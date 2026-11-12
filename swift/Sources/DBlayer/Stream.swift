@@ -391,6 +391,11 @@ public struct AccountScope: Sendable {
     UploadStatusStream(stream: database.openValueStream(epoch: epoch, request: .blob(model: Model.modelName, id: row.id, action: action)))
   }
 
+  /// The status of the transfer of a staged upload, before and after its `commit`.
+  public func uploadStatus<Model: DBModel>(_ staged: StagedUpload<Model>) -> UploadStatusStream {
+    UploadStatusStream(stream: database.openValueStream(epoch: epoch, request: .blob(model: Model.modelName, id: staged.id, action: staged.action)))
+  }
+
   /// The operations that wait for the server, are on their way or were refused.
   public func operations() -> OperationQueueStream {
     OperationQueueStream(stream: database.openValueStream(epoch: epoch, request: .operations))
@@ -421,6 +426,12 @@ public struct AccountScope: Sendable {
   /// Sends the file of an existing record through its declared upload action.
   @concurrent public func upload<Model: DBModel>(_ row: Model, action: String, _ request: UploadRequest) async throws -> MutationReceipt<Model> {
     try await upload(Model.self, id: row.id, action: action, request)
+  }
+
+  /// Sends the file before its row exists. `StagedUpload.commit` creates the row and sends the final mutation, `discard` removes the transfer.
+  @concurrent public func stage<Model: DBModel>(_: Model.Type, action: String, _ request: UploadRequest) async throws -> StagedUpload<Model> {
+    let staged = try await database.stage(epoch: epoch, model: Model.modelName, action: action, request: request.wire)
+    return StagedUpload(id: staged.rowId, action: action, database: database, epoch: epoch)
   }
 
   @concurrent public func uploadBatch<Model: DBModel>(_: Model.Type, items: [UploadItem], request: UploadBatchRequest) async throws -> OperationReceipt<Model> {

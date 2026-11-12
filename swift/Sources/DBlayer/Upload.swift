@@ -29,6 +29,25 @@ public struct UploadRequest: Sendable {
   }
 }
 
+/// A file sent before its row exists. `id` is the id of the row `commit` creates.
+public struct StagedUpload<Model: DBModel>: Sendable {
+  public let id: String
+  public let action: String
+  let database: Database
+  let epoch: UInt64
+
+  /// Creates the row with `values` and sends the final mutation with `variables`. A second call throws `Invalid`.
+  @concurrent public func commit(values: [String: JSONValue], variables: [String: JSONValue] = [:]) async throws -> MutationReceipt<Model> {
+    let receipt = try await database.commitStaged(epoch: epoch, model: Model.modelName, rowId: id, action: action, valuesJson: JSONValue.object(values).text, variablesJson: JSONValue.object(variables).text)
+    return try MutationReceipt(database: database, wire: receipt)
+  }
+
+  /// Removes the transfer and its files. Returns the value of the core.
+  @concurrent public func discard() async throws -> Bool {
+    try await database.cancelUpload(epoch: epoch, model: Model.modelName, rowId: id, action: action)
+  }
+}
+
 public struct UploadItem: Sendable {
   public var values: [String: JSONValue]
   public var path: String?
