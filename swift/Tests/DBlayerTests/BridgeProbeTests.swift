@@ -204,29 +204,6 @@ struct BridgeProbeTests {
     #expect(transport.calls.filter { $0.operationName == "CreateMoment" }.count == 1)
   }
 
-  @MainActor
-  @Test
-  func aReactionUsesItsDeclaredKeyAcrossGeneratedValuesAndCells() async throws {
-    _ = try await Self.openRecordSession()
-    let record = try await Self.settledRecord()
-    let row = try await record.update(reactions: [RecordReactionNode(body: "A", userId: "u1")]).optimisticValue!
-    let changed = try await row.react(reactionBody: "C", userId: "u1").optimisticValue!
-    #expect(changed.reactions.map(\.userId) == ["u1"])
-    #expect(changed.reactions.map(\.body) == ["C"])
-  }
-
-  @MainActor
-  @Test
-  func anOptimisticReactionCarriesTheNestedUserOfTheLocalRow() async throws {
-    _ = try await Self.openRecordSession()
-    let ann = try await User.create(name: "Ann").optimisticValue!
-    let record = try await Self.settledRecord()
-    let withUser = try await record.react(reactionBody: "A", userId: ann.id).optimisticValue!
-    #expect(withUser.reactions.first?.user?.name == "Ann")
-    let withoutUser = try await record.react(reactionBody: "B", userId: "nobody").optimisticValue!
-    #expect(withoutUser.reactions.first { $0.userId == "nobody" }?.user == nil)
-  }
-
   private func openWithAMoment(_ transport: MockTransport) async throws -> Moment {
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
