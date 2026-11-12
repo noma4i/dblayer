@@ -154,8 +154,6 @@ pub enum Fault {
 }
 
 impl Fault {
-    pub(super) fn of_end(cause: crate::runtime::Cause) -> Self { Self::Ended(if cause == crate::runtime::Cause::Close { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded }) }
-    pub(super) fn end_cause(&self) -> crate::ffi::EndCause { if let Self::Ended(cause) = self { cause.clone() } else { crate::ffi::EndCause::SessionEnded } }
     pub(crate) fn of_reject(reason: RejectReason) -> Self {
         match reason {
             RejectReason::NoSession => Self::Ended(crate::ffi::EndCause::SessionEnded),

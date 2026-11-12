@@ -157,15 +157,13 @@ impl OutboxState {
     }
 
     /// Every held call gets exactly one answer.
-    pub(super) fn answer_held(&mut self, fault: Fault, fx: &mut Effects<Outbox>) {
+    pub(super) fn answer_held(&mut self, cause: crate::ffi::EndCause, fx: &mut Effects<Outbox>) {
+        let fault = Fault::Ended(cause.clone());
         for input in std::mem::take(&mut self.held) {
             match input {
                 OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::DiscardTransfer { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Err(fault.clone())),
                 OutboxInput::RetryTransfer { uploads, .. } => self.retry_transfer_answer(uploads.into_iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(fault.clone()), fx),
-                OutboxInput::Outcome { reply, .. } => {
-                    let cause = fault.end_cause();
-                    Self::reply(fx, reply, OutboxAnswer::Outcome(OutboxOutcome::Ended(cause)))
-                }
+                OutboxInput::Outcome { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Outcome(OutboxOutcome::Ended(cause.clone()))),
                 OutboxInput::ReserveOp { target, .. } => self.opened(fx, target, Err(fault.clone())),
                 OutboxInput::ReserveReplacement { target, .. } => if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(crate::runtime::Outbound::new(transfer, super::transfer::TransferInput::ReplacementReserved { target, result: Err(fault.clone()) }))); },
                 _ => {}
@@ -197,10 +195,10 @@ impl OutboxState {
             OutboxInput::OrphanTransfers { op_ids } => self.orphan_transfers.extend(op_ids),
             OutboxInput::EpochEnded(ended) => {
                 self.ended = true;
-                self.answer_held(Fault::of_end(ended.cause), fx);
+                self.answer_held(crate::ffi::EndCause::of(ended.cause), fx);
             }
             OutboxInput::Closing => {
-                self.answer_held(Fault::Ended(crate::ffi::EndCause::Closed), fx);
+                self.answer_held(crate::ffi::EndCause::Closed, fx);
                 self.closing = true;
                 self.maybe_drained(fx);
             }

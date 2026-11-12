@@ -461,7 +461,7 @@ impl TransferState {
         for id in self.open_ids() {
             self.interrupt(id, end.clone(), fx);
         }
-        self.answer_held(Fault::Ended(if end == crate::ffi::EndCause::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded }), fx);
+        self.answer_held(if end == crate::ffi::EndCause::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded }, fx);
     }
 
     pub(super) fn close(&mut self, fx: &mut Fx) {
@@ -482,7 +482,7 @@ impl TransferState {
                 _ => self.interrupt(id, crate::ffi::EndCause::Closed, fx),
             }
         }
-        self.answer_held(Fault::Ended(crate::ffi::EndCause::Closed), fx);
+        self.answer_held(crate::ffi::EndCause::Closed, fx);
         self.maybe_drained(fx);
     }
 }

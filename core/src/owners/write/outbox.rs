@@ -754,8 +754,8 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn interrupt_all(&mut self, fault: Fault, fx: &mut Effects<Outbox>) {
-        let cause = fault.end_cause();
+    pub(super) fn interrupt_all(&mut self, cause: crate::ffi::EndCause, fx: &mut Effects<Outbox>) {
+        let fault = Fault::Ended(cause.clone());
         let outcome = OutboxOutcome::Ended(cause);
         let open: Vec<OpId> = self.ops.values().filter(|operation| operation.stage != Stage::Done).map(|operation| operation.op_id).collect();
         for op_id in open {
@@ -857,9 +857,9 @@ impl OutboxState {
             OutboxInput::Online(Online(on)) => self.online_changed(now, on, fx),
             OutboxInput::ActivateEpoch(epoch) => self.begin_epoch(epoch),
             OutboxInput::EpochStarted(started) => self.base_generation = started.generation,
-            OutboxInput::EpochEnded(ended) => self.interrupt_all(Fault::of_end(ended.cause), fx),
+            OutboxInput::EpochEnded(ended) => self.interrupt_all(crate::ffi::EndCause::of(ended.cause), fx),
             OutboxInput::Closing => {
-                self.interrupt_all(Fault::Ended(crate::ffi::EndCause::Closed), fx);
+                self.interrupt_all(crate::ffi::EndCause::Closed, fx);
                 self.closing = true;
                 self.maybe_drained(fx);
             }

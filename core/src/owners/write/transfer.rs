@@ -911,7 +911,7 @@ impl TransferState {
                 run(fx, TransferEffect::SnapshotRequest { epoch: started.epoch });
             }
             TransferInput::Closing => {
-                self.answer_held(Fault::Ended(crate::ffi::EndCause::Closed), fx);
+                self.answer_held(crate::ffi::EndCause::Closed, fx);
                 self.close(fx);
             }
             TransferInput::EpochEnded(ended) => {
@@ -950,14 +950,12 @@ impl TransferState {
     }
 
     /// Every held call gets exactly one answer.
-    pub(super) fn answer_held(&mut self, fault: Fault, fx: &mut Fx) {
+    pub(super) fn answer_held(&mut self, cause: crate::ffi::EndCause, fx: &mut Fx) {
+        let fault = Fault::Ended(cause.clone());
         for input in std::mem::take(&mut self.held) {
             match input {
                 TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::SelectRow { reply: id, .. } => reply(fx, id, TransferAnswer::Err(fault.clone())),
-                TransferInput::Outcome { reply: id, .. } => {
-                    let cause = fault.end_cause();
-                    reply(fx, id, TransferAnswer::Outcome(OutboxOutcome::Ended(cause), None))
-                }
+                TransferInput::Outcome { reply: id, .. } => reply(fx, id, TransferAnswer::Outcome(OutboxOutcome::Ended(cause.clone()), None)),
                 _ => {}
             }
         }
