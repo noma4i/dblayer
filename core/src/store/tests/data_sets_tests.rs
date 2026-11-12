@@ -236,7 +236,7 @@ fn data_sets_derived_once_per_batch() {
         ], 1),
     ];
     let db = open();
-    crate::store::fixtures::exec(&db, "CREATE TABLE sets_writes (n INTEGER); CREATE TRIGGER sets_written AFTER UPDATE OF lastMessageId, lastMessageAt, lastSequenceNumber, lastMessageBody ON row_chats BEGIN INSERT INTO sets_writes VALUES (1); END");
+    crate::store::fixtures::exec(&db, "CREATE TABLE sets_writes (n INTEGER); CREATE TRIGGER sets_written AFTER UPDATE OF lastMessageId, lastMessageAt, lastSequenceNumber, lastMessageBody ON row_chats BEGIN INSERT INTO sets_writes VALUES (1); END; CREATE TRIGGER sets_inserted AFTER INSERT ON row_chats BEGIN INSERT INTO sets_writes VALUES (1); END");
     for (name, ops, expected) in batches {
         write(&db, BatchAuthor::Outbox, Vec::new(), ops);
         let writes = crate::store::fixtures::count(&db, "SELECT COUNT(*) FROM sets_writes");
