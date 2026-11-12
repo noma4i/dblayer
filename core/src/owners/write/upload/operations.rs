@@ -42,6 +42,8 @@ impl UploadOperations {
         self.create_blob.iter().chain(multipart)
     }
 
+    pub fn is_step(&self, name: &str) -> bool { self.declared().any(|operation| operation.name == name) }
+
     pub fn root_of(&self, name: &str) -> Option<&str> {
         self.declared().find(|operation| operation.name == name).and_then(|operation| operation.root_path.as_deref())
     }

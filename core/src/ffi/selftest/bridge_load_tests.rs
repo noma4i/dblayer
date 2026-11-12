@@ -223,7 +223,7 @@ async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     let opener = crate::ffi::OpenDatabase::new();
     let world_a = World::new("server", "A", true);
     let switch = Switchable::new(Some(world_a.clone()), false);
-    let first = bound(opener.open_with_clock(config.clone(), crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { transport: Some(switch.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000), super::rig_models::plain_options(), None)).await.unwrap();
+    let first = bound(opener.open_with_clock(config.clone(), crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { transport: Some(switch.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000), crate::ffi::OpenOptions::default(), None)).await.unwrap();
     first.register_operations(plain_operations()).await.unwrap();
     first.set_online(true).unwrap();
     bound(first.refresh(first.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
@@ -233,7 +233,7 @@ async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     bound(first.close_database()).await.unwrap();
     let world_b = World::new("server", "B", true);
     switch.set(Some(world_b.clone()));
-    let second = bound(opener.open_with_clock(config, crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { transport: Some(switch), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(100), super::rig_models::plain_options(), None)).await.unwrap();
+    let second = bound(opener.open_with_clock(config, crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { transport: Some(switch), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(100), crate::ffi::OpenOptions::default(), None)).await.unwrap();
     second.register_operations(plain_operations()).await.unwrap();
     second.set_online(true).unwrap();
     bound(second.refresh(second.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap();

@@ -312,7 +312,10 @@ impl Database {
         let row_id = self.file_row(epoch, &model, &row_id, &field, false).await?;
         self.read_in_epoch(epoch, "file url", move |database| Ok(database.db.url(&model, &row_id, &field)?.map(|path| path.to_string_lossy().into_owned()))).await
     }
-    pub async fn register_operations(&self, defs_json: String) -> Result<(), DbError> {
+    pub async fn register_operations(&self, defs_json: String) -> Result<(), DbError> { self.declare(defs_json, true).await }
+
+    /// The declaration of `open`: the operations the library sends by itself are checked only when the set holds an operation that is not an upload step, the app declares the rest later.
+    pub(super) async fn declare(&self, defs_json: String, explicit: bool) -> Result<(), DbError> {
         self.not_closed()?;
         let defs: Vec<Value> = self.offload(move || parse_json(&defs_json)).await?;
         self.remote()?;
@@ -336,7 +339,8 @@ impl Database {
         }
         let registered: Vec<(String, String)> = self.db.specs().values().flat_map(|spec| spec.actions.iter().filter_map(|action| action.mutation.as_ref().filter(|mutation| names.iter().any(|(name, _)| name == *mutation)).map(|_| (spec.key.to_string(), action.name.clone())))).collect();
         crate::owners::read::preload_keys(&self.db, false).map_err(|error| DbError::Invalid { detail: format!("the preload of the schema is invalid: {error}") })?;
-        let missing: Vec<String> = crate::owners::read::own_operations(&self.db).into_iter().filter(|name| !declared.iter().any(|operation| operation.name == *name)).collect();
+        let checked = explicit || declared.iter().any(|operation| !self.uploads.as_ref().is_some_and(|uploads| uploads.is_step(&operation.name)));
+        let missing: Vec<String> = crate::owners::read::own_operations(&self.db).into_iter().filter(|_| checked).filter(|name| !declared.iter().any(|operation| operation.name == *name)).collect();
         if !missing.is_empty() {
             return Err(DbError::Invalid { detail: format!("the operations the library sends by itself are not registered: {}", missing.join(", ")) });
         }

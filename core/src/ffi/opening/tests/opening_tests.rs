@@ -135,6 +135,7 @@ async fn life_register_missing_own_operation() {
         serde_json::from_value(serde_json::json!({"area":"OWNER", "relation":"byOwner"})).unwrap(),
     ];
     model.listens.push(UpdatesSpec { subscription: "ItemListen".into(), deleted_by: None, deleted_unless: None, set: Default::default(), removes: false, debounce: None, root: None, id: Vec::new(), apply: None });
+    let model_with_steps = model.clone();
     let database = Database::open(config(), crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     database.set_online(true).unwrap();
     for (left_out, expected) in [(vec!["Changes"], "Changes"), (vec!["ItemNode"], "ItemNode"), (vec!["OwnerItems"], "OwnerItems"), (vec!["ItemListen"], "ItemListen"), (vec!["ItemNode", "Changes"], "Changes, ItemNode")] {
@@ -150,6 +151,20 @@ async fn life_register_missing_own_operation() {
     database.register_operations(format!("[{}]", all.join(","))).await.unwrap();
     assert_eq!(database.run(database.session_epoch(), "Greeting".into(), r#"{"name":"Ada"}"#.into()).await.unwrap(), r#""Hello Ada""#);
     database.close_database().await.unwrap();
+
+    let models = |model: &ModelSpec| crate::ffi::specs(serde_json::to_string(&vec![model.clone()]).unwrap());
+    let mut stepped = model_with_steps.clone();
+    stepped.upload_steps = Some(crate::owners::write::upload::UploadOperations { create_blob: Some(crate::owners::write::upload::UploadOperation::new("CreateBlob")), multipart: None });
+    let definition = |name: &str, document: &str| crate::ffi::OperationDefinition { name: name.into(), document: document.into() };
+    let ports = || crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
+    let slot = OpenDatabase::new();
+    let empty = slot.open(config(), models(&model_with_steps), OpenOptions::default(), ports(), None).await.unwrap();
+    assert!(matches!(empty.register_operations(format!("[{greeting}]")).await, Err(DbError::Invalid { .. })), "an explicit registration is checked after an open without operations");
+    empty.close_database().await.unwrap();
+    let steps = OpenOptions { operations: vec![definition("CreateBlob", "mutation CreateBlob { createBlob { url } }")] };
+    slot.open(config(), models(&stepped), steps, ports(), None).await.unwrap().close_database().await.unwrap();
+    let reads = OpenOptions { operations: vec![definition("Greeting", "query Greeting($name: String!) { greeting(name: $name) }")] };
+    assert!(matches!(slot.open(config(), models(&stepped), reads, ports(), None).await, Err(DbError::Invalid { .. })), "an open with a read and without the own operations is refused");
 }
 
 #[tokio::test]

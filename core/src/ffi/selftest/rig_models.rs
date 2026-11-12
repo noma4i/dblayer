@@ -193,7 +193,6 @@ pub(super) fn plain_operations() -> String {
     json!(operations).to_string()
 }
 
-/// The operations a plain harness hands to `open`: the schema sends some of them by itself.
 const OTHER_OWN_OPERATIONS: [(&str, &str); 7] = [
     ("Notices", "subscription Notices { notices { id } }"),
     ("RigEvents", "subscription RigEvents { rigEvents { id } }"),
@@ -211,11 +210,6 @@ pub(super) fn with_own_operations(definitions: &str) -> String {
         if !operations.iter().any(|operation| operation["name"] == *name) { operations.push(json!({"name": name, "document": document})); }
     }
     json!(operations).to_string()
-}
-
-pub(super) fn plain_options() -> crate::ffi::OpenOptions {
-    let operations: Vec<Value> = serde_json::from_str(&plain_operations()).unwrap();
-    crate::ffi::OpenOptions { operations: operations.into_iter().map(|operation| crate::ffi::OperationDefinition { name: operation["name"].as_str().unwrap().into(), document: operation["document"].as_str().unwrap().into() }).collect() }
 }
 
 pub(super) fn add_reactions(models: &mut Value) {

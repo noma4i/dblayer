@@ -132,7 +132,7 @@ impl OpenDatabase {
 impl Database {
     async fn declare_operations(&self, operations: Vec<OperationDefinition>) -> Result<(), DbError> {
         let defs = serde_json::Value::Array(operations.into_iter().map(|operation| serde_json::json!({ "name": operation.name, "document": operation.document })).collect());
-        self.register_operations(defs.to_string()).await
+        self.declare(defs.to_string(), false).await
     }
 
     async fn start_observers(&self, observers: Option<Arc<dyn PlatformObserver>>) -> Result<(), DbError> {

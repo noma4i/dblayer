@@ -468,7 +468,7 @@ impl Rig {
         if reactions { add_reactions(&mut models); }
         edit(&mut models);
         let database = opener
-            .open_with_clock(config(), crate::ffi::specs(models.to_string()), crate::ffi::OpenPorts { transport: Some(switch.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(WatchedHeld::default())), http: Some(world.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone(), super::rig_models::plain_options(), None)
+            .open_with_clock(config(), crate::ffi::specs(models.to_string()), crate::ffi::OpenPorts { transport: Some(switch.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(WatchedHeld::default())), http: Some(world.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone(), crate::ffi::OpenOptions::default(), None)
             .await
             .unwrap();
         database.register_operations(plain_operations()).await.unwrap();
@@ -486,7 +486,7 @@ impl Rig {
         let switch = Switchable::new(Some(first.clone()), invalid);
         let clock = TestClock::new(1_000_000);
         let opener = OpenDatabase::new();
-        let database = opener.open_with_clock(config(), crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { transport: Some(switch.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone(), super::rig_models::plain_options(), None).await.unwrap();
+        let database = opener.open_with_clock(config(), crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { transport: Some(switch.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
         database.register_operations(plain_operations()).await.unwrap();
         database.set_online(true).unwrap();
         Rig { opener, database, world: first, switch, clock }
@@ -536,7 +536,7 @@ impl Rig {
         let opener = OpenDatabase::new();
         let mut models: Value = serde_json::from_str(&plain_models()).unwrap();
         edit(&mut models);
-        let database = opener.open_with_clock(config(), crate::ffi::specs(models.to_string()), crate::ffi::OpenPorts { transport: Some(switch.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(WatchedHeld::default())), http: Some(first.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone(), super::rig_models::plain_options(), None).await.unwrap();
+        let database = opener.open_with_clock(config(), crate::ffi::specs(models.to_string()), crate::ffi::OpenPorts { transport: Some(switch.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(WatchedHeld::default())), http: Some(first.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
         database.register_operations(plain_operations()).await.unwrap();
         database.set_online(true).unwrap();
         bound(database.session_call("login_link".into(), json!({"account": first.account()}).to_string())).await.unwrap();
@@ -548,7 +548,7 @@ impl Rig {
         self.switch.set(None);
         bound(self.database.close_database()).await.unwrap();
         self.switch.set(next);
-        let database = self.opener.open_with_clock(config(), crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { transport: Some(self.switch.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, self.clock.clone(), super::rig_models::plain_options(), None).await.unwrap();
+        let database = self.opener.open_with_clock(config(), crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { transport: Some(self.switch.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, self.clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
         database.register_operations(plain_operations()).await.unwrap();
         database.set_online(true).unwrap();
         self.database = database;
@@ -581,7 +581,7 @@ impl Rig {
 
     /// A second open through the opener that already owns an open database.
     pub(super) async fn open_again(&self, transport: Option<Arc<dyn Transport>>) -> Result<Arc<Database>, DbError> {
-        self.opener.open_with_clock(config(), crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { transport, endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000), super::rig_models::plain_options(), None).await
+        self.opener.open_with_clock(config(), crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { transport, endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000), crate::ffi::OpenOptions::default(), None).await
     }
 
     pub(super) async fn settle(&self) { bound(crate::ffi::settled(&self.database)).await.unwrap(); }
