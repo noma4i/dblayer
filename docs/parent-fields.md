@@ -4,6 +4,7 @@ The parent fields named by `sets` are derived from the server value of the paren
 These rules also apply when a partial response creates the child locally for the first time. No extra write from the app is needed.
 Deleting the newest child derives the fields from the children left and the server value.
 If no child and no server value remain, all copied fields become null.
+Field names that start with `server__` are reserved: a model with such a field is rejected.
 
 Read the parent entity after declaring `sets` in the child model:
 

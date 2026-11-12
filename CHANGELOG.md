@@ -17,6 +17,7 @@
 - Skip created rows in an `insert_on: [:create]` scope with constant variables and no rule.
 - Keep the last load phase of a window that loses the network while loading.
 - Clear the load error of a window when its last reader leaves.
+- Reject model fields whose names start with `server__`.
 
 ### Fixed
 
