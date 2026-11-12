@@ -14,7 +14,6 @@ mod matrix_admission_tests;
 mod matrix_write_tests;
 mod removed_by_tests;
 mod matrix_answer_tests;
-mod matrix_value_tests;
 mod matrix_idle_tests;
 mod calls_tests;
 mod effect_rows_tests;

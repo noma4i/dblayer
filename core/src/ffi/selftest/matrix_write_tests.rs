@@ -177,7 +177,6 @@ async fn matrix_write_path_kind() {
         let result = bound(database.set_ephemeral(epoch, "Kind".into(), base.id.clone(), json!({"typing": "yes"}).to_string())).await.map(|()| unreachable_row());
         matrix.check("set_ephemeral.typing", "invalid", "\"yes\"", "Invalid", &invalid_names(&result, "typing"));
     }
-    // the server landing paths run on the schema of the app in consumer/matrix_write_server_tests.rs
     matrix.finish();
 }
 
