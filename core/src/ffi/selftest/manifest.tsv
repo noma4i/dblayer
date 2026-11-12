@@ -95,8 +95,6 @@ K35		core	a_command_read_between_its_confirming_commit_and_the_announcement_is_d
 C20	C4	core	a_load_after_a_session_reset_needs_a_new_session_and_asks_nothing	green	-	consumer-reds 4
 C20	C4	core	a_reset_during_a_load_interrupts_it_and_its_late_answer_never_reaches_the_next_session	green	-	consumer-reds 4
 C21	C4	core	a_load_all_whose_caller_went_away_asks_the_server_for_no_more_pages	green	-	android-reds 2
-C21	C4	kotlin	com.noma4i.dblayer.LoadAllCancellationTest.cancellingTheCallerOfLoadAllStopsTheTransportCalls	green	-	android-reds 2
-C24		kotlin	com.noma4i.dblayer.ServerModelWithoutTransportTest.aCreateOfAServerModelOnADatabaseWithoutATransportIsRefusedAsNoSession	green	-	android-reds 4
 S101		core	server_calls_without_a_transport_report_no_session	red-by-reading	-	arch-audit Fable K2 K8
 S101		swift	BridgeProbeTests.serverCallsWithoutATransportReportNoSession	red-by-reading	-	arch-audit Fable K2 K8
 S101		kotlin	com.noma4i.dblayer.ServerModelWithoutTransportTest.aCreateOfAServerModelOnADatabaseWithoutATransportIsRefusedAsNoSession	red-by-reading	-	arch-audit Fable K2 K8
@@ -109,11 +107,7 @@ S107		core	an_old_encrypted_cable_cannot_deliver_into_the_next_account	unrun	S1:
 S107		swift	BridgeProbeTests.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the subscription	arch-audit Astra A1
 S107		kotlin	com.noma4i.dblayer.EncryptedOldSinkTest.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the subscription	arch-audit Astra A1
 S108		core	an_old_encrypted_cable_cannot_deliver_into_the_next_account	unrun	S1: reset closes the cable	arch-audit Astra A1
-S108		swift	BridgeProbeTests.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the cable	arch-audit Astra A1
-S108		kotlin	com.noma4i.dblayer.EncryptedOldSinkTest.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the cable	arch-audit Astra A1
 S109		core	a_round_running_at_the_session_exit_asks_for_the_job_of_the_next_epoch_after_it_ends	red-by-reading	S1: session reset; S4: adapt roundEnd consumers	coordinator msg_5bf3e2eac6f8
-S110		swift	BridgeProbeTests.resetDuringPutEndsTheWaitAndRemovesTheOldUpload	red-by-reading	S1: upload needs a session	arch-audit Fable K8
-S110		kotlin	com.noma4i.dblayer.UploadSessionTest.resetDuringPutEndsTheWaitAndRemovesTheOldUpload	red-by-reading	S1: upload needs a session	arch-audit Fable K8
 S111		core	a_reset_during_a_load_interrupts_it_and_its_late_answer_never_reaches_the_next_session	red-by-reading	S1: old resume is refused	arch-audit Astra A1
 S201	K1-b	core	a_cached_entity_remains_loaded_when_its_initial_network_read_fails	red-by-reading	-	arch-audit fable K1-b
 S203	C23	core	a_profile_delivery_is_ready_with_its_rows_before_an_explicit_refresh	red-by-reading	-	arch-audit fable K1
