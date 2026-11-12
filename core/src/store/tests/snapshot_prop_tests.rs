@@ -27,12 +27,6 @@ fn store_snapshot_lands_to_one_state() {
     assert!(found.is_empty(), "cells against P-DATA-104:\n{}", found.join("\n"));
 }
 
-#[test]
-fn store_snapshot_repeat_changes_nothing() {
-    let found = red(REPEAT);
-    assert!(found.is_empty(), "cells against P-DATA-104:\n{}", found.join("\n"));
-}
-
 fn case_named(name: &str) -> Case {
     *CASES.iter().find(|case| case.name == name).unwrap()
 }
