@@ -94,7 +94,7 @@ async fn boundary_declaration_orders() {
             assert!(database.reads.get("Alpha").is_none() && database.reads.get("Beta").is_none(), "{order:?}: a good declaration was installed beside the bad one");
             assert!(database.reads.get("Signal").is_some(), "{order:?}: the earlier declaration was kept");
         }
-        database.register_operations(serde_json::Value::Array(vec![good("Alpha"), good("Beta"), good("Signal")]).to_string()).await.unwrap();
+        database.register_operations(serde_json::Value::Array(vec![good("Alpha"), good("Beta")]).to_string()).await.unwrap();
         assert!(database.reads.get("Alpha").is_some() && database.reads.get("Beta").is_some());
     }
     assert_eq!(traces, 18);

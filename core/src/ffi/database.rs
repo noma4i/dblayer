@@ -121,7 +121,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { pub(super) me: std::sync::Weak<Database>, pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(crate) life: Arc<crate::owners::life::Life>, pub(super) db: Arc<Store>, pub(super) remote: bool, pub(super) reads: crate::owners::read::ReadOperations, pub(super) returns: Arc<HashMap<String, crate::schema::FieldSpec>>, pub(super) uploads: Option<UploadOperations>, pub(super) preparer: Arc<OnceLock<Arc<dyn super::Preparer>>>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { pub(super) me: std::sync::Weak<Database>, pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(crate) life: Arc<crate::owners::life::Life>, pub(super) db: Arc<Store>, pub(super) remote: bool, pub(super) reads: crate::owners::read::ReadOperations, pub(super) returns: Arc<HashMap<String, crate::schema::FieldSpec>>, pub(super) uploads: Option<UploadOperations>, pub(super) preparer: Arc<OnceLock<Arc<dyn super::Preparer>>>, pub(super) partial_operations: Arc<std::sync::atomic::AtomicBool>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) struct Wiring {
     pub transport: Option<Arc<dyn core::Upstream>>,
@@ -165,7 +165,7 @@ impl Database {
         let life = Self::build_life(&db, transport.clone(), encrypted.as_ref(), cable, seal, reads.clone(), (uploads.clone(), jobs.clone(), preparer.clone()))?;
         let remote = transport.is_some();
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
-        Ok(Arc::new_cyclic(|me| Self { me: me.clone(), lease: Arc::new(OnceLock::new()), life, db, remote, reads, returns, uploads, preparer, jobs, wires: Arc::new(wires) }))
+        Ok(Arc::new_cyclic(|me| Self { me: me.clone(), lease: Arc::new(OnceLock::new()), life, db, remote, reads, returns, uploads, preparer, partial_operations: Default::default(), jobs, wires: Arc::new(wires) }))
     }
 
     pub async fn open(config: Config, models_json: String, ports: super::OpenPorts) -> Result<Arc<Self>, DbError> {
@@ -177,7 +177,7 @@ impl Database {
     }
 
     async fn open_at(config: Config, models_json: String, ports: super::OpenPorts, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
-        let super::OpenPorts { transport, encrypted, credentials, http, endpoint, preparer, .. } = ports;
+        let super::OpenPorts { transport, encrypted, credentials, http, endpoint, preparer, partial_operations, .. } = ports;
         blocking(move || {
             let database = match encrypted {
                 Some(encrypted) => {
@@ -197,6 +197,7 @@ impl Database {
                 }
             };
             if let Some(preparer) = preparer { let _ = database.preparer.set(preparer); }
+            database.partial_operations.store(partial_operations, std::sync::atomic::Ordering::SeqCst);
             super::transport::follow_life(&database.life);
             Ok(database)
         }).await
@@ -339,7 +340,7 @@ impl Database {
         }
         let registered: Vec<(String, String)> = self.db.specs().values().flat_map(|spec| spec.actions.iter().filter_map(|action| action.mutation.as_ref().filter(|mutation| names.iter().any(|(name, _)| name == *mutation)).map(|_| (spec.key.to_string(), action.name.clone())))).collect();
         crate::owners::read::preload_keys(&self.db, false).map_err(|error| DbError::Invalid { detail: format!("the preload of the schema is invalid: {error}") })?;
-        let checked = explicit || declared.iter().any(|operation| !self.uploads.as_ref().is_some_and(|uploads| uploads.is_step(&operation.name)));
+        let checked = !self.partial_operations.load(std::sync::atomic::Ordering::SeqCst) && (explicit || declared.iter().any(|operation| !self.uploads.as_ref().is_some_and(|uploads| uploads.is_step(&operation.name))));
         let missing: Vec<String> = crate::owners::read::own_operations(&self.db).into_iter().filter(|_| checked).filter(|name| !declared.iter().any(|operation| operation.name == *name)).collect();
         if !missing.is_empty() {
             return Err(DbError::Invalid { detail: format!("the operations the library sends by itself are not registered: {}", missing.join(", ")) });

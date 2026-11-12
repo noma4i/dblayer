@@ -41,7 +41,7 @@ async fn call_result_normalized() {
         {"name": "Profile", "returns": serde_json::from_str::<Value>(&declaration()).unwrap()},
         {"name": "Raw", "returns": FieldSpec::raw("Raw")},
     ]});
-    let database = Database::open(Config { path: None, data_version: None }, specs.to_string(), crate::ffi::OpenPorts { transport: Some(Arc::new(Answers(answer.clone(), sent.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+    let database = Database::open(Config { path: None, data_version: None }, specs.to_string(), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(Answers(answer.clone(), sent.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     database.register_operations(json!([
         {"name": "Profile", "document": "query Profile { profile { id } }"},
         {"name": "Raw", "document": "query Raw { profile { id } }"},

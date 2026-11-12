@@ -7,7 +7,7 @@ const FEED: &str = "query MomentsFeed($first: Int, $after: String) { feed(first:
 
 async fn feed_rig() -> Rig {
     let rig = Rig::signed_as(World::new("server", "A", true), false, wrapper_models).await;
-    rig.database.register_operations(super::rig_models::with_own_operations(&json!([{"name":"MomentsFeed","document":FEED}]).to_string())).await.unwrap();
+    rig.database.register_operations(json!([{"name":"MomentsFeed","document":FEED}]).to_string()).await.unwrap();
     rig.world.answer_with("MomentsFeed", json!({"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}));
     rig
 }

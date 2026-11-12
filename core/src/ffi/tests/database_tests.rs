@@ -35,7 +35,7 @@ fn config() -> Config { Config { path: None, data_version: None } }
 
 #[tokio::test]
 async fn life_register_ok() {
-    let database = Database::open(config(), crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+    let database = Database::open(config(), crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     database.register_operations(r#"[{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}]"#.into()).await.unwrap();
     database.set_online(true).unwrap();
     assert_eq!(database.run(database.session_epoch(), "Greeting".into(), r#"{"name":"Ada"}"#.into()).await.unwrap(), r#""Hello Ada""#);
@@ -45,7 +45,7 @@ async fn life_register_ok() {
 /// net_prop_set_online_no_wall_clock: `set_online` returns the outcome of the owner under a clock that never advances, and `Err(Closed)` once the database closed.
 #[tokio::test]
 async fn net_prop_set_online_no_wall_clock() {
-    let database = Database::open_with_clock(config(), crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000)).await.unwrap();
+    let database = Database::open_with_clock(config(), crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000)).await.unwrap();
     let sink = database.online_sink().unwrap();
     let live = Arc::clone(&database);
     crate::test_wait::within(async move { crate::task::spawn_blocking(None, move || live.set_online(true)).await.unwrap() }).await.unwrap();
@@ -68,7 +68,7 @@ async fn unified_open_rejects_incomplete_or_unencrypted_session_arguments() {
         (true, true, true, false),
     ] {
         let encrypted = encrypted.then(|| EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() });
-        let result = Database::open(config(), crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { transport: transport.then(|| Arc::new(Plain) as Arc<dyn Transport>), encrypted, credentials: credentials.then(|| Arc::new(Unused) as Arc<dyn CredentialStore>), http: http.then(|| Arc::new(Unused) as Arc<dyn EncryptedHttp>), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await;
+        let result = Database::open(config(), crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { partial_operations: true, transport: transport.then(|| Arc::new(Plain) as Arc<dyn Transport>), encrypted, credentials: credentials.then(|| Arc::new(Unused) as Arc<dyn CredentialStore>), http: http.then(|| Arc::new(Unused) as Arc<dyn EncryptedHttp>), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await;
         rejected.push(matches!(result, Err(DbError::Invalid { .. })));
     }
     assert_eq!(rejected, [true; 6]);

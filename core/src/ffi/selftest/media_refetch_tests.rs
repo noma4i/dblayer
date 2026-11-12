@@ -44,7 +44,7 @@ fn requests(rig: &Rig, operation: &str) -> usize { rig.world.log().iter().filter
 #[tokio::test(flavor = "multi_thread")]
 async fn a_media_refetch_after_mutation_reads_the_whole_stale_window() {
     let rig = Rig::signed_as(World::new("server", "A", true), false, media_models).await;
-    rig.database.register_operations(super::rig_models::with_own_operations(&DEFINITIONS)).await.unwrap();
+    rig.database.register_operations(DEFINITIONS.into()).await.unwrap();
     for operation in ["MediaMarker", "MediaTail", "LikeMoment", "ChatMedia"] { rig.world.answer_with(operation, json!({"data":{}})); }
     for count in [0, 0, 1, 1, 1] { rig.world.fail_next("MediaMarker", marker(count)); }
     rig.world.fail_next("ChatMedia", page("v1"));

@@ -19,7 +19,7 @@ func closePrevious() async {
 
 public func openDatabase(config: Config, modelsJson: String, transport: Transport?, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, operations: String = "[]", preparer: Preparer? = ScriptedPreparer()) async throws -> Database {
   await closePrevious()
-  return try await DB.opener.open(config: config, modelsJson: withRawCalls(modelsJson), options: OpenOptions(operations: definitions(of: withUploadSteps(operations, models: modelsJson))), ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: transport == nil ? nil : scriptedEndpoint, preparer: preparer), observers: nil)
+  return try await DB.opener.open(config: config, modelsJson: withRawCalls(modelsJson), options: OpenOptions(operations: definitions(of: withUploadSteps(operations, models: modelsJson))), ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: transport == nil ? nil : scriptedEndpoint, preparer: preparer, partialOperations: true), observers: nil)
 }
 
 public func withRawCalls(_ source: String, _ names: [String] = ["SessionProfile", "PurchaseCreate", "RecordAlbumSend"]) -> String {
@@ -156,7 +156,7 @@ public func openSigned(config: Config, modelsJson: String, transport: Transport?
   let restored = try held.get() != nil
   let database: Database
   if onlineAtOpen {
-    let ports = OpenPorts(transport: mock, encrypted: standEncrypted(), credentials: held, http: server, endpoint: scriptedEndpoint, preparer: preparer)
+    let ports = OpenPorts(transport: mock, encrypted: standEncrypted(), credentials: held, http: server, endpoint: scriptedEndpoint, preparer: preparer, partialOperations: true)
     let declared = definitions(of: withUploadSteps(operations, models: modelsJson))
     let steps = Set(uploadStepOperations.map(\.name))
     await closePrevious()

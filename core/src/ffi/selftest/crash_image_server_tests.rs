@@ -66,7 +66,7 @@ impl FakeHttp for Recording {
 
 async fn open(path: &Path, http: Arc<Recording>, credentials: Arc<WatchedHeld>, clock: Arc<TestClock>) -> Arc<Database> {
     let restored = credentials.inner.value().is_some();
-    let ports = OpenPorts { transport: Some(Arc::new(Puts::default())), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(credentials), http: Some(http), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
+    let ports = OpenPorts { partial_operations: true, transport: Some(Arc::new(Puts::default())), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(credentials), http: Some(http), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
     let config = Config { path: Some(path.to_string_lossy().into_owned()), data_version: None };
     let database = Database::open_with_clock(config, crate::ffi::specs(serde_json::to_string(&vec![moment_spec()]).unwrap()), ports, clock).await.unwrap();
     let mut declared: Vec<Value> = MUTATIONS.iter().map(|(name, root)| json!({"name": name, "document": mutation(name, root), "rootPath": root})).collect();

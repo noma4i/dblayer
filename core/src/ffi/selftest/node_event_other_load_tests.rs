@@ -49,7 +49,7 @@ async fn open(world: Arc<World>) -> (Arc<Database>, Arc<Cable>, Arc<crate::ffi::
     });
     let cable = Arc::new(Cable { peer, token, opened: cable_opened });
     let clock = crate::ffi::TestClock::new(1_000_000);
-    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![presence]).unwrap()), crate::ffi::OpenPorts { transport: Some(cable.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::tests::session_guards_tests::WatchedHeld::default())), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone())).await.unwrap();
+    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![presence]).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(cable.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::tests::session_guards_tests::WatchedHeld::default())), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone())).await.unwrap();
     database.register_operations(json!([
         {"name":"PresenceNode","document":"query PresenceNode($id: ID!) { node(id: $id) { ... on Presence { id online } } }"},
         {"name":"PresenceDetails","document":"query PresenceDetails($id: ID!) { presence(id: $id) { id online } }"},

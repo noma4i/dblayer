@@ -165,6 +165,10 @@ async fn life_register_missing_own_operation() {
     slot.open(config(), models(&stepped), steps, ports(), None).await.unwrap().close_database().await.unwrap();
     let reads = OpenOptions { operations: vec![definition("Greeting", "query Greeting($name: String!) { greeting(name: $name) }")] };
     assert!(matches!(slot.open(config(), models(&stepped), reads, ports(), None).await, Err(DbError::Invalid { .. })), "an open with a read and without the own operations is refused");
+    let stand = crate::ffi::OpenPorts { partial_operations: true, ..ports() };
+    let partial = slot.open(config(), models(&model_with_steps), OpenOptions { operations: vec![definition("Greeting", "query Greeting($name: String!) { greeting(name: $name) }")] }, stand, None).await.unwrap();
+    partial.register_operations(format!("[{greeting}]")).await.unwrap();
+    partial.close_database().await.unwrap();
 }
 
 #[tokio::test]

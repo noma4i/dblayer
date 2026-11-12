@@ -31,7 +31,7 @@ struct Session {
 impl Session {
     async fn settled(created: Value) -> Session {
         let rig = Rig::signed_as(World::new("server", "A", true), false, wrapper_models).await;
-        rig.database.register_operations(super::rig_models::with_own_operations(&OPERATIONS)).await.unwrap();
+        rig.database.register_operations(OPERATIONS.into()).await.unwrap();
         rig.world.answer_with("CreateRecord", created);
         rig.world.answer_with("RecordReact", json!({"data":{"recordReact":record(json!([]))}}));
         let epoch = rig.database.session_epoch();

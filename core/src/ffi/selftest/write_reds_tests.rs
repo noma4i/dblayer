@@ -33,7 +33,7 @@ fn sent_strings(rig: &Rig, operation: &str) -> Vec<Vec<String>> {
 
 async fn parent_child_rig() -> Rig {
     let rig = Rig::signed_as(World::new("server", "A", true), false, wrapper_models).await;
-    rig.database.register_operations(super::rig_models::with_own_operations(&PARENT_AND_CHILD)).await.unwrap();
+    rig.database.register_operations(PARENT_AND_CHILD.into()).await.unwrap();
     rig.world.answer_with("CreateContainer", json!({"data":{"createContainer":{"__typename":"Container","id":"k1","title":"box","shelves":[]}}}));
     rig.world.answer_with("CreateRecord", json!({"data":{"createRecord":{"__typename":"Record","id":"r1","containerId":"k1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[]}}}));
     rig.world.answer_with("CreateMoment", serde_json::from_str(MOMENT_ANSWER).unwrap());
@@ -283,7 +283,7 @@ async fn write_declared_id_variable_never_carries_the_temp_id() {
         let create = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Container").unwrap()["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "create").unwrap();
         create["variables"] = json!({"title": "title", "containerId": "id"});
     }).await;
-    rig.database.register_operations(super::rig_models::with_own_operations(&PARENT_AND_CHILD)).await.unwrap();
+    rig.database.register_operations(PARENT_AND_CHILD.into()).await.unwrap();
     rig.world.answer_with("CreateContainer", json!({"data":{"createContainer":{"__typename":"Container","id":"k1","title":"box","shelves":[]}}}));
     let epoch = rig.database.session_epoch();
     let parent = bound(rig.database.create(epoch, "Container".into(), json!({"title":"box"}).to_string(), "{}".into())).await.unwrap();

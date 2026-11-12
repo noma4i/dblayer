@@ -313,7 +313,7 @@ impl Rig {
         let credentials = credentials_of(path.as_deref());
         let signed = CredentialSlot::get(&*credentials).unwrap().is_some();
         let held = Arc::new(Held(credentials));
-        let db = within(Database::open_with_clock(Config { path, data_version: None }, crate::ffi::specs(models.clone()), crate::ffi::OpenPorts { transport: Some(Arc::new(Wire(server.clone()))), encrypted: Some(encrypted), credentials: Some(held), http: Some(Arc::new(Wire(server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone())).await.unwrap();
+        let db = within(Database::open_with_clock(Config { path, data_version: None }, crate::ffi::specs(models.clone()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(Wire(server.clone()))), encrypted: Some(encrypted), credentials: Some(held), http: Some(Arc::new(Wire(server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone())).await.unwrap();
         db.register_operations(OPERATIONS.into()).await.unwrap();
         db.set_online(true).unwrap();
         if !signed { within(db.session_call("login_link".into(), json!({"account": "A"}).to_string())).await.unwrap(); }

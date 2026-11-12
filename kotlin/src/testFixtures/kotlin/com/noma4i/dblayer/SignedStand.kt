@@ -13,7 +13,7 @@ interface WrapsMock { val base: MockTransport }
 suspend fun openDatabase(config: Config, modelsJson: String, transport: Transport? = null, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, operations: String = "[]", preparer: Preparer? = ScriptedPreparer()): Database {
     standServer = null
     DBlayer.openedDatabase()?.closeDatabase()
-    return DBlayer.opener.open(config, withRawCalls(modelsJson), OpenOptions(definitionsOf(withUploadSteps(operations, modelsJson))), OpenPorts(transport, encrypted, credentials, http, SCRIPTED_ENDPOINT, preparer = preparer), null)
+    return DBlayer.opener.open(config, withRawCalls(modelsJson), OpenOptions(definitionsOf(withUploadSteps(operations, modelsJson))), OpenPorts(transport, encrypted, credentials, http, SCRIPTED_ENDPOINT, preparer = preparer, partialOperations = true), null)
 }
 
 fun withRawCalls(source: String, names: List<String> = listOf("SessionProfile", "PurchaseCreate", "RecordAlbumSend")): String {
@@ -126,7 +126,7 @@ suspend fun openSigned(config: Config, modelsJson: String, transport: Transport?
         val steps = UPLOAD_STEP_OPERATIONS.map { it.first }.toSet()
         val (atOpen, later) = declared.partition { ((it as kotlinx.serialization.json.JsonObject)["name"] as kotlinx.serialization.json.JsonPrimitive).content in steps }
         DBlayer.openedDatabase()?.closeDatabase()
-        val opened = adopt(DBlayer.opener.open(config, withRawCalls(modelsJson), OpenOptions(definitionsOf(kotlinx.serialization.json.JsonArray(atOpen).toString())), OpenPorts(mock, standEncrypted(), credential, server, SCRIPTED_ENDPOINT, preparer = preparer), OnlineAtOpen()))
+        val opened = adopt(DBlayer.opener.open(config, withRawCalls(modelsJson), OpenOptions(definitionsOf(kotlinx.serialization.json.JsonArray(atOpen).toString())), OpenPorts(mock, standEncrypted(), credential, server, SCRIPTED_ENDPOINT, preparer = preparer, partialOperations = true), OnlineAtOpen()))
         opened.registerOperations(withSessionProfile(kotlinx.serialization.json.JsonArray(later).toString()))
         opened
     } else {

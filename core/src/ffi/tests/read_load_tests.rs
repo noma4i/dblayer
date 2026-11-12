@@ -53,7 +53,7 @@ async fn open(gated: bool) -> (Arc<Database>, Arc<Pages>) {
     });
     model.relations.push(feed);
     let transport = Arc::new(Pages { asked: Mutex::new(Vec::new()), gate: Arc::new(Semaphore::new(0)), gated, count: AtomicUsize::new(0), last_page: AtomicUsize::new(1), response: Mutex::new(None), panics: std::sync::atomic::AtomicBool::new(false) });
-    let db = Database::open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000)).await.unwrap();
+    let db = Database::open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000)).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).await.unwrap();
     db.set_online(true).unwrap();
     (db, transport)

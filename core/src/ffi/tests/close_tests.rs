@@ -28,6 +28,7 @@ pub(in super::super) async fn with_transport(clock: Arc<dyn Clock>) -> (Arc<Data
         super::signed_session_tests::signed_session(db);
         Ok(super::database::Wiring { transport: Some(wired), encrypted: None, cable: None, seal: None })
     }).unwrap();
+    database.partial_operations.store(true, std::sync::atomic::Ordering::SeqCst);
     database.register_operations(r#"[{"name":"Signal","document":"subscription Signal { signal { id } }","rootPath":"signal"}]"#.into()).await.unwrap();
     (database, transport)
 }

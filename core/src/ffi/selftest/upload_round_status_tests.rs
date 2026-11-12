@@ -63,7 +63,7 @@ const STEPS: [(&str, &str); 6] = [
 async fn a_round_that_starts_with_nothing_unfinished_is_ended_at_once_before_any_session() {
     let stand = Stand::new();
     let models = include_str!("upload_wrapper_models.json").to_string();
-    let ports = crate::ffi::OpenPorts { transport: Some(stand.puts.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
+    let ports = crate::ffi::OpenPorts { partial_operations: true, transport: Some(stand.puts.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
     let database = crate::ffi::Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(models), ports).await.unwrap();
     let declared: Vec<_> = STEPS.iter().map(|(name, document)| serde_json::json!({"name": name, "document": document})).collect();
     database.register_operations(serde_json::Value::Array(declared).to_string()).await.unwrap();

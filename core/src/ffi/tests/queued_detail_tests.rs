@@ -40,7 +40,7 @@ async fn graphql_extensions_reach_run_and_refresh() {
     ] {
         for entry in ["run", "refresh"] {
             let response = serde_json::json!({"errors":[{"message":"purchase refused","extensions":fields},{"message":"secondary","extensions":{"code":"SECONDARY","transactionDisposition":"KEEP"}}]}).to_string();
-            let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![moment_spec()]).unwrap()), crate::ffi::OpenPorts { transport: Some(Arc::new(GraphqlRefusal(response))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+            let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![moment_spec()]).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(GraphqlRefusal(response))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
             database.register_operations(OPERATIONS.into()).await.unwrap();
             database.set_online(true).unwrap();
             let error = match entry {

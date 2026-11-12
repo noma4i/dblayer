@@ -14,7 +14,7 @@ const MUTATION: &str = "mutation MakeMoment { makeMoment { id text } }";
 
 async fn open(path: &Path, rig: &Rig) -> Arc<Database> {
     let config = EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() };
-    let ports = OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
+    let ports = OpenPorts { partial_operations: true, transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
     let database = within(Database::open(Config { path: Some(path.to_string_lossy().into_owned()), data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![moment_spec()]).unwrap()), ports)).await.unwrap();
     let operations = serde_json::json!([{"name":"CreateBlob","document":BLOB,"rootPath":"createBlob"},{"name":"MakeMoment","document":MUTATION,"rootPath":"makeMoment"}]);
     database.register_operations(operations.to_string()).await.unwrap();

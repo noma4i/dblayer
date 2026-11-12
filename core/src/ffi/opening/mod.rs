@@ -37,6 +37,9 @@ pub struct OpenPorts {
     /// The platform reader and writer of the prepare step: a source with `prepare` is refused without it.
     #[uniffi(default = None)]
     pub preparer: Option<Arc<dyn Preparer>>,
+    /// Test stands set it: the database accepts a registration that leaves out an operation the library sends by itself. The `open` of an app never sets it.
+    #[uniffi(default = false)]
+    pub partial_operations: bool,
 }
 
 struct ExecutorHttp(Arc<dyn Transport>);
