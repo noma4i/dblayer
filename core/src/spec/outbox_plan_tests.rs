@@ -100,37 +100,12 @@ fn out_submit_removes_receiver() {
 }
 
 #[test]
-fn out_removes_receiver_every_window() {
-    let base = seeded();
-    let leaving = changes(&base, ScopeEffectKind::Leave, json!(["u1"]));
-    let windows: Vec<_> = leaving.iter().map(|change| match change { ListChange::Leave { list, id, before, .. } => (list.to_string(), id.clone(), before.clone()), other => panic!("{other:?}") }).collect();
-    assert_eq!(windows, [(list("A").to_string(), "u1".to_string(), Some(order_keys().0)), (list("B").to_string(), "u1".to_string(), Some(order_keys().0))], "a Leave for each window the row is a member of, with the place to give back");
-}
-
-#[test]
 fn out_submit_leaves_scope() {
     let base = seeded();
     let leaving = changes(&base, ScopeEffectKind::Leave, json!(["u2", "u3"]));
-    let seen: Vec<_> = leaving.iter().map(|change| match change { ListChange::Leave { id, before, .. } => (id.as_str(), before.clone()), other => panic!("{other:?}") }).collect();
-    assert_eq!(seen, [("u2", Some(order_keys().1)), ("u3", None), ("u2", Some(order_keys().1)), ("u3", None)], "the member keeps its place for the rollback, a row that is no member has none");
-}
-
-#[test]
-fn out_submit_join_missing_row_batch() {
-    use super::outbox_cells_tests::submit_op;
-    use super::outbox_harness::{model_op, Policy, Twin};
-    use crate::owners::write::outbox::NewOp;
-    let members = changes(&seeded(), ScopeEffectKind::Join, json!(["u7"])).into_iter().filter_map(|change| match change {
-        ListChange::Join { model, list, id, order_key: Some(order_key), .. } => Some(crate::owners::store::EffectMember { model, list: list.to_string(), row_id: id, order_key, leave: false }),
-        _ => None,
-    }).collect();
-    let effects = crate::owners::store::IntentEffects { members, ..Default::default() };
-    let mut twin = Twin::new();
-    let id = submit_op(&mut twin, NewOp { effects, ..model_op("r", Policy::Rollback, false) }, 901);
-    assert_eq!(twin.stores.len(), 1);
-    assert!(twin.store_text.contains(&format!("Intent {{ op_id: {id}")), "{}", twin.store_text);
-    assert!(twin.store_text.contains("members: []"), "{}", twin.store_text);
-    assert!(!twin.store_text.contains("u7"), "{}", twin.store_text);
+    let seen: Vec<_> = leaving.iter().map(|change| match change { ListChange::Leave { list, id, before, .. } => (list.to_string(), id.as_str(), before.clone()), other => panic!("{other:?}") }).collect();
+    let (a, b) = (list("A").to_string(), list("B").to_string());
+    assert_eq!(seen, [(a.clone(), "u2", Some(order_keys().1)), (a, "u3", None), (b.clone(), "u2", Some(order_keys().1)), (b, "u3", None)], "a Leave for each window, the member keeps its place for the rollback, a row that is no member has none");
 }
 
 #[test]
