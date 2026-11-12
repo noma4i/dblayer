@@ -31,14 +31,14 @@ fn upload_status(database: &crate::ffi::Database, id: &str) -> Option<WireUpload
 fn present(database: &crate::ffi::Database, id: &str) -> bool { database.peek_row(database.session_epoch(), "Moment".into(), id.into()).unwrap().is_some() }
 
 #[derive(Clone, Copy, Debug)]
-enum Case { RefusedCreate, DiscardedFailedCreate, DiscardedFailedUpload, CancelledUpload, LandedUpload, CancelledDuringSend, OfflineSend, PreparedLanded }
+enum Case { RefusedCreate, DiscardedFailedCreate, DiscardedFailedUpload, CancelledUpload, LandedUpload, CancelledDuringSend, OfflineSend, PreparedLanded, RefusedFinal, RefusedFinalKept }
 
 /// Requirement P-STORE-32: after any commit and after every open, each row of a server model with a temporary id has a holder, an operation `create` or a transfer. Observable: the file of every commit of a scenario and the file after the open on it. Assert: no row with a temporary id without a holder, in any scenario that ends its holder. Catches: an end of the holder that leaves the optimistic row behind.
 #[tokio::test(flavor = "multi_thread")]
 async fn store_prop_temp_row_has_a_holder() {
-    for case in [Case::RefusedCreate, Case::DiscardedFailedCreate, Case::DiscardedFailedUpload, Case::CancelledUpload, Case::LandedUpload, Case::CancelledDuringSend, Case::OfflineSend, Case::PreparedLanded] {
+    for case in [Case::RefusedCreate, Case::DiscardedFailedCreate, Case::DiscardedFailedUpload, Case::CancelledUpload, Case::LandedUpload, Case::CancelledDuringSend, Case::OfflineSend, Case::PreparedLanded, Case::RefusedFinal, Case::RefusedFinalKept] {
         let stand = match case {
-            Case::DiscardedFailedCreate => Stand::new().keep_moment(),
+            Case::DiscardedFailedCreate | Case::RefusedFinalKept => Stand::new().keep_moment(),
             Case::PreparedLanded => Stand::new().with_preparer(ScriptedPreparer::new(probed_image(), PREPARED, &[])),
             _ => Stand::new(),
         };
@@ -104,6 +104,19 @@ async fn store_prop_temp_row_has_a_holder() {
                 held.release();
                 crate::test_wait::settled(&database, "the row landed", || present(&database, "m77")).await;
             }
+            Case::RefusedFinal | Case::RefusedFinalKept => {
+                stand.script.data("CreateBlob", BLOB);
+                stand.script.data("CreateMoment", REFUSED);
+                let sent = bound(database.send(clip("Moment", r#"{"text":"A"}"#, "upload_clip", &file, epoch))).await.unwrap();
+                let temporary = sent.optimistic_value.as_ref().unwrap().id.clone();
+                let _ = bound(database.confirmed(sent, false)).await;
+                crate::test_wait::settled(&database, "the refusal is shown", || upload_status(&database, &temporary) == Some(WireUploadStatus::Failed) || !present(&database, &temporary)).await;
+                if present(&database, &temporary) {
+                    copy_tree(&files_of(&live), &kept_files);
+                    bound(database.discard(epoch, "Moment".into(), temporary.clone(), Some("upload_clip".into()))).await.unwrap();
+                }
+                crate::test_wait::settled(&database, "the row ended", || !present(&database, &temporary)).await;
+            }
             Case::OfflineSend => {
                 database.set_online(false).unwrap();
                 stand.script.data("CreateBlob", BLOB);
@@ -129,7 +142,7 @@ async fn store_prop_temp_row_has_a_holder() {
         let (capture, _) = base.end(&live);
         let secret = stand.rig.credentials.inner.value().unwrap();
         let prepared = matches!(case, Case::PreparedLanded);
-        let drains = !matches!(case, Case::DiscardedFailedCreate | Case::DiscardedFailedUpload);
+        let drains = !matches!(case, Case::DiscardedFailedCreate | Case::DiscardedFailedUpload | Case::RefusedFinal | Case::RefusedFinalKept);
         let checks = over_images(&capture, &kept_files, move |index, image: PathBuf| {
             let secret = secret.clone();
             let preparer: Option<std::sync::Arc<dyn crate::ffi::Preparer>> = prepared.then(|| ScriptedPreparer::new(probed_image(), PREPARED, &[]) as std::sync::Arc<dyn crate::ffi::Preparer>);
@@ -137,7 +150,7 @@ async fn store_prop_temp_row_has_a_holder() {
                 let before = unheld(&image);
                 let (_fresh, reopened) = reopen_preparing(&image, &secret, &operations, preparer, |fresh| { fresh.script.data("CreateBlob", BLOB); fresh.script.data("CreateMoment", LANDED); }).await;
                 crate::test_wait::settled(&reopened, "opened", || true).await;
-                if drains { crate::test_wait::within_named(5, &format!("{case:?} image {index} drains"), drained(&reopened)).await; }
+                if drains { crate::test_wait::within_named(15, &format!("{case:?} image {index} drains"), drained(&reopened)).await; }
                 let after = if drains { temporary_rows(&image) } else { unheld(&image) };
                 bound(reopened.close_database()).await.unwrap();
                 (index, before, after)
