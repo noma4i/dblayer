@@ -300,7 +300,7 @@ fn feed_chan_scope_variables_shared() {
     rig.handshake();
     rig.confirm(HOME);
     assert!(rig.want_window(SCREEN + 1, "home").is_empty(), "equal subscription and variables are one channel: no second subscribe");
-    assert_eq!(rig.want_window(SCREEN + 2, "about", ABOUT), [format!("subscribe:{ABOUT}")], "other variables are another channel");
+    assert_eq!(rig.want_window(SCREEN + 2, "about"), [format!("subscribe:{ABOUT}")], "other variables are another channel");
     assert_eq!(rig.state().subscribed(), [HOME, ABOUT]);
 }
 
@@ -311,7 +311,7 @@ fn feed_chan_scope_variables_want_minus() {
     rig.handshake();
     rig.confirm(HOME);
     rig.want_window(SCREEN + 1, "home");
-    rig.want_window(SCREEN + 2, "about", ABOUT);
+    rig.want_window(SCREEN + 2, "about");
     rig.confirm(ABOUT);
     assert!(rig.unwant("Screen", SCREEN).is_empty(), "the other window of the channel still wants it");
     assert_eq!(rig.unwant("Screen", SCREEN + 1), [format!("unsubscribe:{HOME}")], "the last window of the channel takes only its channel away");
