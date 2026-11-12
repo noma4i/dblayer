@@ -540,3 +540,25 @@ fn xfer_removed_with_init_in_flight_owes_abort() {
     let (_, out) = twin.discard(KEY);
     assert!(out.releases().is_empty(), "the upload is known: its debt is in the removal batch");
 }
+
+/// P-XFER-52 (xfer_prop_init_multipart_never_unowned): in every order of the discard, the report of the live step and the answer of the released pair, the multipart upload of `Init` is owed once.
+#[test]
+fn xfer_prop_init_multipart_never_unowned() {
+    let owed = crate::owners::write::upload_codec::multipart_id("k", "u1");
+    for order in permutations(&[0, 1, 2]) {
+        let mut twin = Twin::new();
+        let id = twin.uploading(KEY, 3);
+        let request_id = crate::owners::write::wire::step_request_id(id, twin.t(id).cycle_id, crate::owners::write::upload::UploadStage::Init, 1);
+        let mut written = Vec::new();
+        for event in &order {
+            let out = match event {
+                0 => twin.discard(KEY).1,
+                1 => minted(&mut twin, id, &owed),
+                _ => init_answer(&mut twin, INIT, request_id),
+            };
+            written.extend(out.orphans_written());
+            while twin.has_pending() { written.extend(twin.commit().orphans_written()); }
+        }
+        assert_eq!(written.into_iter().map(|(upload_id, _)| upload_id).collect::<Vec<_>>(), vec![owed.clone()], "{order:?}: one debt of the upload");
+    }
+}
