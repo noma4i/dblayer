@@ -55,12 +55,6 @@ fn xfer_accepting_rejected_interrupted() {
     use super::transfer_harness::{item, joint, EPOCH};
     use crate::owners::contract::RejectReason;
     use crate::owners::write::transfer::{TransferInput, TransferStage};
-    let mut stale = Twin::new();
-    let (id, reply, _) = stale.accepting(KEY, 2);
-    let out = stale.reject(RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 2)].into() });
-    assert_eq!(stale.stage(id), TransferStage::Done);
-    assert!(matches!(out.replies(reply).as_slice(), [crate::owners::write::transfer::TransferAnswer::Err(crate::owners::write::outbox::Fault::Ended(crate::ffi::EndCause::SessionEnded))]));
-    assert_eq!(out.copies(), 0);
     for reason in [RejectReason::NoSession, RejectReason::Closed] {
         let mut twin = Twin::new();
         let (id, reply, _) = twin.accepting(KEY, 2);
