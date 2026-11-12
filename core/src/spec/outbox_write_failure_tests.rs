@@ -43,9 +43,9 @@ fn out_landing_invalid() {
     assert_eq!(twin.stage(id), Some(St::Done));
 }
 
-/// D-336 (3): a `create` answer with a swap whose batch is refused as Invalid: the batch has no rows and no swap, the open operations of the row keep the temporary id.
+/// D-341 (2): a `create` answer with a swap whose batch is refused as Invalid: the batch has no rows and no swap of the row, the alias temp -> real is written, the open operations and the next operation of the row address the real id.
 #[test]
-fn out_landing_invalid_create_swap_not_applied() {
+fn out_landing_invalid_create_alias_written() {
     let mut twin = Twin::new();
     let created = sending(&mut twin, Policy::Rollback, false);
     let follower = twin.submit("r", Policy::Rollback, false);
@@ -57,7 +57,10 @@ fn out_landing_invalid_create_swap_not_applied() {
     assert!(!twin.store_text.contains("Swap") && !twin.store_text.contains("Rows { model: \"Moment\"") && twin.store_text.contains("RemoveIntent"), "the batch without rows has no swap: {}", twin.store_text);
     assert_eq!((twin.stage(created), refused.iter().filter(|effect| matches!(effect, OutboxEffect::Store { .. })).count()), (Some(St::Landing), 1));
     twin.committed(created);
-    assert_eq!(twin.state().ops[&follower].op.row_id, "r", "no swap: the row keeps its id, the real row comes with the re-read");
+    assert!(!twin.store_text.contains("\"R\""), "no row with the real id is written: {}", twin.store_text);
+    assert_eq!(twin.state().ops[&follower].op.row_id, "R", "the alias is written: the open operation of the row goes with the real id");
+    let next = twin.submit("r", Policy::Rollback, false);
+    assert_eq!(twin.state().ops[&next].op.row_id, "R", "the next operation of the row goes with the real id");
 }
 
 #[test]
@@ -75,6 +78,22 @@ fn out_rollback_invalid_server_outcome() {
     let done = twin.committed(id);
     assert!(matches!(outcomes(&done).as_slice(), [OutboxOutcome::Rejected { .. }]), "{done:?}");
     assert_eq!(twin.det.trace()[at..].iter().filter(|entry| entry.effects.contains("Stale")).count(), 1, "the windows of the rollback models are marked stale after Committed");
+}
+
+/// D-341 (1): a repeated Invalid of the batch without rows ends the operation as Failed, the waiters get the answer.
+#[test]
+fn out_invalid_without_rows_repeated_fails() {
+    for landing_stage in [true, false] {
+        let mut twin = Twin::new();
+        let id = if landing_stage { landing(&mut twin) } else { rolling_back(&mut twin) };
+        refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
+        let again = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
+        assert_eq!((twin.stage(id), kinds(&again), sends(&again)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark], 0), "landing={landing_stage}: {again:?}");
+        assert!(twin.state().ops[&id].error.as_deref().is_some_and(|error| error.contains("Internal(Invalid): bad row")), "landing={landing_stage}: {:?}", twin.state().ops[&id].error);
+        let done = twin.committed(id);
+        assert!(matches!(outcomes(&done).as_slice(), [OutboxOutcome::Failed { error }] if error.contains("Internal(Invalid): bad row")), "landing={landing_stage}: the waiter gets Failed: {done:?}");
+        assert_eq!(twin.stage(id), Some(St::Failed), "landing={landing_stage}");
+    }
 }
 
 #[test]

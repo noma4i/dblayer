@@ -40,7 +40,7 @@ pub fn landing(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) {
             finish(op, Outcome::Ended(EndCause::Closed), e);
         }
         Input::Rejected { reason: Reason::Storage, .. } => { row(e, "out_landing_storage"); e.push(Effect::Schedule { op: op.id, what: "Tick(backoff)" }); }
-        Input::Rejected { reason: Reason::Invalid, .. } if op.rowless => undefined(e, "out_landing_invalid", "a repeated Invalid of the batch without rows is impossible"),
+        Input::Rejected { reason: Reason::Invalid, .. } if op.rowless => { row(e, "out_landing_invalid"); mark_failed(op, ErrKind::Internal, e); }
         Input::Rejected { reason: Reason::Invalid, .. } => {
             row(e, "out_landing_invalid");
             op.rowless = true;
@@ -86,7 +86,7 @@ pub fn rolling_back(s: &mut State, op: &mut Op, i: &Input, e: &mut Vec<Effect>) 
             finish(op, Outcome::Ended(EndCause::Closed), e);
         }
         Input::Rejected { reason: Reason::Storage, .. } => { row(e, "out_rollback_storage"); e.push(Effect::Schedule { op: op.id, what: "Tick(backoff)" }); }
-        Input::Rejected { reason: Reason::Invalid, .. } if matches!(op.cause, Cause::Refusal | Cause::Expired) && op.rowless => undefined(e, "out_rollback_invalid_server_outcome", "a repeated Invalid of the batch without rows is impossible"),
+        Input::Rejected { reason: Reason::Invalid, .. } if matches!(op.cause, Cause::Refusal | Cause::Expired) && op.rowless => { row(e, "out_rollback_invalid_server_outcome"); mark_failed(op, ErrKind::Internal, e); }
         Input::Rejected { reason: Reason::Invalid, .. } if matches!(op.cause, Cause::Refusal | Cause::Expired) => {
             row(e, "out_rollback_invalid_server_outcome");
             op.rowless = true;
