@@ -9,7 +9,7 @@ use super::rig_events::events;
 use super::rig_tests::{bound, Fault, Gate, Rig, World};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::{Cell, WireRow};
-use crate::ffi::WireOperationReceipt;
+use crate::ffi::{ReadFetch, ReadRequest, WireOperationReceipt};
 use crate::test_wait::settled_showing;
 
 const SEEDS: u64 = 100;
@@ -147,6 +147,13 @@ impl Run {
         let pointer = last_shown(&self.rig, &self.rows).and_then(|row| row.id);
         let visible = self.reference.visible_ids();
         assert!(pointer.as_ref().is_none_or(|id| visible.contains(id)), "seed {seed}, after step `{step}`: the pointer {pointer:?} names a row that is not a visible child; {}", self.describe());
+        let Some(id) = pointer else { return };
+        let named = Arc::new(Rows::default());
+        let stream = self.rig.database.watch(ReadRequest::Entity { model: "Message".into(), id: id.clone(), fetch: ReadFetch::Never }, named.clone());
+        let what = format!("seed {seed}, after step `{step}`: an entity stream opened on the pointer {id} shows that row");
+        let shown = || named.0.lock().unwrap().iter().map(|row| row.id.clone()).collect::<Vec<_>>();
+        settled_showing(&self.rig, &what, || format!("{}; shown {:?}", self.describe(), shown()), || shown() == [id.clone()]).await;
+        stream.cancel();
     }
 
     async fn step(&mut self, random: &mut Random) -> (String, bool) {
