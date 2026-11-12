@@ -39,19 +39,45 @@ pub(super) fn media_full() -> Twin {
     twin
 }
 
+/// The marker check asks up to the saved sequence, then the answer picks the tail, the full read or the next page of either.
 #[test]
-fn win_media_marker_check() {
-    let mut saved = Twin::media();
-    saved.hold.store(true, Ordering::SeqCst);
-    saved.watch();
-    let effects = saved.step(Input::Read(Read::Media { marker: SAVED, members: 3 }));
-    assert!(effects.iter().any(|effect| matches!(effect, Effect::Marker { up_to: 5, .. })), "the marker is asked up to the saved sequence: {effects:?}");
-    assert_eq!(saved.stage(), Some(WindowStage::Loading));
-    let effects = Twin::media().watch();
-    assert!(effects.iter().any(|effect| matches!(effect, Effect::Marker { up_to: 0, .. })), "without a saved marker the check starts at 0: {effects:?}");
-    let effects = Twin::new().watch();
-    assert!(effects.iter().any(|effect| matches!(effect, Effect::Request { page: 1, .. })) && asked(&effects) == 1, "a key without media asks its page: {effects:?}");
+fn win_media_marker_answer_decides_the_read() {
+    {
+        let mut saved = Twin::media();
+        saved.hold.store(true, Ordering::SeqCst);
+        saved.watch();
+        let effects = saved.step(Input::Read(Read::Media { marker: SAVED, members: 3 }));
+        assert!(effects.iter().any(|effect| matches!(effect, Effect::Marker { up_to: 5, .. })), "the marker is asked up to the saved sequence: {effects:?}");
+        assert_eq!(saved.stage(), Some(WindowStage::Loading));
+        let effects = Twin::media().watch();
+        assert!(effects.iter().any(|effect| matches!(effect, Effect::Marker { up_to: 0, .. })), "without a saved marker the check starts at 0: {effects:?}");
+        let effects = Twin::new().watch();
+        assert!(effects.iter().any(|effect| matches!(effect, Effect::Request { page: 1, .. })) && asked(&effects) == 1, "a key without media asks its page: {effects:?}");
+    }
+    {
+        let mut twin = media_checking();
+        let effects = answer_marker(&mut twin, marker(9, 1, 3));
+        assert!(matches!(&effects[..], [Effect::Tail { after: 5, .. }]), "{effects:?}");
+    }
+    {
+        let mut unsaved = Twin::media();
+        unsaved.watch();
+        let effects = answer_marker(&mut unsaved, marker(9, 1, 0));
+        assert!(matches!(&effects[..], [Effect::Request { page: 1, .. }]), "no saved marker: {effects:?}");
+        for (case, answer) in [("the revision moved", marker(9, 2, 3)), ("the counts moved", marker(9, 1, 4))] {
+            let mut twin = media_checking();
+            let effects = answer_marker(&mut twin, answer);
+            assert!(matches!(&effects[..], [Effect::Request { page: 1, .. }]), "{case}: {effects:?}");
+        }
+    }
+    {
+        let effects = media_full().respond(Some(2));
+        assert!(matches!(&effects[..], [Effect::Request { page: 1, .. }]), "the next page of the full read: {effects:?}");
+        let effects = media_tail().respond(Some(2));
+        assert!(matches!(&effects[..], [Effect::Tail { after: 5, .. }]), "the next page of the tail: {effects:?}");
+    }
 }
+
 
 #[test]
 fn win_media_marker_same() {
@@ -65,57 +91,35 @@ fn win_media_marker_same() {
     assert_eq!((twin.stage(), twin.phase()), (Some(WindowStage::Idle), Phase::Loaded));
 }
 
+/// A window that opened with a refetch debt is refetched even when the marker matches, also after a failed load.
 #[test]
-fn win_media_marker_does_not_prove_a_window_that_opened_stale() {
-    let mut twin = Twin::media();
-    twin.hold.store(true, Ordering::SeqCst);
-    twin.watch();
-    twin.step(Input::Read(Read::MediaMarked { marker: SAVED, members: 3 }));
-    let effects = answer_marker(&mut twin, SAVED);
-    assert!(matches!(&effects[..], [Effect::Request { page: 1, .. }]), "the marker proved a window that opened with a refetch debt: {effects:?}");
-}
-
-#[test]
-fn win_media_stale_mark_survives_failed_load() {
-    let mut twin = Twin::media();
-    twin.hold.store(true, Ordering::SeqCst);
-    twin.watch();
-    twin.step(Input::Read(Read::MediaMarked { marker: SAVED, members: 3 }));
-    twin.step(Input::Online(false));
-    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-    let effects = twin.step(Input::Online(true));
-    assert!(effects.iter().any(|effect| matches!(effect, Effect::Marker { up_to: 5, .. })), "{effects:?}");
-    let effects = answer_marker(&mut twin, SAVED);
-    assert!(matches!(&effects[..], [Effect::Request { page: 1, .. }]), "the mark was spent by the failed load and the marker proved a stale window: {effects:?}");
-}
-
-#[test]
-fn win_media_tail() {
-    let mut twin = media_checking();
-    let effects = answer_marker(&mut twin, marker(9, 1, 3));
-    assert!(matches!(&effects[..], [Effect::Tail { after: 5, .. }]), "{effects:?}");
-}
-
-#[test]
-fn win_media_full() {
-    let mut unsaved = Twin::media();
-    unsaved.watch();
-    let effects = answer_marker(&mut unsaved, marker(9, 1, 0));
-    assert!(matches!(&effects[..], [Effect::Request { page: 1, .. }]), "no saved marker: {effects:?}");
-    for (case, answer) in [("the revision moved", marker(9, 2, 3)), ("the counts moved", marker(9, 1, 4))] {
-        let mut twin = media_checking();
-        let effects = answer_marker(&mut twin, answer);
-        assert!(matches!(&effects[..], [Effect::Request { page: 1, .. }]), "{case}: {effects:?}");
+fn win_media_stale_debt_blocks_the_marker_proof() {
+    {
+        let mut twin = Twin::media();
+        twin.hold.store(true, Ordering::SeqCst);
+        twin.watch();
+        twin.step(Input::Read(Read::MediaMarked { marker: SAVED, members: 3 }));
+        let effects = answer_marker(&mut twin, SAVED);
+        assert!(matches!(&effects[..], [Effect::Request { page: 1, .. }]), "the marker proved a window that opened with a refetch debt: {effects:?}");
+    }
+    {
+        let mut twin = Twin::media();
+        twin.hold.store(true, Ordering::SeqCst);
+        twin.watch();
+        twin.step(Input::Read(Read::MediaMarked { marker: SAVED, members: 3 }));
+        twin.step(Input::Online(false));
+        assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+        let effects = twin.step(Input::Online(true));
+        assert!(effects.iter().any(|effect| matches!(effect, Effect::Marker { up_to: 5, .. })), "{effects:?}");
+        let effects = answer_marker(&mut twin, SAVED);
+        assert!(matches!(&effects[..], [Effect::Request { page: 1, .. }]), "the mark was spent by the failed load and the marker proved a stale window: {effects:?}");
     }
 }
 
-#[test]
-fn win_media_next() {
-    let effects = media_full().respond(Some(2));
-    assert!(matches!(&effects[..], [Effect::Request { page: 1, .. }]), "the next page of the full read: {effects:?}");
-    let effects = media_tail().respond(Some(2));
-    assert!(matches!(&effects[..], [Effect::Tail { after: 5, .. }]), "the next page of the tail: {effects:?}");
-}
+
+
+
+
 
 #[test]
 fn win_media_bad_cursor() {
@@ -132,38 +136,50 @@ fn win_media_bad_cursor() {
     assert_eq!((repeated.stage(), repeated.phase()), (Some(WindowStage::Idle), Phase::Failed));
 }
 
+/// The last page asks the confirm marker, a matching confirm lands rows and marker in one batch, a counted answer is asked again, a chain that never confirms lands nothing.
 #[test]
-fn win_media_confirm() {
-    let effects = media_full().respond(None);
-    assert!(matches!(&effects[..], [Effect::Marker { up_to: 9, .. }]), "the last page asks the marker up to the newest sequence: {effects:?}");
+fn win_media_confirm_of_the_chain() {
+    {
+        let effects = media_full().respond(None);
+        assert!(matches!(&effects[..], [Effect::Marker { up_to: 9, .. }]), "the last page asks the marker up to the newest sequence: {effects:?}");
+    }
+    {
+        let mut full = media_full();
+        full.respond(None);
+        let effects = answer_marker(&mut full, marker(9, 1, 1));
+        assert_eq!(commits(&effects), 1);
+        assert!(full.commit.contains("WindowMarker") && full.commit.contains("Window {"), "the rows and the marker are one batch: {}", full.commit);
+        full.land();
+        assert_eq!((full.stage(), full.phase()), (Some(WindowStage::Idle), Phase::Loaded));
+        let mut tail = media_tail();
+        tail.respond(None);
+        let effects = answer_marker(&mut tail, marker(9, 1, 4));
+        assert_eq!(commits(&effects), 1, "the saved rows and the rows of the tail are the counts of the marker");
+    }
+    {
+        let mut twin = media_full();
+        twin.respond(None);
+        let effects = answer_marker(&mut twin, marker(9, 1, 5));
+        assert!(matches!(&effects[..], [Effect::ScheduleRetry { .. }]), "{effects:?}");
+        assert_eq!(twin.phase(), Phase::Loading);
+        let Some(Effect::ScheduleRetry { request }) = effects.first().cloned() else { panic!("{effects:?}") };
+        let effects = twin.step(Input::Retry { request });
+        assert!(matches!(&effects[..], [Effect::Marker { up_to: 9, .. }]), "the confirm is asked again: {effects:?}");
+    }
+    {
+        let mut twin = media_full();
+        twin.respond(None);
+        let refused = answer_marker(&mut twin, marker(9, 1, 5));
+        let Some(Effect::ScheduleRetry { request }) = refused.first().cloned() else { panic!("{refused:?}") };
+        twin.step(Input::Retry { request });
+        let effects = answer_marker(&mut twin, marker(9, 1, 5));
+        assert_eq!(commits(&effects), 0, "a chain that did not confirm lands nothing");
+        assert_eq!((twin.stage(), twin.phase()), (Some(WindowStage::Idle), Phase::Failed));
+    }
 }
 
-#[test]
-fn win_media_confirmed() {
-    let mut full = media_full();
-    full.respond(None);
-    let effects = answer_marker(&mut full, marker(9, 1, 1));
-    assert_eq!(commits(&effects), 1);
-    assert!(full.commit.contains("WindowMarker") && full.commit.contains("Window {"), "the rows and the marker are one batch: {}", full.commit);
-    full.land();
-    assert_eq!((full.stage(), full.phase()), (Some(WindowStage::Idle), Phase::Loaded));
-    let mut tail = media_tail();
-    tail.respond(None);
-    let effects = answer_marker(&mut tail, marker(9, 1, 4));
-    assert_eq!(commits(&effects), 1, "the saved rows and the rows of the tail are the counts of the marker");
-}
 
-#[test]
-fn win_media_confirm_retry() {
-    let mut twin = media_full();
-    twin.respond(None);
-    let effects = answer_marker(&mut twin, marker(9, 1, 5));
-    assert!(matches!(&effects[..], [Effect::ScheduleRetry { .. }]), "{effects:?}");
-    assert_eq!(twin.phase(), Phase::Loading);
-    let Some(Effect::ScheduleRetry { request }) = effects.first().cloned() else { panic!("{effects:?}") };
-    let effects = twin.step(Input::Retry { request });
-    assert!(matches!(&effects[..], [Effect::Marker { up_to: 9, .. }]), "the confirm is asked again: {effects:?}");
-}
+
 
 fn wire_ids(effects: &[Effect]) -> (u64, u32) {
     let ids: Vec<(u64, u32)> = effects.iter().filter_map(|effect| match effect {
@@ -203,54 +219,45 @@ fn win_media_chain_request_ids() {
     assert!(landing.contains(&Effect::Commit { request: load, replace_all: false }), "the batch carries the id of the load: {landing:?}");
 }
 
-#[test]
-fn win_media_confirm_failed() {
-    let mut twin = media_full();
-    twin.respond(None);
-    let refused = answer_marker(&mut twin, marker(9, 1, 5));
-    let Some(Effect::ScheduleRetry { request }) = refused.first().cloned() else { panic!("{refused:?}") };
-    twin.step(Input::Retry { request });
-    let effects = answer_marker(&mut twin, marker(9, 1, 5));
-    assert_eq!(commits(&effects), 0, "a chain that did not confirm lands nothing");
-    assert_eq!((twin.stage(), twin.phase()), (Some(WindowStage::Idle), Phase::Failed));
-}
 
+/// An abort before the matching confirm leaves no batch and the check restarts from the saved marker; a fresh landed window asks nothing.
 #[test]
-fn win_media_abort_keeps() {
-    let mut twin = media_tail();
-    twin.respond(Some(2));
-    let effects = twin.step(Input::Online(false));
-    assert!(commits(&effects) == 0 && effects.iter().any(|effect| matches!(effect, Effect::Cancel { .. })), "{effects:?}");
-    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-    let effects = twin.step(Input::Online(true));
-    assert!(effects.iter().any(|effect| matches!(effect, Effect::Marker { up_to: 5, .. })), "the saved marker is the same: the check starts again from it: {effects:?}");
-}
-
-/// P-WIN-22: the rows and the marker land in 1 batch after a confirm that matched; every abort leaves them as they were, a fresh window asks nothing.
-#[test]
-fn win_prop_media_atomic() {
-    type Abort = fn(u64, u32) -> Input;
-    let aborts: [(&str, Abort); 7] = [
-        ("offline", |_, _| Input::Online(false)),
-        ("epoch ended", |_, _| Input::EpochEnded),
-        ("closing", |_, _| Input::Closing),
-        ("the last reader leaves", |_, _| Input::InterestMinus { id: STREAM }),
-        ("a permanent error", |request, attempt| Input::TransportError { request, attempt, failure: Failure::Permanent }),
-        ("a dropped request", |request, attempt| Input::Dropped { request, attempt }),
-        ("an invalid cursor twice", |request, attempt| Input::TransportError { request, attempt, failure: Failure::Permanent }),
-    ];
-    for (case, abort) in aborts {
-        for mut twin in [media_tail(), media_full()] {
-            twin.respond(Some(2));
-            let (request, attempt) = twin.ref_request();
-            let effects = twin.step(abort(request, attempt));
-            assert_eq!(commits(&effects), 0, "{case}: no batch before a confirm");
-        }
+fn win_media_abort_before_confirm_lands_nothing() {
+    {
+        let mut twin = media_tail();
+        twin.respond(Some(2));
+        let effects = twin.step(Input::Online(false));
+        assert!(commits(&effects) == 0 && effects.iter().any(|effect| matches!(effect, Effect::Cancel { .. })), "{effects:?}");
+        assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+        let effects = twin.step(Input::Online(true));
+        assert!(effects.iter().any(|effect| matches!(effect, Effect::Marker { up_to: 5, .. })), "the saved marker is the same: the check starts again from it: {effects:?}");
     }
-    let mut twin = media_full();
-    twin.respond(None);
-    answer_marker(&mut twin, marker(9, 1, 1));
-    twin.land();
-    let effects = twin.step(Input::Load { id: 1, goal: Goal::First, force: false });
-    assert_eq!(asked(&effects), 0, "a fresh window asks nothing");
+    {
+        type Abort = fn(u64, u32) -> Input;
+        let aborts: [(&str, Abort); 7] = [
+            ("offline", |_, _| Input::Online(false)),
+            ("epoch ended", |_, _| Input::EpochEnded),
+            ("closing", |_, _| Input::Closing),
+            ("the last reader leaves", |_, _| Input::InterestMinus { id: STREAM }),
+            ("a permanent error", |request, attempt| Input::TransportError { request, attempt, failure: Failure::Permanent }),
+            ("a dropped request", |request, attempt| Input::Dropped { request, attempt }),
+            ("an invalid cursor twice", |request, attempt| Input::TransportError { request, attempt, failure: Failure::Permanent }),
+        ];
+        for (case, abort) in aborts {
+            for mut twin in [media_tail(), media_full()] {
+                twin.respond(Some(2));
+                let (request, attempt) = twin.ref_request();
+                let effects = twin.step(abort(request, attempt));
+                assert_eq!(commits(&effects), 0, "{case}: no batch before a confirm");
+            }
+        }
+        let mut twin = media_full();
+        twin.respond(None);
+        answer_marker(&mut twin, marker(9, 1, 1));
+        twin.land();
+        let effects = twin.step(Input::Load { id: 1, goal: Goal::First, force: false });
+        assert_eq!(asked(&effects), 0, "a fresh window asks nothing");
+    }
 }
+
+

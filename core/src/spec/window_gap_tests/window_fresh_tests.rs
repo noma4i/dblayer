@@ -116,38 +116,41 @@ fn win_idle_expiry_silent() {
     assert!(take(&twin.log).is_empty(), "the time passed fresh_until and no input came: nothing happens");
 }
 
+/// landed_at is the time of the Response, an empty page lives empty_in, a page with rows lives expires_in, a next page does not move fresh_until.
 #[test]
-fn win_landing_fresh_until() {
-    let mut twin = Twin::new();
-    twin.watch();
-    let (request, attempt) = twin.ref_request();
-    twin.step(Input::Response { request, attempt, cursor: None, rows: false });
-    assert!(twin.commit.contains(&format!("landed_at: {NOW}")), "{}", twin.commit);
-    twin.now = NOW + 500;
-    twin.land();
-    twin.now = NOW;
-    twin.step(Input::InterestMinus { id: STREAM });
-    twin.now = NOW + EMPTY_LIFE - 1;
-    assert_eq!(requests(&twin.call(1, Goal::First)), 0, "an empty page is fresh for empty_in");
-    twin.now = NOW + EMPTY_LIFE;
-    assert_eq!(requests(&twin.call(2, Goal::First)), 1);
-    let mut rows = fresh_idle();
-    rows.now = NOW + EMPTY_LIFE;
-    assert_eq!(requests(&rows.call(1, Goal::First)), 0, "a page with rows is fresh for expires_in");
+fn win_landing_stamps_fresh_until_from_page_one() {
+    {
+        let mut twin = Twin::new();
+        twin.watch();
+        let (request, attempt) = twin.ref_request();
+        twin.step(Input::Response { request, attempt, cursor: None, rows: false });
+        assert!(twin.commit.contains(&format!("landed_at: {NOW}")), "{}", twin.commit);
+        twin.now = NOW + 500;
+        twin.land();
+        twin.now = NOW;
+        twin.step(Input::InterestMinus { id: STREAM });
+        twin.now = NOW + EMPTY_LIFE - 1;
+        assert_eq!(requests(&twin.call(1, Goal::First)), 0, "an empty page is fresh for empty_in");
+        twin.now = NOW + EMPTY_LIFE;
+        assert_eq!(requests(&twin.call(2, Goal::First)), 1);
+        let mut rows = fresh_idle();
+        rows.now = NOW + EMPTY_LIFE;
+        assert_eq!(requests(&rows.call(1, Goal::First)), 0, "a page with rows is fresh for expires_in");
+    }
+    {
+        let mut twin = Twin::new();
+        twin.call(1, Goal::First);
+        twin.finish(Some(2));
+        twin.now = NOW + 100_000;
+        twin.call(2, Goal::Next);
+        twin.now = NOW + 200_000;
+        twin.finish(None);
+        twin.now = NOW + LIFE;
+        assert_eq!(requests(&twin.call(3, Goal::First)), 1, "page 2 did not move landed_at: the window expires from page 1");
+    }
 }
 
-#[test]
-fn win_landing_next_page_keeps_fresh_until() {
-    let mut twin = Twin::new();
-    twin.call(1, Goal::First);
-    twin.finish(Some(2));
-    twin.now = NOW + 100_000;
-    twin.call(2, Goal::Next);
-    twin.now = NOW + 200_000;
-    twin.finish(None);
-    twin.now = NOW + LIFE;
-    assert_eq!(requests(&twin.call(3, Goal::First)), 1, "page 2 did not move landed_at: the window expires from page 1");
-}
+
 
 #[derive(Clone, Copy, Debug)]
 enum Turn {
@@ -282,26 +285,29 @@ fn win_prop_fresh_for_any_input_times() {
     });
 }
 
+/// A saved window asks again when it is stale, expired, or landed after the step time (the clock went back); the same for a stream and a call.
 #[test]
-fn win_prop_clock_back() {
-    for (ahead, asked) in [(1, 0), (LIFE - 1, 0), (LIFE, 1), (LIFE + 1, 1)] {
-        let mut twin = opening_twin();
-        twin.watch();
-        assert_eq!(requests(&twin.step(Input::Read(saved(NOW + ahead, false)))), asked, "a stream: the saved window landed {ahead} ms after the step time");
-        let mut twin = opening_twin();
-        twin.call(1, Goal::First);
-        assert_eq!(requests(&twin.step(Input::Read(saved(NOW + ahead, false)))), asked, "a call: the saved window landed {ahead} ms after the step time");
+fn win_open_freshness_of_the_saved_window() {
+    {
+        for (ahead, asked) in [(1, 0), (LIFE - 1, 0), (LIFE, 1), (LIFE + 1, 1)] {
+            let mut twin = opening_twin();
+            twin.watch();
+            assert_eq!(requests(&twin.step(Input::Read(saved(NOW + ahead, false)))), asked, "a stream: the saved window landed {ahead} ms after the step time");
+            let mut twin = opening_twin();
+            twin.call(1, Goal::First);
+            assert_eq!(requests(&twin.step(Input::Read(saved(NOW + ahead, false)))), asked, "a call: the saved window landed {ahead} ms after the step time");
+        }
+    }
+    {
+        for (read, asked) in [(saved(NOW - 10_000, false), 0), (saved(NOW - LIFE, false), 1), (saved(NOW - 10_000, true), 1)] {
+            let mut twin = opening_twin();
+            twin.watch();
+            assert_eq!(requests(&twin.step(Input::Read(read))), asked, "{read:?}");
+        }
     }
 }
 
-#[test]
-fn win_prop_freshness_survives_open() {
-    for (read, asked) in [(saved(NOW - 10_000, false), 0), (saved(NOW - LIFE, false), 1), (saved(NOW - 10_000, true), 1)] {
-        let mut twin = opening_twin();
-        twin.watch();
-        assert_eq!(requests(&twin.step(Input::Read(read))), asked, "{read:?}");
-    }
-}
+
 
 #[test]
 fn win_idle_stale_lost_rereads() {

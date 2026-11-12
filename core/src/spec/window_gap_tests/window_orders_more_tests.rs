@@ -33,10 +33,30 @@ fn win_orders_dictionary_fields() {
     }
 }
 
-/// P-WIN-19: the freshness and the debt saved before the close decide the first load after the open, whatever the order of the stream, the call and the answer of the read pool.
+/// The first load after the open follows the freshness and the debt saved before the close and lands on the saved generation with Loaded, whatever the order of the stream, the call and the read.
 #[test]
-fn win_orders_open_freshness() {
-    for (read, asked) in [(saved(NOW - 10_000, false), 0), (saved(NOW - LIFE, false), 1), (saved(NOW - 10_000, true), 1)] {
+fn win_orders_open_load() {
+    {
+        for (read, asked) in [(saved(NOW - 10_000, false), 0), (saved(NOW - LIFE, false), 1), (saved(NOW - 10_000, true), 1)] {
+            let all: Vec<_> = orders(&[Ev::Watch, Ev::Call1, Ev::Respond], &[]).into_iter().filter(|order| order[0] != Ev::Respond).collect();
+            assert_eq!(all.len(), 4);
+            for order in all {
+                let mut twin = opening_twin();
+                let mut seen = Seen::default();
+                for event in order.iter().copied() {
+                    let effects = match event {
+                        Ev::Watch => twin.watch(),
+                        Ev::Call1 => twin.call(1, Goal::First),
+                        _ => twin.step(Input::Read(read)),
+                    };
+                    seen.add(&effects);
+                }
+                assert_eq!(seen.requests, asked, "{order:?} {read:?}");
+                assert_eq!(outcomes_of(&twin, 1), if asked == 0 { vec![Result3::Loaded] } else { Vec::new() }, "{order:?} {read:?}");
+            }
+        }
+    }
+    {
         let all: Vec<_> = orders(&[Ev::Watch, Ev::Call1, Ev::Respond], &[]).into_iter().filter(|order| order[0] != Ev::Respond).collect();
         assert_eq!(all.len(), 4);
         for order in all {
@@ -46,15 +66,19 @@ fn win_orders_open_freshness() {
                 let effects = match event {
                     Ev::Watch => twin.watch(),
                     Ev::Call1 => twin.call(1, Goal::First),
-                    _ => twin.step(Input::Read(read)),
+                    _ => twin.step(Input::Read(saved(NOW - LIFE, false))),
                 };
                 seen.add(&effects);
             }
-            assert_eq!(seen.requests, asked, "{order:?} {read:?}");
-            assert_eq!(outcomes_of(&twin, 1), if asked == 0 { vec![Result3::Loaded] } else { Vec::new() }, "{order:?} {read:?}");
+            settle(&mut twin, &mut seen);
+            assert_eq!(seen.requests, 1, "{order:?}");
+            assert!(twin.commit.contains("\"Moment\": 0"), "{order:?}: the basis is the saved generation: {}", twin.commit);
+            assert_eq!(outcomes_of(&twin, 1), [Result3::Loaded], "{order:?}: a landing, not a refusal");
+            assert_eq!(twin.stage(), Some(WindowStage::Idle));
         }
     }
 }
+
 
 /// P-WIN-25: the inputs that arrive while the saved window is read apply once, in the order of arrival, and the answer of another read changes nothing.
 #[test]
@@ -82,29 +106,6 @@ fn win_orders_opening_held() {
     }
 }
 
-/// P-WIN-14: the first load after the close and the open lands its answer on the saved generation and gives the caller `Loaded`, whatever the order of the stream, the call and the read.
-#[test]
-fn win_orders_reopen_load() {
-    let all: Vec<_> = orders(&[Ev::Watch, Ev::Call1, Ev::Respond], &[]).into_iter().filter(|order| order[0] != Ev::Respond).collect();
-    assert_eq!(all.len(), 4);
-    for order in all {
-        let mut twin = opening_twin();
-        let mut seen = Seen::default();
-        for event in order.iter().copied() {
-            let effects = match event {
-                Ev::Watch => twin.watch(),
-                Ev::Call1 => twin.call(1, Goal::First),
-                _ => twin.step(Input::Read(saved(NOW - LIFE, false))),
-            };
-            seen.add(&effects);
-        }
-        settle(&mut twin, &mut seen);
-        assert_eq!(seen.requests, 1, "{order:?}");
-        assert!(twin.commit.contains("\"Moment\": 0"), "{order:?}: the basis is the saved generation: {}", twin.commit);
-        assert_eq!(outcomes_of(&twin, 1), [Result3::Loaded], "{order:?}: a landing, not a refusal");
-        assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    }
-}
 
 /// P-WIN-21: a key only the preload watches asks nothing while the device saves power and asks once at the end of it; a reader is not deferred.
 #[test]

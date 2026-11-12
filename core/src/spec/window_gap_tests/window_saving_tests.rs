@@ -101,14 +101,3 @@ fn win_prop_preload_power_saving() {
     assert_eq!(requests(&twin.step(Input::PowerSaving(false))), 1, "the end of power saving loads the key once");
     assert_eq!(requests(&twin.step(Input::PowerSaving(true))) + requests(&twin.step(Input::PowerSaving(false))), 0, "a request in flight is not asked again");
 }
-
-#[test]
-fn win_preload_derived_limit() {
-    let mut twin = Twin::new();
-    let other = WindowKey { model: "Moment".into(), name: "other".into() };
-    twin.post(w::WindowsInput::PreloadKeys { keys: vec![key(), other.clone()] });
-    assert_eq!(twin.state().windows(), 2, "a window for every derived key");
-    twin.post(w::WindowsInput::PreloadKeys { keys: vec![key()] });
-    assert_eq!(twin.state().interest(&other), Vec::<u64>::new(), "a key that the source no longer names loses the preload interest");
-    assert_eq!(twin.state().interest(&key()), [w::PRELOAD]);
-}
