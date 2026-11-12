@@ -46,7 +46,7 @@ impl TransferState {
 
     /// No transfer has work that runs without a new external event. A PUT outside the process, a backoff, the network, a slot, the source, the declaration and the preparation are not such work. The final mutation belongs to Outbox.
     fn is_quiet(&self) -> bool {
-        self.phase != Phase::Restoring && self.pending.is_empty() && self.scan().all(|transfer| match transfer.stage {
+        self.pending.is_empty() && self.scan().all(|transfer| match transfer.stage {
             TransferStage::Reserving | TransferStage::Accepting | TransferStage::PersistingPrepared | TransferStage::PersistingCopy | TransferStage::PersistingRetry | TransferStage::PersistingFailure | TransferStage::Removing | TransferStage::PersistingAttempt | TransferStage::PersistingPart | TransferStage::PersistingComplete | TransferStage::PersistingCommit | TransferStage::PersistingBatchIntent => false,
             TransferStage::Uploading | TransferStage::Completing => transfer.waiting_retry || transfer.pending_step.is_some() || (transfer.put_detached && transfer.in_flight) || !transfer.in_flight,
             TransferStage::Ready => transfer.waiting_retry || self.starts_held || self.online != Some(true) || self.active() >= self.slots || !self.can_start(transfer),
