@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Cancel or discard a staged upload right after `commit` removes it instead of throwing `InFlight`.
+
 ## 6.32.0 - 2026-11-13
 
 ### Added

@@ -401,7 +401,7 @@ A finished upload closes its operation and removes its entry from `uploads`, exc
 
 ## Upload before the final mutation
 
-A file may go up before its row exists, such as a photo the user picks while the form is still open. Start it with `stage`, then end it with `commit` or `discard`. `discard` works in any stage of the file, also while its parts go up: it aborts the multipart and removes the copy, and it throws `InFlight` only after the final mutation left.
+A file may go up before its row exists, such as a photo the user picks while the form is still open. Start it with `stage`, then end it with `commit` or `discard`. `discard` works in any stage of the file, also while its parts go up: it aborts the multipart and removes the copy. After `commit`, `discard` returns `true` (the upload is removed with its row) or `false` (the final mutation already left and the row stays). A single staged upload never throws `InFlight`, also when `discard` follows `commit` at once.
 
 ```swift
 let staged = try await scope.stage(Moment.self, action: "upload_clip", UploadRequest(path: path, prepare: prepare))
