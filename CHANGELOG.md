@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased
+## 6.27.1 - 2026-11-12
 
 ### Fixed
 
-- Keep the `sets:` value a local write gives to the row of a parent.
+- A row created on the device keeps the value its create gives to a `sets:` field.
 
 ## 6.27.0 - 2026-11-12
 
