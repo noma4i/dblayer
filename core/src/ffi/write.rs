@@ -138,7 +138,7 @@ impl Database {
         let row = planned.row_id.clone();
         let shown = planned.shown.clone();
         if planned.noop {
-            if self.db.spec(&model)?.is_memory() {
+            if action != "destroy" && self.db.spec(&model)?.is_memory() {
                 let renewal = IntentEffects { rows: vec![EffectRow { model: model.clone(), row_id: shown.to_string(), values: json!({ "id": shown.as_str() }).to_string() }], shown: Some((model.clone(), shown.to_string())), ..Default::default() };
                 let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Model(renewal), row.to_string(), String::new());
                 let (revision, value) = self.written(epoch, waiter, action, &model).await?;

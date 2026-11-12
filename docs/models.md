@@ -333,6 +333,8 @@ user.set(typing = true)
 
 `model Presence, storage: :memory` keeps the whole model in memory. Rows are read, observed and loaded through scopes with `query` like any other model. They are not written to the database file and are empty after a restart.
 
+A `destroy` of a memory or local row that is already gone, for example after its expiry, succeeds and changes nothing.
+
 ```ruby
 model Presence, storage: :memory, expires_in: 1.minute do
   attribute :userId, :id

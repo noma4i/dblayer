@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Destroy of a memory or local row that is already gone succeeds.
 - A window at its page limit reports no more pages and ends `loadMore`.
 
 ## 6.28.0 - 2026-11-13

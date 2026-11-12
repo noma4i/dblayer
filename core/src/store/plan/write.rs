@@ -189,13 +189,17 @@ impl Store {
     /// The row and every row that depends on it.
     pub(crate) fn plan_destroy(&self, model: &str, id: &RowId) -> Result<Planned, CoreError> {
         let own = RowRef::new(ModelKey::new(model), id.clone());
-        let effects = self.read_models(&[model], |reader| {
+        let spec = self.spec(model)?;
+        let local_only = spec.is_memory() || spec.is_local();
+        let Some(effects) = self.read_models(&[model], |reader| {
             if reader.point(model, id.as_str())?.is_none() {
-                return Err(CoreError::NotFound { model: model.to_string(), id: id.to_string() });
+                return if local_only { Ok(None) } else { Err(CoreError::NotFound { model: model.to_string(), id: id.to_string() }) };
             }
             let tombstones = self.destroy_targets(reader, &own)?.into_iter().map(|target| EffectTombstone { model: target.model.to_string(), row_id: target.id.to_string() }).collect();
-            Ok(IntentEffects { tombstones, ..Default::default() })
-        })?;
+            Ok(Some(IntentEffects { tombstones, ..Default::default() }))
+        })? else {
+            return Ok(Planned { model: model.to_string(), row_id: id.clone(), shown: id.clone(), input: json!({ "id": id.as_str() }), effects: IntentEffects::default(), noop: true });
+        };
         Ok(Planned { model: model.to_string(), row_id: id.clone(), shown: id.clone(), input: json!({ "id": id.as_str() }), effects, noop: false })
     }
 
