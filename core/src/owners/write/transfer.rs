@@ -654,11 +654,11 @@ impl TransferState {
             }
             (RejectReason::Invalid(detail), true) => {
                 if stage == Some(TransferStage::PersistingCopy) && self.transfers.get(&pending.ids[0]).is_some_and(|transfer| transfer.supply_back.is_some()) {
-                    self.source_rejected(pending.ids[0], Fault::Invalid, fx);
+                    self.source_rejected(pending.ids[0], Fault::Rejected(rejected.reason.clone()), fx);
                     return;
                 }
                 if stage == Some(TransferStage::PersistingFailure) {
-                    if let Some(rep) = self.transfers.get_mut(&pending.ids[0]).and_then(|transfer| transfer.supply_reply.take()) { reply(fx, rep, TransferAnswer::Err(Fault::Invalid)); }
+                    if let Some(rep) = self.transfers.get_mut(&pending.ids[0]).and_then(|transfer| transfer.supply_reply.take()) { reply(fx, rep, TransferAnswer::Err(Fault::Rejected(rejected.reason.clone()))); }
                 }
                 if stage == Some(TransferStage::PersistingBatchIntent) {
                     for &id in &pending.ids { self.mark_failure(now, id, format!("Internal(Invalid): {detail}"), fx); }
