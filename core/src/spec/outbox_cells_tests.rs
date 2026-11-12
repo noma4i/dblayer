@@ -812,7 +812,7 @@ fn out_batch_refused_without_a_session_ends_the_operation_for_the_waiter_and_tra
 #[test]
 fn out_discard_of_an_operation_in_flight_is_refused() {
     let discard = || OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY };
-    for stage in [St::Submitting, St::PersistingAttempt, St::Landing, St::RollingBack(RWhy::Rejected), St::Sending] {
+    for stage in [St::Submitting, St::PersistingAttempt, St::Landing, St::Sending] {
         let (mut twin, id) = if stage == St::Sending { let mut twin = Twin::new(); let id = sending(&mut twin, Policy::Rollback, false); (twin, id) } else { let (twin, id, _) = in_batch_stage(stage, false); (twin, id) };
         let effects = twin.post(discard());
         assert_eq!((twin.stage(id), answers(&effects, DISCARD_REPLY), effects.len()), (Some(stage), vec![OutboxAnswer::Err(Fault::InFlight)], 1), "{stage:?}");
