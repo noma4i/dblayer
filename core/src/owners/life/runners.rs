@@ -244,7 +244,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 }
                 let Some(exchange) = &self.exchange else { return };
                 match super::session_runner::SessionRunner::rows(exchange, &self.db) {
-                    Ok(stored) => wiring.to_session(SessionInput::Restored { epoch, pending: stored.pending.map(|pending| if orphan_pending { PendingCall { author: None, owner: Some(crate::owners::session::MutateOwner::Detached), ..pending } } else { pending }), answers: stored.answers, pending_lost: stored.dropped_pending, resume_answer: stored.resume_answer }),
+                    Ok(stored) => wiring.to_session(SessionInput::Restored { epoch, pending: stored.pending.map(|pending| if orphan_pending && !matches!(pending.owner, Some(crate::owners::session::MutateOwner::Transfer { step: crate::owners::write::upload::UploadStage::Init, .. })) { PendingCall { author: None, owner: Some(crate::owners::session::MutateOwner::Detached), ..pending } } else { pending }), answers: stored.answers, pending_lost: stored.dropped_pending, resume_answer: stored.resume_answer }),
                     Err(error) => wiring.to_session(SessionInput::RestoreFailed { epoch, error: error.to_string() }),
                 }
             }
