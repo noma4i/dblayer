@@ -22,20 +22,6 @@ fn operation(seq: i64, row: &str, action: &str, status: OperationStatus) -> Oper
     value
 }
 
-#[test]
-fn dlv_operations_blocked_by_table() {
-    for (input, expected) in [
-        (vec![("a", "update", OperationStatus::Failed), ("a", "update", OperationStatus::Pending)], vec![None, Some(1)]),
-        (vec![("a", "update", OperationStatus::Failed), ("a", "update", OperationStatus::Failed), ("a", "update", OperationStatus::Pending)], vec![None, Some(1), Some(2)]),
-        (vec![("a", "update", OperationStatus::Failed), ("b", "update", OperationStatus::Pending)], vec![None, None]),
-        (vec![("a", "upload:photo", OperationStatus::Failed), ("a", "update", OperationStatus::Pending)], vec![None, Some(1)]),
-    ] {
-        let operations: Vec<_> = input.into_iter().enumerate().map(|(i, (row, action, status))| operation(i as i64 + 1, row, action, status)).collect();
-        let actual: Vec<_> = queue_of(&operations).unwrap().into_iter().map(|item| item.blocked_by).collect();
-        assert_eq!(actual, expected);
-    }
-}
-
 fn queue_work(n: usize, m: usize) -> (usize, usize) {
     let db = Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     {

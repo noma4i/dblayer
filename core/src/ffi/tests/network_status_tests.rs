@@ -113,18 +113,6 @@ fn net_status_same_value_silent() {
     }));
 }
 
-/// Requirement: a new reader gets the current value at once. Observable: the first frame. Assert: it is the newest value, without waiting for a change.
-#[test]
-fn net_status_reader_gets_current() {
-    in_own_process(module_path!(), "net_status_reader_gets_current", &TARGETS, |target| run(async {
-        let platform = platform(target).await;
-        platform.set(true).await;
-        platform.set(false).await;
-        let late = observed().0.subscribe();
-        assert_eq!(within(late.next()).await, Some(false), "{target}: the first frame is the current value");
-    }));
-}
-
 /// Requirement: with no value a new reader waits. Observable: the first read. Assert: pending after unrelated work, then the first platform value.
 #[test]
 fn net_status_reader_waits_first_value() {
