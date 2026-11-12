@@ -113,7 +113,7 @@ async fn flow_chat_created_on_the_device_keeps_its_own_activity_time() {
     rig.database.close_now();
 }
 
-/// P-DATA-57, P-DATA-59 (в), (г): an own send in flight, a message of another user, then the answer or the kept refusal: the pointer follows the newest message by `newer:` and the time of the chat never decreases.
+/// P-DATA-57, P-DATA-59: an own send in flight, a message of another user, then the answer or the kept refusal: the pointer follows the newest message by `newer:` and the time of the chat never decreases.
 #[tokio::test(flavor = "multi_thread")]
 async fn flow_chat_last_message_own_send_foreign_event_answer() {
     for (own_at, newest) in [(100, "m9"), (200, "m1")] {
