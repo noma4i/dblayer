@@ -91,8 +91,13 @@ public final class SystemPreparer: Preparer, @unchecked Sendable {
     var items: [AVMetadataItem] = []
     for format in try await asset.load(.availableMetadataFormats) { items += try await asset.loadMetadata(for: format) }
     for track in tracks { items += try await track.load(.metadata) }
-    return items.compactMap { ($0.identifier?.rawValue ?? ($0.key as? String)).map(decodedMetadataKey) }
+    return items.compactMap { ($0.identifier?.rawValue ?? ($0.key as? String)).map { locationKey(decodedMetadataKey($0)) } }
   }
+}
+
+private func locationKey(_ key: String) -> String {
+  let name = (key.split(separator: "/", maxSplits: 1).last.map(String.init) ?? key).lowercased()
+  return name == "loci" || name == "©xyz" || name.hasPrefix("com.apple.quicktime.location.") ? "location" : key
 }
 
 private func decodedMetadataKey(_ identifier: String) -> String {
