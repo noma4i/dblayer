@@ -18,7 +18,7 @@ pub trait Preparer: Send + Sync {
 /// What the platform read from a source file.
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum ProbeOutcome {
-    Video { source: VideoSource },
+    Video { source: VideoSource, metadata_keys: Vec<String> },
     Image { width: u32, height: u32, exif_orientation: u32, format: ImageFormat },
     Failed { message: String },
 }
@@ -34,13 +34,14 @@ pub struct PrepareJob {
 
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum PreparePlan {
-    Video { plan: VideoPlan, audio_bitrate: u32, audio_channels: u32, audio_sample_rate: u32, mirror: bool },
+    Video { plan: VideoPlan, strip_metadata: Vec<String>, audio_bitrate: u32, audio_channels: u32, audio_sample_rate: u32, mirror: bool },
     Image { plan: PhotoPlan, quality: f64, format: ImageFormat },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum PrepareOutcome {
     Done { name: Option<String>, mime: Option<String> },
+    CannotDecode { message: String },
     Failed { message: String },
 }
 
