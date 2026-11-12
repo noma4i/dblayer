@@ -10,7 +10,7 @@ const EPOCH: u64 = 1;
 
 #[test]
 fn call_deadline_expired() {
-    for (operation, kind) in [("Op", CallKind::Query), ("Change", CallKind::Mutate)] {
+    for (operation, kind) in [("Op", CallKind::Query)] {
         let mut twin = Twin::new();
         twin.feed(Input::Run { epoch: EPOCH, operation: operation.into(), reply: 1 });
         let request_id = twin.history.iter().find_map(|effect| if let CallsEffect::Request { request_id, .. } = effect { Some(*request_id) } else { None }).unwrap();
@@ -883,4 +883,49 @@ fn matrix_owner_state_input_calls() {
     ];
     state_input_pairs(&mut matrix, "reference ref_calls", vec![("online idle", Twin::new), ("offline", offline), ("sending query", sending), ("sending mutation", sending_mutation), ("done", done), ("before the snapshot", undeclared_online)], alphabet, |twin: &mut Twin, input| { twin.feed(input); });
     matrix.finish();
+}
+
+fn change_run() -> CallsState {
+    use crate::runtime::StateOwner;
+    let mut state = CallsState::new(EPOCH, Some(true), &[("Change", CallKind::Mutate)]);
+    Calls::step(&mut state, CallsInput::Run { epoch: EPOCH, operation: "Change".into(), variables: "{}".into(), reply: 1 }, crate::runtime::Time(0));
+    state
+}
+
+fn step(state: &mut CallsState, input: CallsInput) -> Vec<CallsEffect> {
+    use crate::runtime::{Effect, StateOwner};
+    Calls::step(state, input, crate::runtime::Time(0)).into_iter().filter_map(|effect| if let Effect::Run(effect) = effect { Some(effect) } else { None }).collect()
+}
+
+fn replies(effects: &[CallsEffect]) -> Vec<CallAnswer> { effects.iter().filter_map(|effect| if let CallsEffect::Reply { answer, .. } = effect { Some(answer.clone()) } else { None }).collect() }
+
+#[test]
+fn call_deadline_expired_mutate_first() {
+    let mut state = change_run();
+    let effects = step(&mut state, CallsInput::Deadline { call_id: 1 });
+    assert!(replies(&effects).is_empty(), "the answer waits for the verdict of Session: {effects:?}");
+    assert_eq!(effects, vec![CallsEffect::Release { request_id: 1 }]);
+}
+
+#[test]
+fn call_deadline_expired_mutate_sent() {
+    for (last, want) in [(CallsInput::Dropped { call_id: 1 }, CallError::Dropped), (CallsInput::TransportError { call_id: 1, error: CallError::Network }, CallError::Network)] {
+        let mut state = change_run();
+        step(&mut state, last);
+        let effects = step(&mut state, CallsInput::Deadline { call_id: 1 });
+        assert_eq!(replies(&effects), vec![Err(want.clone())], "the pair exists: the last kind of error, the outcome is unknown: {effects:?}");
+        assert!(effects.contains(&CallsEffect::Release { request_id: 1 }) && !effects.iter().any(|effect| matches!(effect, CallsEffect::Cancel { .. })), "{effects:?}");
+    }
+}
+
+#[test]
+fn call_releasing_verdict() {
+    let ok = || CallsInput::Response { call_id: 1, body: Some("{}".into()), data: None, errors: Vec::new(), kind: crate::transport::AnswerKind::Final };
+    for (verdict, want) in [(CallsInput::Dropped { call_id: 1 }, Err(CallError::Dropped)), (CallsInput::TransportError { call_id: 1, error: CallError::Http { status: 500, detail: String::new() } }, Err(CallError::Dropped)), (ok(), Ok("{}".to_string()))] {
+        let mut state = change_run();
+        step(&mut state, CallsInput::Deadline { call_id: 1 });
+        let effects = step(&mut state, verdict.clone());
+        assert_eq!(replies(&effects), vec![want], "{verdict:?}: {effects:?}");
+        assert!(!effects.iter().any(|effect| matches!(effect, CallsEffect::Request { .. })), "no retry after the Release: {effects:?}");
+    }
 }
