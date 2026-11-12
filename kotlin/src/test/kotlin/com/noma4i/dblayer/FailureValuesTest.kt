@@ -13,8 +13,8 @@ class FailureValuesTest {
         assertEquals(listOf<Any?>("Invalid", "the cell is empty", "refused", null, null), listOf(failure.kind, failure.reason, failure.message, failure.sessionCode, failure.requestSize))
         val sync = syncInfo(SyncState.Failed, failure)
         assertEquals(listOf<Any?>(SyncState.Failed, failure, emptyList<String>(), 0), listOf(sync.state, sync.error, sync.actions, sync.attempts))
-        val upload = uploadInfo(UploadStatus.Failed, 40.0, failure)
-        assertEquals(listOf<Any?>(UploadStatus.Failed, 40.0, failure), listOf(upload.status, upload.progress, upload.error))
+        val upload = uploadInfo(UploadStatus.Failed, 0.4, failure)
+        assertEquals(listOf<Any?>(UploadStatus.Failed, 0.4, failure), listOf(upload.status, upload.progress, upload.error))
         assertEquals(sync, dbJson.decodeFromString<SyncInfo>(dbJson.encodeToString(sync)))
     }
 }

@@ -5,7 +5,7 @@ use std::task::{Context, Poll, Waker};
 
 use super::encrypted_tests::{SubscriptionsOnly, ThroughServer};
 use super::session_guards_tests::{Rig, SOCIAL_BODY};
-use super::{Config, Database, EncryptedConfig, NetworkPath, NetworkStatus, NetworkTransport, OnlineSink, OpenPorts, TestClock};
+use super::{Config, Database, EncryptedConfig, NetworkPath, NetworkStatus, NetworkKind, OnlineSink, OpenPorts, TestClock};
 use crate::test_wait::{in_own_process, within, within_named};
 use crate::transport::encrypted::tests::vectors_tests::{origin, pin, public_key_der_b64};
 
@@ -14,8 +14,8 @@ const TARGETS: [&str; 2] = ["status", "database"];
 
 type Frame = Pin<Box<dyn Future<Output = Option<NetworkPath>> + Send>>;
 
-/// The path `set_online` gives: the transport is unknown and the network number stays.
-fn on(online: bool) -> Option<NetworkPath> { Some(NetworkPath { online, transport: if online { NetworkTransport::Other } else { NetworkTransport::None }, network: 0 }) }
+/// The path `set_online` gives: the kind is unknown and the network number stays.
+fn on(online: bool) -> Option<NetworkPath> { Some(NetworkPath { online, kind: if online { NetworkKind::Other } else { NetworkKind::None }, network: 0 }) }
 
 fn run(work: impl Future<Output = ()>) { tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap().block_on(work); }
 
@@ -396,10 +396,10 @@ fn observed() -> (Arc<NetworkStatus>, Arc<StatusDouble>) {
     (NetworkStatus::new(double.clone()), double)
 }
 
-/// A path of the platform: a transport and a network number.
-fn path(transport: NetworkTransport, network: u64) -> NetworkPath { NetworkPath { online: transport != NetworkTransport::None, transport, network } }
+/// A path of the platform: a kind and a network number.
+fn path(kind: NetworkKind, network: u64) -> NetworkPath { NetworkPath { online: transport != NetworkKind::None, transport, network } }
 
-/// Requirement net_path_value: the value of the process carries the transport and the network number as the platform gave them. Observable: `current` and the first frame. Assert: `None` before, then the path as given for an online and an offline input.
+/// Requirement net_path_value: the value of the process carries the kind and the network number as the platform gave them. Observable: `current` and the first frame. Assert: `None` before, then the path as given for an online and an offline input.
 #[test]
 fn net_path_value() {
     in_own_process(module_path!(), "net_path_value", &["status"], |_| run(async {
@@ -407,30 +407,30 @@ fn net_path_value() {
         let sink = double.sink();
         assert_eq!(status.current(), None);
         let reader = status.subscribe();
-        sink.set_path(path(NetworkTransport::Wifi, 7));
-        assert_eq!(within(reader.next()).await, Some(path(NetworkTransport::Wifi, 7)), "the first frame is the path of the platform");
-        sink.set_path(path(NetworkTransport::None, 7));
-        assert_eq!(status.current(), Some(path(NetworkTransport::None, 7)), "an offline path keeps the network number and has no transport");
+        sink.set_path(path(NetworkKind::Wifi, 7));
+        assert_eq!(within(reader.next()).await, Some(path(NetworkKind::Wifi, 7)), "the first frame is the path of the platform");
+        sink.set_path(path(NetworkKind::None, 7));
+        assert_eq!(status.current(), Some(path(NetworkKind::None, 7)), "an offline path keeps the network number and has no transport");
     }));
 }
 
-/// Requirement net_path_wakes_on_change_only: a reader wakes when any of the 3 fields changes and stays pending on the same path. Observable: a waiting read. Assert: pending after repeats, then 1 frame for a changed transport and 1 for a changed network number.
+/// Requirement net_path_wakes_on_change_only: a reader wakes when any of the 3 fields changes and stays pending on the same path. Observable: a waiting read. Assert: pending after repeats, then 1 frame for a changed kind and 1 for a changed network number.
 #[test]
 fn net_path_wakes_on_change_only() {
     in_own_process(module_path!(), "net_path_wakes_on_change_only", &["status"], |_| run(async {
         let (status, double) = observed();
         let sink = double.sink();
-        sink.set_path(path(NetworkTransport::Wifi, 1));
+        sink.set_path(path(NetworkKind::Wifi, 1));
         let reader = status.subscribe();
-        assert_eq!(within(reader.next()).await, Some(path(NetworkTransport::Wifi, 1)));
+        assert_eq!(within(reader.next()).await, Some(path(NetworkKind::Wifi, 1)));
         let mut held = reading!(&reader);
-        for _ in 0..3 { sink.set_path(path(NetworkTransport::Wifi, 1)); }
+        for _ in 0..3 { sink.set_path(path(NetworkKind::Wifi, 1)); }
         assert!(poll_once(&mut held).is_pending(), "the same path woke the reader");
-        sink.set_path(path(NetworkTransport::Other, 1));
-        assert_eq!(within(held).await, Some(path(NetworkTransport::Other, 1)), "a changed transport");
+        sink.set_path(path(NetworkKind::Other, 1));
+        assert_eq!(within(held).await, Some(path(NetworkKind::Other, 1)), "a changed kind");
         let next = reading!(&reader);
-        sink.set_path(path(NetworkTransport::Other, 2));
-        assert_eq!(within(next).await, Some(path(NetworkTransport::Other, 2)), "a changed network number");
+        sink.set_path(path(NetworkKind::Other, 2));
+        assert_eq!(within(next).await, Some(path(NetworkKind::Other, 2)), "a changed network number");
     }));
 }
 
@@ -440,15 +440,15 @@ fn net_path_handover() {
     in_own_process(module_path!(), "net_path_handover", &["status"], |_| run(async {
         let (status, double) = observed();
         let sink = double.sink();
-        sink.set_path(path(NetworkTransport::Wifi, 1));
+        sink.set_path(path(NetworkKind::Wifi, 1));
         let reader = status.subscribe();
         let mut seen = vec![within(reader.next()).await];
-        for next in [path(NetworkTransport::Cellular, 2), path(NetworkTransport::Cellular, 3)] {
+        for next in [path(NetworkKind::Cellular, 2), path(NetworkKind::Cellular, 3)] {
             let held = reading!(&reader);
             sink.set_path(next);
             seen.push(within(held).await);
         }
-        assert_eq!(seen, [(NetworkTransport::Wifi, 1), (NetworkTransport::Cellular, 2), (NetworkTransport::Cellular, 3)].map(|(transport, network)| Some(path(transport, network))));
+        assert_eq!(seen, [(NetworkKind::Wifi, 1), (NetworkKind::Cellular, 2), (NetworkKind::Cellular, 3)].map(|(transport, network)| Some(path(transport, network))));
         assert!(seen.iter().flatten().all(|path| path.online));
     }));
 }
