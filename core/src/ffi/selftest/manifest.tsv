@@ -1,63 +1,27 @@
 version	1
 id	aliases	lane	test	state	s1	provenance
-S315	batch-receipt	swift	BridgeProbeTests.batchOwnsSourcesAndConfirmsEveryMemberWithOneRequest	red-by-reading	one operation keeps stable item keys when answers arrive reversed	coordinator batch receipt decision
-S315	batch-receipt	kotlin	com.noma4i.dblayer.UploadBatchTest.batchOwnsSourcesAndConfirmsEveryMemberWithOneRequest	red-by-reading	one operation keeps stable item keys when answers arrive reversed	coordinator batch receipt decision
 S314	multi-join	core	joining_multiple_members_keeps_each_once_in_order	red-by-reading	multiple members and duplicate ID remain ordered	S3 scope planner audit
-S314	multi-join	swift	BridgeProbeTests.joiningMultipleMembersKeepsEachOnceInOrder	red-by-reading	multiple members and duplicate ID remain ordered	S3 scope planner audit
-S314	multi-join	kotlin	com.noma4i.dblayer.ClubTest.joiningMultipleMembersKeepsEachOnceInOrder	red-by-reading	multiple members and duplicate ID remain ordered	S3 scope planner audit
-S312	format	swift	BridgeProbeTests.aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision
-S312	format	kotlin	com.noma4i.dblayer.ClubTest.aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision
 S313	outcome	core	boundary_receipt_orders	red-by-reading	read the same outcome twice	operation receipt
-S313	outcome	swift	BridgeProbeTests.aReceiptCanBeConfirmedTwice	red-by-reading	read the same outcome twice	operation receipt
-S313	outcome	kotlin	com.noma4i.dblayer.ClubTest.aReceiptCanBeConfirmedTwice	red-by-reading	read the same outcome twice	operation receipt
 S301	A4	core	an_acknowledged_membership_change_survives_an_older_list_answer	red-by-reading	join and leave after read starts, ACK before old read	arch-audit/astra.md A4 H2
-S301	A4	swift	BridgeProbeTests.anAcknowledgedMembershipChangeSurvivesAnOlderListAnswer	red-by-reading	join and leave after read starts, ACK before old read	arch-audit/astra.md A4 H2
-S301	A4	kotlin	com.noma4i.dblayer.ClubTest.anAcknowledgedMembershipChangeSurvivesAnOlderListAnswer	red-by-reading	join and leave after read starts, ACK before old read	arch-audit/astra.md A4 H2
 S302	K7	core	a_create_refusal_follows_the_declared_policy	red-by-reading	HTTP 422 and business refusal after create	arch-audit/fable.md K7
-S302	K7	swift	BridgeProbeTests.aCreateRefusalFollowsTheDeclaredPolicy	red-by-reading	HTTP 422 and business refusal after create	arch-audit/fable.md K7
-S302	K7	kotlin	com.noma4i.dblayer.ClubTest.aCreateRefusalFollowsTheDeclaredPolicy	red-by-reading	HTTP 422 and business refusal after create	arch-audit/fable.md K7
 S303	A5	core	an_offline_action_and_a_message_are_each_sent_once_after_reconnect	regression-by-reading	offline action and send, reconnect	arch-audit/astra.md A5
-S303	A5	swift	BridgeProbeTests.anOfflineActionAndALetterAreEachSentOnceAfterReconnect	regression-by-reading	offline action and send, reconnect	arch-audit/astra.md A5
-S303	A5	kotlin	com.noma4i.dblayer.ClubTest.anOfflineActionAndALetterAreEachSentOnceAfterReconnect	regression-by-reading	offline action and send, reconnect	arch-audit/astra.md A5
 S304	A5	core	forward_returns_its_optimistic_value_before_the_server_answers	red-by-reading	forward returns optimistic value while answer is held	arch-audit/astra.md A5
-S304	A5	swift	BridgeProbeTests.forwardReturnsItsOptimisticValueBeforeTheServerAnswers	red-by-reading	forward returns optimistic value while answer is held	arch-audit/astra.md A5
-S304	A5	kotlin	com.noma4i.dblayer.ClubTest.forwardReturnsItsOptimisticValueBeforeTheServerAnswers	red-by-reading	forward returns optimistic value while answer is held	arch-audit/astra.md A5
 S305	K3	core	out_leave_rows_orders	regression-by-reading	join and leave refusal restore both ordered lists	arch-audit/fable.md K3
 S306	A4	core	a_later_confirmed_membership_change_survives_an_earlier_refusal	red-by-reading	join and leave, earlier refusal then later ACK, one operation of a row in flight	arch-audit/astra.md A4
-S306	A4	swift	BridgeProbeTests.aLaterConfirmedMembershipChangeSurvivesAnEarlierRefusal	red-by-reading	join and leave, earlier refusal then later ACK, one operation of a row in flight	arch-audit/astra.md A4
-S306	A4	kotlin	com.noma4i.dblayer.ClubTest.aLaterConfirmedMembershipChangeSurvivesAnEarlierRefusal	red-by-reading	join and leave, earlier refusal then later ACK, one operation of a row in flight	arch-audit/astra.md A4
 S307	K7	core	a_refused_durable_send_keeps_its_row_when_declared	regression-by-reading	durable send refusal with declared keep	arch-audit/fable.md K7
-S307	K7	swift	BridgeProbeTests.aRefusedDurableSendKeepsItsRowWhenDeclared	regression-by-reading	durable send refusal with declared keep	arch-audit/fable.md K7
-S307	K7	kotlin	com.noma4i.dblayer.ClubTest.aRefusedDurableSendKeepsItsRowWhenDeclared	regression-by-reading	durable send refusal with declared keep	arch-audit/fable.md K7
 S308	A5	core	react_then_undo_keeps_the_other_users_reaction	red-by-reading	react then undo, answers in the order of the row	arch-audit/astra.md A5
-S308	A5	swift	BridgeProbeTests.reactThenUndoKeepsTheOtherUsersReaction	red-by-reading	react then undo, answers in the order of the row	arch-audit/astra.md A5
-S308	A5	kotlin	com.noma4i.dblayer.OptimisticReactionChainTest.reactThenUndoKeepsTheOtherUsersReaction	red-by-reading	react then undo, answers in the order of the row	arch-audit/astra.md A5
 S309	A5	core	an_outcome_arrives_before_a_held_list_and_the_automatic_reread_shows_the_added_member	regression-by-reading	outcome before held list and automatic reread	arch-audit/astra.md A5
 S311	K7	core	a_refused_destroy_restores_the_row_according_to_its_declaration	regression-by-reading	destroy refusal restores row	arch-audit/fable.md K7
-S311	K7	swift	BridgeProbeTests.aRefusedDestroyRestoresTheRowAccordingToItsDeclaration	regression-by-reading	destroy refusal restores row	arch-audit/fable.md K7
-S311	K7	kotlin	com.noma4i.dblayer.ClubTest.aRefusedDestroyRestoresTheRowAccordingToItsDeclaration	regression-by-reading	destroy refusal restores row	arch-audit/fable.md K7
 C01	R-3	core	closing_with_the_target_unset_sends_nothing_and_leaves_the_next_database_clean	green	S1: no fresh-open promise; the harness sets online/power/preload itself, target=nil ends Interrupted, a new explicit load makes B visible	I SharedTestDatabase.kt:22-35 and SwitchableTransport.kt:7
-C01	R-3	kotlin	com.noma4i.dblayer.SwitchableHarnessTest.aCloseWithTheTargetUnsetLeavesTheNextDatabaseClean	green	S1: as core	I SharedTestDatabase.kt:22-35
 C02	R-1	core	closing_with_the_target_unset_sends_nothing_and_leaves_the_next_database_clean	green	S1: as C01	I TestDatabaseClock.swift:28-55 and TestTransport.swift:95-96
-C02	R-1	swift	BridgeProbeTests.aCloseWithTheTargetUnsetLeavesTheNextDatabaseClean	green	S1: as core	I TestDatabaseClock.swift:28-55
 C03		core	a_late_answer_of_the_previous_transport_reaches_no_window_of_the_next_test	green	-	I TestTransport.swift:95-96 and SwitchableTransport.kt:7 (both route a token to the target of its open)
 C04	R-2,R-4	core	reopening_through_the_same_opener_after_a_close_gives_a_clean_database	green	S1: close is awaited (async)	I TestDatabaseClock.swift:58-70, A RegisteredReplies.kt:21-27
-C04	R-2,R-4	swift	BridgeProbeTests.reopeningAfterACloseGivesACleanDatabaseWithAndWithoutATransport	green	S1: close is awaited	I TestDatabaseClock.swift:58-70
-C04	R-2,R-4	kotlin	com.noma4i.dblayer.SwitchableHarnessTest.reopeningAfterACloseGivesACleanDatabaseWithAndWithoutATransport	green	S1: close is suspend	A RegisteredReplies.kt:21-27
 C05	R-5	core	app_login_in_the_ios_and_android_order_fills_the_handles_held_since_launch	green	S1: the login has no data logout: iOS 5 library steps, Android 4; slice 2: new projections, the same holder across A, empty, B	I LoginLinkSignIn.swift:53-78, AuthSession.swift:76-90, MyProfileLoad.swift:17-21
-C05	R-5	swift	BridgeProbeTests.anAppLoginAfterALogoutRefreshesTheHeldEntityAndNoReadFollowsTheLogout	green	S1: startSealedSession loses the data logout; the test is renamed to the exit it checks	I AuthSession.swift:76-90
 C07	R-8	core	app_login_in_the_ios_and_android_order_fills_the_handles_held_since_launch	green	S1: Android login drops cancelAndJoin liveEvents and the data logout; slice 2: new projections, the same holder across A, empty, B	A Application.kt:201-214 and SessionStore.kt:34-36
-C07	R-8	kotlin	com.noma4i.dblayer.LifecycleSessionTest.aLoginAfterALogoutNeverDeliversTheLastAccountToAHeldList	green	S1: startSession loses the data logout	A SessionStore.kt:34-36
 C06	R-6	core	app_logout_ios_order_ends_a_pending_initial_wait_and_hides_the_account_from_the_next_login	green	S1: exit is unregister, revoke, closeCable, await sessionReset, clearStoredSession, clearUserState; sessionReset clears the data, no data logout	I AccountSignOut.swift:41-61, AuthSession.swift:125-144, Navigation/RootScreen.swift:33-36
-C06	R-6	swift	BridgeProbeTests.theAppExitOrderEndsAPendingInitialWaitAndEveryCallOfTheExit	green	S1: as core	I AccountSignOut.swift:41-61
-C06	R-6	swift	BridgeProbeTests.theAppExitOrderEndsEveryHeldWaitWhenTheCredentialIsGone	green	S1: the data logout leaves the exit	I AccountSignOut.swift:41-61
 C08	R-9	core	app_logout_android_order_cancels_the_streams_and_the_next_login_reads_again	green	S1: exit is unregister, revoke, closeCable, sessionReset, app cleanup, clearUserState; the collectors are the UI's own	A AccountSignOut.kt:37-46 and Application.kt:217-250
 C08	R-9	core	app_logout_stops_when_the_unregister_is_refused	green	S1: the test calls the data logout or the old exit through its helpers; the helpers lose the data logout and the exit is the session reset	A AccountSignOut.kt:37-46 (a refused revoke returns false and stops the chain)
-C08	R-9	kotlin	com.noma4i.dblayer.LifecycleSessionTest.theAppExitOrderEndsAPendingInitialWaitAndEveryCallOfTheExit	green	S1: the data logout leaves the exit	A Application.kt:217-250
-C08	R-9	kotlin	com.noma4i.dblayer.LifecycleSessionTest.theAppExitOrderEndsEveryHeldWaitWhenTheCredentialIsGone	green	S1: the data logout leaves the exit	A Application.kt:217-250
 C09	R-7	core	app_logout_local_only_skips_the_revoke_and_stops_every_read	green	S1: one library step, sessionReset	I AuthSession.swift:141-145, A AccountSignOut.kt:37-46
-C09	R-7	swift	BridgeProbeTests.aLocalOnlyExitSkipsTheRevokeAndStopsEveryRead	green	S1: the data logout leaves the exit	I AuthSession.swift:141-145
-C09	R-7	kotlin	com.noma4i.dblayer.LifecycleSessionTest.aLocalOnlyExitSkipsTheRevokeAndStopsEveryRead	green	S1: the data logout leaves the exit	A AccountSignOut.kt:37-46
 C10	G-09	core	every_explicit_call_survives_every_transition_with_a_late_answer_that_succeeds	green	S1: the Logout transition cell merges into SessionReset	library
 C10	G-09	core	every_explicit_call_survives_every_transition_with_a_late_sealed_refusal	green	S1: the Logout transition cell merges into SessionReset	library
 C11	R-4	core	a_call_that_is_never_answered_ends_when_the_database_closes	green	S1: close is awaited	library
@@ -65,11 +29,7 @@ C11		core	close_ends_every_pending_stream_wait_of_a_held_handle	green	S1: close 
 C11		swift	BridgeProbeTests.closeEndsACallThatTheServerNeverAnswers	green	S1: close is awaited	library
 C11		kotlin	com.noma4i.dblayer.LifecycleSessionTest.closeEndsACallThatTheServerNeverAnswers	green	S1: close is suspend	library
 C12		core	account_switch_a_b_a_never_delivers_the_previous_account_and_drops_its_late_answer	green	S1: exit loses the data logout; slice 2: new projections, the same holder across A, empty, B	library
-C12		swift	BridgeProbeTests.anAccountSwitchABAKeepsAHeldListAndEntityFreeOfThePreviousAccount	green	S1: exit loses the data logout	library
-C12		kotlin	com.noma4i.dblayer.LifecycleSessionTest.anAccountSwitchABAKeepsAHeldListAndEntityFreeOfThePreviousAccount	green	S1: exit loses the data logout	library
 C12		core	logout_then_login_of_the_same_account_reads_it_again	green	S1: exit loses the data logout; slice 2: new projections, the same holder across A, empty, B	library
-C12		swift	BridgeProbeTests.aLogoutThenALoginOfTheSameAccountReadsItAgain	green	S1: exit loses the data logout	library
-C12		kotlin	com.noma4i.dblayer.LifecycleSessionTest.aLogoutThenALoginOfTheSameAccountReadsItAgain	green	S1: exit loses the data logout	library
 C12		core	a_list_opened_after_the_exit_loads_after_the_next_login_and_its_wait_ends	green	S1: the wait after the exit gets Interrupted (design section 5, C12); slice 2: new projections, the same holder across A, empty, B	library
 C13		core	overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consistent_chain_and_a_clean_reset	green	-	library
 C14		core	a_queued_mutation_refused_without_a_sequence_keeps_the_session_and_a_reset_clears_the_mutation	green	-	library
@@ -78,45 +38,25 @@ C16		core	repeated_online_and_power_saving_signals_add_no_request	green	S1: the 
 C17		core	out_open_restores_pending	green	S1: close is awaited	library
 C18		core	memory_expiry_follows_the_last_write	green	-	library
 C19	R-5	core	login_link_already_authenticated_signs_out_then_repeats_once	green	S1: the test calls the data logout or the old exit through its helpers; the helpers lose the data logout and the exit is the session reset	I LoginLinkSignIn.swift:53-78, A LoginLinkSignIn.kt:36-47
-C19	R-5	swift	BridgeProbeTests.anAlreadyAuthenticatedLoginSignsOutThenLogsInAgain	green	S1: startSealedSession loses the data logout	I LoginLinkSignIn.swift:53-78
-C19	R-5	kotlin	com.noma4i.dblayer.LifecycleSessionTest.anAlreadyAuthenticatedLoginSignsOutThenLogsInAgain	green	S1: startSession loses the data logout	A LoginLinkSignIn.kt:36-47
 G01		core	harness_cycles_survive_tests_that_leave_offline_logout_and_subscriptions_behind	green	S1: each test closes its database and the next test opens a new one; the leftover logout becomes a session reset	library
 R11		core	a_refused_refresh_keeps_the_views_and_the_credential	green	S1: the refusal is typed, the credential and the views stay	I LiveEventLifecycle.swift:24
 B01		core	a_stream_opened_after_the_login_starts_with_a_snapshot_of_the_account_in_its_epoch	green	S2: login: the first value is a snapshot in the epoch of the session	arch-r2
-B01		swift	BridgeProbeTests.aStreamAfterTheLoginStartsWithASnapshotOfTheAccountInItsEpoch	green	S2: login: the first value is a snapshot in the epoch of the session	arch-r2
-B01		kotlin	com.noma4i.dblayer.ValueBridgeTest.aStreamAfterTheLoginStartsWithASnapshotOfTheAccountInItsEpoch	green	S2: login: the first value is a snapshot in the epoch of the session	arch-r2
 B02		core	the_session_reset_ends_every_stream_with_one_outcome_and_no_account_value_follows	green	S2: sign-out: one outcome, no value after it, nothing open	arch-r2
-B02		swift	BridgeProbeTests.theSessionResetEndsEveryStreamWithOneOutcome	green	S2: sign-out: one outcome, no value after it, nothing open	arch-r2
-B02		kotlin	com.noma4i.dblayer.ValueBridgeTest.theSessionResetEndsEveryStreamWithOneOutcome	green	S2: sign-out: one outcome, no value after it, nothing open	arch-r2
 B03		core	an_account_switch_gives_new_streams_and_no_value_of_a_reaches_b	green	S2: account switch A to B: new projections, no A value in B	arch-r2
-B03		swift	BridgeProbeTests.anAccountSwitchGivesNewProjectionsAndNoValueOfAReachesB	green	S2: account switch A to B: new projections, no A value in B	arch-r2
-B03		kotlin	com.noma4i.dblayer.ValueBridgeTest.anAccountSwitchGivesNewProjectionsAndNoValueOfAReachesB	green	S2: account switch A to B: new projections, no A value in B	arch-r2
 B04		core	a_message_sent_offline_goes_out_once_and_keeps_its_position	green	S2: send offline then online: one message, stable position	arch-r2
-B04		swift	BridgeProbeTests.aMessageSentOfflineGoesOutOnceAndKeepsItsPosition	green	S2: send offline then online: one message, stable position	arch-r2
-B04		kotlin	com.noma4i.dblayer.ValueBridgeTest.aMessageSentOfflineGoesOutOnceAndKeepsItsPosition	green	S2: send offline then online: one message, stable position	arch-r2
 B05		core	a_late_answer_of_the_old_epoch_is_dropped_and_a_command_of_the_old_epoch_is_refused	green	S2: late old-epoch answer dropped, old-epoch command refused	arch-r2
-B05		swift	BridgeProbeTests.aCommandAndALateCallOfTheOldEpochEndWithoutReachingTheNewAccount	green	S2: late old-epoch answer dropped, old-epoch command refused	arch-r2
-B05		kotlin	com.noma4i.dblayer.ValueBridgeTest.aCommandAndALateCallOfTheOldEpochEndWithoutReachingTheNewAccount	green	S2: late old-epoch answer dropped, old-epoch command refused	arch-r2
 B06		core	the_reader_that_cancels_ends_the_stream_and_the_core_keeps_nothing	green	S2: cancel of the reader ends the stream	arch-r2
 B06		swift	BridgeProbeTests.theReaderThatStopsEndsTheStreamInTheCore	green	S2: cancel of the reader ends the stream	arch-r2
 B06		kotlin	com.noma4i.dblayer.ValueBridgeTest.theReaderThatStopsEndsTheStreamInTheCore	green	S2: cancel of the reader ends the stream	arch-r2
 B07		core	work_counters_idle_zero_one_row_one_decode_and_subscriptions_equal_readers	green	S2: spec F counters: idle 0, one row one decode, subscriptions equal readers	arch-r2
-B07		swift	BridgeProbeTests.aChangeOfOneRowDecodesOneRowAndSubscriptionsEqualReaders	green	S2: spec F counters: idle 0, one row one decode, subscriptions equal readers	arch-r2
-B07		kotlin	com.noma4i.dblayer.ValueBridgeTest.aChangeOfOneRowDecodesOneRowAndSubscriptionsEqualReaders	green	S2: spec F counters: idle 0, one row one decode, subscriptions equal readers	arch-r2
 B08		core	dlv_prop_single_unread_delta	green	core-only: the owner Deliveries holds one unread value and a missed revision gives one new snapshot (P-DLV-15)	arch-r3
 B10		core	the_outcome_of_an_offline_command_waits_and_ends_with_the_epoch_of_its_receipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3
-B10		swift	BridgeProbeTests.theOutcomeOfAnOfflineCommandWaitsAndEndsWithTheEpochOfItsReceipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3
-B10		kotlin	com.noma4i.dblayer.ValueBridgeTest.theOutcomeOfAnOfflineCommandWaitsAndEndsWithTheEpochOfItsReceipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3
 B11		core	a_stream_request_whose_caller_left_ends_with_its_epoch_and_holds_nothing	green	core-only: the proof holds a server request through the fake world gate	arch-r3
 B12		core	a_stream_that_cannot_connect_ends_once_and_leaves_the_table	green	S3 R4: a connect error ends the stream with one outcome	arch-r3
-B12		swift	BridgeProbeTests.aStreamThatCannotConnectEndsOnceAndLeavesTheTable	green	S3 R4: a connect error ends the stream with one outcome	arch-r3
-B12		kotlin	com.noma4i.dblayer.ValueBridgeTest.aStreamThatCannotConnectEndsOnceAndLeavesTheTable	green	S3 R4: a connect error ends the stream with one outcome	arch-r3
 B13		core	the_cancel_of_a_reader_returns_while_a_delivery_runs_and_none_is_admitted_after_it	green	core-only: the proof blocks the reader inside its delivery and counts calls in the core	arch-r3
 B14		kotlin	com.noma4i.dblayer.ValueBridgeTest.aProjectionInACancelledScopeLeavesNoStreamInTheCore	green	S3 R6: a projection in a cancelled scope leaves no stream in the core	arch-r3
 B15		core	work_counters_an_entity_stream_ignores_other_rows_and_a_count_stream_gets_one_value_per_write	green	core-only: the proof reads the core work counters	arch-r3
 K02	B2	core	a_command_and_a_read_of_a_left_account_are_refused_and_change_nothing	green	-	arch-r3b review B2
-K02	B2	swift	BridgeProbeTests.aCommandAndAReadOfAnAccountThatLeftAreRefusedAndChangeNothing	green	-	arch-r3b review B2
-K02	B2	kotlin	com.noma4i.dblayer.ValueBridgeTest.aCommandAndAReadOfAnAccountThatLeftAreRefusedAndChangeNothing	green	-	arch-r3b review B2
 K03	B3	core	a_send_needs_a_session_and_a_plain_action_waits_for_the_network	green	-	arch-r3b review B3
 K04	B4	core	a_server_create_returns_the_confirmed_row	green	-	arch-r3b review B4
 K05	B5	core	the_cancel_of_a_reader_releases_its_object_outside_every_library_lock	green	-	arch-r3b review B5
@@ -131,26 +71,8 @@ K12	forward	core	a_forward_leaves_the_source_unchanged_upserts_the_answer_row_an
 K13	B6	core	member_actions_change_both_member_lists_before_the_answer_and_a_refusal_restores_them	green	-	arch-r3c B6 leave and members
 K13	B6	core	leave_removes_the_group_from_its_list_before_the_answer_and_a_refusal_restores_it	green	-	arch-r3c B6 leave and members
 K22	B6	core	forward_shows_a_local_copy_in_the_target_thread_and_a_refusal_removes_it	green	-	arch-r3c B6 leave and members
-K09	B	swift	BridgeProbeTests.aListThatRefreshesOnConnectLoadsAgainOnceWhenTheNetworkReturns	green	-	arch-r3c
-K10	A	swift	BridgeProbeTests.aDurableSendThatFailedOnTheNetworkGoesOutAtOnceWhenTheNetworkReturns	green	-	arch-r3c
-K11	B	swift	BridgeProbeTests.aRefreshAndALoadMoreFailAtOnceOfflineAndTheStreamShowsTheError	green	-	arch-r3c
-K14	B6	swift	BridgeProbeTests.aReactionWithADelayedAnswerShowsAsUnsentBeforeTheAnswerAndSyncedAfter	green	-	arch-r3c
 K16	B8	swift	BridgeProbeTests.aReaderThatFallsBehindKeepsAtMost256DeliveriesAndEndsWithTheWholeList	green	-	arch-r3c
-K09	B	kotlin	com.noma4i.dblayer.ReconnectTest.aListThatRefreshesOnConnectLoadsAgainOnceWhenTheNetworkReturns	green	-	arch-r3c
-K10	A	kotlin	com.noma4i.dblayer.ReconnectTest.aDurableSendThatFailedOnTheNetworkGoesOutAtOnceWhenTheNetworkReturns	green	-	arch-r3c
-K11	B	kotlin	com.noma4i.dblayer.ReconnectTest.aRefreshAndALoadMoreFailAtOnceOfflineAndTheStreamShowsTheError	green	-	arch-r3c
-K14	B6	kotlin	com.noma4i.dblayer.RecordSessionTest.aReactionWithADelayedAnswerShowsAsUnsentBeforeTheAnswerAndSyncedAfter	green	-	arch-r3c
 K16	B8	kotlin	com.noma4i.dblayer.ValueBridgeTest.aReaderThatFallsBehindKeepsAtMost256DeliveriesAndEndsWithTheWholeList	green	-	arch-r3c
-K04	B4	swift	BridgeProbeTests.aServerCreateReturnsTheConfirmedRow	green	-	arch-r3c
-K04	B4	kotlin	com.noma4i.dblayer.ClubTest.aServerCreateReturnsTheConfirmedRow	green	-	arch-r3c
-K13	B6	swift	BridgeProbeTests.aMemberActionChangesBothListsBeforeTheAnswerAndARefusalRestoresThem	green	-	arch-r3c
-K13	B6	swift	BridgeProbeTests.leaveRemovesTheClubFromItsListBeforeTheAnswerAndARefusalRestoresIt	green	-	arch-r3c
-K22	B6	swift	BridgeProbeTests.aForwardShowsALocalCopyInTheTargetThreadAndARefusalRemovesIt	green	-	arch-r3c
-K13	B6	kotlin	com.noma4i.dblayer.ClubTest.aMemberActionChangesBothListsBeforeTheAnswerAndARefusalRestoresThem	green	-	arch-r3c
-K13	B6	kotlin	com.noma4i.dblayer.ClubTest.leaveRemovesTheClubFromItsListBeforeTheAnswerAndARefusalRestoresIt	green	-	arch-r3c
-K22	B6	kotlin	com.noma4i.dblayer.ClubTest.aForwardShowsALocalCopyInTheTargetThreadAndARefusalRemovesIt	green	-	arch-r3c
-K12	forward	swift	BridgeProbeTests.aForwardLeavesTheSourceUnchangedUpsertsTheAnswerRowAndReturnsIt	green	-	arch-r3c
-K12	forward	kotlin	com.noma4i.dblayer.ClubTest.aForwardLeavesTheSourceUnchangedUpsertsTheAnswerRowAndReturnsIt	green	-	arch-r3c
 RC09	C09	swift	ProjectionRecoveryTests.aDeltaIsAppliedAsItComesAndKeepsOnlyItsOwnEdits	green	-	arch-r3d review C09
 RC09	C09	kotlin	com.noma4i.dblayer.ProjectionRecoveryTest.aDeltaIsAppliedAsItComesAndKeepsOnlyItsOwnEdits	green	-	arch-r3d review C09
 K17	C01	core	every_entry_of_a_left_account_is_refused_and_reaches_nothing	green	core-only: the proof counts the requests that reached the fake world; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3d review C01
@@ -165,43 +87,24 @@ K28	E06	kotlin	com.noma4i.dblayer.BridgeProbeTest.updateAndDestroyReachTypedLive
 P01		swift	BridgeProbeTests.aModelEventsCollectorHearsEventsInOrderAndNothingFromBeforeItStarted	green	-	parity slice 3 platform tests
 P01		kotlin	com.noma4i.dblayer.ModelEventsTest.aModelEventsCollectorHearsEventsInOrderAndNothingFromBeforeItStarted	green	-	parity slice 3 platform tests
 P02		core	the_session_reset_ends_every_stream_with_one_outcome_and_no_account_value_follows	green	-	parity slice 3 platform tests
-P02		swift	BridgeProbeTests.aSessionResetEndsTheOldEventsStream	green	test rig limit: a stream of the next session needs a real session with a model-event subscription, covered by the core Sync test an_events_collector_keeps_receiving_across_sign_out_and_the_next_sign_in	parity slice 3 platform tests
-P02		kotlin	com.noma4i.dblayer.ModelEventsTest.aSessionResetEndsTheOldEventsStream	green	test rig limit: as swift	parity slice 3 platform tests
-P03		swift	BridgeProbeTests.aRelatedQueryReturnsTheLinkedRowsAndFollowsATargetChangeAndALinkChange	green	-	parity slice 3 platform tests
-P03		kotlin	com.noma4i.dblayer.FirstFrameAndRelatedTest.aRelatedQueryReturnsTheLinkedRowsAndFollowsATargetChangeAndALinkChange	green	-	parity slice 3 platform tests
 P04		swift	BridgeProbeTests.theFirstFrameOfAWarmStreamArrivesOffTheCallingThreadWithTheCachedRows	green	spec B first frame: SQLite thread not observable through the public API, asserts the delivery thread and not-inside-subscribe	parity slice 3 platform tests
 P04		kotlin	com.noma4i.dblayer.FirstFrameAndRelatedTest.theFirstFrameOfAWarmStreamArrivesOffTheCallingThreadWithTheCachedRows	green	spec B first frame: as swift	parity slice 3 platform tests
 K32		core	adding_and_removing_a_member_ends_with_the_member_lists_of_the_server_in_both_orders	green	-	ios-reds review R3 R4
-K32		swift	BridgeProbeTests.anAddedAndARemovedMemberEndWithTheMemberListsOfTheServer	green	-	ios-reds review R3 R4
-K32		kotlin	com.noma4i.dblayer.ClubTest.anAddedAndARemovedMemberEndWithTheMemberListsOfTheServer	green	-	ios-reds review R3 R4
-K33		swift	BridgeProbeTests.aMutationReturnsWithItsAnswerWhileALoadOfItsRefetchedListIsHeld	regression-by-reading	S3 receipt outcome precedes held reread	ios-reds review R3 R4
-K33		kotlin	com.noma4i.dblayer.ClubTest.aMutationReturnsWithItsAnswerWhileALoadOfItsRefetchedListIsHeld	regression-by-reading	S3 receipt outcome precedes held reread	ios-reds review R3 R4
 K34		core	out_join_rows_orders	green	-	ios-reds review R3 R4
-K34		swift	BridgeProbeTests.addingAMemberWhoseRowIsNotCachedEndsWithTheAnswer	green	-	ios-reds review R3 R4
-K34		kotlin	com.noma4i.dblayer.ClubTest.addingAMemberWhoseRowIsNotCachedEndsWithTheAnswer	green	-	ios-reds review R3 R4
 K35		core	a_command_read_between_its_confirming_commit_and_the_announcement_is_delivered	green	core-only: the proof pins the interval between the confirming commit and its announcement with a core hook	ios-reds review R3 R4
 C20	C4	core	a_load_after_a_session_reset_needs_a_new_session_and_asks_nothing	green	-	consumer-reds 4
 C20	C4	core	a_reset_during_a_load_interrupts_it_and_its_late_answer_never_reaches_the_next_session	green	-	consumer-reds 4
-C20	C4	swift	BridgeProbeTests.theLoadThatRestoresAResetSessionReturnsItsOwnResult	green	-	consumer-reds 4
-C20	C4	kotlin	com.noma4i.dblayer.SessionRestoreTest.theLoadThatRestoresAResetSessionReturnsItsOwnResult	green	-	consumer-reds 4
 C21	C4	core	a_load_all_whose_caller_went_away_asks_the_server_for_no_more_pages	green	-	android-reds 2
 C21	C4	kotlin	com.noma4i.dblayer.LoadAllCancellationTest.cancellingTheCallerOfLoadAllStopsTheTransportCalls	green	-	android-reds 2
-C22		kotlin	com.noma4i.dblayer.OptimisticReactionChainTest.eachReactionOnTheRowOfThePreviousCallKeepsOtherUsersReactions	green	-	android-reds 1
-C22		kotlin	com.noma4i.dblayer.OptimisticReactionChainTest.aSendOnADatabaseWithoutATransportIsRefusedAsNoSession	green	-	android-reds 1
 C24		kotlin	com.noma4i.dblayer.ServerModelWithoutTransportTest.aCreateOfAServerModelOnADatabaseWithoutATransportIsRefusedAsNoSession	green	-	android-reds 4
 S101		core	server_calls_without_a_transport_report_no_session	red-by-reading	-	arch-audit Fable K2 K8
 S101		swift	BridgeProbeTests.serverCallsWithoutATransportReportNoSession	red-by-reading	-	arch-audit Fable K2 K8
 S101		kotlin	com.noma4i.dblayer.ServerModelWithoutTransportTest.aCreateOfAServerModelOnADatabaseWithoutATransportIsRefusedAsNoSession	red-by-reading	-	arch-audit Fable K2 K8
-S101		kotlin	com.noma4i.dblayer.OptimisticReactionChainTest.aSendOnADatabaseWithoutATransportIsRefusedAsNoSession	red-by-reading	-	arch-audit Fable K2 K8
 S102		core	reset_clears_ephemeral_values_before_the_next_account_reads_the_same_id	unrun	S1: reset clears the account	arch-audit Astra A1
-S102		swift	BridgeProbeTests.resetClearsEphemeralValuesBeforeTheNextAccountReadsTheSameId	unrun	S1: reset clears the account	arch-audit Astra A1
-S102		kotlin	com.noma4i.dblayer.SessionRestoreTest.resetClearsEphemeralValuesBeforeTheNextAccountReadsTheSameId	unrun	S1: reset clears the account	arch-audit Astra A1
 S103		core	an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs_each_once	unrun	S1: reset ends the transfer	arch-audit Fable K2
 S103		swift	BridgeProbeTests.resetDuringPutEndsTheWaitAndRemovesTheOldUpload	unrun	S1: reset ends the transfer	arch-audit Fable K2
 S103		kotlin	com.noma4i.dblayer.UploadSessionTest.resetDuringPutEndsTheWaitAndRemovesTheOldUpload	unrun	S1: reset ends the transfer	arch-audit Fable K2
 S104		core	a_reset_during_a_load_interrupts_it_and_its_late_answer_never_reaches_the_next_session	unrun	S1: reset ends the load	arch-audit Fable K2
-S104		swift	BridgeProbeTests.aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccount	unrun	S1: reset ends the load	arch-audit Fable K2
-S104		kotlin	com.noma4i.dblayer.SessionRestoreTest.aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccount	unrun	S1: reset ends the load	arch-audit Fable K2
 S107		core	an_old_encrypted_cable_cannot_deliver_into_the_next_account	unrun	S1: reset closes the subscription	arch-audit Astra A1
 S107		swift	BridgeProbeTests.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the subscription	arch-audit Astra A1
 S107		kotlin	com.noma4i.dblayer.EncryptedOldSinkTest.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the subscription	arch-audit Astra A1
@@ -209,26 +112,18 @@ S108		core	an_old_encrypted_cable_cannot_deliver_into_the_next_account	unrun	S1:
 S108		swift	BridgeProbeTests.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the cable	arch-audit Astra A1
 S108		kotlin	com.noma4i.dblayer.EncryptedOldSinkTest.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the cable	arch-audit Astra A1
 S109		core	a_round_running_at_the_session_exit_asks_for_the_job_of_the_next_epoch_after_it_ends	red-by-reading	S1: session reset; S4: adapt roundEnd consumers	coordinator msg_5bf3e2eac6f8
-S109		swift	BridgeProbeTests.uploadRoundKeepsEachGroupsOriginalEpoch	red-by-reading	S4: adapt roundEnd consumers	coordinator msg_5bf3e2eac6f8
-S109		kotlin	com.noma4i.dblayer.UploadSessionTest.uploadRoundKeepsEachGroupsOriginalEpoch	red-by-reading	S4: adapt roundEnd consumers	coordinator msg_5bf3e2eac6f8
 S110		swift	BridgeProbeTests.resetDuringPutEndsTheWaitAndRemovesTheOldUpload	red-by-reading	S1: upload needs a session	arch-audit Fable K8
 S110		kotlin	com.noma4i.dblayer.UploadSessionTest.resetDuringPutEndsTheWaitAndRemovesTheOldUpload	red-by-reading	S1: upload needs a session	arch-audit Fable K8
 S111		core	a_reset_during_a_load_interrupts_it_and_its_late_answer_never_reaches_the_next_session	red-by-reading	S1: old resume is refused	arch-audit Astra A1
-S111		swift	BridgeProbeTests.aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccount	red-by-reading	S1: old resume is refused	arch-audit Astra A1
-S111		kotlin	com.noma4i.dblayer.SessionRestoreTest.aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccount	red-by-reading	S1: old resume is refused	arch-audit Astra A1
 S201	K1-b	core	a_cached_entity_remains_loaded_when_its_initial_network_read_fails	red-by-reading	-	arch-audit fable K1-b
 S203	C23	core	a_profile_delivery_is_ready_with_its_rows_before_an_explicit_refresh	red-by-reading	-	arch-audit fable K1
 S204	K1-reset	core	a_held_entity_ends_its_load_wait_after_session_reset	unrun	-	arch-audit fable K1
 S205	K1-cancel	core	cancelling_a_reader_before_its_first_load_interrupts_the_wait	unrun	-	arch-audit fable K1
 S207	N1r	core	a_mutation_answer_requires_one_reread_after_an_older_load	unrun	-	arch-audit fable K4
-S207	N1r	swift	BridgeProbeTests.aMutationReturnsWithItsAnswerWhileALoadOfItsRefetchedListIsHeld	unrun	-	arch-audit fable K4
-S207	N1r	kotlin	com.noma4i.dblayer.ClubTest.aMutationReturnsWithItsAnswerWhileALoadOfItsRefetchedListIsHeld	unrun	-	arch-audit fable K4
 S210	C21	core	a_load_all_whose_caller_went_away_asks_the_server_for_no_more_pages	unrun	-	arch-audit fable K6
 S210	C21	swift	BridgeProbeTests.cancellingTheCallerOfLoadAllStopsTheTransportCalls	unrun	-	arch-audit fable K6
 S210	C21	kotlin	com.noma4i.dblayer.LoadAllCancellationTest.cancellingTheCallerOfLoadAllStopsTheTransportCalls	unrun	-	arch-audit fable K6
 S211	shared-load	core	cancelling_one_load_interest_keeps_the_other_call_alive	unrun	-	arch-audit astra A2 cancellation
-S211	shared-load	swift	BridgeProbeTests.cancellingOneLoadInterestKeepsTheOtherCallAlive	unrun	-	arch-audit astra A2 cancellation
-S211	shared-load	kotlin	com.noma4i.dblayer.TestClockTest.cancellingOneLoadInterestKeepsTheOtherCallAlive	unrun	-	arch-audit astra A2 cancellation
 S211b	last-interest	core	cancelling_the_last_load_interest_cancels_the_request	red-by-reading	-	arch-audit fable K6 cancellation
 S211b	last-interest	swift	BridgeProbeTests.cancellingTheLastLoadInterestCancelsTheRequest	red-by-reading	-	arch-audit fable K6 cancellation
 S211b	last-interest	kotlin	com.noma4i.dblayer.LoadAllCancellationTest.cancellingTheLastLoadInterestCancelsTheRequest	red-by-reading	-	arch-audit fable K6 cancellation
@@ -236,48 +131,16 @@ S211c	last-interest-order	core	the_last_load_interest_leaves_through_the_owner_a
 S212	K9	core	a_receipt_revision_arrives_with_the_updated_row	unrun	-	arch-audit fable K9
 S213	H3	core	cancelling_a_delivery_wait_leaves_the_stream_running	unrun	-	arch-audit astra H3, server response held
 S214	A2-cold	core	a_cold_profile_delivers_a_complete_first_frame_when_empty_or_failed	red-by-reading	-	arch-audit astra A2
-S217	A2-ttl	swift	BridgeProbeTests.aTestClockMovesFreshForWithoutSleeping	unrun	-	arch-audit astra A2
-S217	A2-ttl	kotlin	com.noma4i.dblayer.TestClockTest.aTestClockMovesFreshForWithoutSleeping	unrun	-	arch-audit astra A2
 S218	A2-media	core	preloads_and_three_media_loads_finish_on_empty_pages	unrun	-	arch-audit astra A2
-S218	A2-media	swift	BridgeProbeTests.preloadsAndThreeMediaLoadsFinishOnEmptyPages	unrun	-	arch-audit astra A2
-S218	A2-media	kotlin	com.noma4i.dblayer.MediaPreloadTest.preloadsAndThreeMediaLoadsFinishOnEmptyPages	unrun	-	arch-audit astra A2
 S220	window-reopen	core	a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response	red-by-reading	-	coordinator persisted issuance sequence
-S220	window-reopen	swift	BridgeProbeTests.aRefreshAfterReopenAndClockRollbackKeepsTheNewResponse	red-by-reading	-	coordinator persisted issuance sequence
-S220	window-reopen	kotlin	com.noma4i.dblayer.TestClockTest.aRefreshAfterReopenAndClockRollbackKeepsTheNewResponse	red-by-reading	-	coordinator persisted issuance sequence
 S221	window-debt	core	a_window_without_a_reader_is_read_again_when_the_next_reader_opens_it	green	-	coordinator persisted stale debt
 S221	window-debt	core	a_window_without_a_reader_is_read_again_when_the_next_reader_opens_it	green	-	coordinator persisted stale debt
 S221	window-debt	core	a_window_without_a_reader_is_read_again_when_the_next_reader_opens_it	green	-	coordinator persisted stale debt
-T01	H6	swift	BridgeProbeTests.anOfflineDiscardRoutesItsReopenedAbortAsATransfer	red-by-reading	-	arch-audit/astra.md A6
-T01	H6	kotlin	com.noma4i.dblayer.TransferTest.anOfflineDiscardRoutesItsReopenedAbortAsATransfer	red-by-reading	-	arch-audit/astra.md A6
-T04		swift	BridgeProbeTests.attachedFilesSurviveReopenAndDetachingOneKeepsTheOther	regression	-	arch-audit/astra.md A6
-T04		kotlin	com.noma4i.dblayer.TransferTest.attachedFilesSurviveReopenAndDetachingOneKeepsTheOther	regression	-	arch-audit/astra.md A6
-T02		swift	BridgeProbeTests.completeFailureThenRetryKeepsTheConfirmedParts	regression	-	arch-audit/astra.md A6
-T02		kotlin	com.noma4i.dblayer.TransferTest.completeFailureThenRetryKeepsTheConfirmedParts	regression	-	arch-audit/astra.md A6
-T05		swift	BridgeProbeTests.aFailedBlobExpiresWhenTheNetworkReturnsAfterSevenDays	regression	-	arch-audit/astra.md A6
-T05		kotlin	com.noma4i.dblayer.TransferTest.aFailedBlobExpiresWhenTheNetworkReturnsAfterSevenDays	regression	-	arch-audit/astra.md A6
-T03		swift	BridgeProbeTests.cancellingTheMiddleFileKeepsTheOtherFilesInOrder	regression	-	ChatAlbumSendTest.kt cancellingATileRenumbersTheRemainingTilesAndTheAnswerStillReplacesThem
-T03		kotlin	com.noma4i.dblayer.TransferTest.cancellingTheMiddleFileKeepsTheOtherFilesInOrder	regression	-	ChatAlbumSendTest.kt cancellingATileRenumbersTheRemainingTilesAndTheAnswerStillReplacesThem
-T03R		swift	BridgeProbeTests.retryingARefusedFileKeepsTheOtherAlbumFiles	regression	-	ChatAlbumSendTest.kt aRefusedFileFailsOnlyItsTileAndRetryLetsTheWholeAlbumGoInOrder
-T03R		kotlin	com.noma4i.dblayer.TransferTest.retryingARefusedFileKeepsTheOtherAlbumFiles	regression	-	ChatAlbumSendTest.kt aRefusedFileFailsOnlyItsTileAndRetryLetsTheWholeAlbumGoInOrder
-T03S		swift	BridgeProbeTests.discardingARefusedFileSendsTheRemainingFileAsSingle	regression	-	ChatAlbumSendTest.kt discardingDownToOneTileSendsItAsASingleMessageWithItsClientKey
-T03S		kotlin	com.noma4i.dblayer.TransferTest.discardingARefusedFileSendsTheRemainingFileAsSingle	regression	-	ChatAlbumSendTest.kt discardingDownToOneTileSendsItAsASingleMessageWithItsClientKey
-T01G	H6	swift	BridgeProbeTests.discardingAQueuedPhotoOfflineRoutesTheAbortAfterReopen	red-by-reading	-	GroupPhotoSend.swift queueCreate and dismiss
-T01G	H6	kotlin	com.noma4i.dblayer.TransferTest.discardingAQueuedPhotoOfflineRoutesTheAbortAfterReopen	red-by-reading	-	GroupPhotoSend.swift queueCreate and dismiss
-T02G	C5	swift	BridgeProbeTests.anHttpRefusalOfAPhotoKeepsTheFailedRecordUntilDiscard	regression	-	UploadMultipartTests.swift HTTP 422
-T02G	C5	kotlin	com.noma4i.dblayer.TransferTest.anHttpRefusalOfAPhotoKeepsTheFailedRecordUntilDiscard	regression	-	UploadMultipartTests.swift HTTP 422
-T05S		swift	BridgeProbeTests.reopeningAfterSevenDaysExpiresAFailedBlob	hypothesis	-	arch-audit/astra.md A6 startup expiry
-T05S		kotlin	com.noma4i.dblayer.TransferTest.reopeningAfterSevenDaysExpiresAFailedBlob	hypothesis	-	arch-audit/astra.md A6 startup expiry
-T06		swift	BridgeProbeTests.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	hypothesis	-	arch-audit/astra.md A6 transfer identity
-T06		kotlin	com.noma4i.dblayer.TransferTest.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	hypothesis	-	arch-audit/astra.md A6 transfer identity
 T09		core	xfer_round_refused_stale	red-by-reading	-	late Android scheduler refusal after session reset
-T10		swift	BridgeProbeTests.multipartBatchAcceptsACorrelationKeyWithPathCharacters	regression	-	multipart transfer identity range file
-T10		kotlin	com.noma4i.dblayer.TransferTest.multipartBatchAcceptsACorrelationKeyWithPathCharacters	regression	-	multipart transfer identity range file
 T13		core	xfer_round_needed_new_epoch	red-by-reading	-	new Android upload after old running round
 T14		kotlin	com.noma4i.dblayer.UploadWorkTest.onlyUploadRequestsGoThroughTheNetworkOfTheRunningJob	red-by-reading	-	late Android job must not clear a newer network route
 T15		core	xfer_round_requested_new_epoch	red-by-reading	-	Android scheduler refusal crosses a session reset
 T16		core	xfer_round_running_epoch_ended	regression	-	ending Android round after session reset
-T17		swift	BridgeProbeTests.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	transfer without an item
-T17		kotlin	com.noma4i.dblayer.TransferTest.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	transfer without an item
 T04		core	file_attach_detach	regression	-	arch-audit/astra.md A6
 T20		core	a_small_file_uploads_in_one_step_and_its_mutation_carries_the_signed_id	regression	-	Transfer owner through Database
 T20		core	a_large_file_uploads_in_parts_and_completes_before_its_mutation	regression	-	Transfer owner through Database
@@ -285,17 +148,11 @@ T20		core	a_cancelled_upload_sends_nothing	regression	-	Transfer owner through D
 T20		core	a_send_with_a_file_confirms_through_the_declared_steps	regression	-	Transfer owner through Database
 S300		core	a_fresh_profile_is_read_again_after_expiry	green	-	library
 S208	K4-destroy	core	a_missing_destroyed_row_causes_one_reread_of_the_open_list	unrun	-	arch-audit fable K4
-S208	K4-destroy	swift	BridgeProbeTests.aMissingDestroyedRowCausesOneRereadOfTheOpenList	unrun	-	arch-audit fable K4
-S208	K4-destroy	kotlin	com.noma4i.dblayer.DestroyRereadTest.aMissingDestroyedRowCausesOneRereadOfTheOpenList	unrun	-	arch-audit fable K4
 S209	A3-journal	core	a_slow_events_reader_reads_the_kept_events_and_one_exact_lost_range_then_one_end	unrun	-	arch-audit astra A3, one core journal
-S209	A3-journal	swift	BridgeProbeTests.aSlowCollectorReadsKeptEventsAndLostRangesThatAddUpToTheEventsSent	unrun	-	arch-audit astra A3, one core journal
-S209	A3-journal	kotlin	com.noma4i.dblayer.ModelEventsTest.aSlowCollectorReadsKeptEventsAndLostRangesThatAddUpToTheEventsSent	unrun	-	arch-audit astra A3, one core journal
 S219	A3-events	core	dlv_event_before_after	unrun	-	arch-audit astra A3
 S219	A3-events	swift	BridgeProbeTests.chatEventPayloadPlatforms	unrun	-	arch-audit astra A3
 S219	A3-events	kotlin	com.noma4i.dblayer.EventPayloadTest.chatEventPayloadPlatforms	unrun	-	arch-audit astra A3
 S316	replaced-pair	core	a_server_id_that_replaces_a_temporary_row_of_a_held_list_arrives_as_a_replaced_pair	unrun	-	coordinator replaced pair
-S316	replaced-pair	swift	BridgeProbeTests.aRewriteCarriesTheTemporaryIdThatTheServerIdReplaced	unrun	-	coordinator replaced pair
-S316	replaced-pair	kotlin	com.noma4i.dblayer.BridgeProbeTest.aRewriteCarriesTheTemporaryIdThatTheServerIdReplaced	unrun	-	coordinator replaced pair
 S317	interrupted-answer	core	interrupted_session_answer_without_restored_call_returns_none	green	core-only: no swift or kotlin wrapper of the interrupted session answer yet	coordinator D-72
 S320	feed-event-insert-on	core	feed_event_insert_on	unrun	-	cell feed_event_insert_on
 D101	offline-run	core	a_run_offline_after_open_fails_at_once_and_the_transport_makes_no_attempt	green	-	coordinator D-101
