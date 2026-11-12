@@ -118,3 +118,21 @@ val removed = staged.discard()
 
 - `registerOperations`, and an `open` that passes a read or a mutation, fail with `Invalid` when the definitions leave out an operation the library sends by itself. The error names every missing operation. Pass the generated `GraphQLOperations.all`. See [server sync](server-sync.md#connecting).
 - The parents of a changed row are touched once per batch, the queue order of restored operations is kept, and a failed operation with a lost answer stops no other write. The app changes nothing for these fixes.
+
+## 9. After 6.31.0
+
+- `localUrl` of an upload is set from the first frame of its row. During the call that brought the file it is the file of the caller, after the copy is durable it is the copy of the library, and it is `nil` once the transfer is removed. Show the preview only from `localUrl`, and remove the own copy of the picked file that the app keeps for the preview. See [files](files.md#upload-before-the-final-mutation).
+
+```swift
+for await status in scope.uploadStatus(staged) { preview.show(status.localUrl) }
+```
+
+```kotlin
+scope.uploadStatus(staged).uploadStatus.collect { status -> preview.show(status.localUrl) }
+```
+
+- A saved write or upload whose operation the generated set no longer declares ends `failed` with a `refused` error: "the operation <model>.<action> is not declared". Handle it as any refused write: `discard` it, or `retry` it after the update that declares the operation. See [sync state](sync-state.md).
+- A call or a write that meets an unreadable secret waits and goes when the secret can be read again. Remove the retry of the app on a `Storage` error that only waited for the keystore.
+- A stored upload step fails with the state of the session when the session cannot send it (`StateLost`, or the reason of a blocked session) instead of staying queued. A `failed` row of this kind is handled by `retry` or `discard`.
+- A refused write of the session record to the disk ends at the next online or foreground event: calls get `Storage` until then, and work after the write went through. The app adds no timer.
+- The file probe of a custom `Preparer` reports the turn of a video as 0, 90, 180 or 270, an EXIF orientation as 1 to 8 (any other value is 1), and the location of a video as the key `location`. Remove the own conversion of negative turns and of the platform spelling of the location key.

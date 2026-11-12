@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Write the refused session record again at the next online or foreground event.
+- Show no `localUrl` for a failed upload row without a copy.
+
 ## 6.31.1 - 2026-11-13
 
 ### Fixed
