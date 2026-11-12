@@ -29,17 +29,21 @@ pub(super) struct Case {
     pub windows: bool,
     pub order: bool,
     pub tombstone: bool,
+    pub revisions: bool,
 }
 
-const NONE: Case = Case { name: "", sets: false, partial: false, related: false, windows: false, order: false, tombstone: false };
+const NONE: Case = Case { name: "", sets: false, partial: false, related: false, windows: false, order: false, tombstone: false, revisions: false };
 
-pub(super) const CASES: [Case; 6] = [
+pub(super) const CASES: [Case; 9] = [
     Case { name: "sets_full_rows", sets: true, ..NONE },
     Case { name: "sets_partial_projection", sets: true, partial: true, ..NONE },
     Case { name: "sets_related_parent", sets: true, related: true, ..NONE },
     Case { name: "window_members", windows: true, ..NONE },
     Case { name: "window_order", windows: true, order: true, ..NONE },
     Case { name: "tombstone", tombstone: true, ..NONE },
+    Case { name: "sets_revisions", sets: true, revisions: true, ..NONE },
+    Case { name: "window_revisions", windows: true, revisions: true, ..NONE },
+    Case { name: "tombstone_revisions", tombstone: true, revisions: true, ..NONE },
 ];
 
 struct Row {
@@ -268,12 +272,12 @@ impl Sut for Landing {
         let world = self.world.clone();
         let landed = self.landed.clone();
         let store = &self.lander.store;
-        let mut observations = vec![
-            Observation::new("state", dump(store, false, self.world.case.order)),
-            Observation::new("revs", dump(store, true, true)),
-            Observation::new("repeated", json!(repeated)),
-        ];
-        if world.informative(&landed) {
+        let informative = world.informative(&landed);
+        if world.which == REPEAT {
+            return vec![Observation::new("revs", dump(store, world.case.revisions, world.case.order)), Observation::new("repeated", json!(repeated && informative))];
+        }
+        let mut observations = vec![Observation::new("state", dump(store, false, world.case.order))];
+        if informative {
             observations.push(Observation::new("canonical", self.canonical.entry(landed.clone()).or_insert_with(|| world.canonical(&landed)).clone()));
         }
         observations

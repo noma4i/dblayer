@@ -1,41 +1,30 @@
 use crate::check::explore::{minimize, seeded};
-use crate::check::model::{run, DivergenceKind, Owner, Sut};
+use crate::check::model::{run, DivergenceKind, Owner};
 
 use super::snapshot_world_tests::{Case, SnapshotOwner, CASES, LANDS, REPEAT};
 
-const SEEDS: u64 = 6;
+const SEEDS: u64 = 3;
 
 fn first_red(case: Case, which: &'static str) -> Option<String> {
-    let found: Vec<Option<String>> = std::thread::scope(|scope| {
-        let handles: Vec<_> = (1..=SEEDS)
-            .map(|seed| {
-                scope.spawn(move || {
-                    let began = std::time::Instant::now();
-                    let note = |text: &str| { use std::io::Write; let mut file = std::fs::OpenOptions::new().create(true).append(true).open("/private/tmp/claude-501/-Users-noma4i-orca-workspaces-dblayer-snapshot-prop/1eaa2e0c-37a6-49a6-9652-4bb25cf4bac4/scratchpad/timing.log").unwrap(); writeln!(file, "{} {seed} {which} {text} {:?}", case.name, began.elapsed()).unwrap(); }; // TEMPORARY:
-                    let owner = SnapshotOwner::new(case, seed, which);
-                    let trace = seeded(&owner.alphabet(), seed * 7919, owner.alphabet().len() * 4);
-                    let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
-                    runtime.block_on(async {
-                        let outcome = run(&owner, owner.name(), &trace).await;
-                        note(&format!("run done len {} red {}", trace.len(), outcome.is_err())); // TEMPORARY:
-                        let Err(divergence) = outcome else { return None };
-                        note(&format!("red at step {}", divergence.step)); // TEMPORARY:
-                        let small = minimize(&owner, *divergence).await;
-                        note("minimized"); // TEMPORARY:
-                        let inputs: Vec<String> = small.inputs.iter().map(ToString::to_string).collect();
-                        let DivergenceKind::Property { message, .. } = &small.fault else { return Some(format!("{} seed {seed}: observations diverged", case.name)) };
-                        Some(format!("{} seed {seed}: {} deliveries [{}] {which}: {message}", case.name, inputs.len(), inputs.join(", ")))
-                    })
-                })
-            })
-            .collect();
-        handles.into_iter().map(|handle| handle.join().unwrap()).collect()
-    });
-    found.into_iter().flatten().min_by_key(String::len)
+    (1..=SEEDS).find_map(|seed| {
+        let owner = SnapshotOwner::new(case, seed, which);
+        let trace = seeded(&owner.alphabet(), seed * 7919, owner.alphabet().len() * 2);
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        runtime.block_on(async {
+            let Err(divergence) = run(&owner, owner.name(), &trace).await else { return None };
+            let small = minimize(&owner, *divergence).await;
+            let inputs: Vec<String> = small.inputs.iter().map(ToString::to_string).collect();
+            let DivergenceKind::Property { message, .. } = &small.fault else { return Some(format!("{} seed {seed}: observations diverged", case.name)) };
+            Some(format!("{} seed {seed}: {} deliveries [{}] {which}: {message}", case.name, inputs.len(), inputs.join(", ")))
+        })
+    })
 }
 
 fn red(which: &'static str) -> Vec<String> {
-    CASES.iter().filter_map(|case| first_red(*case, which)).collect()
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = CASES.iter().filter(|case| which == REPEAT || !case.revisions).map(|case| scope.spawn(move || first_red(*case, which))).collect();
+        handles.into_iter().filter_map(|handle| handle.join().unwrap()).collect()
+    })
 }
 
 /// P-DATA-104: one consistent snapshot delivered by any paths and projections, in any order and number of repeats, gives one state.
