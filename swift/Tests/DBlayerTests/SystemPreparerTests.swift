@@ -214,6 +214,7 @@ private func level(_ image: CGImage, x: Int, y: Int) throws -> Double {
 private struct Row {
   let name: String
   var mayFail = false
+  var kind: PrepareKind = .video
   let make: (URL) async throws -> Void
   let plan: ([String]) -> PreparePlan
   let check: (URL) async throws -> String
@@ -251,7 +252,7 @@ private func pictureRow(
 ) -> Row {
   let sideways = turn.rotationDegrees % 180 == 90
   return Row(
-    name: name, mayFail: mayFail,
+    name: name, mayFail: mayFail, kind: .image,
     make: { try writePicture($0, type: type, width: width, height: height, orientation: orientation, alpha: alpha, tagged: true) },
     plan: { _ in photo(UInt32(width), UInt32(height), turn: turn, format: format) },
     check: {
@@ -330,8 +331,7 @@ struct SystemPreparerTests {
         continue
       }
       var keys: [String] = []
-      let kind: PrepareKind = if case .image = row.plan([]) { .image } else { .video }
-      switch await preparer.probe(path: source.path, kind: kind) {
+      switch await preparer.probe(path: source.path, kind: row.kind) {
       case let .video(_, metadataKeys): keys = metadataKeys
       case .image: break
       case let .failed(message):
