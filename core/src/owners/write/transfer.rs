@@ -283,6 +283,11 @@ impl TransferState {
     /// The multipart upload a removed transfer leaves on the server: it gets `abort` until the server answers.
     pub(super) fn orphan_of(transfer: &Transfer) -> Option<String> { transfer.upload_id.clone().filter(|_| !transfer.aborted && transfer.signed_id.is_none()) }
 
+    /// P-XFER-49: the debt of a minted id lives while its upload is not done: its transfer still holds the id as an orphan, or the debt has no transfer.
+    pub(super) fn debt_live(&self, upload_id: &str, debt: &MintedDebt) -> bool {
+        debt.transfer.is_none_or(|id| self.transfers.get(&id).and_then(Self::orphan_of).as_deref() == Some(upload_id))
+    }
+
     pub(super) fn removal_orphan(transfer: &Transfer, removal: &Removal) -> Option<String> {
         match removal {
             Removal::Cancel => Self::orphan_of(transfer),
@@ -439,8 +444,8 @@ impl TransferState {
     #[cfg(test)]
     pub fn minted_attempt(&self, upload_id: &str) -> Option<AttemptId> { self.minted.get(upload_id).map(|debt| debt.attempt_id) }
 
-    /// The Store refused the write of a minted `upload_id`: the debt stays and the write goes again after the backoff.
-    pub(super) fn owe_minted(&mut self, pending: &Pending, fx: &mut Fx) {
+    /// The Store refused the write of a minted `upload_id`: the debt stays, and with `retry` the write goes again after the backoff.
+    pub(super) fn owe_minted(&mut self, pending: &Pending, retry: bool, fx: &mut Fx) {
         let owed = match (&pending.orphan, pending.ids.first().and_then(|id| self.transfers.get(id))) {
             (Some((upload_id, key)), _) => Some((upload_id.clone(), key.clone(), None)),
             (None, Some(transfer)) => transfer.upload_id.clone().map(|upload_id| (upload_id, transfer.key.clone(), Some(transfer.transfer_id))),
@@ -450,7 +455,9 @@ impl TransferState {
         let attempts = self.minted.get(&upload_id).map_or(1, |debt| debt.attempts + 1);
         let attempt_id = self.next_attempt;
         self.next_attempt += 1;
-        fx.push(Effect::Backoff { id: ScheduleId(RETRY_TIMER + attempt_id), policy: RetryPolicy::Upload, attempt: attempts.max(1), input: TransferInput::Tick { kind: TransferTick::Minted { upload_id: upload_id.clone(), attempt_id } } });
+        if retry {
+            fx.push(Effect::Backoff { id: ScheduleId(RETRY_TIMER + attempt_id), policy: RetryPolicy::Upload, attempt: attempts.max(1), input: TransferInput::Tick { kind: TransferTick::Minted { upload_id: upload_id.clone(), attempt_id } } });
+        }
         self.minted.insert(upload_id, MintedDebt { transfer, key, attempts, attempt_id });
     }
 
@@ -615,14 +622,18 @@ impl TransferState {
                 (None, Some(transfer)) => transfer.upload_id.clone().map(|upload_id| (upload_id, transfer.key.clone())),
                 (None, None) => None,
             };
-            if !ends {
-                self.owe_minted(&pending, fx);
-            } else if let (StoreKind::ControlOrphan, Some((upload_id, key))) = (pending.kind, minted.clone()) {
-                let attempt_id = self.next_attempt;
-                self.next_attempt += 1;
-                self.minted.insert(upload_id, MintedDebt { transfer: None, key, attempts: 1, attempt_id });
-            } else if let (false, Some((upload_id, key))) = (pending.kind == StoreKind::ControlOrphan, minted) {
-                self.write_control_orphan(upload_id, key, fx);
+            match &rejected.reason {
+                RejectReason::Storage(_) | RejectReason::StaleGeneration { .. } => self.owe_minted(&pending, true, fx),
+                RejectReason::Invalid => self.owe_minted(&pending, false, fx),
+                RejectReason::Closed | RejectReason::NoSession => {
+                    if let (StoreKind::ControlOrphan, Some((upload_id, key))) = (pending.kind, minted.clone()) {
+                        let attempt_id = self.next_attempt;
+                        self.next_attempt += 1;
+                        self.minted.insert(upload_id, MintedDebt { transfer: None, key, attempts: 1, attempt_id });
+                    } else if let (false, Some((upload_id, key))) = (pending.kind == StoreKind::ControlOrphan, minted) {
+                        self.write_control_orphan(upload_id, key, fx);
+                    }
+                }
             }
             return;
         }
