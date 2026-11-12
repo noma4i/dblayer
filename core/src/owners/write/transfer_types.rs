@@ -236,6 +236,8 @@ pub struct CommitRequest {
     pub effects: crate::owners::store::IntentEffects,
     pub variables: serde_json::Map<String, serde_json::Value>,
     pub wrap: Option<String>,
+    /// The row of the commit exists already: the owner refuses after it checked the transfer.
+    pub refused: bool,
 }
 
 /// The `Commit` the Store has not confirmed: the effects and the body of the final mutation that the batch writes.

@@ -16,6 +16,7 @@ impl TransferState {
         if !transfer.held || transfer.commit_reply.is_some() { return reply(fx, rep, TransferAnswer::Err(Fault::Invalid)); }
         let open = matches!(transfer.stage, TransferStage::Preparing | TransferStage::Measuring | TransferStage::PersistingPrepared | TransferStage::Ready | TransferStage::PersistingAttempt | TransferStage::Uploading | TransferStage::PersistingPart | TransferStage::Held | TransferStage::Failed);
         if !open { return reply(fx, rep, TransferAnswer::Err(Fault::InFlight)); }
+        if request.refused { return reply(fx, rep, TransferAnswer::Err(Fault::Invalid)); }
         let Some(body) = merged_body(&transfer.mutation.body, &request.variables, request.wrap.as_deref()) else { return reply(fx, rep, TransferAnswer::Err(Fault::Invalid)) };
         transfer.commit = Some(CommitPlan { effects: request.effects, body });
         transfer.commit_reply = Some(rep);

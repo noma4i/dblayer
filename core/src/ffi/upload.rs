@@ -255,10 +255,16 @@ impl Database {
         let (planned, variables) = self.offload(move || {
             let mut values = super::upload_wire::object(&values_json)?;
             values.insert("id".into(), Value::String(row));
-            Ok((db.plan_create(&name, values, Map::new())?, super::upload_wire::object(&variables_json)?))
+            let variables = super::upload_wire::object(&variables_json)?;
+            match db.plan_create(&name, values, Map::new()) {
+                Ok(planned) => Ok((Some(planned.effects), variables)),
+                Err(crate::store::CoreError::AlreadyExists { .. }) => Ok((None, variables)),
+                Err(error) => Err(error.into()),
+            }
         }).await?;
         let wrap = self.db.spec(&model)?.upload_action(&action).ok_or_else(|| invalid("upload action is not declared"))?.wrap.clone();
-        let waiter = self.life.commit_upload(epoch, key_of(&model, &row_id, &action), CommitRequest { effects: planned.effects, variables, wrap });
+        let refused = planned.is_none();
+        let waiter = self.life.commit_upload(epoch, key_of(&model, &row_id, &action), CommitRequest { effects: planned.unwrap_or_default(), variables, wrap, refused });
         let TransferAnswer::Receipt(held) = self.transfer_answer(epoch, waiter, "commit").await? else { return Err(DbError::Internal { detail: "the owner answered a commit with no receipt".into() }) };
         let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&model, shown)).transpose()?;
         Ok(self.transfer_receipt(epoch, model, held, value))
