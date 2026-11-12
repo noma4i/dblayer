@@ -313,6 +313,82 @@ fn life_start_goes_with_the_first_saved_record() {
     assert!(twin.history.iter().any(|effect| matches!(effect, LifecycleEffect::RestoreReady { epoch: 1 })), "e: the restore of the open ends");
 }
 
+/// life_ending_failed_retried_on_event: `Online(true)` and `Foreground` of `EndingFailed` write the erase of the account again, once per event; the erase in flight takes no event.
+#[test]
+fn life_ending_failed_retried_on_event() {
+    let count = |effects: &[LifecycleEffect], wanted: fn(&LifecycleEffect) -> bool| effects.iter().filter(|effect| wanted(effect)).count();
+    let publish_ending = |effect: &LifecycleEffect| matches!(effect, LifecycleEffect::Publish { published, .. } if published.state == PublishedState::Ending);
+    let clear_account = |effect: &LifecycleEffect| matches!(effect, LifecycleEffect::ClearAccount { epoch_old: 2, .. });
+    let mut twin = session(1);
+    twin.feed(reset(5));
+    let failed = clear_failed(&twin);
+    twin.feed(failed);
+    assert_eq!((twin.published().state, twin.replies()), (PublishedState::EndingFailed, vec![(5, Err(LifecycleError::Storage))]));
+    assert!(twin.feed(LifecycleInput::Online(false)).is_empty(), "offline writes nothing");
+    let effects = twin.feed(LifecycleInput::Online(true));
+    assert_eq!((count(&effects, publish_ending), count(&effects, clear_account), twin.published().state, twin.erases().len()), (1, 1, PublishedState::Ending, 1), "an event writes the erase once");
+    assert!(twin.feed(LifecycleInput::Foreground).is_empty(), "an event while the erase is in flight does nothing");
+    let failed = clear_failed(&twin);
+    twin.feed(failed);
+    assert_eq!(twin.published().state, PublishedState::EndingFailed, "the refused retry returns EndingFailed");
+    let effects = twin.feed(LifecycleInput::Foreground);
+    assert_eq!((count(&effects, clear_account), twin.published().state), (1, PublishedState::Ending), "the next event repeats it");
+    let done = cleared(&twin);
+    twin.feed(done);
+    twin.settle();
+    assert_eq!(*twin.phase(), LifecyclePhase::NoSession { epoch: 3 });
+    assert!(twin.history.iter().any(|effect| matches!(effect, LifecycleEffect::EpochStarted { epoch: 3, .. })), "the next epoch starts after the retry");
+    assert_eq!(twin.replies().iter().filter(|(id, _)| *id == 5).cloned().collect::<Vec<_>>(), vec![(5, Err(LifecycleError::Storage))], "the reset heard the first refusal once");
+}
+
+/// life_prop_storage_failed_exits, P-LIFE-25: after `SaveFailed` or `ClearFailed`, any events and refused retries, one `Online(true)` or `Foreground` with the Store back leaves `StorageFailed` and `EndingFailed`; without refusals no event writes.
+#[test]
+fn life_prop_storage_failed_exits() {
+    let events = [LifecycleInput::Online(true), LifecycleInput::Online(false), LifecycleInput::Foreground];
+    let mut traces: Vec<Vec<LifecycleInput>> = vec![Vec::new()];
+    for length in 1..=3 {
+        let mut next = Vec::new();
+        for trace in traces.iter().filter(|trace| trace.len() == length - 1) {
+            for event in &events {
+                let mut longer = trace.clone();
+                longer.push(event.clone());
+                next.push(longer);
+            }
+        }
+        traces.extend(next);
+    }
+    let refuse = |twin: &mut Twin, erase: bool| {
+        if erase {
+            for erase_id in twin.erases() { twin.feed(LifecycleInput::ClearFailed { erase_id, error: SQL.into() }); }
+        } else {
+            for id in twin.publications() { twin.feed(save_failed(id)); }
+        }
+    };
+    for erase in [false, true] {
+        for trace in &traces {
+            let mut twin = if erase { session(1) } else { Twin::new() };
+            twin.feed(if erase { reset(5) } else { credential(1) });
+            refuse(&mut twin, erase);
+            for event in trace {
+                twin.feed(event.clone());
+                refuse(&mut twin, erase);
+            }
+            let failed = |twin: &Twin| twin.cell().state == PublishedState::StorageFailed || twin.published().state == PublishedState::EndingFailed;
+            assert!(failed(&twin), "erase={erase} {trace:?}: the refusal holds until an event");
+            twin.feed(LifecycleInput::Online(true));
+            if erase {
+                for erase_id in twin.erases() { twin.feed(LifecycleInput::Cleared { erase_id }); }
+            }
+            twin.settle();
+            assert!(!failed(&twin), "erase={erase} {trace:?}: one event with the Store back leaves the state");
+        }
+    }
+    for input in traces.iter().flatten() {
+        let mut quiet = Twin::new();
+        assert!(quiet.feed(input.clone()).is_empty(), "{input:?}: no refusal, no write");
+    }
+}
+
 /// life_network_event_ignored: with no `StorageFailed` an event writes nothing, in every phase.
 #[test]
 fn life_network_event_ignored() {

@@ -5,6 +5,7 @@
 ### Fixed
 
 - Write the refused session record again at the next online or foreground event.
+- Repeat the erase of the account data after a refused disk write at the next online or foreground event.
 - Show no `localUrl` for a failed upload row without a copy.
 - Refuse the copy of a source file that was emptied after the call read its size.
 
