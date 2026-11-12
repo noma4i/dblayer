@@ -258,12 +258,12 @@ fn data_newer_order_is_total() {
             permutations(&rest).into_iter().map(move |mut tail| { tail.insert(0, head); tail })
         }).collect()
     }
-    let sets: [Vec<(&str, i64, Option<i64>)>; 3] = [
+    let groups: [Vec<(&str, i64, Option<i64>)>; 3] = [
         vec![("9", 2, None), ("10", 2, None), ("8", 2, None), ("m0", 1, None)],
         vec![("m1", 2, Some(1)), ("m2", 2, Some(1)), ("m3", 5, None), ("m4", 5, Some(0))],
         vec![("m1", 3, None), ("m2", 3, None), ("m3", 3, None), ("m4", 3, None)],
     ];
-    for children in sets {
+    for children in groups {
         let kids: Vec<Child> = children.iter().map(|(id, at, seq)| Child { id: (*id).into(), at: *at, seq: *seq, body: (*id).into() }).collect();
         let first = newest(&kids).unwrap().id.clone();
         for order in permutations(&(0..kids.len()).collect::<Vec<_>>()) {

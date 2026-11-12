@@ -1,4 +1,4 @@
-use crate::check::model::{Owner, Sut};
+use crate::check::model::Owner;
 use crate::check::explore::seeded;
 use serde_json::json;
 
