@@ -15,6 +15,6 @@ macro_rules! sums_each_field {
 fn adding_counters_sums_every_field_and_no_other() {
     sums_each_field!(
         membership_missing_entity, unknown_operation_acks, observation_reads, observer_calls, rows_delivered,
-        rows_read, edge_read_steps, edge_read_scans, outbox_candidates,
+        rows_read, edge_read_steps, edge_read_scans, outbox_candidates, pointer_rows_read,
     );
 }
