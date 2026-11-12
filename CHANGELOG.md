@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Fix upload attempts burning while a step waits for the session queue.
+- Fix a saved write without its declared operation waiting silently: it now fails with `refused`.
+
 ## 6.31.0 - 2026-11-13
 
 ### Added

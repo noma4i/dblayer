@@ -119,6 +119,8 @@ scope.operations().collect { item ->
 
 `retry` sends a failed write again and throws `NotFound` when the write is gone. `discard` drops a write that is not on its way and rolls back its optimistic change; it throws `InFlight` for a write that is on its way. A write queued behind a failed write of the same row waits and shows `blockedBy`.
 
+A saved write or upload whose operation the app does not declare any more (an app update with an older generated set) ends `failed` with a `refused` error once the registration of the app is complete. The text is "the operation <model>.<action> is not declared", and "the upload operation <model>.<action> is not declared" for an upload. `retry` throws `Invalid` with the same text until a registration declares the operation, then it sends the write again.
+
 ## How a mutation is sent
 
 The network decides what happens to a mutation that did not get an answer:
