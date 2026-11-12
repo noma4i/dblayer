@@ -12,6 +12,8 @@
 ### Fixed
 
 - A row created on the device keeps the value its create gives to a `sets:` field.
+- Keep the `sets:` value a local write gives to the row of a parent.
+- Land a saved create answer on reopen instead of rolling the row back.
 
 ## 6.27.0 - 2026-11-12
 
