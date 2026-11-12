@@ -211,10 +211,10 @@ async fn xfer_detached_prop_one_put_through_restart() {
         let temporary = temporary.clone();
         async move {
             let task = recorded_task(&image, &temporary);
-            for lost in [false, true] {
+            let copies = [image.clone(), twin(&image)];
+            for (lost, image) in [false, true].into_iter().zip(copies) {
                 let detached = Arc::new(Detached::default());
-                if let Some(identity) = task { detached.plant(SystemTask { identity, outcome: None }); }
-                if !lost && task.is_some() { detached.finish_offline(0, Detached::ok()); }
+                if let (Some(identity), false) = (task, lost) { detached.plant(SystemTask { identity, outcome: Some(Detached::ok()) }); }
                 let (fresh, reopened) = reopen_with(&image, &secret, &[CREATE_MOMENT], detached.clone(), script).await;
                 if task.is_some() && !lost { drained(&reopened).await; } else { crate::test_wait::settled(&reopened, "opened", || true).await; }
                 let new_starts = detached.started().len();
@@ -236,7 +236,7 @@ async fn xfer_detached_prop_one_put_through_restart() {
 /// The id of the task a file records: the transfer and the count of attempts, when the attempt has the upload recorded and no presign waits for its answer, so the executor may hold a task of it.
 fn recorded_task(image: &std::path::Path, _temporary: &str) -> Option<PutIdentity> {
     let connection = rusqlite::Connection::open(image).unwrap();
-    rusqlite::OptionalExtension::optional(connection.query_row("SELECT transfer_id, attempts FROM sync_upload WHERE upload_id IS NOT NULL AND attempts > 0 AND completed IS NOT 1 AND NOT EXISTS (SELECT 1 FROM encrypted_pending)", [], |row| Ok(PutIdentity { epoch: 0, transfer_id: row.get::<_, i64>(0)? as u64, attempt_id: row.get::<_, i64>(1)? as u64 }))).unwrap()
+    rusqlite::OptionalExtension::optional(connection.query_row("SELECT transfer_id, attempts FROM sync_upload WHERE upload_id IS NOT NULL AND attempts > 0 AND completed IS NOT 1 AND NOT EXISTS (SELECT 1 FROM encrypted_pending) AND (SELECT count(*) FROM sync_upload_part WHERE etag IS NOT NULL) < total", [], |row| Ok(PutIdentity { epoch: 0, transfer_id: row.get::<_, i64>(0)? as u64, attempt_id: row.get::<_, i64>(1)? as u64 }))).unwrap()
 }
 
 /// P-XFER-75: the outcome of a task counts once. A repeat of the outcome, an outcome after the part is confirmed and an outcome after the transfer was cancelled change nothing: `Complete` and the final mutation go once.
@@ -260,4 +260,14 @@ async fn xfer_detached_prop_ended_once() {
     crate::test_wait::settled(&cancelled.database, "the outcome after the cancel was answered", || cancelled.detached.cancelled().len() == 2).await;
     assert_eq!((cancelled.stand.script.count("CompleteMultipart"), cancelled.stand.script.count("CreateMoment")), (0, 0));
     cancelled.database.close_now();
+}
+
+/// A second copy of an image with its log and files directory: each variant of a cut opens its own file.
+fn twin(image: &std::path::Path) -> std::path::PathBuf {
+    let twin = image.with_extension("twin.sqlite");
+    std::fs::copy(image, &twin).unwrap();
+    let wal = |path: &std::path::Path| std::path::PathBuf::from(format!("{}-wal", path.display()));
+    if wal(image).exists() { std::fs::copy(wal(image), wal(&twin)).unwrap(); }
+    copy_tree(&files_of(image), &files_of(&twin));
+    twin
 }
