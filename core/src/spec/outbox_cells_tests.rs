@@ -976,16 +976,6 @@ fn out_landing_committed_stale() {
 }
 
 #[test]
-fn out_landing_invalid() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    let effects = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
-    assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
-    assert!(twin.store_text.contains(&format!("MarkError {{ op_id: {id}, error: Some(\"Internal(Invalid): bad row\")")), "{}", twin.store_text);
-}
-
-#[test]
 fn out_rollback_invalid() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);

@@ -7,7 +7,7 @@ use crate::owners::session::StoredAnswer;
 use crate::owners::write::outbox::{CommitKind, Fault, OutboxAnswer, OutboxInput, OutboxOutcome, Phase, Receipt, StoredOp};
 use crate::runtime::Cause;
 
-fn stored(op_id: u64, row: &str) -> StoredOp {
+pub(super) fn stored(op_id: u64, row: &str) -> StoredOp {
     StoredOp { answered: None, op_id, op: model_op(row, Policy::Rollback, false), created_at: 0, error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() }
 }
 
@@ -30,13 +30,13 @@ fn out_restore_discards_only_orphaned_transfer_intents() {
     assert!(twin.store_text.contains("RetireTransferOutcome") && twin.store_text.contains("Discarded"), "{}", twin.store_text);
 }
 
-fn declare(twin: &mut Twin) { twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] }); }
+pub(super) fn declare(twin: &mut Twin) { twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] }); }
 
-fn restore(twin: &mut Twin, ops: Vec<StoredOp>) -> Vec<OutboxEffect> {
+pub(super) fn restore(twin: &mut Twin, ops: Vec<StoredOp>) -> Vec<OutboxEffect> {
     twin.post(OutboxInput::Restored { ops, pending_lost: false }).into_iter().filter(|effect| !matches!(effect, OutboxEffect::RestoreClassified { .. })).collect()
 }
 
-fn ready(twin: &mut Twin) -> Vec<OutboxEffect> { twin.post(OutboxInput::RestoreReady { epoch: EPOCH }) }
+pub(super) fn ready(twin: &mut Twin) -> Vec<OutboxEffect> { twin.post(OutboxInput::RestoreReady { epoch: EPOCH }) }
 
 fn classified(effects: &[OutboxEffect]) -> Vec<u64> {
     effects.iter().filter_map(|effect| match effect { OutboxEffect::RestoreClassified { epoch } => Some(*epoch), _ => None }).collect()

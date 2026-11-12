@@ -52,6 +52,7 @@ mod outbox_queue_tests;
 mod outbox_marks_tests;
 mod outbox_reserve_tests;
 mod outbox_restore_tests;
+mod outbox_write_failure_tests;
 mod outbox_open_cells_tests;
 mod outbox_landing_cells_tests;
 mod outbox_end_cells_tests;
