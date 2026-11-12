@@ -67,6 +67,7 @@ pub struct AttributeDecl {
     pub from: Option<Spanned<String>>,
     pub merge: Option<Spanned<MergeRule>>,
     pub local: bool,
+    pub derived: bool,
     pub values: Option<Vec<String>>,
     pub as_name: Option<String>,
     pub parse_json: bool,
@@ -123,7 +124,8 @@ pub struct AssociationDecl {
     pub foreign_key: Option<String>,
     pub touch: bool,
     pub sets: Vec<(String, String)>,
-    pub newer: Vec<(String, String)>,
+    pub newer: Vec<String>,
+    pub newer_pos: Option<Pos>,
     pub from: Option<String>,
     pub dependent: bool,
 }

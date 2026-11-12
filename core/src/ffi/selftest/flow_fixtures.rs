@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 
 use super::rig_tests::Rig;
 use crate::ffi::wire::{wire_fields, Cell, WireRow};
-use crate::schema::{ActionDeclaration, RootShape, AssociationKind, AssociationSpec, FieldSpec, ModelSpec, Newer, RelationSpec};
+use crate::schema::{ActionDeclaration, RootShape, AssociationKind, AssociationSpec, FieldSpec, ModelSpec, RelationSpec};
 use crate::value::ScalarKind;
 
 /// The stored members of one selection of `model`: row id and place key, in list order.
@@ -18,9 +18,9 @@ pub(super) fn chat_spec() -> ModelSpec {
     let mut chat = ModelSpec::new("Chat", vec![
         FieldSpec::scalar("id", ScalarKind::Id),
         FieldSpec::scalar("name", ScalarKind::Str).optional(),
-        optional("lastMessageId", ScalarKind::Id),
-        optional("lastMessageAt", ScalarKind::Int),
-        optional("lastActivityAt", ScalarKind::Int),
+        optional("lastMessageId", ScalarKind::Id).derived(),
+        optional("lastMessageAt", ScalarKind::Int).derived(),
+        optional("lastActivityAt", ScalarKind::Int).derived(),
         optional("unreadCount", ScalarKind::Int),
         optional("pinned", ScalarKind::Bool),
         optional("muted", ScalarKind::Bool),
@@ -47,7 +47,7 @@ pub(super) fn add_chat(models: &mut Value) {
     let message = models.iter_mut().find(|model| model["key"] == "Message").unwrap();
     let mut chat = AssociationSpec::new("chat", AssociationKind::BelongsTo, "Chat", "chatId");
     chat.sets = [("lastMessageId", "id"), ("lastMessageAt", "at"), ("lastActivityAt", "at")].map(|(parent, child)| (parent.to_string(), child.to_string())).into();
-    chat.newer = vec![Newer { child: "at".to_string(), parent: "lastMessageAt".to_string() }];
+    chat.newer = vec!["at".to_string()];
     message["fields"].as_array_mut().unwrap().push(serde_json::to_value(optional("status", ScalarKind::Str)).unwrap());
     for field in [optional("authorId", ScalarKind::Id), optional("isForwarded", ScalarKind::Bool), optional("forwardedFromUserId", ScalarKind::Id)] {
         message["fields"].as_array_mut().unwrap().push(serde_json::to_value(field).unwrap());

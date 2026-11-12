@@ -1,5 +1,5 @@
 use dblayer::schema::{
-    ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, CursorSpec, Dependent, EphemeralSpec, FieldKind, FieldSpec, MergeRule, ModelSpec, Newer, NodeRead,
+    ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, CursorSpec, Dependent, EphemeralSpec, FieldKind, FieldSpec, MergeRule, ModelSpec, NodeRead,
     PageDirection, CopyValue, ReceiverCopy, RelationSpec, RemoteShape, RemoteSpec, RootShape, ScopeEffect, ScopeEffectKind, Sort, SortField, SubscriptionAction, SubscriptionApply, UpdatesSpec, VariableSource, NODE_PARAM, EffectSource,
 };
 use dblayer::value::ScalarKind;
@@ -123,6 +123,7 @@ fn build_field(attribute: &AttributeDecl, owner: &str) -> FieldSpec {
         }
     };
     field.nullable = attribute.null;
+    field.derived = attribute.derived;
     field.optional = attribute.optional;
     field.parse_json = attribute.parse_json;
     field.id_from_parent = attribute.id_from.clone();
@@ -186,7 +187,7 @@ fn build_association(association: &AssociationDecl, owner: &str) -> AssociationS
     let mut built = AssociationSpec::new(&association.name, kind, &association_target(association), &association_key(association, owner));
     built.touches_parent = association.touch;
     built.sets = association.sets.iter().cloned().collect();
-    built.newer = association.newer.iter().map(|(child, parent)| Newer { child: child.clone(), parent: parent.clone() }).collect();
+    built.newer = association.newer.clone();
     built.from = association.from.clone();
     built.dependent = association.dependent.then_some(Dependent::Destroy);
     built

@@ -1,7 +1,8 @@
 model Container do
   attribute :title, :string
-  attribute :lastRecordAt, :date, null: true
-  attribute :lastRecordId, :id, null: true
+  attribute :lastRecordAt, :date, derived: true
+  attribute :lastRecordId, :id, derived: true
+  attribute :lastSequenceNumber, :int, derived: true
   attribute :shareUrl, :string, null: true
   attribute :isPublic, :bool, null: true
   attribute :shelves, [:enum], values: ["PRIMARY", "SECONDARY"], as: ContainerShelf, null: true

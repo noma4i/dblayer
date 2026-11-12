@@ -189,7 +189,7 @@ fn key_of(field: &FieldSpec) -> &str {
 }
 
 fn writable_fields(model: &ModelSpec) -> Vec<&FieldSpec> {
-    model.fields.iter().filter(|field| field.name != "id" && !field.is_local() && !is_file(field)).collect()
+    model.fields.iter().filter(|field| field.name != "id" && !field.is_local() && !field.derived && !is_file(field)).collect()
 }
 
 fn create_fields<'a>(model: &ModelSpec, fields: &[&'a FieldSpec]) -> Vec<&'a FieldSpec> {

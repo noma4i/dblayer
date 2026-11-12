@@ -50,7 +50,7 @@ impl<'a> Run<'a> {
     }
 
     fn require_payload_fields(&mut self, node: &'a ModelDecl, fields: &'a [AttributeDecl], operation: &str, prefix: &[&str], starts: &[&'a Select]) {
-        for field in fields.iter().filter(|field| !field.local) {
+        for field in fields.iter().filter(|field| !field.local && !field.derived) {
             let Some(path) = self.path_of(node, field, &field.name).map(|path| path.join(".")) else { continue };
             let Some(found) = self.follow_inside(Spot { file: node.file, at: field.pos, label: "payload field" }, operation, prefix, starts, &path) else { continue };
             if let Some((_, Body::Fields(children))) = self.body_of(field, node.file) {

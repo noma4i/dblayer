@@ -44,8 +44,12 @@ impl AssociationSpec {
         self.sets.iter().find(|(_, child)| child.as_str() == "id").map(|(parent, _)| parent.as_str())
     }
 
+    fn compared_parents(&self) -> impl Iterator<Item = &str> {
+        self.newer.iter().flat_map(|field| self.sets.iter().filter(move |(_, child)| *child == field).map(|(parent, _)| parent.as_str()))
+    }
+
     fn child_order<'a>(&'a self, row: &'a Map<String, Value>) -> Order<'a> {
-        Order { id: row.get("id").and_then(Value::as_str), tuple: self.newer.iter().map(|newer| present(row.get(&newer.child))).collect() }
+        Order { id: row.get("id").and_then(Value::as_str), tuple: self.newer.iter().map(|field| present(row.get(field))).collect() }
     }
 
     pub fn newest<'a>(&self, children: impl IntoIterator<Item = &'a Map<String, Value>>) -> Option<&'a Map<String, Value>> {
@@ -57,9 +61,9 @@ impl AssociationSpec {
         let mut values = self.chosen(server, newest);
         if newest.and_then(|child| child.get("id")).and_then(Value::as_str).is_some_and(is_temp_id) {
             let behind = self.chosen(server, confirmed);
-            for newer in &self.newer {
-                let Some(held) = behind.get(&newer.parent) else { continue };
-                if values.get(&newer.parent).is_none_or(|value| compare_values(held, value) == Ordering::Greater) { values.insert(newer.parent.clone(), held.clone()); }
+            for parent in self.compared_parents() {
+                let Some(held) = behind.get(parent) else { continue };
+                if values.get(parent).is_none_or(|value| compare_values(held, value) == Ordering::Greater) { values.insert(parent.to_string(), held.clone()); }
             }
         }
         values
@@ -71,7 +75,7 @@ impl AssociationSpec {
         let from_child: Map<String, Value> = self.sets.iter().filter_map(|(parent, field)| present(child.get(field)).map(|value| (parent.clone(), value.clone()))).collect();
         let id = child.get("id").and_then(Value::as_str);
         let pointed = self.pointer_field().and_then(|field| server.get(field)).and_then(Value::as_str).is_some_and(|pointer| Some(pointer) == id);
-        let beats = self.newer.iter().find_map(|newer| Some((from_child.get(&newer.parent)?, server.get(&newer.parent)?))).is_some_and(|(child, server)| compare_values(child, server) == Ordering::Greater);
+        let beats = self.compared_parents().find_map(|parent| Some((from_child.get(parent)?, server.get(parent)?))).is_some_and(|(child, server)| compare_values(child, server) == Ordering::Greater);
         let server_wins = !server.is_empty() && (pointed || (!id.is_some_and(is_temp_id) && !beats));
         let (mut values, winner) = if server_wins { (from_child, server) } else { (server, from_child) };
         values.extend(winner);
@@ -97,7 +101,7 @@ impl ModelSpec {
                     .fields
                     .iter()
                     .filter(|field| set.contains(&(model.key.as_str(), field.name.as_str())))
-                    .map(|field| FieldSpec { name: format!("{SERVER_VALUE}{}", field.name), nullable: true, default: None, indexed: false, from: None, merge: None, searchable: false, ..field.clone() })
+                    .map(|field| FieldSpec { name: format!("{SERVER_VALUE}{}", field.name), nullable: true, default: None, indexed: false, from: None, merge: None, searchable: false, derived: false, ..field.clone() })
                     .filter(|shadow| !model.fields.iter().any(|field| field.name == shadow.name))
                     .collect();
                 model.fields.extend(shadows);

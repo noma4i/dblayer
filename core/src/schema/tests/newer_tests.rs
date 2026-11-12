@@ -1,12 +1,12 @@
 use serde_json::{json, Map, Value};
 
 use super::*;
-use crate::schema::{AssociationKind, Newer};
+use crate::schema::AssociationKind;
 
 fn chat_link() -> AssociationSpec {
     let mut chat = AssociationSpec::new("chat", AssociationKind::BelongsTo, "chats", "chatId");
     chat.sets = [("lastMessageId", "id"), ("lastMessageAt", "createdAt"), ("lastSequenceNumber", "sequenceNumber")].map(|(parent, child)| (parent.to_string(), child.to_string())).into();
-    chat.newer = [("sequenceNumber", "lastSequenceNumber"), ("createdAt", "lastMessageAt")].map(|(child, parent)| Newer { child: child.to_string(), parent: parent.to_string() }).into();
+    chat.newer = vec!["sequenceNumber".to_string(), "createdAt".to_string()];
     chat
 }
 

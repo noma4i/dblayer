@@ -39,7 +39,7 @@ model Record do
     attribute :transcoded, :bool, null: true
     attribute :fileUrl, :string, null: true
   end
-  belongs_to :container, sets: { lastRecordId: :id, lastRecordAt: :createdAt }, newer: { createdAt: :lastRecordAt }
+  belongs_to :container, sets: { lastRecordId: :id, lastRecordAt: :createdAt, lastSequenceNumber: :sequenceNumber }, newer: [:sequenceNumber, :createdAt]
   scope :by_container do
     parameter :containerId, :id
     where containerId: :containerId

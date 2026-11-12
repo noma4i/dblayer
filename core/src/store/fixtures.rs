@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 use crate::store::{BatchPlan, DestroyReason, EntityOp, ScopeOp, ScopeRef};
 use crate::identity::{ModelKey, RowId, ListKey};
 use crate::runtime::ManualClock;
-use crate::schema::{ActionDeclaration, AssociationKind, AssociationSpec, Dependent, FieldSpec, ModelSpec, Newer, RootShape};
+use crate::schema::{ActionDeclaration, AssociationKind, AssociationSpec, Dependent, FieldSpec, ModelSpec, RootShape};
 use crate::value::ScalarKind;
 
 use super::Store;
@@ -141,10 +141,10 @@ pub fn chats_spec() -> ModelSpec {
         vec![
             FieldSpec::scalar("id", ScalarKind::Id),
             FieldSpec::scalar("title", ScalarKind::Str).optional(),
-            FieldSpec::scalar("lastMessageId", ScalarKind::Id).nullable().optional().indexed(),
-            FieldSpec::scalar("lastMessageAt", ScalarKind::Date).nullable().optional(),
-            FieldSpec::scalar("lastSequenceNumber", ScalarKind::Int).nullable().optional(),
-            FieldSpec::scalar("lastMessageBody", ScalarKind::Str).nullable().optional(),
+            FieldSpec::scalar("lastMessageId", ScalarKind::Id).nullable().optional().indexed().derived(),
+            FieldSpec::scalar("lastMessageAt", ScalarKind::Date).nullable().optional().derived(),
+            FieldSpec::scalar("lastSequenceNumber", ScalarKind::Int).nullable().optional().derived(),
+            FieldSpec::scalar("lastMessageBody", ScalarKind::Str).nullable().optional().derived(),
         ],
     );
     let mut messages = AssociationSpec::new("messages", AssociationKind::HasMany, "messages", "chatId");
@@ -177,7 +177,7 @@ pub fn chat_messages_spec() -> ModelSpec {
     let mut chat = AssociationSpec::new("chat", AssociationKind::BelongsTo, "chats", "chatId");
     chat.touches_parent = true;
     chat.sets = [("lastMessageId", "id"), ("lastMessageAt", "createdAt"), ("lastSequenceNumber", "sequenceNumber"), ("lastMessageBody", "body")].map(|(parent, child)| (parent.to_string(), child.to_string())).into();
-    chat.newer = [("sequenceNumber", "lastSequenceNumber"), ("createdAt", "lastMessageAt")].map(|(child, parent)| Newer { child: child.to_string(), parent: parent.to_string() }).into();
+    chat.newer = vec!["sequenceNumber".to_string(), "createdAt".to_string()];
     spec.associations.push(chat);
     spec
 }

@@ -15,7 +15,7 @@ impl<'a> Run<'a> {
     pub(super) fn check_fields(&mut self, node: &'a ModelDecl, attributes: &[&'a AttributeDecl], owner: &str, scope: &Scope<'a>, covered: &mut BTreeSet<String>, stack: &mut Vec<(String, String)>) {
         for attribute in attributes {
             let name = attribute.name.as_str();
-            if attribute.ty == TypeRef::File || attribute.local || name.is_empty() {
+            if attribute.ty == TypeRef::File || attribute.local || attribute.derived || name.is_empty() {
                 continue;
             }
             let Some(path) = self.path_of(node, attribute, name) else { continue };

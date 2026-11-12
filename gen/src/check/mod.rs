@@ -13,6 +13,7 @@ use crate::ParseError;
 mod scope;
 mod attributes;
 mod changes;
+mod derived;
 mod removed_by;
 mod effects;
 mod enums;
@@ -46,6 +47,7 @@ pub fn check(nodes: &[ModelDecl]) -> Result<Vec<ModelSpec>, Vec<Found>> {
         check_model(node, nodes, &mut errors);
     }
     attributes::check_types(nodes, &mut errors);
+    derived::check_derived(nodes, &mut errors);
     if !errors.is_empty() {
         return Err(errors);
     }

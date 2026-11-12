@@ -105,6 +105,7 @@ pub(super) fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> 
         cx.fail(line.pos, format!("attribute `{name}` takes a name and a type"));
     }
     let local = line.opt(cx, "local").and_then(|pair| boolean(cx, &pair.value, "`local`")).unwrap_or(false);
+    let derived = line.opt(cx, "derived").and_then(|pair| boolean(cx, &pair.value, "`derived`")).unwrap_or(false);
     let explicit = call.args.get(1).map(|node| (type_ref(&node.item), node));
     let mut ty_owner = owner.clone();
     let mut resolved: Option<Ty> = None;
@@ -112,7 +113,7 @@ pub(super) fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> 
         Some(Value::Str(text) | Value::Symbol(text)) => text.clone(),
         _ => name.clone(),
     };
-    let schema_field = match (cx.schema, &owner.0, local) {
+    let schema_field = match (cx.schema, &owner.0, local || derived) {
         (Some(schema), Some(type_name), false) => schema_field(schema, type_name, &source_name),
         _ => None,
     };
@@ -120,7 +121,7 @@ pub(super) fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> 
         ty_owner = Owner(Some(reached.name().to_string()));
     }
     let schema_null = site != Site::Returns && schema_field.as_ref().is_some_and(|reached| reached.nullable);
-    if let (Some(schema), Some(type_name), true) = (cx.schema, &owner.0, !local && needs_inference(call)) {
+    if let (Some(schema), Some(type_name), true) = (cx.schema, &owner.0, !local && !derived && needs_inference(call)) {
         let mut ty = Ty { kind: TyKind::Named(type_name.clone()), nullable: false, has_default: false };
         let mut failed = None;
         for part in source_name.split('.') {
@@ -181,6 +182,7 @@ pub(super) fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> 
         from: None,
         merge: None,
         local,
+        derived,
         values: None,
         as_name: None,
         parse_json: false,
@@ -230,6 +232,15 @@ pub(super) fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> 
         } else {
             cx.fail(at(&pair.value), "`merge` must be `:present`, `:non_empty`, `:positive`, `:monotonic`, a list of tiers like `[[:a, :b], [:c]]` or a hash of those per key (a key may also be `:local`)");
         }
+    }
+    if derived {
+        for pair in call.options.iter().filter(|pair| matches!(pair.key.as_str(), "null" | "optional" | "default" | "from" | "local" | "merge" | "id_from")) {
+            cx.fail(pair_pos(pair), format!("derived attribute `{name}` cannot set `{}`: a derived field is nullable and written only by `sets:` of a child", pair.key));
+        }
+        if site != Site::Model || is_file {
+            cx.fail(line.pos, format!("derived attribute `{name}` must be a top-level attribute that is not a file"));
+        }
+        decl.null = true;
     }
     if local && !matches!(site, Site::Model) {
         cx.fail(line.pos, "`local` applies only to a top-level attribute");

@@ -64,6 +64,8 @@ pub enum DeclarationError {
     LocalNotOptional(String),
     #[error("association {0} sets or compares a field that is not declared")]
     SetsUnknownField(String),
+    #[error("association {0} sets a field of its parent that is not declared derived: true")]
+    SetsTargetNotDerived(String),
     #[error("action {action} lands the unknown model {model}")]
     UnknownLanding { action: String, model: String },
     #[error("removed_by {model} matches the field {field} that is not declared")]

@@ -10,7 +10,7 @@ pub(super) fn association(cx: &mut Cx, call: &Call, kind: AssociationKind) -> Op
             return None;
         }
     };
-    let mut decl = AssociationDecl { pos: line.pos, kind, name, class_name: None, foreign_key: None, touch: false, sets: Vec::new(), newer: Vec::new(), from: None, dependent: false };
+    let mut decl = AssociationDecl { pos: line.pos, kind, name, class_name: None, foreign_key: None, touch: false, sets: Vec::new(), newer: Vec::new(), newer_pos: None, from: None, dependent: false };
     decl.class_name = line.opt(cx, "class_name").and_then(|pair| konst(cx, &pair.value, "`class_name`"));
     decl.foreign_key = line.opt(cx, "foreign_key").and_then(|pair| symbol(cx, &pair.value, "`foreign_key`"));
     decl.from = line.opt(cx, "from").and_then(|pair| path(cx, &pair.value, "`from`")).map(|found| found.item);
@@ -18,8 +18,10 @@ pub(super) fn association(cx: &mut Cx, call: &Call, kind: AssociationKind) -> Op
         decl.touch = line.opt(cx, "touch").and_then(|pair| boolean(cx, &pair.value, "`touch`")).unwrap_or(false);
         let sets = line.opt(cx, "sets");
         decl.sets = symbol_pairs(cx, sets, "`sets`");
-        let newer = line.opt(cx, "newer");
-        decl.newer = symbol_pairs(cx, newer, "`newer`");
+        if let Some(pair) = line.opt(cx, "newer") {
+            decl.newer_pos = Some(pair_pos(pair));
+            decl.newer = symbol_list(cx, &pair.value, "`newer`");
+        }
     }
     if matches!(kind, AssociationKind::HasMany | AssociationKind::HasOne) {
         if let Some(pair) = line.opt(cx, "dependent") {
@@ -32,6 +34,16 @@ pub(super) fn association(cx: &mut Cx, call: &Call, kind: AssociationKind) -> Op
     }
     line.finish(cx);
     Some(decl)
+}
+
+fn symbol_list(cx: &mut Cx, node: &Node<Value>, what: &str) -> Vec<String> {
+    match &node.item {
+        Value::Array(items) => items.iter().filter_map(|item| symbol(cx, item, what)).collect(),
+        _ => {
+            cx.fail(at(node), format!("{what} must be a list of child fields like `[:createdAt]`"));
+            Vec::new()
+        }
+    }
 }
 
 pub(super) fn symbol_pairs(cx: &mut Cx, pair: Option<&Pair>, what: &str) -> Vec<(String, String)> {

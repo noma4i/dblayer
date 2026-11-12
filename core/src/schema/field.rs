@@ -48,6 +48,8 @@ pub struct FieldSpec {
     pub merge: Option<MergeRule>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub searchable: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub derived: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<FieldSpec>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -71,6 +73,7 @@ impl FieldSpec {
             values: Vec::new(),
             merge: None,
             searchable: false,
+            derived: false,
             fields: Vec::new(),
             shared: Vec::new(),
         }
@@ -132,6 +135,10 @@ impl FieldSpec {
 
     pub fn nullable(self) -> Self {
         Self { nullable: true, ..self }
+    }
+
+    pub fn derived(self) -> Self {
+        Self { derived: true, nullable: true, ..self }
     }
 
     pub fn optional(self) -> Self {
@@ -254,15 +261,9 @@ pub struct AssociationSpec {
     #[serde(default)]
     pub sets: BTreeMap<String, String>,
     #[serde(default)]
-    pub newer: Vec<Newer>,
+    pub newer: Vec<String>,
     #[serde(default)]
     pub from: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Newer {
-    pub child: String,
-    pub parent: String,
 }
 
 impl AssociationSpec {
@@ -304,8 +305,7 @@ impl AssociationSpec {
         if self.dependent.is_some() && !self.owns_children() {
             return Err(DeclarationError::DependentOnNonOwner(name()));
         }
-        let compared = self.newer.iter().map(|newer| &newer.child);
-        if self.sets.values().chain(compared).any(|field| !fields.contains(field.as_str())) {
+        if self.sets.values().chain(&self.newer).any(|field| !fields.contains(field.as_str())) {
             return Err(DeclarationError::SetsUnknownField(name()));
         }
         Ok(())
@@ -316,9 +316,11 @@ impl AssociationSpec {
         if self.owns_children() && !target.is_indexed(&self.foreign_key) {
             return Err(DeclarationError::ForeignKeyNotIndexed(self.name.clone()));
         }
-        let compared = self.newer.iter().map(|newer| &newer.parent);
-        if self.sets.keys().chain(compared).any(|field| !target.fields.iter().any(|declared| declared.name == *field)) {
+        if self.sets.keys().any(|field| !target.fields.iter().any(|declared| declared.name == *field)) {
             return Err(DeclarationError::SetsUnknownField(self.name.clone()));
+        }
+        if self.sets.keys().any(|field| !target.fields.iter().any(|declared| declared.name == *field && declared.derived)) {
+            return Err(DeclarationError::SetsTargetNotDerived(self.name.clone()));
         }
         Ok(())
     }

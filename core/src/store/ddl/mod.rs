@@ -176,7 +176,7 @@ fn id_order_term() -> String {
 
 pub(crate) fn newer_order(association: &AssociationSpec) -> Vec<(String, bool)> {
     std::iter::once((format!("({})", crate::identity::permanent_row_flag(&sql_ident("id"))), false))
-        .chain(association.newer.iter().map(|newer| (sql_ident(&column_name(&newer.child)), true)))
+        .chain(association.newer.iter().map(|field| (sql_ident(&column_name(field)), true)))
         .chain(std::iter::once((id_order_term(), true)))
         .collect()
 }

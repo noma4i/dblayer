@@ -1,5 +1,5 @@
 use dblayer::schema::{
-    AssociationKind, Coverage, CursorSpec, Dependent, FieldKind, MergeRule, ModelSpec, Newer, OnFailure, PageDirection, RemoteShape, RootShape, Sort, Storage, UpdatesSpec, VariableSource,
+    AssociationKind, Coverage, CursorSpec, Dependent, FieldKind, MergeRule, ModelSpec, OnFailure, PageDirection, RemoteShape, RootShape, Sort, Storage, UpdatesSpec, VariableSource,
 };
 use dblayer::value::{ScalarKind, SortDirection};
 use serde_json::json;
@@ -93,15 +93,15 @@ fn associations_and_composite_index() {
 }
 
 #[test]
-fn a_belongs_to_that_sets_parent_fields_keeps_them_and_the_newer_guard() {
+fn a_belongs_to_that_sets_derived_parent_fields_keeps_them_and_the_newer_list() {
     let model = check_source(
-        "model Owner do\n  attribute :lastId, :id, null: true\n  attribute :lastAt, :date, null: true\n  attribute :lastSeq, :int, null: true\nend\n\nmodel Sample do\n  attribute :ownerId, :id\n  attribute :createdAt, :date\n  attribute :seq, :int\n  index :ownerId\n  belongs_to :owner, class_name: Owner, foreign_key: :ownerId, sets: { lastId: :id, lastAt: :createdAt, lastSeq: :seq }, newer: { seq: :lastSeq, createdAt: :lastAt }\nend\n",
+        "model Owner do\n  attribute :lastId, :id, derived: true\n  attribute :lastAt, :date, derived: true\n  attribute :lastSeq, :int, derived: true\nend\n\nmodel Sample do\n  attribute :ownerId, :id\n  attribute :createdAt, :date\n  attribute :seq, :int\n  index :ownerId\n  belongs_to :owner, class_name: Owner, foreign_key: :ownerId, sets: { lastId: :id, lastAt: :createdAt, lastSeq: :seq }, newer: [:seq, :createdAt]\nend\n",
     )
     .unwrap()
     .remove(1);
     let owner = &model.associations[0];
     assert_eq!(owner.sets.iter().map(|(parent, child)| (parent.as_str(), child.as_str())).collect::<Vec<_>>(), [("lastAt", "createdAt"), ("lastId", "id"), ("lastSeq", "seq")]);
-    assert_eq!(owner.newer, vec![Newer { child: "seq".to_string(), parent: "lastSeq".to_string() }, Newer { child: "createdAt".to_string(), parent: "lastAt".to_string() }]);
+    assert_eq!(owner.newer, ["seq", "createdAt"]);
 }
 
 #[test]
