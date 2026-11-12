@@ -62,11 +62,15 @@ extension BridgeProbeTests {
     try DB.database.setOnline(online: false)
     let status = StatusProbe.status()
     let (frames, ready) = AsyncStream<Bool>.makeStream()
-    let ending = Task { for await value in status.changes { ready.yield(value) } }
+    let ending = Task {
+      let reader = Cursor(status.changes)
+      if let value = await reader.next("the current value of the ending reader") { ready.yield(value) }
+      _ = await reader.next("the frame after the cancel")
+    }
     let kept = Cursor(status.changes)
     #expect(await kept.next("the current value of the kept reader") == false)
-    var seen = frames.makeAsyncIterator()
-    #expect(await seen.next() == false)
+    let seen = Cursor(frames)
+    #expect(await seen.next("the frame the ending reader passed on") == false)
     ending.cancel()
     await ending.value
     try DB.database.setOnline(online: true)

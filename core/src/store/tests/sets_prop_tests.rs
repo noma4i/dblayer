@@ -322,7 +322,7 @@ fn same_revision(steps: &[Step]) -> Result<(), String> {
 fn red() -> Vec<String> {
     std::thread::scope(|scope| {
         let handles: Vec<_> = (1..=SEEDS).map(|seed| scope.spawn(move || is_red(&SetsOwner, seed * 7919, STEPS).then_some(seed * 7919))).collect();
-        let seeds: Vec<u64> = handles.into_iter().filter_map(|handle| handle.join().unwrap()).collect();
+        let seeds: Vec<u64> = handles.into_iter().filter_map(crate::test_wait::join_within).collect();
         let first = seeds.first().and_then(|seed| red_of(&SetsOwner, *seed, STEPS));
         first.into_iter().chain(seeds.iter().skip(1).map(|seed| format!("seed {seed}: red"))).collect()
     })
@@ -362,7 +362,7 @@ fn data_sets_property_generator_reaches_the_cells() {
                 })
             })
             .collect();
-        handles.into_iter().flat_map(|handle| handle.join().unwrap()).collect()
+        handles.into_iter().flat_map(crate::test_wait::join_within).collect()
     });
     let missing: Vec<&str> = cells.into_iter().filter(|cell| !reached.contains(cell)).collect();
     assert!(missing.is_empty(), "the traces of the property never reach: {missing:?}");

@@ -86,7 +86,7 @@ async fn inv_observe_08_a_retry_progress_call_that_passed_the_cancel_check_does_
             assert_eq!(crate::test_wait::within_named(8, "a read after the cancel", reader.next()).await, None, "{order:?} round {round}: a call that starts after the cancel returned a value");
             call.abort();
             let gone = retries.subscribe();
-            crate::test_wait::within_named(8, "the aborted call leaves the registry", async { while !retries.current().waiting.is_empty() { gone.next().await; } }).await;
+            while !retries.current().waiting.is_empty() { crate::test_wait::within_named(8, "the aborted call leaves the registry", gone.next()).await; }
         }
     }
 }

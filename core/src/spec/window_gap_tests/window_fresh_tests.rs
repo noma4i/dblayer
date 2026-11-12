@@ -300,9 +300,7 @@ fn win_prop_fresh_for_any_input_times() {
             })
             .collect();
         for run in runs {
-            if let Err(panic) = run.join() {
-                std::panic::resume_unwind(panic);
-            }
+            crate::test_wait::join_within(run);
         }
     });
 }

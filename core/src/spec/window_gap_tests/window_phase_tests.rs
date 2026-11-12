@@ -177,9 +177,7 @@ fn win_prop_phase_is_a_function_of_stage_and_outcome() {
     std::thread::scope(|scope| {
         let runs: Vec<_> = (1..=8u64).map(|seed| scope.spawn(move || random_program(seed))).collect();
         for run in runs {
-            if let Err(panic) = run.join() {
-                std::panic::resume_unwind(panic);
-            }
+            crate::test_wait::join_within(run);
         }
     });
 }

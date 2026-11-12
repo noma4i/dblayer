@@ -17,7 +17,7 @@ fn red(which: &'static str) -> Vec<String> {
                 red_of(&owner, seed * 7919, owner.alphabet().len() * 2).map(|found| format!("{}: {found}", case.name))
             })))
             .collect();
-        handles.into_iter().filter_map(|handle| handle.join().unwrap()).collect()
+        handles.into_iter().filter_map(crate::test_wait::join_within).collect()
     })
 }
 
