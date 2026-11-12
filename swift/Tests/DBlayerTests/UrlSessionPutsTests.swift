@@ -26,8 +26,6 @@ private final class FakeSession: PutSession, @unchecked Sendable {
   private(set) var uploads: [(URLRequest, URL, String)] = []
   var held: [FakeTask] = []
 
-  func attach(events: any PutEvents) {}
-
   func upload(_ request: URLRequest, fromFile file: URL, description: String) { uploads.append((request, file, description)) }
 
   func tasks() async -> [any PutTask] { held }
@@ -82,7 +80,7 @@ private let identity = PutIdentity(transferId: 7, cycleId: 1, attempt: 2)
 private let sessionIdentifier = "test.dblayer.uploads"
 
 private func executor(_ session: FakeSession, inputs: RecordingInputs) -> UrlSessionPuts {
-  let puts = UrlSessionPuts(identifier: sessionIdentifier, session: session)
+  let puts = UrlSessionPuts(identifier: sessionIdentifier) { _ in session }
   puts.attach(inputs)
   return puts
 }
@@ -104,7 +102,7 @@ struct UrlSessionPutsTests {
     let inputs = RecordingInputs()
     let puts = executor(FakeSession(), inputs: inputs)
     let task = FakeTask(description: PutDescription.text(identity), state: .completed, response: answer(200, etag: "\"abc\""))
-    puts.ended(description: task.taskDescription, outcome: UrlSessionPuts.outcome(of: task))
+    puts.feed.ended(description: task.taskDescription, outcome: UrlSessionPuts.outcome(of: task))
     #expect(await inputs.inputs(1) == ["ended 7.1.2 200 \"abc\""])
   }
 
@@ -113,7 +111,7 @@ struct UrlSessionPutsTests {
   func theSentBytesOfATaskReachTheCore() async {
     let inputs = RecordingInputs()
     let puts = executor(FakeSession(), inputs: inputs)
-    puts.sent(description: PutDescription.text(identity), bytes: 4096)
+    puts.feed.sent(description: PutDescription.text(identity), bytes: 4096)
     #expect(await inputs.inputs(1) == ["sent 7.1.2 4096"])
   }
 
@@ -155,9 +153,10 @@ struct UrlSessionPutsTests {
       func completion(_ name: String) -> @Sendable () -> Void {
         { log.update { $0.append("\(name) \(Thread.isMainThread ? "main" : "thread")") }; if remaining.update({ $0 -= 1; return $0 }) == 0 { done.resume() } }
       }
-      #expect(puts.handle(identifier: sessionIdentifier, completion: completion("first")))
-      #expect(puts.handle(identifier: sessionIdentifier, completion: completion("second")))
-      puts.eventsFinished()
+      let first = puts.handle(identifier: sessionIdentifier, completion: completion("first"))
+      let second = puts.handle(identifier: sessionIdentifier, completion: completion("second"))
+      #expect(first && second)
+      puts.feed.eventsFinished()
     }
     #expect(log.value == ["quiet", "first main", "second main"])
   }
@@ -168,9 +167,10 @@ struct UrlSessionPutsTests {
     let log = Locked<[String]>([])
     let inputs = RecordingInputs()
     let puts = executor(FakeSession(), inputs: inputs)
-    #expect(puts.handle(identifier: "app.own.session", completion: { log.update { $0.append("called") } }) == false)
-    puts.eventsFinished()
-    puts.ended(description: PutDescription.text(identity), outcome: .failed(failure: RawFailure(domain: "t", code: nil, message: "")))
+    let taken = puts.handle(identifier: "app.own.session", completion: { log.update { $0.append("called") } })
+    #expect(taken == false)
+    puts.feed.eventsFinished()
+    puts.feed.ended(description: PutDescription.text(identity), outcome: .failed(failure: RawFailure(domain: "t", code: nil, message: "")))
     _ = await inputs.inputs(1)
     #expect(log.value == [])
   }
@@ -179,10 +179,11 @@ struct UrlSessionPutsTests {
   @Test
   func aCallBeforeOpenWaitsForTheDatabase() async {
     let log = Locked<[String]>([])
-    let puts = UrlSessionPuts(identifier: sessionIdentifier, session: FakeSession())
+    let puts = UrlSessionPuts(identifier: sessionIdentifier) { _ in FakeSession() }
     await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-      #expect(puts.handle(identifier: sessionIdentifier, completion: { log.update { $0.append("completion") }; done.resume() }))
-      puts.eventsFinished()
+      let taken = puts.handle(identifier: sessionIdentifier, completion: { log.update { $0.append("completion") }; done.resume() })
+      #expect(taken)
+      puts.feed.eventsFinished()
       puts.attach(RecordingInputs(onQuiet: { log.update { $0.append("quiet") } }))
     }
     #expect(log.value == ["quiet", "completion"])
@@ -195,12 +196,13 @@ struct UrlSessionPutsTests {
     let ran = Awaited<Void>()
     let inputs = RecordingInputs(onQuiet: { log.update { $0.append("quiet") } })
     let puts = executor(FakeSession(), inputs: inputs)
-    puts.eventsFinished()
-    #expect(puts.handle(identifier: sessionIdentifier, completion: { log.update { $0.append("completion") }; Task { await ran.set(()) } }))
-    puts.ended(description: PutDescription.text(identity), outcome: .failed(failure: RawFailure(domain: "t", code: nil, message: "")))
+    puts.feed.eventsFinished()
+    let taken = puts.handle(identifier: sessionIdentifier, completion: { log.update { $0.append("completion") }; Task { await ran.set(()) } })
+    #expect(taken)
+    puts.feed.ended(description: PutDescription.text(identity), outcome: .failed(failure: RawFailure(domain: "t", code: nil, message: "")))
     _ = await inputs.inputs(1)
     #expect(log.value == [])
-    puts.eventsFinished()
+    puts.feed.eventsFinished()
     await ran.get()
     #expect(log.value == ["quiet", "completion"])
   }
