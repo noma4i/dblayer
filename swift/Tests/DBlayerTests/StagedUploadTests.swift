@@ -17,8 +17,8 @@ private func stagedFile() throws -> URL {
   return file
 }
 
-private func untilHeld(_ status: UploadStatusStream) async -> Bool {
-  for await item in status {
+private func untilHeld(_ status: Cursor<UploadStatusStream>) async -> Bool {
+  while let item = await status.next("the held status") {
     if case let .progress(progress) = item, progress.progress >= 0.99 { return true }
   }
   return false
@@ -38,7 +38,7 @@ extension BridgeProbeTests {
     let scope = try DB.account()
     let staged = try await scope.stage(Moment.self, action: "upload_clip", UploadRequest(path: file.path))
     #expect(staged.action == "upload_clip")
-    #expect(await untilHeld(scope.uploadStatus(staged)))
+    #expect(await untilHeld(Cursor(scope.uploadStatus(staged))))
     #expect(try await Moment.find(staged.id).current() == nil)
     let receipt = try await staged.commit(values: ["text": .string("hello")])
     #expect(receipt.optimisticValue?.id == staged.id)
@@ -58,12 +58,14 @@ extension BridgeProbeTests {
     defer { try? FileManager.default.removeItem(at: file) }
     let scope = try DB.account()
     let staged = try await scope.stage(Moment.self, action: "upload_clip", UploadRequest(path: file.path))
-    let status = scope.uploadStatus(staged)
+    let status = Cursor(scope.uploadStatus(staged))
     #expect(await untilHeld(status))
     #expect(try await staged.discard())
-    var last: TransferItem?
-    for await item in status { last = item }
-    guard case .ended = last else { Issue.record("the status did not end: \(String(describing: last))"); return }
+    var ended = false
+    while let item = await status.next("the end of the status") {
+      if case .ended = item { ended = true; break }
+    }
+    #expect(ended)
     #expect(try await Moment.find(staged.id).current() == nil)
     await DB.closeForCleanup()
   }
