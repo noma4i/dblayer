@@ -27,7 +27,7 @@
 
 ### Changed
 
-- Order rows with equal values and the `id` field by the one id order.
+- Sort rows with equal values, and a sort by `id`, in numeric id order.
 - Keep the server outcome of an operation when the database refuses its answer rows.
 - Retry the rollback of a refused operation after a database refusal.
 - Requeue an operation waiting to retry when the network drops, and retry on return.
