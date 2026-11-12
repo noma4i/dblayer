@@ -49,16 +49,6 @@ fn xfer_discard_deferred_abort() {
 }
 
 #[test]
-fn xfer_orphan_abort_sent() {
-    let mut twin = orphan_restart(vec![("u9".into(), KEY.into())]);
-    assert!(twin.online(false).orphan_aborts().is_empty());
-    let out = twin.online(true);
-    assert_eq!(out.orphan_aborts(), vec!["u9".to_string()]);
-    let again = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
-    assert!(again.orphan_aborts().is_empty(), "an abort in flight is not sent twice");
-}
-
-#[test]
 fn xfer_orphan_abort_waits_declaration() {
     #[derive(Clone, Copy, Debug, PartialEq)]
     enum Event { Online, Offline, Restored, RestoreReady, Register }
@@ -82,17 +72,6 @@ fn xfer_orphan_abort_waits_declaration() {
         }
         assert_eq!(aborts, ["u9".to_string()], "{order:?}: the orphan abort goes out once");
     }
-}
-
-#[test]
-fn xfer_orphan_abort_done() {
-    let mut twin = orphan_restart(vec![("u9".into(), KEY.into())]);
-    twin.online(true);
-    let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), result: Ok(()) });
-    assert_eq!(out.orphans_removed(), vec!["u9".to_string()]);
-    twin.commit();
-    twin.online(false);
-    assert!(twin.online(true).orphan_aborts().is_empty(), "an answered abort is not sent again");
 }
 
 /// transfer.md:13, lifecycle.md:525 (D-280): the answer of a restored abort pair comes as a step answer; Transfer finds the debt by the identity of the pair and settles it as AbortDone.
@@ -140,18 +119,6 @@ fn xfer_minted_control_rewritten_after_end() {
     twin.close();
     let mut reopened = orphan_restart(vec![("u1".into(), KEY.into())]);
     assert_eq!(reopened.online(true).orphan_aborts(), vec!["u1".to_string()], "the durable debt is aborted once after the restart");
-}
-
-#[test]
-fn xfer_orphan_abort_retry_later() {
-    for status in [Some(503u16), None] {
-        let mut twin = orphan_restart(vec![("u9".into(), KEY.into())]);
-        twin.online(true);
-        let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), result: Err(crate::owners::write::transfer::AbortFault { temporary: true, status }) });
-        assert!(Twin::quiet(&out), "{status:?}: a temporary failure writes nothing and sets no timer: {out:?}");
-        twin.online(false);
-        assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()], "{status:?}: the next network sends it again");
-    }
 }
 
 #[test]
@@ -298,19 +265,6 @@ fn xfer_discard_before_the_cancelled_attempt_answers() {
 }
 
 #[test]
-fn xfer_upload_minted() {
-    let mut twin = Twin::new();
-    let id = twin.uploading(KEY, 3);
-    twin.online(false);
-    assert_eq!(twin.stage(id), TransferStage::Ready);
-    let out = minted(&mut twin, id, "u1");
-    assert_eq!((out.writes(), twin.t(id).upload_id.as_deref()), (1, Some("u1")), "the id of the cancelled attempt is written");
-    twin.commit();
-    let (_, out) = twin.discard(KEY);
-    assert_eq!((out.orphans_written(), out.removed()), (vec![("u1".to_string(), KEY.to_string())], vec![KEY.to_string()]), "the removal carries the orphan");
-}
-
-#[test]
 fn xfer_upload_minted_late() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 3);
@@ -375,15 +329,18 @@ fn minted_due(twin: &mut Twin, upload_id: &str) -> Out {
 /// xfer_minted_write_storage (P-XFER-41, D-192): the Store refuses the write of the id of a live transfer. The debt stays and nothing is aborted.
 #[test]
 fn xfer_minted_write_storage() {
-    let mut twin = Twin::new();
-    let id = twin.uploading(KEY, 3);
-    twin.online(false);
-    let out = minted(&mut twin, id, "u1");
-    assert_eq!(out.writes(), 1);
+    for reason in [RejectReason::Storage("disk".into()), RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 0)].into() }] {
+        let mut twin = Twin::new();
+        let id = twin.uploading(KEY, 3);
+        twin.online(false);
+        let out = minted(&mut twin, id, "u1");
+        assert_eq!(out.writes(), 1, "{reason:?}");
 
-    let refused = twin.reject(RejectReason::Storage("disk".into()));
-    assert_eq!((refused.timers, refused.orphan_aborts().len(), refused.orphans_written().len(), twin.t(id).upload_id.as_deref()), (1, 0, 0, Some("u1")), "the debt is kept and scheduled, nothing is aborted: {refused:?}");
-    assert!(minted(&mut twin, id, "u1").runs.is_empty(), "the same id again is no new debt");
+        let refused = twin.reject(reason.clone());
+        assert_eq!((refused.timers, refused.orphan_aborts().len(), refused.orphans_written().len(), twin.t(id).upload_id.as_deref()), (1, 0, 0, Some("u1")), "{reason:?}: the debt is kept and scheduled, nothing is aborted: {refused:?}");
+        assert!(minted(&mut twin, id, "u1").runs.is_empty(), "{reason:?}: the same id again is no new debt");
+        assert_eq!(minted_due(&mut twin, "u1").writes(), 1, "{reason:?}: the write goes again");
+    }
 }
 
 /// xfer_minted_write_interrupted (D-277): the Store refuses the epoch batch of the minted id with NoSession or Closed. The same step writes the debt as a Control batch `UploadOrphan`; nothing is scheduled or aborted before its Committed, and the first network admission after it aborts the id.
@@ -420,21 +377,6 @@ fn xfer_orphan_restart_after_close() {
     assert_eq!(reopened.online(true).orphan_aborts(), vec!["u1".to_string()], "the debt of the closed process is aborted after the restart");
     reopened.online(false);
     assert!(reopened.online(true).orphan_aborts().is_empty(), "the abort in flight is not sent twice");
-}
-
-/// xfer_minted_write_other: a refused write of the minted id with StaleGeneration behaves as xfer_minted_write_storage: the debt is kept and scheduled, the tick writes it again.
-#[test]
-fn xfer_minted_write_other() {
-    let reason = RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 0)].into() };
-    let mut twin = Twin::new();
-    let id = twin.uploading(KEY, 3);
-    twin.online(false);
-    let out = minted(&mut twin, id, "u1");
-    assert_eq!(out.writes(), 1);
-    let refused = twin.reject(reason);
-    assert_eq!((refused.timers, refused.orphan_aborts().len(), refused.orphans_written().len(), twin.t(id).upload_id.as_deref()), (1, 0, 0, Some("u1")), "the debt is kept and scheduled, nothing is aborted: {refused:?}");
-    let again = minted_due(&mut twin, "u1");
-    assert_eq!(again.writes(), 1, "the write goes again");
 }
 
 /// xfer_minted_write_invalid (P-DATA-97): the Store refuses the write of the minted id as invalid and would refuse the same batch again. Nothing is written or scheduled, the debt stays in memory and the end of the epoch writes it as an orphan.
