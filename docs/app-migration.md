@@ -116,6 +116,18 @@ val receipt = staged.commit(buildJsonObject { put("text", "hello") })
 val removed = staged.discard()
 ```
 
+- On iOS the PUT of a file runs in a background `URLSession` and finishes with the app in the background. Add the call to `application(_:handleEventsForBackgroundURLSession:completionHandler:)`. Remove the background task and the `beginBackgroundTask` calls around uploads. Android changes nothing. See [upload with the app in the background](files.md#upload-with-the-app-in-the-background).
+
+```swift
+func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
+  DB.handleBackgroundEvents(identifier: identifier, completion: completionHandler)
+}
+```
+
+```kotlin
+// Android: no change, the upload job runs the PUT.
+```
+
 - `registerOperations`, and an `open` that passes a read or a mutation, fail with `Invalid` when the definitions leave out an operation the library sends by itself. The error names every missing operation. Pass the generated `GraphQLOperations.all`. See [server sync](server-sync.md#connecting).
 - The parents of a changed row are touched once per batch, the queue order of restored operations is kept, and a failed operation with a lost answer stops no other write. The app changes nothing for these fixes.
 

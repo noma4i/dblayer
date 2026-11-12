@@ -13,6 +13,7 @@ extension URLSessionTask: PutTask {}
 
 /// The background session that runs the PUTs outside the process. The system keeps the tasks, the executor keeps nothing.
 protocol PutSession: AnyObject, Sendable {
+  func attach(events: any PutEvents)
   func upload(_ request: URLRequest, fromFile file: URL, description: String)
   func tasks() async -> [any PutTask]
 }
@@ -32,31 +33,38 @@ protocol PutInputs: Sendable {
 extension Database: PutInputs {}
 
 /// A value that arrives once: a reader before it waits for it.
-final class Awaited<Value: Sendable>: @unchecked Sendable {
-  private let lock = NSLock()
+actor Awaited<Value: Sendable> {
   private var value: Value?
   private var waiting: [CheckedContinuation<Value, Never>] = []
 
   func set(_ new: Value) {
-    lock.lock()
     value = new
     let readers = waiting
     waiting = []
-    lock.unlock()
     readers.forEach { $0.resume(returning: new) }
   }
 
   func get() async -> Value {
-    await withCheckedContinuation { reader in
-      lock.lock()
-      if let value {
-        lock.unlock()
-        reader.resume(returning: value)
-      } else {
-        waiting.append(reader)
-        lock.unlock()
-      }
-    }
+    if let value { return value }
+    return await withCheckedContinuation { waiting.append($0) }
+  }
+}
+
+/// The completion of the app for a wake and the end of the events of the system: whichever comes second runs the completion.
+actor WakeCompletion {
+  private var completion: (@Sendable () -> Void)?
+  private var finished = false
+
+  func handed(_ new: @escaping @Sendable () -> Void) -> (@Sendable () -> Void)? {
+    guard finished else { completion = new; return nil }
+    finished = false
+    return new
+  }
+
+  func eventsEnded() -> (@Sendable () -> Void)? {
+    guard let taken = completion else { finished = true; return nil }
+    completion = nil
+    return taken
   }
 }
 
@@ -78,34 +86,31 @@ enum PutDescription {
 }
 
 /// The executor of the PUTs outside the process: every call is one call of the system session or one input of the core.
-final class UrlSessionPuts: PutExecutor, PutEvents, @unchecked Sendable {
+final class UrlSessionPuts: PutExecutor, PutEvents, Sendable {
   static let current = Awaited<UrlSessionPuts?>()
 
   private let inputs = Awaited<any PutInputs>()
+  private let wake = WakeCompletion()
   private let settled: @Sendable () async -> Void
-  private let lock = NSLock()
-  private var session: (any PutSession)?
-  private var completion: (@Sendable () -> Void)?
-  private var finished = false
+  private let session: any PutSession
 
-  init(session: (UrlSessionPuts) -> any PutSession, settled: @escaping @Sendable () async -> Void = DB.settledTransfers) {
+  init(session: any PutSession, settled: @escaping @Sendable () async -> Void = DB.settledTransfers) {
     self.settled = settled
-    self.session = session(self)
+    self.session = session
+    session.attach(events: self)
   }
 
   /// The system session exists on iOS with a bundle id: macOS and the tests of the host run the PUTs in the process.
   static func available() -> UrlSessionPuts? {
     #if os(iOS)
     guard let bundle = Bundle.main.bundleIdentifier else { return nil }
-    return UrlSessionPuts { BackgroundPutSession(identifier: "\(bundle).dblayer.uploads", events: $0) }
+    return UrlSessionPuts(session: BackgroundPutSession(identifier: "\(bundle).dblayer.uploads"))
     #else
     return nil
     #endif
   }
 
-  func attach(_ database: any PutInputs) { inputs.set(database) }
-
-  private var live: any PutSession { lock.withLock { session! } }
+  func attach(_ database: any PutInputs) { Task { await inputs.set(database) } }
 
   func startPut(identity: PutIdentity, target: PutTarget, file: PutFile) {
     guard let address = URL(string: target.url) else {
@@ -115,17 +120,15 @@ final class UrlSessionPuts: PutExecutor, PutEvents, @unchecked Sendable {
     var request = URLRequest(url: address, timeoutInterval: TimeInterval(target.requestMs) / 1000)
     request.httpMethod = "PUT"
     target.headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
-    live.upload(request, fromFile: URL(fileURLWithPath: file.path), description: PutDescription.text(identity))
+    session.upload(request, fromFile: URL(fileURLWithPath: file.path), description: PutDescription.text(identity))
   }
 
   func cancelPut(identity: PutIdentity) {
     let text = PutDescription.text(identity)
-    let session = live
     Task { await session.tasks().filter { $0.taskDescription == text }.forEach { $0.cancel() } }
   }
 
   func resumePuts(identities: [PutIdentity]) {
-    let session = live
     Task {
       let tasks = await session.tasks()
       let listed = Set(identities.map(PutDescription.key))
@@ -155,39 +158,30 @@ final class UrlSessionPuts: PutExecutor, PutEvents, @unchecked Sendable {
 
   /// The app handed the completion of the wake over: it runs once the events are delivered and the core is quiet.
   func handle(completion: @escaping @Sendable () -> Void) {
-    let ready = lock.withLock { () -> Bool in
-      guard finished else { self.completion = completion; return false }
-      finished = false
-      return true
-    }
-    if ready { run(completion) }
+    Task { if let ready = await wake.handed(completion) { await run(ready) } }
   }
 
   func eventsFinished() {
-    let taken = lock.withLock { () -> (@Sendable () -> Void)? in
-      guard let taken = completion else { finished = true; return nil }
-      completion = nil
-      return taken
-    }
-    if let taken { run(taken) }
+    Task { if let ready = await wake.eventsEnded() { await run(ready) } }
   }
 
-  private func run(_ completion: @escaping @Sendable () -> Void) {
-    Task {
-      await settled()
-      DispatchQueue.main.async(execute: completion)
-    }
+  private func run(_ completion: @escaping @Sendable () -> Void) async {
+    await settled()
+    DispatchQueue.main.async(execute: completion)
   }
 }
 
 /// The background `URLSession`: the system keeps its tasks over the death of the process.
 final class BackgroundPutSession: NSObject, PutSession, URLSessionTaskDelegate, @unchecked Sendable {
-  private let events: any PutEvents
+  private let identifier: String
+  private var events: (any PutEvents)?
   private var session: URLSession!
 
-  init(identifier: String, events: any PutEvents) {
+  init(identifier: String) { self.identifier = identifier }
+
+  /// The session starts once the executor listens: the system delivers the events of an earlier wake at once.
+  func attach(events: any PutEvents) {
     self.events = events
-    super.init()
     let configuration = URLSessionConfiguration.background(withIdentifier: identifier)
     configuration.sessionSendsLaunchEvents = true
     configuration.waitsForConnectivity = true
@@ -207,10 +201,10 @@ final class BackgroundPutSession: NSObject, PutSession, URLSessionTaskDelegate, 
   func tasks() async -> [any PutTask] { await session.allTasks }
 
   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-    events.ended(description: task.taskDescription, outcome: UrlSessionPuts.outcome(of: task))
+    events?.ended(description: task.taskDescription, outcome: UrlSessionPuts.outcome(of: task))
   }
 
-  func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) { events.eventsFinished() }
+  func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) { events?.eventsFinished() }
 }
 
 extension DB {
@@ -224,7 +218,8 @@ extension DB {
 
   /// The queue of operations has no transfer in a PUT or in the steps that follow it.
   @Sendable static func settledTransfers() async {
-    guard let account = try? account() else { return }
+    let account: AccountScope
+    do { account = try DB.account() } catch { return }
     for await item in account.operations() {
       guard case let .queue(_, items) = item else { return }
       if !items.contains(where: busy) { return }

@@ -18,18 +18,17 @@ private final class FakeTask: PutTask, @unchecked Sendable {
 
   func cancel() {
     cancelled = true
-    cancelledSignal.set(())
+    Task { await cancelledSignal.set(()) }
   }
 }
 
 private final class FakeSession: PutSession, @unchecked Sendable {
-  private let lock = NSLock()
-  private var started: [(URLRequest, URL, String)] = []
+  private(set) var uploads: [(URLRequest, URL, String)] = []
   var held: [FakeTask] = []
 
-  var uploads: [(URLRequest, URL, String)] { lock.withLock { started } }
+  func attach(events: any PutEvents) {}
 
-  func upload(_ request: URLRequest, fromFile file: URL, description: String) { lock.withLock { started.append((request, file, description)) } }
+  func upload(_ request: URLRequest, fromFile file: URL, description: String) { uploads.append((request, file, description)) }
 
   func tasks() async -> [any PutTask] { held }
 }
@@ -74,7 +73,7 @@ private func answer(_ status: Int, etag: String?) -> HTTPURLResponse {
 private let identity = PutIdentity(epoch: 3, transferId: 7, attemptId: 2)
 
 private func executor(_ session: FakeSession, inputs: RecordingInputs, settled: @escaping @Sendable () async -> Void = {}) -> UrlSessionPuts {
-  let puts = UrlSessionPuts(session: { _ in session }, settled: settled)
+  let puts = UrlSessionPuts(session: session, settled: settled)
   puts.attach(inputs)
   return puts
 }
