@@ -45,7 +45,7 @@ struct Started {
     live: std::path::PathBuf,
 }
 
-async fn started(length: u64) -> Started {
+async fn opened() -> Started {
     let detached = Arc::new(Detached::default());
     let stand = Stand::new().detached_through(detached.clone());
     script(&stand);
@@ -53,12 +53,23 @@ async fn started(length: u64) -> Started {
     let live = directory.path().join("live.sqlite");
     let clock = TestClock::new(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64);
     let database = stand.open_with(Some(&live), &[CREATE_MOMENT], Some(clock.clone())).await;
-    let epoch = database.session_epoch();
-    let file = source(directory.path(), length);
-    let sent = bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &file, epoch))).await.unwrap();
-    let temporary = sent.optimistic_value.as_ref().unwrap().id.clone();
-    crate::test_wait::settled(&database, "the PUT started outside the process", || detached.started().len() == 1).await;
-    Started { stand, detached, database, clock, temporary, directory, live }
+    Started { stand, detached, database, clock, temporary: String::new(), directory, live }
+}
+
+/// The clip is sent and the executor got the start of its PUT.
+async fn launch(run: &mut Started, length: u64) {
+    let epoch = run.database.session_epoch();
+    let file = source(run.directory.path(), length);
+    let sent = bound(run.database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &file, epoch))).await.unwrap();
+    run.temporary = sent.optimistic_value.as_ref().unwrap().id.clone();
+    let detached = run.detached.clone();
+    crate::test_wait::settled(&run.database, "the PUT started outside the process", || detached.started().len() == 1).await;
+}
+
+async fn started(length: u64) -> Started {
+    let mut run = opened().await;
+    launch(&mut run, length).await;
+    run
 }
 
 /// A file below the multipart threshold still goes as one part as large as the file, `Init` first, the PUT started with the presigned target by the executor and not by the transport, and no timer ends it.
@@ -183,15 +194,16 @@ async fn xfer_detached_missing() {
 /// Observable: the starts of a process opened on every image and its landed row. Catches: a restart that starts the part again beside a live task, an upload created twice after the id was recorded.
 #[tokio::test(flavor = "multi_thread")]
 async fn xfer_detached_prop_one_put_through_restart() {
-    let run = started(MEBIBYTE).await;
+    let mut run = opened().await;
     let secret = run.stand.rig.credentials.inner.value().unwrap();
     rusqlite::Connection::open(&run.live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
     let base = Capture::begin(&run.live);
+    launch(&mut run, MEBIBYTE).await;
+    let kept = run.directory.path().join("kept.files");
+    copy_tree(&files_of(&run.live), &kept);
     run.detached.finish(0, Detached::ok());
     crate::test_wait::settled(&run.database, "the row landed", || landed(&run.database)).await;
     drained(&run.database).await;
-    let kept = run.directory.path().join("kept.files");
-    copy_tree(&files_of(&run.live), &kept);
     let (capture, _) = base.end(&run.live);
     let temporary = run.temporary.clone();
     let cuts = over_images(&capture, &kept, |index, image| {
@@ -204,7 +216,7 @@ async fn xfer_detached_prop_one_put_through_restart() {
                 if let Some(identity) = task { detached.plant(SystemTask { identity, outcome: None }); }
                 if !lost && task.is_some() { detached.finish_offline(0, Detached::ok()); }
                 let (fresh, reopened) = reopen_with(&image, &secret, &[CREATE_MOMENT], detached.clone(), script).await;
-                drained(&reopened).await;
+                if task.is_some() && !lost { drained(&reopened).await; } else { crate::test_wait::settled(&reopened, "opened", || true).await; }
                 let new_starts = detached.started().len();
                 match (task.is_some(), lost) {
                     (true, false) => assert_eq!((new_starts, landed(&reopened)), (0, true), "cut {index}: a recorded attempt with a finished task starts no second PUT and lands"),
@@ -221,10 +233,10 @@ async fn xfer_detached_prop_one_put_through_restart() {
     run.database.close_now();
 }
 
-/// The id of the task a file records: the transfer and the count of attempts, when the attempt has the upload recorded.
+/// The id of the task a file records: the transfer and the count of attempts, when the attempt has the upload recorded and no presign waits for its answer, so the executor may hold a task of it.
 fn recorded_task(image: &std::path::Path, _temporary: &str) -> Option<PutIdentity> {
     let connection = rusqlite::Connection::open(image).unwrap();
-    rusqlite::OptionalExtension::optional(connection.query_row("SELECT transfer_id, attempts FROM sync_upload WHERE upload_id IS NOT NULL AND attempts > 0 AND completed IS NOT 1", [], |row| Ok(PutIdentity { epoch: 0, transfer_id: row.get::<_, i64>(0)? as u64, attempt_id: row.get::<_, i64>(1)? as u64 }))).unwrap()
+    rusqlite::OptionalExtension::optional(connection.query_row("SELECT transfer_id, attempts FROM sync_upload WHERE upload_id IS NOT NULL AND attempts > 0 AND completed IS NOT 1 AND NOT EXISTS (SELECT 1 FROM encrypted_pending)", [], |row| Ok(PutIdentity { epoch: 0, transfer_id: row.get::<_, i64>(0)? as u64, attempt_id: row.get::<_, i64>(1)? as u64 }))).unwrap()
 }
 
 /// P-XFER-75: the outcome of a task counts once. A repeat of the outcome, an outcome after the part is confirmed and an outcome after the transfer was cancelled change nothing: `Complete` and the final mutation go once.
