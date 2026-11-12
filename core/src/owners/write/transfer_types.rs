@@ -41,6 +41,9 @@ pub fn file_id(transfer_id: TransferId) -> String { format!("transfers/{transfer
 /// The temporary file of the new copy of a retry with a new source: it replaces `file_id` after the `Committed` of the metadata.
 pub fn staged_file_id(transfer_id: TransferId) -> String { format!("{}.staged", file_id(transfer_id)) }
 
+/// The file the platform writes the result of the prepare step to: the measure step reads it, then it goes.
+pub fn prepared_file_id(transfer_id: TransferId) -> String { format!("{}.prepared", file_id(transfer_id)) }
+
 /// The request the codec of the executor builds the steps of a file from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Steps {
@@ -274,6 +277,13 @@ pub enum TransferInput {
     SelectRow { model: String, rows: Vec<String>, outbox_min: Option<(OpId, String)>, kind: super::outbox_types::SelectKind, reply: ReplyId, version: u64 },
     SelectConfirmed { reply: ReplyId },
     SlotFreed,
+    /// The prepare slot is free: the waiting transfer with the smallest `(seq, position)` starts.
+    PrepareSlotFreed,
+    /// The platform read the source of the attempt.
+    Probed { transfer_id: TransferId, attempt_id: AttemptId, outcome: crate::ffi::ProbeOutcome },
+    /// The whole percent of the run of the attempt.
+    PrepareProgress { transfer_id: TransferId, attempt_id: AttemptId, percent: u32 },
+    Prepared { transfer_id: TransferId, attempt_id: AttemptId, outcome: crate::ffi::PrepareOutcome },
     Online(Online),
     PowerSaving(bool),
     EpochStarted(EpochStarted),
@@ -289,6 +299,7 @@ pub enum Shown {
     WaitingSource,
     Queued,
     Uploading { progress: u32 },
+    Preparing { progress: u32 },
     Failed { error: String },
     Gone,
 }
@@ -297,7 +308,7 @@ impl Shown {
     /// What the shown value writes to `sync_upload`: two values that give the same columns write once.
     pub fn columns(&self) -> (u8, bool) {
         match self {
-            Self::Copying => (0, false),
+            Self::Copying | Self::Preparing { .. } => (0, false),
             Self::WaitingSource => (1, false),
             Self::Queued => (2, false),
             Self::Uploading { progress } => (3, *progress >= 100),
@@ -351,13 +362,20 @@ pub enum StoreKind {
     StagedRestored,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TransferEffect {
     /// Copy `source` into the file directory in chunks of 1 MiB.
     Copy { transfer_id: TransferId, attempt_id: AttemptId, key: Key, source: Source, staged: bool },
     /// The temporary file of the copy takes the place of the copy: the answer comes back as `StagedPromoted`.
     PromoteStaged { transfer_id: TransferId },
     CopyCancel { transfer_id: TransferId },
+    /// The platform reads the source of the transfer: the answer comes back as `Probed`.
+    Probe { transfer_id: TransferId, attempt_id: AttemptId },
+    /// The platform writes the result by `plan`: the answers come back as `PrepareProgress` and `Prepared`.
+    Prepare { transfer_id: TransferId, attempt_id: AttemptId, plan: crate::ffi::PreparePlan },
+    PrepareCancel { transfer_id: TransferId, attempt_id: AttemptId },
+    /// Read the result of the platform in chunks: the answer comes back as `CopyDone` or `CopyFailed`.
+    Measure { transfer_id: TransferId, attempt_id: AttemptId },
     /// A step of the file (`part`, `blob`) with `NetworkPurpose::Transfer`.
     Step { transfer_id: TransferId, attempt_id: AttemptId, cycle_id: CycleId, key: Key, operation: u64, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location>, seeded: Option<SeededAnswer> },
     Complete { transfer_id: TransferId, attempt_id: AttemptId, cycle_id: CycleId, key: Key, upload_id: Option<String>, parts: Vec<(u32, Option<String>)>, place: Option<Location>, seeded: Option<SeededAnswer> },
@@ -385,6 +403,9 @@ pub enum TransferStage {
     AwaitingSource,
     Copying,
     CopyReady,
+    Preparing,
+    Measuring,
+    PersistingPrepared,
     PersistingCopy,
     PersistingRetry,
     PersistingFailure,
@@ -420,8 +441,27 @@ pub enum NextStep {
     Mutation,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreparePhase {
+    Queued,
+    Probe,
+    Run,
+}
+
+/// The prepare step of a transfer: its phase, the plan of the run and what the platform answered.
+#[derive(Clone, Debug)]
+pub struct PrepareRun {
+    pub phase: PreparePhase,
+    pub plan: Option<crate::ffi::PreparePlan>,
+    pub metadata_keys: Vec<String>,
+    pub percent: u32,
+    pub name: Option<String>,
+    pub mime: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Transfer {
+    pub prep: Option<PrepareRun>,
     pub transfer_id: TransferId,
     pub key: Key,
     pub seq: u64,

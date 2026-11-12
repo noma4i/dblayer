@@ -58,6 +58,7 @@ impl TransferState {
         self.next_seq += 1;
         let BatchItem { key, fields, urgent, source, prepare, mutation, steps, .. } = item;
         let transfer = Transfer {
+            prep: None,
             transfer_id,
             key,
             seq,
