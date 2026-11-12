@@ -67,7 +67,8 @@ pub(super) fn follow_parent_pointers(connection: &Connection, models: &BTreeMap<
     let mut parents = Parents::default();
     let written = envelope.entity_ops.iter().enumerate().filter(|(_, op)| matches!(op, EntityOp::Upsert { .. })).map(|(index, op)| (op.row_ref(), index)).collect();
     let doomed = envelope.entity_ops.iter().filter(|op| matches!(op, EntityOp::Destroy { .. })).map(EntityOp::row_ref).collect();
-    let changes = envelope.entity_ops.clone();
+    let (mut changes, rest): (Vec<EntityOp>, Vec<EntityOp>) = envelope.entity_ops.iter().cloned().partition(|op| matches!(op, EntityOp::Destroy { reason: DestroyReason::Replaced { .. }, .. }));
+    changes.extend(rest);
     let mut ops = Ops { entities: &mut envelope.entity_ops, written, doomed, current };
     for op in changes {
         match op {
@@ -92,11 +93,15 @@ fn advance(models: &BTreeMap<String, ModelInfo>, reader: &Reader<'_>, model: &Mo
             continue;
         }
         let Some(current) = ops.current(reader, parents, &parent)? else { continue };
-        if !association.child_is_newer(&current, row) {
+        let child = row.get("id").and_then(read_id).map(|id| RowRef::new(model.clone(), id));
+        let stored = match &child { Some(child) => ops.load(reader, child)?, None => None };
+        let confirmed = stored.is_none() && child.as_ref().map(|child| replaced_a_temporary_id(reader, child)).transpose()?.unwrap_or(false);
+        let written = association.written_by(&current, row, stored.as_ref(), confirmed);
+        if written.is_empty() {
             continue;
         }
         let mut merged = current.clone();
-        for (parent_field, child_field) in &association.sets {
+        for (parent_field, child_field) in written {
             if let Some(value) = row.get(child_field) {
                 merged.insert(parent_field.clone(), value.clone());
             }
@@ -106,6 +111,11 @@ fn advance(models: &BTreeMap<String, ModelInfo>, reader: &Reader<'_>, model: &Mo
         }
     }
     Ok(())
+}
+
+fn replaced_a_temporary_id(reader: &Reader<'_>, child: &RowRef) -> Result<bool, StoreError> {
+    let ids = serde_json::to_string(&[child.id.as_str()])?;
+    Ok(reader.connection().prepare_cached(include_str!("sql/lookup/read_aliases_of.sql"))?.exists(rusqlite::params![child.model.as_str(), ids])?)
 }
 
 fn rename(models: &BTreeMap<String, ModelInfo>, reader: &Reader<'_>, model: &ModelKey, id: &RowId, by: &RowId, ops: &mut Ops<'_>, parents: &mut Parents) -> Result<(), StoreError> {

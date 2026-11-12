@@ -40,6 +40,7 @@ pub(super) fn plan(writer: &mut super::row_write::RowWrite<'_>, envelope: &mut B
         let models = writer.models;
         let reader = Reader::new(connection, models);
         let TempReplacement { model, temp, real } = replacement;
+        put_alias(connection, model, temp, real)?;
         let followed = |other: &&OutboxOperation| other.operation.id.0 != own && other.operation.row_ids.contains(temp);
         if outbox.iter().filter(followed).any(|follower| follower.operation.action_key.ends_with(":destroy")) {
             envelope.entity_ops.retain(|operation| !matches!(operation, EntityOp::Upsert { model: owner, id, .. } if owner.as_str() == model && id == real));
@@ -91,7 +92,6 @@ fn carry_locals(reader: &Reader<'_>, envelope: &mut BatchPlan, model: &str, real
 }
 
 pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, temp: &str, real: &str, own: i64) -> Result<crate::store::CommitResult, StoreError> {
-    writer.connection.execute(include_str!("sql/ddl/put_row_alias.sql"), rusqlite::params![model, temp, real])?;
     let temp = RowId::new(temp).map_err(|error| StoreError::Constraint(error.to_string()))?;
     let real = RowId::new(real).map_err(|error| StoreError::Constraint(error.to_string()))?;
     let held = writer.stored(model, temp.as_str())?.map(|stored| stored.row);
@@ -100,6 +100,13 @@ pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, te
     if held.is_some() {
         let outbox = crate::store::plan::read_outbox(&reader)?;
         plan(writer, &mut envelope, &outbox, TempReplacement { model, temp: &temp, real: &real }, own, held)?;
+    } else {
+        put_alias(writer.connection, model, &temp, &real)?;
     }
     writer.apply(&envelope)
+}
+
+fn put_alias(connection: &rusqlite::Connection, model: &str, temp: &RowId, real: &RowId) -> Result<(), StoreError> {
+    connection.execute(include_str!("sql/ddl/put_row_alias.sql"), rusqlite::params![model, temp.as_str(), real.as_str()])?;
+    Ok(())
 }
