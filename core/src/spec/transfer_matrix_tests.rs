@@ -78,6 +78,12 @@ fn xfer_persisting_invalid() {
         assert!(out.shows().is_empty(), "{name}");
         twin.commit();
         assert_eq!(twin.stage(id), TransferStage::Failed, "{name}");
+        if name == "PersistingComplete" {
+            let (_, retried) = twin.retry(KEY, None);
+            let after = [retried, twin.commit(), twin.commit()];
+            let sent = (after.iter().map(|out| out.steps().len()).sum::<usize>(), after.iter().map(|out| out.completes()).sum::<usize>());
+            assert_eq!(sent, (0, 1), "the retry goes straight to `complete`, no part is sent");
+        }
     }
 }
 
