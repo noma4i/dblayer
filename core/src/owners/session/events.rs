@@ -200,7 +200,6 @@ impl SessionState {
             SessionInput::EpochEnded(EpochEnded { epoch, cause }) => {
                 if epoch != self.epoch { self.phase = phase; return; }
                 if cause == Cause::Close { self.phase = phase; return; }
-                self.write_settled();
                 if cause != Cause::SessionStarted || self.resume_published.is_none() {
                     self.end_resume(SessionError::NoSession, fx);
                 }
@@ -247,9 +246,9 @@ impl SessionState {
                 let pending = Self::detached(pending, fx);
                 self.start_calling(pending, fx);
             }
-            SessionPhase::Persisting { pending, batch } if pending.request_id == req_id => self.phase = SessionPhase::Persisting { pending: Self::detached(pending, fx), batch },
+            SessionPhase::Persisting { pending, batch, writing } if pending.request_id == req_id => self.phase = SessionPhase::Persisting { pending: Self::detached(pending, fx), batch, writing },
             SessionPhase::Calling { pending, attempts, phase } if pending.request_id == req_id => self.phase = SessionPhase::Calling { pending: Self::detached(pending, fx), attempts, phase },
-            SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended } if pending.request_id == req_id => self.phase = SessionPhase::Landing { pending: Self::detached(pending, fx), batch, answer, identity, sequence, server_ended },
+            SessionPhase::Landing { pending, batch, writing, answer, identity, sequence, server_ended } if pending.request_id == req_id => self.phase = SessionPhase::Landing { pending: Self::detached(pending, fx), batch, writing, answer, identity, sequence, server_ended },
             SessionPhase::Blocked { pending: Some(pending), reason } if pending.request_id == req_id => self.phase = SessionPhase::Blocked { pending: Some(Self::detached(pending, fx)), reason },
             SessionPhase::Idle if !self.restored => {
                 self.released.insert(req_id);
@@ -561,7 +560,7 @@ impl SessionState {
                 }
                 self.phase = SessionPhase::Blocked { pending, reason };
             }
-            (SessionPhase::Persisting { pending, batch }, SessionInput::Committed(Committed { batch: committed, .. })) if committed == batch => {
+            (SessionPhase::Persisting { pending, batch, .. }, SessionInput::Committed(Committed { batch: committed, .. })) if committed == batch => {
                 self.write_settled();
                 if let Some(error) = self.detach_error.take() {
                     self.resume_finish_retained(&pending, Err(error), true, fx);
@@ -569,7 +568,7 @@ impl SessionState {
                     self.phase = SessionPhase::Calling { pending: PendingCall { reply: None, ..pending }, attempts: 0, phase: AttemptPhase::WaitingRetry };
                 } else { self.start_calling(pending, fx); }
             }
-            (SessionPhase::Persisting { pending, batch }, SessionInput::Rejected(Rejected { batch: rejected, reason })) if rejected == batch => match reason {
+            (SessionPhase::Persisting { pending, batch, writing }, SessionInput::Rejected(Rejected { batch: rejected, reason })) if rejected == batch => match reason {
                 RejectReason::Invalid(_) => {
                     self.write_settled();
                     self.detach_error = None;
@@ -577,16 +576,15 @@ impl SessionState {
                     self.idle(fx);
                 }
                 RejectReason::Storage(_) => {
-                    self.phase = SessionPhase::Persisting { pending, batch };
+                    self.phase = SessionPhase::Persisting { pending, batch, writing };
                     self.write_refused(fx);
                 }
-                RejectReason::NoSession | RejectReason::Closed => self.phase = SessionPhase::Persisting { pending, batch },
-                RejectReason::StaleGeneration { .. } => { self.phase = SessionPhase::Persisting { pending, batch }; fx.push(SessionEffect::ExecutorFailed); }
+                RejectReason::NoSession | RejectReason::Closed => self.phase = SessionPhase::Persisting { pending, batch, writing },
+                RejectReason::StaleGeneration { .. } => { self.phase = SessionPhase::Persisting { pending, batch, writing }; fx.push(SessionEffect::ExecutorFailed); }
             },
-            (SessionPhase::Persisting { pending, batch }, SessionInput::Tick) if !self.write_in_flight => {
-                self.write_in_flight = true;
+            (SessionPhase::Persisting { pending, batch, writing: false }, SessionInput::Tick) => {
                 fx.push(SessionEffect::CommitPending { batch, epoch: pending.epoch, pending: pending.clone(), session: self.write_session });
-                self.phase = SessionPhase::Persisting { pending, batch };
+                self.phase = SessionPhase::Persisting { pending, batch, writing: true };
             }
             (phase @ (SessionPhase::Persisting { .. } | SessionPhase::Calling { .. } | SessionPhase::Landing { .. }), SessionInput::Mutate { author, owner, req_id, epoch, path, body, purpose }) => {
                 let current = pending_of(&phase).is_some_and(|pending| pending.request_id == req_id);
@@ -598,7 +596,7 @@ impl SessionState {
                 self.queue.push_back(Queued::Call { operation, body, reply: id });
             }
             (SessionPhase::Calling { pending, attempts, phase }, input) => self.calling(pending, attempts, phase, input, fx),
-            (SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended }, SessionInput::Committed(Committed { batch: committed, .. })) if committed == batch => {
+            (SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended, .. }, SessionInput::Committed(Committed { batch: committed, .. })) if committed == batch => {
                 self.write_settled();
                 match identity.filter(|_| answer.is_ok()) {
                     Some(digest) => {
@@ -632,7 +630,7 @@ impl SessionState {
                 if self.failed_batch == Some(batch) { self.report_failed(fx); }
                 self.idle(fx);
             }
-            (SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended }, SessionInput::Rejected(Rejected { batch: rejected, reason })) if rejected == batch => match reason {
+            (SessionPhase::Landing { pending, batch, writing, answer, identity, sequence, server_ended }, SessionInput::Rejected(Rejected { batch: rejected, reason })) if rejected == batch => match reason {
                 RejectReason::Invalid(_) => {
                     self.write_settled();
                     let mut delivered = pending.clone();
@@ -649,13 +647,13 @@ impl SessionState {
                     self.phase = SessionPhase::Blocked { pending: Some(PendingCall { reply: None, ..delivered }), reason: Block::Invalid };
                 }
                 RejectReason::Storage(_) => {
-                    self.phase = SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended };
+                    self.phase = SessionPhase::Landing { pending, batch, writing, answer, identity, sequence, server_ended };
                     self.write_refused(fx);
                 }
-                RejectReason::NoSession | RejectReason::Closed => self.phase = SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended },
-                RejectReason::StaleGeneration { .. } => { self.phase = SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended }; fx.push(SessionEffect::ExecutorFailed); }
+                RejectReason::NoSession | RejectReason::Closed => self.phase = SessionPhase::Landing { pending, batch, writing, answer, identity, sequence, server_ended },
+                RejectReason::StaleGeneration { .. } => { self.phase = SessionPhase::Landing { pending, batch, writing, answer, identity, sequence, server_ended }; fx.push(SessionEffect::ExecutorFailed); }
             },
-            (SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended }, SessionInput::Tick) if !self.write_in_flight => {
+            (SessionPhase::Landing { pending, batch, writing: false, answer, identity, sequence, server_ended }, SessionInput::Tick) => {
                 self.land(pending, answer, identity, sequence, server_ended, fx);
                 if let (Some(failed), SessionPhase::Landing { batch: renewed, .. }) = (self.failed_batch, &self.phase) { if failed == batch { self.failed_batch = Some(*renewed); } }
             }

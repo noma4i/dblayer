@@ -188,9 +188,9 @@ pub enum SessionPhase {
     PendingHeld { pending: PendingCall },
     SecretMismatch,
     SecretUnavailable { error: String, read: Option<SecretOpId> },
-    Persisting { pending: PendingCall, batch: BatchId },
+    Persisting { pending: PendingCall, batch: BatchId, writing: bool },
     Calling { pending: PendingCall, attempts: u64, phase: AttemptPhase },
-    Landing { pending: PendingCall, batch: BatchId, answer: SessionAnswer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool },
+    Landing { pending: PendingCall, batch: BatchId, writing: bool, answer: SessionAnswer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool },
     Blocked { pending: Option<PendingCall>, reason: Block },
     Closed,
 }
@@ -318,7 +318,6 @@ pub struct SessionState {
     failed_batch: Option<BatchId>,
     /// `Storage` refusals in a row of the pair or the landing write: any other outcome of the write resets it.
     write_failures: u64,
-    write_in_flight: bool,
     /// The `Session{digest}` that the first sign-in writes with its pair: the repeat carries it again.
     write_session: Option<Digest>,
     detach_error: Option<SessionError>,
