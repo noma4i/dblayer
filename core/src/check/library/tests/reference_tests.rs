@@ -12,7 +12,7 @@ use crate::check::value::{Input, Observation};
 const DEPTH: usize = 1;
 const SEEDS: u64 = 8;
 const LENGTH: usize = 20;
-const PARALLEL: usize = 8;
+const PARALLEL: usize = 16;
 /// Distinct divergences that are minimized and printed.
 const GROUPS: usize = 6;
 
@@ -83,16 +83,6 @@ fn family(anonymous: bool, keep: fn(&Input) -> bool, deep: usize, extra: Vec<Vec
     without_unpromised(out)
 }
 
-/// Part `part` of `parts` of a family: the programs whose index modulo `parts` is `part - 1`.
-fn part_of(programs: Vec<Vec<Input>>, part: usize, parts: usize) -> Vec<Vec<Input>> {
-    programs.into_iter().enumerate().filter(|(index, _)| index % parts == part - 1).map(|(_, program)| program).collect()
-}
-
-/// Part `part` of 4 of a family: the programs whose index modulo 4 is `part - 1`.
-fn quarter(programs: Vec<Vec<Input>>, part: usize) -> Vec<Vec<Input>> {
-    programs.into_iter().enumerate().filter(|(index, _)| index % 4 == part - 1).map(|(_, program)| program).collect()
-}
-
 fn kinds(items: &[Observation]) -> String {
     items.iter().map(|item| item.value["kind"].as_str().map_or_else(|| item.kind.clone(), |kind| format!("{}:{kind}", item.kind))).collect::<Vec<_>>().join(",")
 }
@@ -149,109 +139,28 @@ async fn assert_matches(programs: Vec<Vec<Input>>) {
 }
 
 /// Requirement: library.md sections 3 to 7 for the slice O1 (environment and loads): after every input the stand shows what the reference shows.
-/// Observable: the requests (`sent`), the answers, the outcomes of the loads by name, the errors. Assert: no program of the modeled inputs diverges and none meets a spec hole.
-/// The 2 heavy families run as 4 tests each and the family without a session as 1, so each test stays inside the time limit of a test on a loaded machine.
+/// Observable: the requests (`sent`), the answers, the outcomes of the loads by name, the errors. Assert: no program of the modeled inputs (with a second login, without it, without a session) diverges and none meets a spec hole.
 #[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_loads_part_1() {
-    assert_matches(quarter(family(false, |input| !is_stream(input), depth(), retry_programs()), 1)).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_loads_part_2() {
-    assert_matches(quarter(family(false, |input| !is_stream(input), depth(), retry_programs()), 2)).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_loads_part_3() {
-    assert_matches(quarter(family(false, |input| !is_stream(input), depth(), retry_programs()), 3)).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_loads_part_4() {
-    assert_matches(quarter(family(false, |input| !is_stream(input), depth(), retry_programs()), 4)).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_loads_without_second_login_part_1() {
-    assert_matches(quarter(family(false, |input| input.name != "login" && !is_stream(input), depth(), Vec::new()), 1)).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_loads_without_second_login_part_2() {
-    assert_matches(quarter(family(false, |input| input.name != "login" && !is_stream(input), depth(), Vec::new()), 2)).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_loads_without_second_login_part_3() {
-    assert_matches(quarter(family(false, |input| input.name != "login" && !is_stream(input), depth(), Vec::new()), 3)).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_loads_without_second_login_part_4() {
-    assert_matches(quarter(family(false, |input| input.name != "login" && !is_stream(input), depth(), Vec::new()), 4)).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_loads_without_session() {
-    assert_matches(family(true, |input| !is_stream(input), depth().min(1), Vec::new())).await;
+async fn library_matches_reference_loads() {
+    let mut programs = family(false, |input| !is_stream(input), depth(), retry_programs());
+    programs.extend(family(false, |input| input.name != "login" && !is_stream(input), depth(), Vec::new()));
+    programs.extend(family(true, |input| !is_stream(input), depth().min(1), Vec::new()));
+    assert_matches(programs).await;
 }
 
 /// Requirement: library.md sections 3, 4, 5 and 7 for the slice O2 (streams `List`, `Count`, `Entity`): the value of a stream after `pull`, its end and its `cancel`, the loads that a stream opens or joins.
-/// Observable: the values of the streams (rows, phase, kind of the error, `loaded` present), `ended`, `empty`, the requests. Assert: no program diverges and none meets a spec hole.
-/// The family runs as 8 tests (program `index % 6`) and the family without a session as 1.
-async fn streams_part(part: usize) {
-    assert_matches(part_of(stream_family(false, &[], depth()), part, 8)).await;
-}
-
+/// Observable: the values of the streams (rows, phase, kind of the error, `loaded` present), `ended`, `empty`, the requests. Assert: no program, with a session or without, diverges and none meets a spec hole.
 #[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_streams_part_1() {
-    streams_part(1).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_streams_part_2() {
-    streams_part(2).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_streams_part_3() {
-    streams_part(3).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_streams_part_4() {
-    streams_part(4).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_streams_part_5() {
-    streams_part(5).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_streams_part_6() {
-    streams_part(6).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_streams_part_7() {
-    streams_part(7).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_streams_part_8() {
-    streams_part(8).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_streams_without_session() {
-    assert_matches(stream_family(true, &[], depth().min(1))).await;
+async fn library_matches_reference_streams() {
+    let mut programs = stream_family(false, &[], depth());
+    programs.extend(stream_family(true, &[], depth().min(1)));
+    assert_matches(programs).await;
 }
 
 /// Requirement: library.md section 3 `phase(window)`: `load = Waiting` (no network) gives the phase by `outcome`, not Loading; the last cancel takes the request back.
 /// Observable: the phase of the value of a `Count` stream after the network goes away, and after its cancel. Assert: no program diverges.
 #[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_stream_phase_without_network() {
+async fn library_matches_reference_window() {
     let count = Input::new("open_count").with("as", "c1").with("relation", "feed");
     let offline = Input::new("set_online").with("online", false);
     let pull = Input::new("pull").with("stream", "c1");
@@ -261,21 +170,16 @@ async fn library_matches_reference_stream_phase_without_network() {
     assert_matches([waiting, cancelled].into_iter().map(|body| [prelude(false), body].concat()).collect()).await;
 }
 
-/// Requirement: library.md section 7 `close` + `open`: the windows take `saved`, the network is unknown until the first message of the platform, the identity stays.
-/// Observable: the requests, the answers, the outcomes after the first input that follows the reopening. Assert: no program `prelude ; close ; open ; <letter>` diverges.
+/// Requirement: library.md sections 7 and 11.4: `close` + `open` (the windows take `saved`, the network is unknown until the first message of the platform, the identity stays), the network return rereads the watched window of a subscribed model whatever the size of its page, and the stored pair of a login that met `close` goes out after `open`.
+/// Observable: the requests, the answers, the outcomes after the first input that follows the reopening and after `set_online`. Assert: no program `prelude ; close ; open ; <letter>` and none of the saved programs of the rules I12 and I13 and the join of a load to a running one diverges.
 #[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_after_reopen() {
+async fn library_matches_reference_env() {
     let letters: Vec<Input> = alphabet().into_iter().filter(modeled).collect();
-    let programs = all_traces(&letters, 1).into_iter().map(reopened).collect();
-    assert_matches(without_unpromised(programs)).await;
-}
-
-/// Requirement: library.md sections 7 and 11.4: the network return rereads the watched window of a subscribed model whatever the size of its page, and the stored pair of a login that met `close` goes out after `open`.
-/// Observable: the requests after `set_online`. Assert: the saved programs of the rules I12 and I13 and the join of a load to a running one show what the reference shows.
-#[tokio::test(flavor = "multi_thread")]
-async fn library_matches_reference_on_saved_session_and_network_programs() {
+    let mut programs: Vec<Vec<Input>> = all_traces(&letters, 1).into_iter().map(reopened).collect();
     let traces = crate::check::corpus::read_dir(&crate::check::corpus::shared_dir().join("library")).unwrap();
-    let programs: Vec<_> = traces.iter().filter(|trace| trace.name.starts_with("i12_") || trace.name.starts_with("i13_") || trace.name.starts_with("begin_load_joins")).map(|trace| trace.inputs()).collect();
-    assert_eq!(programs.len(), 7, "the corpus programs of the rules I12, I13 and the join of a load");
+    let saved: Vec<_> = traces.iter().filter(|trace| trace.name.starts_with("i12_") || trace.name.starts_with("i13_") || trace.name.starts_with("begin_load_joins")).map(|trace| trace.inputs()).collect();
+    assert_eq!(saved.len(), 7, "the corpus programs of the rules I12, I13 and the join of a load");
+    programs = without_unpromised(programs);
+    programs.extend(saved);
     assert_matches(programs).await;
 }
