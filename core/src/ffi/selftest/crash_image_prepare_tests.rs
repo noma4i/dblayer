@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use super::crash_image_support::{copy_tree, drained, files_of, over_images, reopen_preparing, saved_work, Capture};
 use super::rig_tests::bound;
-use super::upload_prepare_tests::{probed_image, send, shrink, PREPARED, SOURCE};
+use super::upload_prepare_tests::{probed_image, send, shrink, upload_of, PREPARED, SOURCE};
+use crate::ffi::wire::WireUploadStatus;
 use super::upload_stand::{ScriptedPreparer, Stand, BLOB, CREATE_MOMENT};
 
 const LANDED: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#;
@@ -30,6 +31,7 @@ async fn crash_image_prepare() {
     stand.script.data("CreateMoment", LANDED);
     let receipt = bound(database.send(send(epoch, &file, shrink()))).await.unwrap();
     let kept_files = directory.path().join("kept.files");
+    assert_eq!(upload_of(&database, &receipt.optimistic_value.as_ref().unwrap().id).map(|upload| upload.status), Some(WireUploadStatus::Preparing), "the accepted transfer waits in the prepare step");
     run_hold.entered().await;
     copy_tree(&files_of(&live), &kept_files);
     run_hold.release();

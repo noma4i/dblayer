@@ -108,7 +108,8 @@ async fn pending_source_values_reach_the_row_and_rollback() {
 #[tokio::test(flavor = "multi_thread")]
 async fn xfer_prop_pending_terminates() {
     for order in [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] {
-        let stand = Stand::new();
+        let preparer = super::upload_stand::ScriptedPreparer::new(crate::ffi::ProbeOutcome::Failed { message: "unused".into() }, b"", &[]);
+        let stand = Stand::new().with_preparer(preparer.clone());
         let database = stand.open(None, &OPERATIONS).await;
         for index in 0..3 { stand.script.data("CreateBlob", &blob(index)); }
         stand.script.data("CreateAssets", r#"{"data":{"createAssets":{"assets":[{"id":"a0","clientKey":"key-0","size":3,"position":0},{"id":"a1","clientKey":"key-1","size":3,"position":1},{"id":"a2","clientKey":"key-2","size":3,"position":2}]}}}"#);
@@ -133,6 +134,7 @@ async fn xfer_prop_pending_terminates() {
         assert_eq!(sent.len(), 1, "{order:?}");
         let keys: Vec<_> = sent[0]["items"].as_array().unwrap().iter().map(|item| item["clientKey"].as_str().unwrap()).collect();
         assert_eq!(keys, ["key-0", "key-1", "key-2"], "{order:?}");
+        assert_eq!(preparer.calls(), 0, "{order:?}: a source without settings never reaches the platform preparer");
         database.close_now();
     }
 }

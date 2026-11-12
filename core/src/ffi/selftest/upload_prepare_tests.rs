@@ -2,11 +2,14 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use super::crash_image_support::{files_of, queue_now};
 use super::rig_tests::bound;
-use super::upload_stand::{Stand, CREATE_MOMENT};
-use crate::ffi::upload_wire::{WirePrepare, WireSource, WireUploadRequest};
+use super::upload_batch_shift_tests::{blob, OPERATIONS};
+use super::upload_stand::{source_of, ScriptedPreparer, Stand, BLOB, CREATE_MOMENT};
+use crate::ffi::upload_wire::{WirePrepare, WireSource, WireUploadBatch, WireUploadItem, WireUploadRequest};
 use crate::ffi::command::{CommandRequest, CommandUpload};
-use crate::ffi::{DbError, PrepareJob, PrepareOutcome, PrepareProgress, Preparer, ProbeOutcome};
+use crate::ffi::wire::{WireUpload, WireUploadStatus};
+use crate::ffi::{DbError, PrepareJob, PrepareOutcome, PrepareProgress, Preparer, ProbeOutcome, ReadRequest, ReadValue};
 use crate::prepare::{default_video_limits, CropFractions, ImageFormat, PhotoEdit, PixelSize, VideoLimits};
 
 struct Refusing;
@@ -24,13 +27,13 @@ fn video(change: impl FnOnce(&mut VideoLimits)) -> WirePrepare {
     WirePrepare::Video { limits: Some(limits), mirror: false }
 }
 
-fn image(change: impl FnOnce(&mut PhotoEdit)) -> WirePrepare {
+pub(super) fn image(change: impl FnOnce(&mut PhotoEdit)) -> WirePrepare {
     let mut edit = PhotoEdit { max_size: None, enlarge: false, crop: None, output_size: None, mirror: false, rotation_degrees: 0 };
     change(&mut edit);
     WirePrepare::Image { edit, quality: None, format: ImageFormat::Jpeg }
 }
 
-fn send(epoch: u64, path: &std::path::Path, prepare: WirePrepare) -> CommandRequest {
+pub(super) fn send(epoch: u64, path: &std::path::Path, prepare: WirePrepare) -> CommandRequest {
     let source = WireSource::File { path: path.to_str().unwrap().into(), name: None, mime: None, prepare: Some(prepare) };
     CommandRequest { epoch, model: "Moment".into(), values_json: r#"{"text":"clip"}"#.into(), args_json: "{}".into(), upload: Some(CommandUpload { action: "upload_clip".into(), request: WireUploadRequest { source, variables_json: "{}".into() } }) }
 }
@@ -72,5 +75,226 @@ async fn xfer_prepare_invalid_settings() {
     let database = without.open(Some(&directory.path().join("other.sqlite")), &[CREATE_MOMENT]).await;
     let refused = bound(database.send(send(database.session_epoch(), &source, WirePrepare::Video { limits: None, mirror: false }))).await.map(|_| ());
     assert!(matches!(refused, Err(DbError::Invalid { .. })), "no preparer: {refused:?}");
+    database.close_now();
+}
+
+const LANDED: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#;
+const LANDED_NEXT: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m78","uuid":"v","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:01.000Z"}}}"#;
+pub(super) const SOURCE: &[u8] = b"source-bytes-of-the-clip";
+pub(super) const PREPARED: &[u8] = b"prepared";
+
+pub(super) fn probed_image() -> ProbeOutcome { ProbeOutcome::Image { width: 400, height: 400, exif_orientation: 1, format: ImageFormat::Jpeg } }
+
+pub(super) fn shrink() -> WirePrepare { image(|edit| edit.max_size = Some(PixelSize { width: 200, height: 200 })) }
+
+pub(super) fn upload_of(database: &crate::ffi::Database, id: &str) -> Option<WireUpload> {
+    let row = database.peek_row(database.session_epoch(), "Moment".into(), id.into()).unwrap()?;
+    row.uploads.into_iter().find(|entry| entry.action == "upload_clip").map(|entry| entry.upload)
+}
+
+fn shown(database: &crate::ffi::Database, id: &str) -> bool { database.peek_row(database.session_epoch(), "Moment".into(), id.into()).unwrap().is_some() }
+
+pub(super) fn files_left(database: &std::path::Path) -> usize {
+    fn walk(path: &std::path::Path) -> usize {
+        std::fs::read_dir(path).map_or(0, |found| found.map(|entry| { let entry = entry.unwrap(); if entry.file_type().unwrap().is_dir() { walk(&entry.path()) } else { 1 } }).sum())
+    }
+    walk(&files_of(database))
+}
+
+async fn quiet(database: &crate::ffi::Database) {
+    let life = database.life_handle();
+    bound(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
+}
+
+async fn checksum_of(bytes: &[u8]) -> String {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("sum");
+    std::fs::write(&path, bytes).unwrap();
+    crate::owners::write::upload_io::md5_base64(&path, &crate::transport::CancelToken::new()).await.unwrap()
+}
+
+fn source_file(directory: &std::path::Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
+    let path = directory.join(name);
+    std::fs::write(&path, bytes).unwrap();
+    path
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_prepare_runs_then_uploads() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let source = source_file(directory.path(), "clip.jpg", SOURCE);
+    let preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[0.3, 0.6, 1.0]);
+    let hold = preparer.hold_next();
+    let stand = Stand::new().with_preparer(preparer.clone());
+    let database = stand.open(Some(&path), &[CREATE_MOMENT]).await;
+    stand.script.data("CreateBlob", BLOB);
+    stand.script.data("CreateMoment", LANDED);
+    let epoch = database.session_epoch();
+    let receipt = bound(database.send(send(epoch, &source, shrink()))).await.unwrap();
+    let id = receipt.optimistic_value.as_ref().unwrap().id.clone();
+    assert_eq!(upload_of(&database, &id).map(|upload| upload.status), Some(WireUploadStatus::Preparing), "the receipt comes with the copy and the preparing row");
+    hold.entered().await;
+    let watch = database.subscribe_values(epoch, ReadRequest::Blob { model: "Moment".into(), id: id.clone(), action: "upload_clip".into() });
+    hold.release();
+    let mut preparing = Vec::new();
+    loop {
+        match bound(watch.pull_next()).await {
+            Some(ReadValue::Status { state, progress, .. }) if state == "preparing" => preparing.push(progress),
+            Some(ReadValue::Status { .. }) => break,
+            other => panic!("the status ended: {other:?}"),
+        }
+    }
+    assert!(preparing.windows(2).all(|pair| pair[0] <= pair[1]) && preparing.iter().any(|percent| *percent >= 30), "the percent of the step never goes back: {preparing:?}");
+    bound(database.confirmed(receipt, false)).await.unwrap();
+    let blobs = stand.script.variables("CreateBlob");
+    assert_eq!(blobs.len(), 1);
+    assert_eq!((blobs[0]["byteSize"].as_u64(), blobs[0]["checksum"].as_str().map(str::to_string)), (Some(PREPARED.len() as u64), Some(checksum_of(PREPARED).await)), "the server gets the size and the checksum of the prepared file");
+    assert_eq!(*stand.puts.bodies.lock().unwrap(), vec![PREPARED.to_vec()], "the body of the PUT is the prepared file");
+    assert_eq!(stand.script.count("CreateMoment"), 1);
+    crate::test_wait::settled(&database, "no copy and no result stay", || files_left(&path) == 0).await;
+    assert_eq!(preparer.runs().len(), 1);
+    database.close_now();
+
+    let stand = Stand::new().with_preparer(preparer.clone());
+    let database = stand.open(Some(&directory.path().join("pending.sqlite")), &OPERATIONS).await;
+    for index in 0..2 { stand.script.data("CreateBlob", &blob(index)); }
+    stand.script.data("CreateAssets", r#"{"data":{"createAssets":{"assets":[{"id":"a0","clientKey":"key-0","size":3,"position":0},{"id":"a1","clientKey":"key-1","size":3,"position":1}]}}}"#);
+    let epoch = database.session_epoch();
+    let items = (0..2).map(|index| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":3,"position":{index}}}"#), source: WireSource::Pending, variables_json: "{}".into() }).collect();
+    let batch = bound(database.upload_create_batch(epoch, "Asset".into(), items, WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
+    let supplied = source_file(directory.path(), "supplied.jpg", SOURCE);
+    let runs = preparer.runs().len();
+    for item in &batch.items {
+        bound(database.supply_source(epoch, "Asset".into(), item.optimistic_value.id.clone(), "create_files".into(), source_of(&supplied, "{}", &shrink()))).await.unwrap();
+    }
+    for item in batch.items { bound(database.confirmed(item.receipt, false)).await.unwrap(); }
+    assert_eq!(preparer.runs().len() - runs, 2, "a supplied source with settings goes through the step");
+    assert_eq!(stand.puts.bodies.lock().unwrap().iter().filter(|body| body.as_slice() == PREPARED).count(), 2);
+    database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_prepare_pass_through() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = source_file(directory.path(), "clip.jpg", SOURCE);
+    let preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[]);
+    let stand = Stand::new().with_preparer(preparer.clone());
+    let database = stand.open(Some(&directory.path().join("db.sqlite")), &[CREATE_MOMENT]).await;
+    stand.script.data("CreateBlob", BLOB);
+    stand.script.data("CreateMoment", LANDED);
+    let receipt = bound(database.send(send(database.session_epoch(), &source, image(|_| {})))).await.unwrap();
+    bound(database.confirmed(receipt, false)).await.unwrap();
+    assert_eq!((preparer.probes(), preparer.runs()), (vec![SOURCE.to_vec()], Vec::new()), "the plan asks for no work: the metadata is read, nothing is written");
+    assert_eq!(*stand.puts.bodies.lock().unwrap(), vec![SOURCE.to_vec()], "the copy of the source goes");
+    assert_eq!(stand.script.count("CreateMoment"), 1);
+    database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_prepare_failed_and_retry() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let source = source_file(directory.path(), "clip.jpg", SOURCE);
+    let preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[0.5]);
+    preparer.fail_next("the codec refused");
+    let stand = Stand::new().keep_moment().with_preparer(preparer.clone());
+    let database = stand.open(Some(&path), &[CREATE_MOMENT]).await;
+    stand.script.data("CreateBlob", BLOB);
+    stand.script.data("CreateMoment", LANDED);
+    let epoch = database.session_epoch();
+    let receipt = bound(database.send(send(epoch, &source, shrink()))).await.unwrap();
+    let id = receipt.optimistic_value.as_ref().unwrap().id.clone();
+    let _ = bound(database.confirmed(receipt, false)).await;
+    crate::test_wait::settled(&database, "the failed step is shown", || upload_of(&database, &id).is_some_and(|upload| upload.status == WireUploadStatus::Failed)).await;
+    let failed = upload_of(&database, &id).unwrap();
+    assert_eq!(failed.error.map(|error| error.kind), Some("prepare_failed".to_string()));
+    assert!(files_left(&path) > 0, "the copy of the source stays");
+    assert_eq!(stand.script.count("CreateBlob"), 0);
+    let again = crate::ffi::upload_wire::WireUploadSource { path: source.to_str().unwrap().into(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into() };
+    assert!(matches!(bound(database.retry(epoch, "Moment".into(), id.clone(), Some("upload_clip".into()), Some(again))).await, Err(DbError::Invalid { .. })), "a new source is a new upload");
+    let retried = bound(database.retry(epoch, "Moment".into(), id.clone(), Some("upload_clip".into()), None)).await.unwrap();
+    bound(database.confirmed(retried, false)).await.unwrap();
+    assert_eq!(preparer.runs().len(), 2, "the retry runs the step again from the copy");
+    assert_eq!(*stand.puts.bodies.lock().unwrap(), vec![PREPARED.to_vec()]);
+    assert_eq!(stand.script.count("CreateMoment"), 1);
+    database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_prepare_cancel() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let source = source_file(directory.path(), "clip.jpg", SOURCE);
+    let preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[0.5]);
+    let hold = preparer.hold_next();
+    let stand = Stand::new().with_preparer(preparer.clone());
+    let database = stand.open(Some(&path), &[CREATE_MOMENT]).await;
+    stand.script.data("CreateBlob", BLOB);
+    stand.script.data("CreateMoment", LANDED);
+    let epoch = database.session_epoch();
+    let receipt = bound(database.send(send(epoch, &source, shrink()))).await.unwrap();
+    let id = receipt.optimistic_value.as_ref().unwrap().id.clone();
+    assert_eq!(upload_of(&database, &id).map(|upload| upload.status), Some(WireUploadStatus::Preparing), "the accepted transfer waits in the prepare step");
+    hold.entered().await;
+    assert!(bound(database.cancel_upload(epoch, "Moment".into(), id.clone(), "upload_clip".into())).await.unwrap());
+    assert_eq!(preparer.cancels(), preparer.runs());
+    assert_eq!(preparer.cancels().len(), 1);
+    assert!(!shown(&database, &id), "the optimistic row is gone");
+    crate::test_wait::settled(&database, "no copy and no result stay", || files_left(&path) == 0).await;
+    hold.release();
+    quiet(&database).await;
+    assert_eq!((files_left(&path), shown(&database, &id), stand.script.count("CreateBlob"), stand.puts.bodies.lock().unwrap().len()), (0, false, 0, 0), "the late end of the run changes nothing");
+    database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_prepare_one_at_a_time() {
+    let directory = tempfile::tempdir().unwrap();
+    let (first, second) = (source_file(directory.path(), "a.jpg", b"first-source"), source_file(directory.path(), "b.jpg", b"second-source"));
+    let preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[0.5]);
+    let hold = preparer.hold_next();
+    let stand = Stand::new().with_preparer(preparer.clone());
+    let database = stand.open(Some(&directory.path().join("db.sqlite")), &[CREATE_MOMENT]).await;
+    for landed in [LANDED, LANDED_NEXT] {
+        stand.script.data("CreateBlob", BLOB);
+        stand.script.data("CreateMoment", landed);
+    }
+    let epoch = database.session_epoch();
+    let one = bound(database.send(send(epoch, &first, shrink()))).await.unwrap();
+    assert_eq!(upload_of(&database, one.optimistic_value.as_ref().map_or("", |value| value.id.as_str())).map(|upload| upload.status), Some(WireUploadStatus::Preparing), "the accepted transfer waits in the prepare step");
+    hold.entered().await;
+    let two = bound(database.send(send(epoch, &second, shrink()))).await.unwrap();
+    quiet(&database).await;
+    assert_eq!(preparer.probes(), vec![b"first-source".to_vec()], "the second transfer waits for the step");
+    hold.release();
+    bound(database.confirmed(one, false)).await.unwrap();
+    bound(database.confirmed(two, false)).await.unwrap();
+    assert_eq!(preparer.probes(), vec![b"first-source".to_vec(), b"second-source".to_vec()], "the order of the acceptance");
+    assert_eq!(preparer.peak_runs(), 1);
+    database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_prepare_end() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let source = source_file(directory.path(), "clip.jpg", SOURCE);
+    let preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[0.5]);
+    let hold = preparer.hold_next();
+    let stand = Stand::new().with_preparer(preparer.clone());
+    let database = stand.open(Some(&path), &[CREATE_MOMENT]).await;
+    let epoch = database.session_epoch();
+    let receipt = bound(database.send(send(epoch, &source, shrink()))).await.unwrap();
+    assert_eq!(upload_of(&database, receipt.optimistic_value.as_ref().map_or("", |value| value.id.as_str())).map(|upload| upload.status), Some(WireUploadStatus::Preparing), "the accepted transfer waits in the prepare step");
+    hold.entered().await;
+    let waiting = { let database = database.clone(); tokio::spawn(async move { database.confirmed(receipt, false).await }) };
+    bound(database.session_reset()).await.unwrap();
+    assert!(matches!(bound(waiting).await.unwrap(), Err(DbError::NoSession { .. })), "the wait ends with the end of the session");
+    assert_eq!(preparer.cancels(), preparer.runs());
+    assert_eq!(preparer.cancels().len(), 1);
+    crate::test_wait::settled(&database, "no copy and no result stay", || files_left(&path) == 0).await;
+    assert_eq!(queue_now(&database).await, 0);
+    hold.release();
     database.close_now();
 }
