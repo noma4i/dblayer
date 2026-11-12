@@ -731,6 +731,15 @@ for path in sorted((source / "store").rglob("*.rs")):
                 number = text.count("\n", 0, header.end() + found.start()) + 1
                 findings.append(f"Z56 the entry of a row in a window reads only the source of the batch, RelationSpec::admits decides it (P-DATA-100): {path.relative_to(root)}:{number}")
 
+manifest = source / "ffi" / "selftest" / "manifest.tsv"
+lanes = {"core": (source, ".rs", "fn"), "swift": (root / "swift" / "Tests", ".swift", "func"), "kotlin": (root / "kotlin" / "src", ".kt", "fun")}
+declared = {lane: set(re.findall(rf"\b{word}\s+`?(\w+)`?\s*\(", "".join(path.read_text() for path in sorted(folder.rglob(f"*{suffix}"))))) for lane, (folder, suffix, word) in lanes.items() if folder.is_dir()}
+for number, line in enumerate(manifest.read_text().splitlines()[2:] if manifest.is_file() else [], start=3):
+    cells = line.split("\t")
+    if len(cells) < 4 or cells[2] not in declared: continue
+    if cells[3].rsplit(".", 1)[-1].rsplit("::", 1)[-1] not in declared[cells[2]]:
+        findings.append(f"Z58 a row of the sequence manifest names a test that the {cells[2]} lane declares: {manifest.relative_to(root)}:{number} {cells[3]}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     print("Each finding is a second mechanism or a second meaning of one word. Find the cause and remove the duplicate: keep the owner, delete the copy. A rename or an allowlist line that only makes the check pass is refused at review.")

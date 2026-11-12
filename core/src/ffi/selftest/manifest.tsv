@@ -130,7 +130,7 @@ S220	window-reopen	core	a_refresh_after_reopen_and_clock_rollback_keeps_the_new_
 S221	window-debt	core	a_window_without_a_reader_is_read_again_when_the_next_reader_opens_it	green	-	coordinator persisted stale debt
 S221	window-debt	core	a_window_without_a_reader_is_read_again_when_the_next_reader_opens_it	green	-	coordinator persisted stale debt
 S221	window-debt	core	a_window_without_a_reader_is_read_again_when_the_next_reader_opens_it	green	-	coordinator persisted stale debt
-T09		core	xfer_round_refused_stale	red-by-reading	-	late Android scheduler refusal after session reset
+T09		core	xfer_prop_round_ids	red-by-reading	-	late Android scheduler refusal after session reset
 T13		core	xfer_round_needed_new_epoch	red-by-reading	-	new Android upload after old running round
 T14		kotlin	com.noma4i.dblayer.UploadWorkTest.onlyUploadRequestsGoThroughTheNetworkOfTheRunningJob	red-by-reading	-	late Android job must not clear a newer network route
 T15		core	xfer_round_requested_new_epoch	red-by-reading	-	Android scheduler refusal crosses a session reset
