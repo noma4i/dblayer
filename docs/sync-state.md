@@ -189,6 +189,25 @@ Later changes to the same record wait behind a `failed` change and are sent afte
 Opening starts network monitoring on both platforms. Kotlin requires an Android `Context` as the first argument. The bindings hand one observer object of the platform to the core: it starts with the database and the core stops it before `close` returns. Each OS value (network path, app foreground, power saving mode) goes to the core as one input. An app calls nothing for them.
 Mutations, uploads and loads read the same core flag. While the network is away, changes and uploads wait, and a load or refresh fails with `Offline`. When the network returns, waiting changes and uploads are sent by themselves and open lists that failed on the network read again once.
 
+### Network status
+
+`NetworkStatus` shows the network of the phone as the platform reports it. It is the last value the OS observer gave the core, and it is `nil`/`null` before the first. It does not depend on the server, the cable, retries, the session or `close`. The app keeps no network observer of its own.
+`isOnline` is the current value. `changes` in Swift (an `AsyncSequence` of `Bool`) and `flow` in Kotlin (a `Flow<Boolean>`) deliver the current value first, then each change. A value equal to the current one wakes no reader. A slow reader gets the newest value. Cancelling a read ends only that reader. All `NetworkStatus` instances read the same process-wide source.
+
+```swift
+let network = NetworkStatus()
+let now: Bool? = network.isOnline
+for await online in network.changes {
+  print(online)
+}
+```
+
+```kotlin
+val network = NetworkStatus()
+val now: Boolean? = network.isOnline
+network.flow.collect { online -> println(online) }
+```
+
 ## Refreshing
 
 A whole list refreshes with `refresh()`. The load state of the relation (`phase`: `idle`, `loading`, `loaded`, `failed`, with `error`, `settled` and `hasMore`) is part of every list delivery, see [live data](live-data.md#state-of-a-stream).

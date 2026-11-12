@@ -404,6 +404,7 @@ The entry contains no request payload. Owners include bootstrap, session, window
 Durable outbox and upload owners also expose their saved attempts through operation state.
 
 The list shows the timers that wait now. It is not a list of all calls.
+`RetryProgress` is not a connection state: for the network of the phone read [`NetworkStatus`](sync-state.md#network-status).
 
 ```swift
 let retries = RetryProgress()

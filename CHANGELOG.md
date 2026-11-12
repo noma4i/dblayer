@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Add `NetworkStatus` with `isOnline` and `changes` (Swift) or `flow` (Kotlin): the network of the phone as the platform reports it.
+
 ### Changed
 
 - Carry the reason text of a refused invalid write in `Invalid` errors.
