@@ -6,7 +6,7 @@ use super::rig_tests::bound;
 use super::upload_batch_shift_tests::OPERATIONS;
 use super::upload_stand::Stand;
 
-fn copy_image(from: &std::path::Path, to: &std::path::Path) {
+pub(super) fn copy_image(from: &std::path::Path, to: &std::path::Path) {
     for suffix in ["", "-wal"] {
         let (source, target) = (format!("{}{suffix}", from.display()), format!("{}{suffix}", to.display()));
         if std::path::Path::new(&source).exists() { std::fs::copy(source, target).unwrap(); }

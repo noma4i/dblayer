@@ -38,6 +38,9 @@ impl Capture {
     /// Every cut of the log at a commit, the empty log first: each is the file a process killed at that commit leaves.
     pub(super) fn cuts(&self) -> usize { self.cuts.len() }
 
+    /// The index of the last cut a log of this length holds whole.
+    pub(super) fn cut_at(&self, wal_length: u64) -> usize { self.cuts.iter().rposition(|cut| *cut as u64 <= wal_length).unwrap() }
+
     fn image(&self, index: usize, files: &Path) -> PathBuf {
         let image = self.directory.path().join(format!("image-{index}.sqlite"));
         std::fs::copy(&self.base, &image).unwrap();
@@ -46,6 +49,9 @@ impl Capture {
         image
     }
 }
+
+/// The length of the log of a live database now.
+pub(super) fn wal_length(live: &Path) -> u64 { std::fs::metadata(wal_of(live)).map_or(0, |meta| meta.len()) }
 
 pub(super) struct Base {
     directory: tempfile::TempDir,
