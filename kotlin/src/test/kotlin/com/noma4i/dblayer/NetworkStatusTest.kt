@@ -16,14 +16,30 @@ class NetworkStatusTest {
         assertEquals(false, status.isOnline)
         val one = status.subscribe()
         val two = status.subscribe()
-        assertEquals(false, one.next())
-        assertEquals(false, two.next())
+        assertEquals(false, one.next()?.online)
+        assertEquals(false, two.next()?.online)
         osNetwork(true)
-        assertEquals(true, one.next())
-        assertEquals(true, two.next())
+        assertEquals(true, one.next()?.online)
+        assertEquals(true, two.next()?.online)
         assertEquals(true, status.isOnline)
         osNetwork(false)
-        assertEquals(false, one.next())
+        assertEquals(false, one.next()?.online)
         assertEquals(false, NetworkStatus(org.robolectric.RuntimeEnvironment.getApplication()).isOnline)
+    }
+
+    /** bridge_network_path: the transport and the change of the `Network` object reach `path`, `isOnline` and `flow` as the same values. */
+    @Test
+    fun bridge_network_path_kotlinCarriesThePathAndTheChangeOfNetwork() = bounded {
+        openSignedOffline(Config(null, null), modelsJSON)
+        val status = NetworkStatus(org.robolectric.RuntimeEnvironment.getApplication())
+        osNetwork(true, android.net.NetworkCapabilities.TRANSPORT_WIFI)
+        val reader = status.subscribe()
+        val wifi = reader.next()!!
+        assertEquals(NetworkTransport.WIFI, wifi.transport)
+        assertEquals(wifi, status.path)
+        osNetwork(true, android.net.NetworkCapabilities.TRANSPORT_CELLULAR, org.robolectric.shadows.ShadowNetwork.newInstance(77))
+        val cellular = reader.next()!!
+        assertEquals(Triple(true, NetworkTransport.CELLULAR, true), Triple(cellular.online, cellular.transport, cellular.network != wifi.network))
+        assertEquals(true, status.isOnline)
     }
 }

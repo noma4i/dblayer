@@ -14,15 +14,15 @@ class NetworkStatusCancelTest {
         openSignedOffline(Config(null, null), modelsJSON)
         val status = NetworkStatus(org.robolectric.RuntimeEnvironment.getApplication())
         osNetwork(false)
-        val seen = kotlinx.coroutines.channels.Channel<Boolean>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        val seen = kotlinx.coroutines.channels.Channel<NetworkPath>(kotlinx.coroutines.channels.Channel.UNLIMITED)
         val ending = launch { status.flow.collect { seen.send(it) } }
-        assertEquals(false, seen.receive())
+        assertEquals(false, seen.receive().online)
         val kept = status.subscribe()
-        assertEquals(false, kept.next())
+        assertEquals(false, kept.next()?.online)
         ending.cancel()
         awaitWithin("the cancelled collector ends") { ending.join() }
         osNetwork(true)
-        assertEquals(true, kept.next())
+        assertEquals(true, kept.next()?.online)
         assertEquals(true, status.isOnline)
     }
 }
