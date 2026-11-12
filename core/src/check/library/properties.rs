@@ -143,7 +143,7 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
         }
         let refused = |kind: &str| has_error(observed, kind);
         if kinds(observed, "opened").next().is_some() {
-            (walk.is_open, walk.online, walk.subscriptions) = (true, true, 0);
+            (walk.is_open, walk.online, walk.subscriptions) = (true, false, 0);
             (walk.now, walk.back) = (walk.now - walk.back, 0);
         }
         if let Some(online) = kinds(observed, "online").next() {
