@@ -180,13 +180,15 @@ internal fun readVideoFacts(file: File): VideoFacts {
 internal suspend fun exportWithTransformer(request: VideoExport) = withContext(Dispatchers.Main.immediate) {
     val setup = request.setup
     val item = EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(request.source))).setEffects(Effects(setup.audioProcessors, setup.videoEffects)).build()
-    val encoders = DefaultEncoderFactory.Builder(request.context)
-        .setRequestedVideoEncoderSettings(
+    // Requested encoder settings make Media3 decode and re-encode, so a repack must not set them.
+    val encoders = DefaultEncoderFactory.Builder(request.context).apply {
+        if (setup.videoMime == null) return@apply
+        setRequestedVideoEncoderSettings(
             VideoEncoderSettings.Builder().setBitrate(setup.videoBitrate)
                 .setEncodingProfileLevel(MediaCodecInfo.CodecProfileLevel.AVCProfileHigh, MediaCodecInfo.CodecProfileLevel.AVCLevel42).build(),
         )
-        .setRequestedAudioEncoderSettings(AudioEncoderSettings.Builder().setBitrate(setup.audioBitrate).build())
-        .build()
+        setRequestedAudioEncoderSettings(AudioEncoderSettings.Builder().setBitrate(setup.audioBitrate).build())
+    }.build()
     val handler = Handler(Looper.getMainLooper())
     val holder = ProgressHolder()
     suspendCancellableCoroutine { continuation ->

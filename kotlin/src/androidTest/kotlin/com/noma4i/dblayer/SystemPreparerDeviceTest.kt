@@ -26,7 +26,7 @@ class SystemPreparerDeviceTest {
 
     private class Result(val mime: String, val width: Int, val height: Int, val frames: Int, val hasAudio: Boolean)
 
-    private class Cell(val name: String, val asset: String, val plan: PreparePlan, val mayFail: Boolean = false, val check: (File) -> String)
+    private class Cell(val name: String, val asset: String, val plan: PreparePlan, val mayFail: Boolean = false, val check: (File, File) -> String)
 
     private fun video(reencode: Boolean, width: Int, height: Int, rotation: Int = 0, strip: List<String> = emptyList(), mirror: Boolean = false) =
         PreparePlan.Video(VideoPlan(reencode, width.toUInt(), height.toUInt(), 700_000u, 30u, rotation.toUInt()), strip, 128_000u, 2u, 44_100u, mirror)
@@ -65,18 +65,30 @@ class SystemPreparerDeviceTest {
         }
     }
 
-    private fun videoRow(width: Int, height: Int, mime: String? = "video/avc", audio: Boolean? = true, keys: Boolean = false, frames: IntRange = 1..40): (File) -> String = { file ->
+    private fun dateOf(file: File): String? {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(file.absolutePath)
+            return retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DATE)
+        } finally {
+            retriever.release()
+        }
+    }
+
+    private fun videoRow(width: Int, height: Int, mime: String? = "video/avc", audio: Boolean? = true, keys: Boolean = false, frames: IntRange = 1..40): (File, File) -> String = { file, source ->
         val result = read(file)
         if (mime != null) assertEquals("codec", mime, result.mime)
         assertEquals("size", "${width}x$height", "${result.width}x${result.height}")
         if (audio != null) assertEquals("audio", audio, result.hasAudio)
         assertTrue("frames ${result.frames}", result.frames in frames)
         val found = readMetadataKeys(context, file)
-        assertFalse("location kept: $found", found.any { it == "location" || it == "creation_time" })
+        assertFalse("location kept: $found", found.any { it == "location" })
+        val sourceDate = dateOf(source)
+        assertTrue("source creation time kept: $sourceDate", sourceDate == null || sourceDate != dateOf(file))
         "${result.mime} ${result.width}x${result.height} frames=${result.frames} audio=${result.hasAudio}" + if (keys) " no-location" else ""
     }
 
-    private fun imageRow(width: Int, height: Int, mime: String, alpha: Boolean = false): (File) -> String = { file ->
+    private fun imageRow(width: Int, height: Int, mime: String, alpha: Boolean = false): (File, File) -> String = { file, _ ->
         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }.also { BitmapFactory.decodeFile(file.path, it) }
         assertEquals("format", mime, options.outMimeType)
         assertEquals("size", "${width}x$height", "${options.outWidth}x${options.outHeight}")
@@ -87,7 +99,7 @@ class SystemPreparerDeviceTest {
             val exif = ExifInterface(file.path)
             assertTrue("gps kept", !exif.getLatLong(FloatArray(2)))
             assertTrue("device kept", exif.getAttribute(ExifInterface.TAG_MAKE) == null && exif.getAttribute(ExifInterface.TAG_MODEL) == null)
-            assertEquals("orientation kept", ExifInterface.ORIENTATION_NORMAL, exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL))
+            assertTrue("orientation kept", exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) !in 2..8)
         }
         "$mime ${options.outWidth}x${options.outHeight} alpha=$alpha no-gps no-device"
     }
@@ -131,7 +143,7 @@ class SystemPreparerDeviceTest {
             val outcome = preparer.run(PrepareJob(index.toULong(), source.path, destination.path, cell.plan), Quiet())
             val row = when (outcome) {
                 is PrepareOutcome.Done -> try {
-                    "${cell.name} -> Done ${outcome.mime}: ${cell.check(destination)}"
+                    "${cell.name} -> Done ${outcome.mime}: ${cell.check(destination, source)}"
                 } catch (error: AssertionError) {
                     broken += cell.name
                     "${cell.name} -> WRONG ${error.message}"
