@@ -14,14 +14,14 @@ extension BridgeProbeTests {
     #expect(status.isOnline == false)
     let one = Cursor(status.changes)
     let two = Cursor(status.changes)
-    #expect(await one.next("the current value of the first reader") == false)
-    #expect(await two.next("the current value of the second reader") == false)
+    #expect(await one.next("the current value of the first reader")?.online == false)
+    #expect(await two.next("the current value of the second reader")?.online == false)
     StatusProbe.shared.set(true)
-    #expect(await one.next("the change for the first reader") == true)
-    #expect(await two.next("the change for the second reader") == true)
+    #expect(await one.next("the change for the first reader")?.online == true)
+    #expect(await two.next("the change for the second reader")?.online == true)
     #expect(status.isOnline == true)
     StatusProbe.shared.set(false)
-    #expect(await one.next("the second change") == false)
+    #expect(await one.next("the second change")?.online == false)
     #expect(StatusProbe.status().isOnline == false)
   }
 
@@ -33,13 +33,13 @@ extension BridgeProbeTests {
     StatusProbe.shared.set(true)
     let status = StatusProbe.status()
     let reader = Cursor(status.changes)
-    #expect(await reader.next("the current value") == true)
+    #expect(await reader.next("the current value")?.online == true)
     StatusProbe.shared.set(true)
     StatusProbe.shared.set(true)
     _ = try await Moment.create(text: "answered", in: DB.account()).optimisticValue!
     #expect(status.isOnline == true)
     StatusProbe.shared.set(false)
-    #expect(await reader.next("the first frame after the repeats and the server work") == false)
+    #expect(await reader.next("the first frame after the repeats and the server work")?.online == false)
     #expect(status.isOnline == false)
   }
 
@@ -51,7 +51,7 @@ extension BridgeProbeTests {
     StatusProbe.shared.set(true)
     StatusProbe.shared.set(false)
     let late = Cursor(StatusProbe.status().changes)
-    #expect(await late.next("the first frame of a late reader") == false)
+    #expect(await late.next("the first frame of a late reader")?.online == false)
   }
 
   /// net_status_cancel_one_reader: cancelling the task of one reader ends that reader and the other one still gets the next value.
@@ -61,20 +61,20 @@ extension BridgeProbeTests {
     try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
     StatusProbe.shared.set(false)
     let status = StatusProbe.status()
-    let (frames, ready) = AsyncStream<Bool>.makeStream()
+    let (frames, ready) = AsyncStream<NetworkPath>.makeStream()
     let ending = Task {
       let reader = Cursor(status.changes)
       if let value = await reader.next("the current value of the ending reader") { ready.yield(value) }
       _ = await reader.next("the frame after the cancel")
     }
     let kept = Cursor(status.changes)
-    #expect(await kept.next("the current value of the kept reader") == false)
+    #expect(await kept.next("the current value of the kept reader")?.online == false)
     let seen = Cursor(frames)
-    #expect(await seen.next("the frame the ending reader passed on") == false)
+    #expect(await seen.next("the frame the ending reader passed on")?.online == false)
     ending.cancel()
     await ending.value
     StatusProbe.shared.set(true)
-    #expect(await kept.next("the change for the kept reader") == true)
+    #expect(await kept.next("the change for the kept reader")?.online == true)
     StatusProbe.shared.set(false)
   }
 }
@@ -93,6 +93,26 @@ final class StatusProbe: PlatformObserver, @unchecked Sendable {
 
   var starts: Int { lock.withLock { started } }
   func set(_ online: Bool) { lock.withLock { sink }!.setOnline(online: online) }
+  func set(path: NetworkPath) { lock.withLock { sink }!.setPath(path: path) }
+}
+
+extension BridgeProbeTests {
+  /// bridge_network_path: the path the platform gives reaches `path`, `isOnline` and `changes` as the same values, and a change of the network while online is the next element.
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func bridge_network_path_swiftCarriesThePathAndTheChangeOfNetwork() async throws {
+    await DB.closeForCleanup()
+    let status = StatusProbe.status()
+    let reader = Cursor(status.changes)
+    let wifi = NetworkPath(online: true, transport: .wifi, network: 11)
+    let cellular = NetworkPath(online: true, transport: .cellular, network: 12)
+    StatusProbe.shared.set(path: wifi)
+    #expect(await reader.next("the first path") == wifi)
+    #expect(status.path == wifi)
+    StatusProbe.shared.set(path: cellular)
+    #expect(await reader.next("the path after the change of network") == cellular)
+    #expect(status.path == cellular && status.isOnline == true)
+  }
 }
 
 extension BridgeProbeTests {
@@ -104,11 +124,11 @@ extension BridgeProbeTests {
     let status = StatusProbe.status()
     let reader = Cursor(status.changes)
     StatusProbe.shared.set(true)
-    #expect(await reader.next("a value with no database") == true)
+    #expect(await reader.next("a value with no database")?.online == true)
     try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
     await DB.closeForCleanup()
     StatusProbe.shared.set(false)
-    #expect(await reader.next("a value after the close") == false)
+    #expect(await reader.next("a value after the close")?.online == false)
     #expect(status.isOnline == false)
   }
 
