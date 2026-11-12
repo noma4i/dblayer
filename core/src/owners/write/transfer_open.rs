@@ -97,11 +97,23 @@ impl TransferState {
             return self.discard_held(id, fx);
         }
         if !self.declarations.contains(&(row.mutation.model.clone(), row.mutation.action.clone())) {
+            if self.complete {
+                let id = self.insert_restored(&row, TransferStage::Ready);
+                return self.fail_undeclared(now, id, fx);
+            }
             let id = self.insert_restored(&row, TransferStage::WaitingDeclaration);
             self.waiting.insert(id, (row, outcomes.clone()));
             return;
         }
         self.classify_declared(now, row, outcomes, fx);
+    }
+
+    /// The registration is complete and does not declare the upload operation of a saved transfer: it fails with the local refusal and its held step goes to Session.
+    fn fail_undeclared(&mut self, now: crate::runtime::Time, id: TransferId, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get(&id) else { return };
+        let error = super::failure::undeclared_upload(&transfer.mutation.model, &transfer.mutation.action);
+        self.release_step(id, fx);
+        self.begin_failure(now, id, error, false, fx);
     }
 
     fn classify_declared(&mut self, now: crate::runtime::Time, row: StoredTransfer, outcomes: &TransferOutcomes, fx: &mut Fx) {
@@ -227,6 +239,12 @@ impl TransferState {
         }
         let ready: Vec<TransferId> = self.waiting.iter().filter(|(_, (row, _))| self.declarations.contains(&(row.mutation.model.clone(), row.mutation.action.clone()))).map(|(id, _)| *id).collect();
         let classified = !ready.is_empty();
+        let undeclared: Vec<TransferId> = self.waiting.iter().filter(|(_, (row, _))| self.complete && !self.declarations.contains(&(row.mutation.model.clone(), row.mutation.action.clone()))).map(|(id, _)| *id).collect();
+        for id in undeclared {
+            self.waiting.remove(&id);
+            self.set(id, TransferStage::Ready);
+            self.fail_undeclared(now, id, fx);
+        }
         for id in ready {
             if let Some((row, outcomes)) = self.waiting.remove(&id) {
                 self.classify_declared(now, row, &outcomes, fx);

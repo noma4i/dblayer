@@ -370,6 +370,28 @@ fn xfer_register_rechecks_waiting() {
     assert_eq!((twin.stage(1), out.shows(), out.round_needed()), (TransferStage::Ready, vec![Shown::Queued { progress: 0 }], vec![vec![1]]), "the row is classified again, only this one");
 }
 
+/// xfer_register_complete_fails_undeclared, xfer_open_complete_fails_undeclared, xfer_failed_retry_undeclared: a complete registration without the upload operation of a saved transfer fails it with the local refusal, in either order of the open and the registration; its `retry` is refused with the text until the operation is declared.
+#[test]
+fn xfer_complete_registration_fails_undeclared() {
+    let refusal = crate::owners::write::failure::undeclared_upload("Moment", "upload");
+    let register = |complete| TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "other".into())], complete };
+    let (mut after, _) = undeclared(vec![partly(1, KEY)]);
+    let out = after.post(register(true));
+    assert_eq!((after.stage(1), out.kinds()), (TransferStage::PersistingFailure, vec![UploadKind::Failed]), "registration after the open");
+    after.commit();
+    assert_eq!((after.stage(1), after.t(1).error.clone()), (TransferStage::Failed, Some(refusal.clone())));
+    let mut before = Twin::bare(1);
+    before.post(register(true));
+    let out = before.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
+    assert_eq!((before.stage(1), out.kinds()), (TransferStage::PersistingFailure, vec![UploadKind::Failed]), "registration in Restoring");
+    let text = crate::owners::write::failure::undeclared_upload_message("Moment", "upload");
+    let retry = after.post(TransferInput::Retry { key: KEY.into(), source: None, reply: 9 });
+    assert_eq!((Twin::fault(&retry, 9), after.stage(1)), (Some(crate::owners::write::outbox::Fault::Rejected(crate::owners::contract::RejectReason::Invalid(text))), TransferStage::Failed));
+    after.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: true });
+    let accepted = after.post(TransferInput::Retry { key: KEY.into(), source: None, reply: 9 });
+    assert_eq!((Twin::fault(&accepted, 9), after.stage(1)), (None, TransferStage::PersistingRetry));
+}
+
 #[test]
 fn xfer_register_still_waiting() {
     let (mut twin, _) = undeclared(vec![partly(1, KEY)]);
