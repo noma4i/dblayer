@@ -400,12 +400,12 @@ pub enum StoreKind {
     Commit,
 }
 
-/// Who runs the PUT of a step: the process (`Live`), or the platform outside it, where the first step of a multipart upload only creates the upload (`InitOnly`) and the next one starts the PUT (`Detached`, `attempt` = the count of attempts the row records).
+/// Who runs the PUT of a step: the process (`Live`), or the platform outside it, where the first step of a multipart upload only creates the upload (`InitOnly`) and the next one starts the PUT (`Detached` with the identity built from the row).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PutMode {
     Live,
     InitOnly,
-    Detached { attempt: u64 },
+    Detached { identity: PutIdentity },
 }
 
 #[derive(Clone, Debug, PartialEq)]

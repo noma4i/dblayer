@@ -172,8 +172,8 @@ impl TransferState {
 
     /// The PUTs outside the process that the opening waits for, also those of transfers that wait for the declaration of their operation.
     pub(super) fn waiting_puts(&self) -> Vec<crate::transport::PutIdentity> {
-        let live = self.scan().filter(|transfer| transfer.put_detached && transfer.in_flight && transfer.stage == TransferStage::Uploading).map(|transfer| self.put_identity(transfer));
-        let waiting = self.waiting.values().filter(|(row, _)| self.put_waits(row)).map(|(row, _)| crate::transport::PutIdentity { epoch: self.epoch, transfer_id: row.transfer_id, attempt_id: u64::from(row.attempts) });
+        let live = self.scan().filter(|transfer| transfer.put_detached && transfer.in_flight && transfer.stage == TransferStage::Uploading).map(|transfer| super::transfer_steps::put_identity(transfer.transfer_id, transfer.cycle_id, transfer.attempts));
+        let waiting = self.waiting.values().filter(|(row, _)| self.put_waits(row)).map(|(row, _)| super::transfer_steps::put_identity(row.transfer_id, row.cycle_id.max(1), row.attempts));
         live.chain(waiting).collect()
     }
 

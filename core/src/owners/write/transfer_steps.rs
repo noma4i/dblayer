@@ -12,6 +12,9 @@ use crate::transport::{NetworkPurpose, PutIdentity};
 /// Attempt ids come from one counter, so the id of a timer of an attempt is never the id of another timer.
 fn put_timer(attempt_id: AttemptId) -> ScheduleId { ScheduleId(RETRY_TIMER + attempt_id) }
 
+/// The identity of the PUT outside the process, built from the numbers a transfer row records.
+pub(super) fn put_identity(transfer_id: u64, cycle_id: u64, attempts: u32) -> PutIdentity { PutIdentity { transfer_id, cycle_id, attempt: u64::from(attempts) } }
+
 impl TransferState {
     /// Transfers in the network: only a physical attempt in flight holds a slot.
     pub fn active(&self) -> u32 { self.scan().filter(|transfer| transfer.in_flight).count() as u32 }
@@ -47,16 +50,13 @@ impl TransferState {
         match (self.sizing.detached && multipart && matches!(transfer.next_step, NextStep::Part(_)), transfer.upload_id.is_some()) {
             (false, _) => PutMode::Live,
             (true, false) => PutMode::InitOnly,
-            (true, true) => PutMode::Detached { attempt: u64::from(transfer.attempts) },
+            (true, true) => PutMode::Detached { identity: put_identity(transfer.transfer_id, transfer.cycle_id, transfer.attempts) },
         }
     }
 
-    /// The identity of the PUT outside the process that `transfer` waits for.
-    pub(super) fn put_identity(&self, transfer: &Transfer) -> PutIdentity { PutIdentity { epoch: self.epoch, transfer_id: transfer.transfer_id, attempt_id: u64::from(transfer.attempts) } }
-
     /// The PUT outside the process of a transfer in the network goes: the platform cancels the system task.
     pub(super) fn cancel_put(&self, id: TransferId, fx: &mut Fx) {
-        if let Some(transfer) = self.transfers.get(&id).filter(|transfer| transfer.put_detached && transfer.stage == TransferStage::Uploading) { run(fx, TransferEffect::CancelPut { identity: self.put_identity(transfer) }); }
+        if let Some(transfer) = self.transfers.get(&id).filter(|transfer| transfer.put_detached && transfer.stage == TransferStage::Uploading) { run(fx, TransferEffect::CancelPut { identity: put_identity(transfer.transfer_id, transfer.cycle_id, transfer.attempts) }); }
     }
 
     fn complete_effect(transfer: &Transfer) -> TransferEffect {
@@ -172,7 +172,7 @@ impl TransferState {
     }
 
     pub(super) fn live_put(&self, identity: PutIdentity) -> Option<&Transfer> {
-        self.transfers.get(&identity.transfer_id).filter(|transfer| identity.epoch == self.epoch && transfer.put_detached && transfer.in_flight && transfer.stage == TransferStage::Uploading && u64::from(transfer.attempts) == identity.attempt_id)
+        self.transfers.get(&identity.transfer_id).filter(|transfer| transfer.put_detached && transfer.in_flight && transfer.stage == TransferStage::Uploading && put_identity(transfer.transfer_id, transfer.cycle_id, transfer.attempts) == identity)
     }
 
     pub(super) fn step_ok(&mut self, now: crate::runtime::Time, id: TransferId, attempt_id: AttemptId, part: Option<u32>, upload_id: Option<String>, etag: Option<String>, fx: &mut Fx) {

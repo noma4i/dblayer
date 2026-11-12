@@ -369,7 +369,7 @@ impl TransferExecutor {
     fn step(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), ask: StepAsk) {
         let StepAsk { cycle_id, operation, part, upload_id, source, steps, key, seeded, put } = ask;
         let put = match (put, &self.put) {
-            (PutMode::Detached { attempt }, Some(executor)) => LinkPut::Detached { executor: executor.clone(), identity: PutIdentity { epoch: if let EpochStamp::Epoch(epoch) = stamp { epoch } else { 0 }, transfer_id, attempt_id: attempt } },
+            (PutMode::Detached { identity }, Some(executor)) => LinkPut::Detached { executor: executor.clone(), identity },
             (PutMode::InitOnly, Some(_)) => LinkPut::InitOnly,
             _ => LinkPut::Live,
         };

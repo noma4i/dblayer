@@ -123,13 +123,13 @@ async fn xfer_detached_ended_failed() {
     }
 }
 
-/// An outcome for an epoch, a transfer or an attempt that is not the live one changes nothing and the executor is told to cancel it. The live outcome still lands the row.
+/// An outcome for a cycle, a transfer or an attempt that is not the live one changes nothing and the executor is told to cancel it. The live outcome still lands the row.
 /// Observable: the cancels the executor got, the calls, the landed row. Catches: a foreign outcome that confirms the part of another attempt.
 #[tokio::test(flavor = "multi_thread")]
 async fn xfer_detached_stray() {
     let run = started(MEBIBYTE).await;
     let live = run.detached.started()[0].0;
-    let strays = [PutIdentity { epoch: live.epoch + 1, ..live }, PutIdentity { transfer_id: live.transfer_id + 90, ..live }, PutIdentity { attempt_id: live.attempt_id + 1, ..live }];
+    let strays = [PutIdentity { cycle_id: live.cycle_id + 1, ..live }, PutIdentity { transfer_id: live.transfer_id + 90, ..live }, PutIdentity { attempt: live.attempt + 1, ..live }];
     for stray in strays { run.database.put_ended(stray, Detached::ok()); }
     crate::test_wait::settled(&run.database, "the strays were answered", || run.detached.cancelled().len() == 3).await;
     assert_eq!(run.detached.cancelled(), strays);
@@ -240,12 +240,20 @@ async fn xfer_detached_prop_one_put_through_restart() {
     }).await;
     assert_eq!(cuts.len(), capture.cuts());
     run.database.close_now();
+    let running = started(MEBIBYTE).await;
+    running.database.close_now();
+    let (again, database) = reopen_with(&running.live, &secret, &[CREATE_MOMENT], running.detached.clone(), script).await;
+    crate::test_wait::settled(&database, "the task is listed", || running.detached.resumed().len() == 2).await;
+    running.detached.finish(0, Detached::ok());
+    crate::test_wait::settled(&database, "the row landed", || landed(&database)).await;
+    assert_eq!((running.detached.started().len(), again.script.count("InitMultipart"), again.script.count("CompleteMultipart")), (1, 0, 1), "a task that runs at the opening and ends later with the identity of the old process lands the row without a second PUT");
+    database.close_now();
 }
 
 /// The id of the task a file records: the transfer and the count of attempts, when the attempt has the upload recorded and no presign waits for its answer, so the executor may hold a task of it.
 fn recorded_task(image: &std::path::Path, _temporary: &str) -> Option<PutIdentity> {
     let connection = rusqlite::Connection::open(image).unwrap();
-    rusqlite::OptionalExtension::optional(connection.query_row("SELECT transfer_id, attempts FROM sync_upload WHERE upload_id IS NOT NULL AND attempts > 0 AND completed IS NOT 1 AND NOT EXISTS (SELECT 1 FROM encrypted_pending) AND (SELECT count(*) FROM sync_upload_part WHERE etag IS NOT NULL) < total", [], |row| Ok(PutIdentity { epoch: 0, transfer_id: row.get::<_, i64>(0)? as u64, attempt_id: row.get::<_, i64>(1)? as u64 }))).unwrap()
+    rusqlite::OptionalExtension::optional(connection.query_row("SELECT transfer_id, cycle_id, attempts FROM sync_upload WHERE upload_id IS NOT NULL AND attempts > 0 AND completed IS NOT 1 AND NOT EXISTS (SELECT 1 FROM encrypted_pending) AND (SELECT count(*) FROM sync_upload_part WHERE etag IS NOT NULL) < total", [], |row| Ok(PutIdentity { transfer_id: row.get::<_, i64>(0)? as u64, cycle_id: row.get::<_, i64>(1)? as u64, attempt: row.get::<_, i64>(2)? as u64 }))).unwrap()
 }
 
 /// P-XFER-75: the outcome of a task counts once. A repeat of the outcome, an outcome after the part is confirmed and an outcome after the transfer was cancelled change nothing: `Complete` and the final mutation go once.
@@ -269,6 +277,27 @@ async fn xfer_detached_prop_ended_once() {
     crate::test_wait::settled(&cancelled.database, "the outcome after the cancel was answered", || cancelled.detached.cancelled().len() == 2).await;
     assert_eq!((cancelled.stand.script.count("CompleteMultipart"), cancelled.stand.script.count("CreateMoment")), (0, 0));
     cancelled.database.close_now();
+    let failed = started(MEBIBYTE).await;
+    let past = failed.detached.started()[0].0;
+    failed.detached.finish(0, RawOutcome::Response { status: 400, etag: None, body: String::new() });
+    crate::test_wait::settled(&failed.database, "the upload failed", || status(&failed.database, &failed.temporary) == Some(WireUploadStatus::Failed)).await;
+    failed.stand.script.data("InitMultipart", INIT);
+    let epoch = failed.database.session_epoch();
+    bound(failed.database.retry(epoch, "Moment".into(), failed.temporary.clone(), Some("upload_clip".into()), None)).await.unwrap();
+    let detached = failed.detached.clone();
+    crate::test_wait::settled(&failed.database, "the retry started a task", || detached.started().len() == 2).await;
+    failed.database.put_ended(past, Detached::ok());
+    crate::test_wait::settled(&failed.database, "the outcome of the past cycle was answered", || failed.detached.cancelled().contains(&past)).await;
+    assert_eq!(failed.stand.script.count("CompleteMultipart"), 0, "the outcome of the cycle before retry confirms nothing");
+    failed.database.close_now();
+    let ended = started(MEBIBYTE).await;
+    let task = ended.detached.started()[0].0;
+    bound(ended.database.session_reset()).await.unwrap();
+    crate::test_wait::settled(&ended.database, "the end of the session cancelled the task", || ended.detached.cancelled() == [task]).await;
+    ended.database.put_ended(task, Detached::ok());
+    crate::test_wait::settled(&ended.database, "the outcome of the past session was answered", || ended.detached.cancelled().len() == 2).await;
+    assert_eq!((ended.stand.script.count("CompleteMultipart"), ended.stand.script.count("CreateMoment")), (0, 0));
+    ended.database.close_now();
 }
 
 /// A second copy of an image with its log and files directory: each variant of a cut opens its own file.
@@ -295,7 +324,7 @@ async fn xfer_detached_progress_reaches_the_row() {
     let (complete, landed_hold) = held.unwrap();
     launch(&mut run, MEBIBYTE).await;
     let live = run.detached.started()[0].0;
-    let stray_attempt = PutIdentity { attempt_id: live.attempt_id + 1, ..live };
+    let stray_attempt = PutIdentity { attempt: live.attempt + 1, ..live };
     let stray_transfer = PutIdentity { transfer_id: live.transfer_id + 90, ..live };
     for (identity, sent, shown) in [(live, MEBIBYTE / 2, 0.5), (live, MEBIBYTE / 4, 0.5), (stray_attempt, MEBIBYTE - 1, 0.5), (stray_transfer, MEBIBYTE - 1, 0.5), (live, MEBIBYTE, 0.99)] {
         run.database.put_progress(identity, sent);

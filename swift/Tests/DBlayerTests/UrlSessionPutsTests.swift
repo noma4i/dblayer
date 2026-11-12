@@ -39,15 +39,15 @@ private final class RecordingInputs: PutInputs, @unchecked Sendable {
   private var waiter: CheckedContinuation<Void, Never>?
   private var want = 0
 
-  func putProgress(identity: PutIdentity, sent: UInt64) { record("sent \(identity.transferId).\(identity.attemptId) \(sent)") }
+  func putProgress(identity: PutIdentity, sent: UInt64) { record("sent \(identity.transferId).\(identity.attempt) \(sent)") }
 
   func putEnded(identity: PutIdentity, outcome: RawOutcome) {
-    var text = "ended \(identity.transferId).\(identity.attemptId)"
+    var text = "ended \(identity.transferId).\(identity.attempt)"
     if case let .response(status, etag, _) = outcome { text += " \(status) \(etag ?? "-")" }
     record(text)
   }
 
-  func putMissing(identity: PutIdentity) { record("missing \(identity.transferId).\(identity.attemptId)") }
+  func putMissing(identity: PutIdentity) { record("missing \(identity.transferId).\(identity.attempt)") }
 
   private func record(_ text: String) {
     lock.lock()
@@ -72,7 +72,7 @@ private func answer(_ status: Int, etag: String?) -> HTTPURLResponse {
   HTTPURLResponse(url: URL(string: "https://storage.test/1")!, statusCode: status, httpVersion: nil, headerFields: etag.map { ["ETag": $0] })!
 }
 
-private let identity = PutIdentity(epoch: 3, transferId: 7, attemptId: 2)
+private let identity = PutIdentity(transferId: 7, cycleId: 1, attempt: 2)
 
 private func executor(_ session: FakeSession, inputs: RecordingInputs, settled: @escaping @Sendable () async -> Void = {}) -> UrlSessionPuts {
   let puts = UrlSessionPuts(session: session, settled: settled)
@@ -114,13 +114,13 @@ struct UrlSessionPutsTests {
   @Test
   func resumePutsAnswersFromTheTasksOfTheSystem() async {
     let session = FakeSession()
-    let finished = FakeTask(description: PutDescription.text(PutIdentity(epoch: 1, transferId: 7, attemptId: 2)), state: .completed, response: answer(200, etag: "e"))
-    let running = FakeTask(description: PutDescription.text(PutIdentity(epoch: 1, transferId: 8, attemptId: 1)))
-    let foreign = FakeTask(description: PutDescription.text(PutIdentity(epoch: 1, transferId: 99, attemptId: 1)))
+    let finished = FakeTask(description: PutDescription.text(PutIdentity(transferId: 7, cycleId: 1, attempt: 2)), state: .completed, response: answer(200, etag: "e"))
+    let running = FakeTask(description: PutDescription.text(PutIdentity(transferId: 8, cycleId: 1, attempt: 1)))
+    let foreign = FakeTask(description: PutDescription.text(PutIdentity(transferId: 99, cycleId: 1, attempt: 1)))
     session.held = [finished, running, foreign]
     let inputs = RecordingInputs()
     let puts = executor(session, inputs: inputs)
-    puts.resumePuts(identities: [identity, PutIdentity(epoch: 3, transferId: 8, attemptId: 1), PutIdentity(epoch: 3, transferId: 9, attemptId: 1)])
+    puts.resumePuts(identities: [identity, PutIdentity(transferId: 8, cycleId: 1, attempt: 1), PutIdentity(transferId: 9, cycleId: 1, attempt: 1)])
     #expect(await inputs.inputs(2) == ["ended 7.2 200 e", "missing 9.1"])
     #expect((finished.cancelled, running.cancelled, foreign.cancelled) == (false, false, true))
   }
@@ -130,7 +130,7 @@ struct UrlSessionPutsTests {
   func cancelPutCancelsTheTaskOfTheIdentity() async {
     let session = FakeSession()
     let mine = FakeTask(description: PutDescription.text(identity))
-    let other = FakeTask(description: PutDescription.text(PutIdentity(epoch: 3, transferId: 8, attemptId: 1)))
+    let other = FakeTask(description: PutDescription.text(PutIdentity(transferId: 8, cycleId: 1, attempt: 1)))
     session.held = [mine, other]
     let puts = executor(session, inputs: RecordingInputs())
     puts.cancelPut(identity: identity)

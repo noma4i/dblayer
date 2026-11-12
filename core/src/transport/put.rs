@@ -14,12 +14,12 @@ pub struct TransferIdentity {
     pub step: TransferStep,
 }
 
-/// Names a PUT that the platform runs outside the process: the epoch of the process, the transfer and the attempt that started it.
+/// Names a PUT that the platform runs outside the process: the transfer, its cycle and the attempt count the row records. The numbers survive a restart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Record)]
 pub struct PutIdentity {
-    pub epoch: u64,
     pub transfer_id: u64,
-    pub attempt_id: u64,
+    pub cycle_id: u64,
+    pub attempt: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]

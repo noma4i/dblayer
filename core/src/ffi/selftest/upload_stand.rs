@@ -240,7 +240,7 @@ pub(super) struct SystemTask {
     pub(super) outcome: Option<RawOutcome>,
 }
 
-/// The executor of the PUTs outside the process. It outlives `close` and `open` of the database, like the system does: a task goes on while no process runs, and `resume_puts` finds it by transfer and attempt.
+/// The executor of the PUTs outside the process. It outlives `close` and `open` of the database, like the system does: a task goes on while no process runs, and `resume_puts` finds it by its whole identity.
 #[derive(Default)]
 pub(super) struct Detached {
     tasks: Mutex<Vec<SystemTask>>,
@@ -252,7 +252,6 @@ pub(super) struct Detached {
     queued: Mutex<Vec<(PutIdentity, Option<RawOutcome>)>>,
 }
 
-fn same_task(left: &PutIdentity, right: &PutIdentity) -> bool { left.transfer_id == right.transfer_id && left.attempt_id == right.attempt_id }
 
 impl Detached {
     /// A new open starts: the database of the process before it is gone.
@@ -308,10 +307,10 @@ impl PutExecutor for Detached {
 
     fn resume_puts(&self, identities: Vec<PutIdentity>) {
         self.resumed.lock().unwrap().push(identities.clone());
-        self.tasks.lock().unwrap().retain(|task| identities.iter().any(|listed| same_task(&task.identity, listed)));
+        self.tasks.lock().unwrap().retain(|task| identities.contains(&task.identity));
         let database = self.database.lock().unwrap().as_ref().and_then(std::sync::Weak::upgrade);
         for listed in identities {
-            let found = self.tasks.lock().unwrap().iter().find(|task| same_task(&task.identity, &listed)).cloned();
+            let found = self.tasks.lock().unwrap().iter().find(|task| task.identity == listed).cloned();
             let answer = match found {
                 None => Some(None),
                 Some(SystemTask { outcome: Some(outcome), .. }) => Some(Some(outcome)),

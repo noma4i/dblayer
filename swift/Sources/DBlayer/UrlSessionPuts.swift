@@ -74,17 +74,14 @@ actor WakeCompletion {
 enum PutDescription {
   private static let prefix = "dblayer-put "
 
-  static func text(_ identity: PutIdentity) -> String { "\(prefix)\(identity.epoch).\(identity.transferId).\(identity.attemptId)" }
+  static func text(_ identity: PutIdentity) -> String { "\(prefix)\(identity.transferId).\(identity.cycleId).\(identity.attempt)" }
 
   static func identity(_ text: String?) -> PutIdentity? {
     guard let text, text.hasPrefix(prefix) else { return nil }
     let numbers = text.dropFirst(prefix.count).split(separator: ".").compactMap { UInt64($0) }
     guard numbers.count == 3 else { return nil }
-    return PutIdentity(epoch: numbers[0], transferId: numbers[1], attemptId: numbers[2])
+    return PutIdentity(transferId: numbers[0], cycleId: numbers[1], attempt: numbers[2])
   }
-
-  /// A task of an earlier process names the same PUT with another epoch.
-  static func key(_ identity: PutIdentity) -> String { "\(identity.transferId).\(identity.attemptId)" }
 }
 
 /// The executor of the PUTs outside the process: every call is one call of the system session or one input of the core.
@@ -133,15 +130,15 @@ final class UrlSessionPuts: PutExecutor, PutEvents, Sendable {
   func resumePuts(identities: [PutIdentity]) {
     Task {
       let tasks = await session.tasks()
-      let listed = Set(identities.map(PutDescription.key))
-      var found: [String: any PutTask] = [:]
+      let listed = Set(identities)
+      var found: [PutIdentity: any PutTask] = [:]
       for task in tasks {
         guard let held = PutDescription.identity(task.taskDescription) else { continue }
-        if listed.contains(PutDescription.key(held)) { found[PutDescription.key(held)] = task } else { task.cancel() }
+        if listed.contains(held) { found[held] = task } else { task.cancel() }
       }
       let inputs = await inputs.get()
       for identity in identities {
-        guard let task = found[PutDescription.key(identity)] else { inputs.putMissing(identity: identity); continue }
+        guard let task = found[identity] else { inputs.putMissing(identity: identity); continue }
         if task.state == .completed { inputs.putEnded(identity: identity, outcome: Self.outcome(of: task)) }
       }
     }
