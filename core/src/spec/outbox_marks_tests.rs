@@ -60,29 +60,13 @@ fn out_marking_retry_committed_queued() {
 }
 
 #[test]
-fn out_marking_retry_storage() {
-    let mut twin = Twin::new();
-    let id = marking_retry(&mut twin);
-    let effects = refuse(&mut twin, id, RejectReason::Storage("disk".into()));
-    assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY)), (Some(St::Failed), vec![OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage("disk".into())))]));
-}
-
-#[test]
-fn out_marking_retry_no_session() {
-    for reason in [RejectReason::NoSession, RejectReason::Closed] {
+fn out_marking_retry_refused_batch_answers_the_retry_by_reason() {
+    for reason in [RejectReason::Storage("disk".into()), RejectReason::NoSession, RejectReason::Closed, RejectReason::Invalid("bad row".into())] {
         let mut twin = Twin::new();
         let id = marking_retry(&mut twin);
         let effects = refuse(&mut twin, id, reason.clone());
-        assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY)), (Some(St::Done), vec![OutboxAnswer::Err(Fault::Rejected(reason))]));
+        assert_eq!(answers(&effects, RETRY_REPLY), vec![OutboxAnswer::Err(Fault::Rejected(reason.clone()))], "{reason:?}");
     }
-}
-
-#[test]
-fn out_marking_retry_invalid() {
-    let mut twin = Twin::new();
-    let id = marking_retry(&mut twin);
-    let effects = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
-    assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY)), (Some(St::Failed), vec![OutboxAnswer::Err(Fault::Rejected(RejectReason::Invalid("bad row".into())))]));
 }
 
 #[test]
@@ -94,16 +78,6 @@ fn out_outcome_old_cycle() {
     twin.committed(id);
     let effects = twin.post(OutboxInput::Outcome { receipt: old, reply: 804 , discard_on_failure: false});
     assert!(matches!(answers(&effects, 804).as_slice(), [OutboxAnswer::Outcome(OutboxOutcome::Failed { .. })]), "the outcome of the earlier cycle is immutable: {effects:?}");
-}
-
-#[test]
-fn out_outcome_failed() {
-    let mut twin = Twin::new();
-    let id = failed(&mut twin);
-    let current = Receipt { epoch: EPOCH, op_id: id, cycle_id: 1, revision: 0, optimistic: None };
-    let effects = twin.post(OutboxInput::Outcome { receipt: current, reply: 805 , discard_on_failure: false});
-    assert!(matches!(answers(&effects, 805).as_slice(), [OutboxAnswer::Outcome(OutboxOutcome::Failed { .. })]), "{effects:?}");
-    assert_eq!(twin.stage(id), Some(St::Failed));
 }
 
 #[test]

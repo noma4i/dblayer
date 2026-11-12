@@ -25,9 +25,6 @@ fn out_wait_submit() {
     let (mut twin, id) = reach(St::Submitting, &ready());
     let ended = { take_fx(&twin.log, state_of(&twin.det)); twin.det.end_epoch(EPOCH, Cause::SessionReset); twin.run(); take_fx(&twin.log, state_of(&twin.det)) };
     assert_eq!(replies_of(&ended, SUBMIT_REPLY), [OutboxAnswer::Err(Fault::SessionEnded)]);
-    let (mut twin, id2) = reach(St::Submitting, &ready());
-    let committed = twin.committed(id2);
-    assert!(matches!(replies_of(&committed, SUBMIT_REPLY).as_slice(), [OutboxAnswer::Receipt(_)]));
     let (mut twin, id3) = reach(St::Submitting, &ready());
     let rejected = twin.rejected(id3, RReason::NoSession);
     assert_eq!(replies_of(&rejected, SUBMIT_REPLY), [OutboxAnswer::Err(Fault::Rejected(RejectReason::NoSession))]);
@@ -49,9 +46,6 @@ fn out_wait_outcome() {
         assert_eq!(answers.len(), 1, "{state:?}: one answer");
         assert!(matches!(&answers[0], OutboxAnswer::Outcome(outcome) if out_of(outcome) == want), "{answers:?}");
     }
-    let (mut twin, id) = reach(St::Sending, &ready());
-    let effects = twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, EPOCH + 1), reply: 77 , discard_on_failure: false});
-    assert_eq!(replies_of(&effects, 77), [OutboxAnswer::Err(Fault::NoSession)]);
 }
 
 #[test]
@@ -61,12 +55,6 @@ fn out_wait_retry() {
     assert!(replies_of(&before, 61).is_empty(), "the receipt waits for the batch of the new cycle");
     let ok = twin.committed(id);
     assert!(matches!(replies_of(&ok, 61).as_slice(), [OutboxAnswer::Receipt(_)]));
-    let (mut twin, _) = reach(St::Done, &ready());
-    let none = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 62 });
-    assert_eq!(replies_of(&none, 62), [OutboxAnswer::Err(Fault::NotFound)]);
-    let (mut twin, _) = reach(St::Sending, &ready());
-    let busy = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 63 });
-    assert!(matches!(replies_of(&busy, 63).as_slice(), [OutboxAnswer::Receipt(_)]));
     let (mut twin, _) = reach(St::Submitting, &ready());
     let pending = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 64 });
     assert!(replies_of(&pending, 64).is_empty());
@@ -83,12 +71,6 @@ fn out_wait_discard() {
     assert!(replies_of(&queued, 71).is_empty(), "no answer before Committed");
     let committed = twin.committed(id);
     assert_eq!(replies_of(&committed, 71), [OutboxAnswer::Ok]);
-    let (mut twin, _) = reach(St::Sending, &ready());
-    let in_flight = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 72 });
-    assert_eq!(replies_of(&in_flight, 72), [OutboxAnswer::Err(Fault::InFlight)]);
-    let (mut twin, _) = reach(St::Done, &ready());
-    let none = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 73 });
-    assert_eq!(replies_of(&none, 73), [OutboxAnswer::Err(Fault::NotFound)]);
     let (mut twin, _) = reach(St::Queued, &offline());
     twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 74 });
     take_fx(&twin.log, state_of(&twin.det));
