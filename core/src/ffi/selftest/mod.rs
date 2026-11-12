@@ -92,3 +92,5 @@ mod crash_image_end_tests;
 mod crash_image_pair_tests;
 mod crash_image_retry_tests;
 mod crash_image_revoked_tests;
+mod crash_image_group_tests;
+mod crash_image_multipart_tests;
