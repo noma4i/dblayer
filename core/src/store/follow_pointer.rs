@@ -45,8 +45,16 @@ pub(super) fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, Mod
             for association in setting(&child.spec).filter(|association| association.target == parent.model) {
                 let named = association.pointer_field().and_then(|field| server.get(field)).and_then(read_id);
                 let gone = match named { Some(id) => reader.tombstone_seq(child.spec.key.as_str(), id.as_str())?, None => None };
-                if gone == Some(revision) { stale.insert(parent.model.to_string()); }
-                let server = if gone.is_some() { Row::new() } else { server.clone() };
+                let destroyed_now = gone == Some(revision);
+                if destroyed_now { stale.insert(parent.model.to_string()); }
+                let mut server = server.clone();
+                if gone.is_some() {
+                    let dropped = |declared: &str| association.sets.contains_key(declared) && (destroyed_now || association.pointer_field() == Some(declared));
+                    for (declared, hidden) in info.spec.server_values().filter(|(declared, _)| dropped(declared)) {
+                        server.remove(declared);
+                        next.remove(hidden);
+                    }
+                }
                 let mut newest = |permanent: bool| -> Result<Option<Row>, StoreError> {
                     let mut rows = Vec::new();
                     for id in first_ranked(reader, &child.table, association, &parent.id, permanent)? {
