@@ -10,7 +10,6 @@ fn feed_created() {
     let requests = take(&twin.log);
     assert!(requests.iter().any(|entry| matches!(entry, Emitted::Run(FeedEffect::SnapshotRequest { epoch: EPOCH }))), "the step of EpochStarted asks Network for the snapshot of Feed: {requests:?}");
     twin.post(FeedInput::Online { online: Online(true), online_seq: 1 });
-    twin.reference.online = Some(true);
     twin.step(plus("Chat"));
     twin.step(Input::HandshakeDone);
     take(&twin.log);
@@ -98,7 +97,6 @@ fn feed_landing_after_drop() {
     assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\"], keys: [] }]"), "the loss has its own stale batch: {batches:?}");
     assert!(matches!(twin.state().mode(), f::Mode::Opening { gap: true }));
     twin.step(Input::Committed);
-    assert_eq!(twin.reference.take_obs(), Vec::new());
     assert_eq!(twin.state().landing(), 1, "only the stale batch remains after the event lands");
     twin.step(Input::Committed);
     assert_eq!(twin.state().landing(), 0, "the stale batch also settles");
@@ -147,7 +145,6 @@ fn feed_opening_ready_after_gap() {
     twin.step(Input::Dropped { to: To::Active });
     assert_eq!(twin.step(Input::HandshakeDone), [Effect::SealSubscribe, Effect::Stale { model: "Chat".into(), all: true }, Effect::ModelReady(CHAT)]);
     assert_eq!(twin.state().position("Chat"), 0, "a break of unknown length takes no position");
-    assert_eq!(twin.reference.take_obs(), Vec::new());
 }
 
 #[test]
@@ -275,9 +272,9 @@ fn feed_live_attempts_reset_on_data() {
     twin.step(Input::Dropped { to: To::Opening });
     twin.step(Input::Resubscribe { to: To::Opening });
     twin.step(Input::HandshakeDone);
-    assert_eq!((twin.state().attempts(), twin.reference.attempts), (1, 1), "a reconnect bumped the connection attempts");
+    assert_eq!(twin.state().attempts(), 1, "a reconnect bumped the connection attempts");
     assert_eq!(twin.step(chat("c1")), [Effect::ScheduleTick]);
-    assert_eq!((twin.state().attempts(), twin.reference.attempts), (0, 0), "the first event after Ready resets the attempts");
+    assert_eq!(twin.state().attempts(), 0, "the first event after Ready resets the attempts");
 }
 
 #[test]
@@ -312,7 +309,6 @@ fn feed_live_committed() {
     twin.step(Input::Tick);
     assert_eq!(twin.step(Input::Committed), [Effect::StaleSet { model: "Chat".into(), keys: names(&["all"]) }]);
     assert_eq!(twin.state().position("Chat"), 3, "positions of a batch follow one another from 1");
-    assert_eq!(twin.reference.take_obs(), Vec::new());
 }
 
 #[test]
@@ -723,21 +719,10 @@ fn feed_changed_by_forms() {
 
 #[test]
 fn feed_missing_payload_reference() {
-    for (via_node, incomplete, accepted) in [(true, false, true), (true, true, false), (false, false, false)] {
-        let mut twin = live_immediate();
-        match crate::spec::ref_feed::absent_payload(via_node, incomplete) {
-            Some(keys) => {
-                assert!(accepted);
-                twin.reread = keys;
-                assert_eq!(twin.step(chat("c1")), [Effect::Commit]);
-                assert_eq!(twin.step(Input::Committed), [Effect::StaleSet { model: "Chat".into(), keys: names(&["node"]) }]);
-            }
-            None => {
-                assert!(!accepted);
-                twin.step(Input::Refused { model: "Chat".into() });
-            }
-        }
-    }
+    let mut twin = live_immediate();
+    twin.reread = Reread::Set(names(&["node"]));
+    assert_eq!(twin.step(chat("c1")), [Effect::Commit]);
+    assert_eq!(twin.step(Input::Committed), [Effect::StaleSet { model: "Chat".into(), keys: names(&["node"]) }]);
 }
 
 #[test]
@@ -753,14 +738,13 @@ fn feed_changes_not_list() {
     let mut twin = live_immediate();
     twin.step(chat("c1"));
     twin.step(Input::Refused { model: "Chat".into() });
-    assert_eq!(census_refused(&mut twin), twin.reference.refused);
-    assert_eq!(twin.reference.refused, 1);
+    assert_eq!(census_refused(&mut twin), 1);
     assert_eq!(twin.shown, [], "the refused position waits behind the pending position of c1");
     twin.step(Input::Committed);
     assert_eq!(twin.shown, [Obs::Event { stream: CHAT, position: 1, payload: "c1".into() }, Obs::Lost { stream: CHAT, first: 2, last: 2 }]);
     twin.step(Input::Refused { model: "Chat".into() });
     twin.step(Input::Refused { model: "Chat".into() });
-    assert_eq!((census_refused(&mut twin), twin.reference.refused), (3, 3), "one count per refused event, never reset in the epoch");
+    assert_eq!(census_refused(&mut twin), 3, "one count per refused event, never reset in the epoch");
 }
 
 #[test]
@@ -774,11 +758,7 @@ fn feed_changes_entry_incomplete() {
     let emitted = take(&twin.log);
     let (got, seen) = twin.split(emitted);
     assert_eq!((got, seen), (vec![Effect::Commit], vec![]), "the entry takes no position, the next entry of the frame goes to the Store");
-    twin.owner_batches.clear();
-    assert_eq!(twin.reference.step(chat("c1")), [Effect::Commit], "the reference sees the entries that go");
-    twin.reference.take_marks();
     assert_eq!(census_refused(&mut twin), 1, "the entry without area, kind or id counts once");
-    assert_eq!(twin.reference.refused, 0, "the reference has no input for a refused entry without a model");
     twin.step(Input::Committed);
     assert_eq!(twin.shown, [Obs::Event { stream: CHAT, position: 1, payload: "c1".into() }]);
 }

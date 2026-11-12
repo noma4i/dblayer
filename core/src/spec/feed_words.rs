@@ -45,10 +45,6 @@ pub(super) enum Reread {
     Set(Vec<String>),
 }
 
-pub(super) fn absent_payload(via_node: bool, incomplete_object: bool) -> Option<Reread> {
-    if via_node && !incomplete_object { Some(Reread::Set(vec!["node".into()])) } else { None }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Input {
     WantPlus { model: String, id: u64, stream: bool },

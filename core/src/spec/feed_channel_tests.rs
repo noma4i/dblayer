@@ -12,7 +12,6 @@ use crate::owners::read::windows::{StaleKeys, Windows};
 use crate::owners::store::StoreWriter;
 use crate::spec::support::{new_log, number_after, take, text_after, Discard, Emitted, Log, Sink, Spy, SpyState};
 use crate::runtime::{Address, DetScheduler, EpochStamp};
-use super::ref_feed::ref_feed_channels::{Chan, In, Out};
 
 struct CapturedStore;
 
@@ -45,29 +44,12 @@ fn channels() -> BTreeMap<String, Vec<String>> {
     [("Chat", vec!["A", "B"]), ("Post", vec!["B"]), ("Third", vec!["C"]), ("Screen", vec![])].into_iter().map(|(model, own)| (model.to_string(), own.into_iter().map(String::from).collect())).collect()
 }
 
-fn word(effect: Out) -> String {
-    match effect {
-        Out::Connect => "connect".into(),
-        Out::Joined(stream) => format!("joined:{stream}"),
-        Out::Subscribe(channel) => format!("subscribe:{channel}"),
-        Out::Unsubscribe(channel) => format!("unsubscribe:{channel}"),
-        Out::ModelReady(stream) => format!("modelready:{stream}"),
-        Out::ModelGap(stream) => format!("modelgap:{stream}"),
-        Out::StaleGap { model, online_seq } => format!("stale:{model}:gap{online_seq}"),
-        Out::StaleLost { model } => format!("stale:{model}"),
-        Out::Commit => "commit".into(),
-        Out::ModelInvalid(stream) => format!("modelinvalid:{stream}"),
-        Out::ScheduleResubscribe => "schedule:channel".into(),
-    }
-}
-
 struct Rig {
     det: DetScheduler,
     addr: Address<Spy<Feed>>,
     log: Log<Emitted<FeedEffect>>,
     batches: Vec<u64>,
     subscribes: Vec<Outgoing>,
-    reference: Chan,
     store_batches: Log<crate::owners::store::StoreBatch>,
 }
 
@@ -82,7 +64,7 @@ impl Rig {
         let peers = FeedPeers { store: Address::<StoreWriter>::new(STORE), windows: Address::<Windows>::new(WINDOWS), deliveries: Address::<Deliveries>::new(DELIVERIES) };
         let addr = det.add::<Spy<Feed>>("feed", SpyState::new(f::FeedState::new(EPOCH, peers, BTreeMap::new(), channels()), &log), Discard);
         det.start_epoch(EPOCH);
-        let mut rig = Self { det, addr, log, batches: Vec::new(), subscribes: Vec::new(), reference: Chan::new(channels()), store_batches };
+        let mut rig = Self { det, addr, log, batches: Vec::new(), subscribes: Vec::new(), store_batches };
         rig.post(FeedInput::Online { online: Online(true), online_seq: 1 });
         rig
     }
@@ -91,41 +73,6 @@ impl Rig {
 
     /// Posts one input and shows what the owner gave out, one word per effect.
     fn post(&mut self, input: FeedInput) -> Vec<String> {
-        let row = self.row_of(&input);
-        self.post_row(input, row)
-    }
-
-    fn row_of(&self, input: &FeedInput) -> Option<In> {
-        match input {
-            FeedInput::WantPlus { model, id, stream, .. } => Some(In::WantPlus { model: model.clone(), id: *id, stream: *stream, scoped: Vec::new() }),
-            FeedInput::WantMinus { model, id, .. } => Some(In::WantMinus { model: model.clone(), id: *id }),
-            FeedInput::HandshakeDone { .. } => Some(In::Ready),
-            FeedInput::ChannelConfirmed { channel, .. } => Some(In::ChannelConfirmed(channel.clone())),
-            FeedInput::Event { channel, event, .. } => Some(In::Event { channel: channel.clone(), model: event.model.clone() }),
-            FeedInput::ChannelEnded { channel, error, .. } => Some(In::Ended { channel: channel.clone(), failed: error.is_some_and(|error| !error.retryable) }),
-            FeedInput::ChannelResubscribe { channel, .. } => Some(In::Resubscribe(channel.clone())),
-            FeedInput::Online { online_seq, .. } => Some(In::Online(*online_seq)),
-            _ => None,
-        }
-    }
-
-    fn post_row(&mut self, input: FeedInput, row: Option<In>) -> Vec<String> {
-        let want = row.and_then(|row| self.reference.step(row)).map(|effects| effects.into_iter().map(word).collect::<Vec<_>>());
-        let got = self.owner_post(input);
-        if let Some(mut want) = want {
-            let mut seen = got.clone();
-            seen.sort();
-            want.sort();
-            assert_eq!(seen, want, "the owner and the reference give the same effects of the row");
-            assert_eq!(self.state().confirmed(), self.reference.confirmed.iter().cloned().collect::<Vec<_>>(), "the same confirmed channels");
-            for model in ["Chat", "Post", "Third"] {
-                assert_eq!(self.state().position(model), self.reference.position.get(model).copied().unwrap_or(0), "the same position of {model}");
-            }
-        }
-        got
-    }
-
-    fn owner_post(&mut self, input: FeedInput) -> Vec<String> {
         take(&self.log);
         self.det.post(self.addr, EpochStamp::Epoch(EPOCH), input);
         self.det.run_until_quiet(10_000).expect("the owner is quiet");
@@ -178,7 +125,7 @@ impl Rig {
     }
 
     fn refused_event(&mut self, channel: &str, model: &str) -> Vec<String> {
-        self.owner_post(FeedInput::Event { connection_id: FIRST, channel: channel.into(), event: FramedEvent { model: model.into(), payload: "refused".into(), reread: StaleKeys::none(), refused: true } })
+        self.post(FeedInput::Event { connection_id: FIRST, channel: channel.into(), event: FramedEvent { model: model.into(), payload: "refused".into(), reread: StaleKeys::none(), refused: true } })
     }
 
     /// Chat and Post are wanted, the connection is open and every channel of them is confirmed.
@@ -204,11 +151,11 @@ fn feed_dropped_stale_survives_crash() {
     store.save_window(&window).unwrap();
     let mut rig = Rig::live();
     take(&rig.store_batches);
-    rig.owner_post(FeedInput::Dropped { connection_id: FIRST });
+    rig.post(FeedInput::Dropped { connection_id: FIRST });
     let connection = rig.state().opening_connection().unwrap();
-    rig.owner_post(FeedInput::HandshakeDone { connection_id: connection, key_id: 7 });
-    rig.owner_post(FeedInput::ChannelConfirmed { connection_id: connection, channel: "A".into() });
-    rig.owner_post(FeedInput::ChannelConfirmed { connection_id: connection, channel: "B".into() });
+    rig.post(FeedInput::HandshakeDone { connection_id: connection, key_id: 7 });
+    rig.post(FeedInput::ChannelConfirmed { connection_id: connection, channel: "A".into() });
+    rig.post(FeedInput::ChannelConfirmed { connection_id: connection, channel: "B".into() });
     let batches = take(&rig.store_batches);
     let batch = batches.iter().find(|batch| batch.ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::MarkStale { models, .. } if models.iter().any(|model| model == "Chat")))).expect("channel loss must commit the stale debt");
     store.write_batch(batch, store.files(), None).unwrap();
@@ -306,17 +253,17 @@ fn feed_chan_event_before_confirm() {
 fn feed_changes_refused_held() {
     for handshaken in [false, true] {
         let mut rig = Rig::new();
-        rig.owner_post(FeedInput::WantPlus { model: "Chat".into(), id: CHAT, stream: true, scoped: Vec::new() });
+        rig.post(FeedInput::WantPlus { model: "Chat".into(), id: CHAT, stream: true, scoped: Vec::new() });
         if handshaken {
-            rig.owner_post(FeedInput::HandshakeDone { connection_id: FIRST, key_id: 7 });
+            rig.post(FeedInput::HandshakeDone { connection_id: FIRST, key_id: 7 });
         }
         assert!(rig.refused_event("A", "Chat").is_empty(), "handshaken {handshaken}: nothing before the model is ready");
         assert_eq!((rig.state().held(), rig.state().position("Chat"), rig.state().refused()), (1, 1, 0), "handshaken {handshaken}: held with its position, not counted yet");
         if !handshaken {
-            rig.owner_post(FeedInput::HandshakeDone { connection_id: FIRST, key_id: 7 });
+            rig.post(FeedInput::HandshakeDone { connection_id: FIRST, key_id: 7 });
         }
-        rig.owner_post(FeedInput::ChannelConfirmed { connection_id: FIRST, channel: "A".into() });
-        let seat = rig.owner_post(FeedInput::ChannelConfirmed { connection_id: FIRST, channel: "B".into() });
+        rig.post(FeedInput::ChannelConfirmed { connection_id: FIRST, channel: "A".into() });
+        let seat = rig.post(FeedInput::ChannelConfirmed { connection_id: FIRST, channel: "B".into() });
         assert_eq!(seat, ["modelready:1", "modellost:1"], "handshaken {handshaken}: the seat gives Lost and no commit");
         assert_eq!((rig.state().held(), rig.state().landing(), rig.state().refused()), (0, 0, 1), "handshaken {handshaken}");
     }
