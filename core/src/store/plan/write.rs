@@ -82,7 +82,7 @@ impl Store {
         data.extend(local);
         let input = Value::Object(data.iter().chain(&args).map(|(name, value)| (name.clone(), value.clone())).collect());
         let effects = self.read_models(&[model], |reader| {
-            if reader.point(model, id.as_str())?.is_some() || !read_sync(reader.connection(), model, &[id.to_string()])?.is_empty() {
+            if reader.point(model, id.as_str())?.is_some() || read_sync(reader.connection(), model, &[id.to_string()])?.values().any(|info| !info.actions.is_empty() || !info.dirty_fields.is_empty()) {
                 return Err(CoreError::AlreadyExists { model: model.to_string(), id: id.to_string() });
             }
             let mut effects = IntentEffects { rows: vec![row_effect(model, id.as_str(), None, &data)], ..Default::default() };

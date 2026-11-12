@@ -133,10 +133,10 @@ fn xfer_stage_commit_failed() {
 
 #[test]
 fn xfer_stage_commit_twice() {
-    let mut twin = Twin::new();
+    let mut twin = Twin::with_slots(2);
     held_at(&mut twin, KEY);
     commit_input(&mut twin, KEY);
-    twin.commit();
+    while twin.has_pending() { twin.commit(); }
     let plain = twin.uploading("Moment:r9:upload", 1);
     let stale = twin.reply();
     let request = || CommitRequest { effects: Default::default(), variables: Default::default(), wrap: None };
