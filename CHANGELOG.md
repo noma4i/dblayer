@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Upload `progress` is a share from 0 to 1 that never decreases.
+
 ## 6.28.1 - 2026-11-13
 
 ### Fixed
@@ -11,7 +17,6 @@
 
 ### Changed
 
-- Show the upload progress as a share from 0 to 1 that counts the bytes in flight and never goes down.
 - Declare the fields of `sets:` as `derived: true`, they take their values from the children only.
 - Name the child fields of `newer:` as a list.
 
