@@ -1,10 +1,8 @@
-//! Executable references of the machine specs and the tests that compare the core with them: `Lifecycle` and `Store` (direction A), `Delivery`, `Window` and `Feed` (direction B), `Outbox` and `Transfer` (direction C).
-//! Every test is named like the `Test` column of the machine tables. Tests of `Delivery`, `Window` and `Feed` in `*_gap_tests.rs` run at the level of the owner (`core/src/owners`) on `DetScheduler`.
+//! Tests of the owners of the machines: a test drives one real owner by its inputs in the order of real use and asserts what the owner does outwards.
 
 pub(crate) mod support;
 mod harness_life;
 mod lifecycle;
-mod ref_lifecycle;
 mod ref_session;
 mod store;
 mod delivery_words;

@@ -1,7 +1,6 @@
 //! Owner-level tests of the owner `Transfer`: closing, stray results, rejected writes, orphan aborts and the discard of a failed transfer.
-use super::transfer_harness::{Out, Twin};
+use super::transfer_harness::Twin;
 use crate::owners::write::outbox::OutboxOutcome;
-use crate::owners::write::transfer::AbortFault;
 
 const KEY: &str = "Moment:r1:upload";
 
