@@ -176,7 +176,7 @@ private struct VideoFacts {
 
 private func videoFacts(_ url: URL) async throws -> VideoFacts {
   guard case let .video(source, keys) = await SystemPreparer().probe(path: url.path) else { throw PrepareFailure(message: "the result is no video") }
-  let asset = Container.asset(url)
+  let asset = MediaContainer.asset(url)
   let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
   let formats = try await track.load(.formatDescriptions)
   let reader = try AVAssetReader(asset: asset)
@@ -194,7 +194,7 @@ private func videoFacts(_ url: URL) async throws -> VideoFacts {
 }
 
 private func luminance(_ url: URL, left: Bool) async throws -> Double {
-  let generator = AVAssetImageGenerator(asset: Container.asset(url))
+  let generator = AVAssetImageGenerator(asset: MediaContainer.asset(url))
   let image = try generator.copyCGImage(at: .zero, actualTime: nil)
   return try level(image, x: left ? 2 : image.width - 3, y: image.height / 2)
 }
@@ -267,7 +267,10 @@ private func matrixRows() -> [Row] {
   var rows: [Row] = []
   rows.append(videoRow(
     "h264+aac within limits", FixtureClip(width: 64, height: 32, audio: true, metadata: true),
-    plan: { keys in .video(plan: VideoPlan(reencode: false, width: 64, height: 32, bitrate: 0, frameRate: 30, rotationDegrees: 0), stripMetadata: keys, audioBitrate: 64_000, audioChannels: 1, audioSampleRate: 44100, mirror: false) },
+    plan: { keys in
+      #expect(!keys.isEmpty, "the source carries private metadata")
+      return .video(plan: VideoPlan(reencode: false, width: 64, height: 32, bitrate: 0, frameRate: 30, rotationDegrees: 0), stripMetadata: keys, audioBitrate: 64_000, audioChannels: 1, audioSampleRate: 44100, mirror: false)
+    },
     check: { _, facts in
       #expect(facts.width == 64 && facts.height == 32 && facts.codec == kCMVideoCodecType_H264 && facts.frames == 30 && facts.audio)
       #expect(facts.keys.isEmpty, "private metadata is gone: \(facts.keys)")

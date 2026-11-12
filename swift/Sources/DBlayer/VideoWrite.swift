@@ -61,7 +61,7 @@ enum VideoWrite {
   static func run(
     _ job: PrepareJob, plan: VideoPlan, audio: AudioTarget, mirror: Bool, entry: Running, report: @escaping @Sendable (Double) -> Void
   ) async throws -> PrepareOutcome {
-    let asset = Container.asset(URL(fileURLWithPath: job.source))
+    let asset = MediaContainer.asset(URL(fileURLWithPath: job.source))
     guard let track = try await asset.loadTracks(withMediaType: .video).first else {
       throw PrepareFailure(message: "\(job.source) has no video track")
     }
@@ -290,7 +290,7 @@ private final class PumpGate: @unchecked Sendable {
   }
 }
 
-enum Container {
+enum MediaContainer {
   static func asset(_ url: URL) -> AVURLAsset {
     guard let brand = brand(url) else { return AVURLAsset(url: url) }
     return AVURLAsset(url: url, options: [AVURLAssetOverrideMIMETypeKey: brand == "qt  " ? "video/quicktime" : "video/mp4"])
