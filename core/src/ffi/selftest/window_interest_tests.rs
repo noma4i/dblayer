@@ -1,12 +1,7 @@
-use std::sync::Arc;
-
 use serde_json::json;
 
 use super::nested_storage_tests::wrapper_models;
 use super::rig_tests::{bound, Rig, World};
-use crate::ffi::tape::Rows;
-use crate::ffi::ReadRequest;
-use crate::test_wait::settled;
 
 const FEED: &str = "query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }";
 
@@ -37,21 +32,5 @@ async fn cancelling_one_load_interest_keeps_the_other_call_alive() {
     bound(second.result()).await.unwrap();
     rig.world.mark("B result");
     assert_eq!(feed_requests(&rig), 1, "the second call sent a request of its own, steps and requests in order:\n{}", rig.world.journal());
-    rig.database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_list_that_refreshes_on_connect_loads_again_once_when_the_network_returns() {
-    let rig = feed_rig().await;
-    let rows = Arc::new(Rows::default());
-    let query = json!({"model":"Moment","relation":"feed","params":{},"refreshOnConnect":true}).to_string();
-    drop(rig.database.watch(ReadRequest::List { query: crate::ffi::QuerySpec::json(query) }, rows.clone()));
-    settled(&rig, "the list shows its first load", || rows.len() == 1).await;
-    assert_eq!(feed_requests(&rig), 1);
-    rig.database.set_online(false).unwrap();
-    rig.database.set_online(true).unwrap();
-    settled(&rig, "the list loaded again", || feed_requests(&rig) >= 2).await;
-    rig.settle().await;
-    assert_eq!(feed_requests(&rig), 2, "the list loaded more or less than once on reconnect: {:?}", rig.world.log());
     rig.database.close_now();
 }

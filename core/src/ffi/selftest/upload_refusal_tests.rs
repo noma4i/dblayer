@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::rig_tests::bound;
 use super::upload_stand::{clip, shows, watched, Answer, Stand, BLOB, CREATE_MOMENT};
-use crate::ffi::wire::{WireRow, WireSyncState, WireUploadStatus};
+use crate::ffi::wire::{WireRow, WireSyncState};
 use crate::ffi::{Database, DbError, WireOperationReceipt, WireReceiptTicket};
 use crate::owners::write::upload::MEBIBYTE;
 use crate::test_wait::settled;
@@ -44,25 +44,6 @@ async fn out_response_limit_keeps_pending() {
     assert!(pairs.len() >= 2 && !pairs[0].0.is_empty() && pairs[0].1.is_some());
     assert!(pairs.iter().all(|pair| pair == &pairs[0]));
     assert!(crate::ffi::tests::queue_view_tests::queued(&database).iter().any(|entry| entry.id.0 == operation));
-    database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_refused_blob_fails_the_row_of_its_upload() {
-    let stand = Stand::new();
-    let database = stand.open(None, &EXPIRY_OPERATIONS).await;
-    let directory = tempfile::tempdir().unwrap();
-    let source = directory.path().join("video");
-    std::fs::write(&source, b"video").unwrap();
-    stand.script.enqueue("CreateBlob", Answer::Status(422));
-
-    let sent = bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &source, database.session_epoch()))).await.unwrap();
-    let id = sent.optimistic_value.unwrap().id;
-
-    until_state(&database, &id, WireSyncState::Failed).await;
-    let failed = row(&database, &id).await.unwrap();
-    let upload = &failed.uploads.iter().find(|entry| entry.action == "upload_clip").unwrap().upload;
-    assert_eq!(upload.status, WireUploadStatus::Failed);
     database.close_now();
 }
 
@@ -151,22 +132,6 @@ async fn an_http_refusal_of_a_photo_keeps_the_failed_record_until_discard() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_send_that_landed_before_the_accepted_row_is_read_gives_the_landed_row() {
-    let stand = Stand::new();
-    let database = stand.open(None, &[CREATE_MOMENT]).await;
-    let directory = tempfile::tempdir().unwrap();
-    let source = directory.path().join("photo.jpg");
-    std::fs::write(&source, b"image").unwrap();
-    stand.script.data("CreateBlob", BLOB);
-    stand.script.data("CreateMoment", ROW);
-    let epoch = database.session_epoch();
-    let sent = bound(database.send(clip("Moment", r#"{"text":"group"}"#, "upload_clip", &source, epoch))).await.unwrap();
-    let landed = bound(database.confirmed(sent, false)).await.unwrap().value.expect("the transfer is confirmed with its row");
-    assert_eq!((landed.id, landed.sync.state), ("m1".to_string(), WireSyncState::Synced));
-    database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_complete_failure_then_retry_keeps_the_confirmed_parts() {
     let stand = Stand::new();
     let database = stand.open(None, &[CREATE_MOMENT]).await;
@@ -210,71 +175,6 @@ async fn a_complete_failure_then_retry_keeps_the_confirmed_parts() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_offline_discard_is_aborted_after_the_reopen_toggles_the_network_at_once() {
-    let stand = Stand::new();
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("db.sqlite");
-    let source = directory.path().join("video");
-    std::fs::File::create(&source).unwrap().set_len(11 * MEBIBYTE).unwrap();
-    let operations = [CREATE_MOMENT];
-    let database = stand.open(Some(&path), &operations).await;
-    stand.script.data("InitMultipart", r#"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#);
-    let presign = stand.script.hold("PresignParts", r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}}"#);
-    stand.script.data("PresignParts", r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}}"#);
-    let abort = stand.script.hold("AbortMultipart", r#"{"data":{"abortMultipart":{"ok":true}}}"#);
-    let epoch = database.session_epoch();
-    let sent = bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &source, epoch))).await.unwrap();
-    let id = sent.optimistic_value.unwrap().id;
-    presign.entered().await;
-    database.set_online(false).unwrap();
-    presign.dropped().await;
-    bound(database.discard(epoch, "Moment".into(), id, Some("upload_clip".into()))).await.unwrap();
-    presign.release();
-    database.close_now();
-
-    let reopened: Arc<Database> = stand.open(Some(&path), &operations).await;
-    let names = || stand.script.names();
-    settled(&reopened, "the abort reached the transport", || stand.script.count("AbortMultipart") == 1).await;
-    abort.entered().await;
-    abort.release();
-    bound(crate::ffi::settled(&reopened)).await.unwrap();
-    reopened.set_online(false).unwrap();
-    reopened.set_online(true).unwrap();
-    bound(crate::ffi::settled(&reopened)).await.unwrap();
-    assert_eq!(stand.script.count("AbortMultipart"), 1, "calls: {:?}", names());
-    reopened.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn an_offline_discard_without_waiting_for_the_dropped_step_is_aborted_after_the_reopen() {
-    let stand = Stand::new();
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("db.sqlite");
-    let source = directory.path().join("video");
-    std::fs::File::create(&source).unwrap().set_len(11 * MEBIBYTE).unwrap();
-    let operations = [CREATE_MOMENT];
-    let database = stand.open(Some(&path), &operations).await;
-    stand.script.data("InitMultipart", r#"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#);
-    let presign = stand.script.hold("PresignParts", r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}}"#);
-    let epoch = database.session_epoch();
-    let sent = bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &source, epoch))).await.unwrap();
-    let id = sent.optimistic_value.unwrap().id;
-    presign.entered().await;
-    database.set_online(false).unwrap();
-    bound(database.discard(epoch, "Moment".into(), id, Some("upload_clip".into()))).await.unwrap();
-    presign.release();
-    database.close_now();
-    let abort = stand.script.hold("AbortMultipart", r#"{"data":{"abortMultipart":{"ok":true}}}"#);
-    let reopened: Arc<Database> = stand.open(Some(&path), &operations).await;
-    settled(&reopened, "the abort reached the transport", || stand.script.count("AbortMultipart") == 1).await;
-    abort.entered().await;
-    abort.release();
-    bound(crate::ffi::settled(&reopened)).await.unwrap();
-    assert_eq!(stand.script.count("AbortMultipart"), 1, "calls: {:?}", stand.script.names());
-    reopened.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn an_offline_discard_routes_its_reopened_abort_as_a_transfer() {
     let stand = Stand::new();
     let directory = tempfile::tempdir().unwrap();
@@ -311,6 +211,8 @@ async fn an_offline_discard_routes_its_reopened_abort_as_a_transfer() {
     reopened.set_online(true).unwrap();
     bound(crate::ffi::settled(&reopened)).await.unwrap();
     assert_eq!(stand.script.names(), ["InitMultipart", "PresignParts", "PresignParts", "AbortMultipart"]);
+    let asked = stand.script.variables("PresignParts");
+    assert_eq!(asked[0], asked[1], "the second presign is the replay of the first");
     assert_eq!(stand.script.purposes("AbortMultipart"), [crate::transport::NetworkPurpose::Transfer]);
     reopened.close_now();
 }

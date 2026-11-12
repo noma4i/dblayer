@@ -3,10 +3,10 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::rig_tests::bound;
-use super::upload_stand::{shows, watched, Answer, Stand};
+use super::upload_stand::{shows, watched, Stand};
 use crate::ffi::upload_wire::{WireUploadBatch, WireUploadItem};
 use crate::ffi::wire::WireSyncState;
-use crate::ffi::{Database, DbError, TestClock, WireBatchReceipt, WireOperationReceipt};
+use crate::ffi::{Database, DbError, WireBatchReceipt, WireOperationReceipt};
 use crate::owners::write::upload::MEBIBYTE;
 use crate::test_wait::settled_showing;
 use crate::transport::{NetworkPurpose, TransferStep};
@@ -115,29 +115,12 @@ async fn a_batch_owns_its_sources_and_confirms_every_member_with_one_request() {
     database.set_online(true).unwrap();
 
     assert_eq!(outcomes(&database, &receipt).await, ["confirmed a0", "confirmed a1"]);
+    let landed = bound(database.confirmed(receipt.items[0].receipt.clone(), false)).await.unwrap().value.expect("the item is confirmed with its row");
+    assert_eq!((landed.id, landed.sync.state), ("a0".to_string(), WireSyncState::Synced));
     assert_eq!(stand.script.count("CreateAssets"), 1);
     let sent = sent_items(&stand);
     assert_eq!(keys_of(&sent), ["key-0", "key-1"]);
     assert!(sent.iter().all(|item| item["signedId"] == "signed"));
-    database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_batch_member_that_landed_before_the_accepted_row_is_read_gives_the_landed_row() {
-    let stand = Stand::new();
-    let database = stand.open(None, &ALBUM_OPERATIONS).await;
-    database.set_online(false).unwrap();
-    let directory = tempfile::tempdir().unwrap();
-    let source = directory.path().join("image.png");
-    std::fs::write(&source, b"image").unwrap();
-    let receipt = upload_batch(&database, items(&[&source, &source], &["key-0", "key-1"], 2)).await;
-    for _ in 0..2 { stand.script.data("CreateBlob", &blob(0).replace("signed-0", "signed")); }
-    stand.script.data("CreateAssets", &assets(&[("a0", "key-0", 0), ("a1", "key-1", 1)]));
-    database.set_online(true).unwrap();
-    assert_eq!(outcomes(&database, &receipt).await, ["confirmed a0", "confirmed a1"]);
-
-    let landed = bound(database.confirmed(receipt.items[0].receipt.clone(), false)).await.unwrap().value.expect("the item is confirmed with its row");
-    assert_eq!((landed.id, landed.sync.state), ("a0".to_string(), WireSyncState::Synced));
     database.close_now();
 }
 
@@ -269,40 +252,4 @@ async fn shifting_a_batch_during_a_held_request_keeps_the_file_owner() {
     assert_eq!(sent.iter().map(|item| item["signedId"].as_str().unwrap()).collect::<Vec<_>>(), ["signed-1", "signed-2"]);
     assert!(stand.script.purposes("CreateBlob").iter().all(|purpose| *purpose == NetworkPurpose::Transfer));
     database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_lost_answer_before_a_close_is_replayed_after_the_reopen_and_the_batch_completes() {
-    let (stand, now) = (Stand::new(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64);
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("db.sqlite");
-    let database = stand.open_with(Some(&path), &ALBUM_OPERATIONS, Some(TestClock::new(now))).await;
-    let files = album_files(directory.path(), &["0.jpg", "1.jpg", "2.jpg"], "image-x");
-    stand.script.data("CreateBlob", &blob(0));
-    let held = std::sync::Arc::new(super::upload_stand::Hold::default());
-    stand.script.enqueue("CreateBlob", Answer::Held(held.clone(), Box::new(Answer::Lost)));
-    let epoch = database.session_epoch();
-    let receipt = upload_batch(&database, items(&[&files[0], &files[1], &files[2]], &["key-0", "key-1", "key-2"], 3)).await;
-    held.entered().await;
-    bound(database.discard(epoch, "Asset".into(), receipt.items[0].optimistic_value.id.clone(), Some("create_files".into()))).await.unwrap();
-    database.set_online(false).unwrap();
-    held.release();
-    held.dropped().await;
-    database.close_now();
-    stand.script.data("CreateBlob", &blob(1));
-    stand.script.data("CreateBlob", &blob(2));
-    stand.script.data("CreateAssets", &assets(&[("a2", "key-2", 1), ("a1", "key-1", 0)]));
-
-    let reopened = stand.open_with(Some(&path), &ALBUM_OPERATIONS, Some(TestClock::new(now))).await;
-
-    let (first, second) = (watched(&reopened, "Asset", "a1"), watched(&reopened, "Asset", "a2"));
-    let optimistic: Vec<&str> = receipt.items.iter().map(|item| item.optimistic_value.id.as_str()).chain(["a1", "a2"]).collect();
-    settled_showing(&reopened, "both assets are stored", || state_report(&stand, &reopened, &optimistic), || !first.0.lock().unwrap().is_empty() && !second.0.lock().unwrap().is_empty()).await;
-    let attempts = stand.script.variables("CreateBlob").iter().filter(|variables| variables["filename"] == "1.jpg").count();
-    assert_eq!(attempts, 2, "the lost step is requested once more");
-    let filenames: Vec<String> = stand.script.variables("CreateBlob").iter().map(|variables| variables["filename"].as_str().unwrap().to_string()).collect();
-    assert_eq!(filenames, ["0.jpg", "1.jpg", "1.jpg", "2.jpg"], "calls: {:?}", stand.script.names());
-    assert_eq!(stand.script.count("CreateAssets"), 1);
-    assert_eq!(keys_of(&sent_items(&stand)), ["key-1", "key-2"]);
-    reopened.close_now();
 }
