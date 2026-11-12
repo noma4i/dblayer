@@ -24,59 +24,56 @@ fn win_phase_waiting_by_outcome() {
     assert_eq!((landed.stage(), landed.load_state().phase), (Some(WindowStage::Waiting), OwnerPhase::Loaded), "after a landing");
 }
 
-/// A landing refused by a new generation while nobody watches leaves the stage Idle, the phase follows `outcome`.
+/// The last interest takes the refusal, the cancelled load and the landing outcome with it: the next interest in an offline window is Idle and not settled.
 #[test]
-fn win_phase_stale_generation_without_interest() {
-    let mut twin = Twin::new();
-    twin.watch();
-    twin.respond(None);
-    twin.step(Input::InterestMinus { id: STREAM });
-    let request = twin.ref_landing();
-    twin.step(Input::Rejected { request, reason: Reject::StaleGeneration });
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    offline_watch(&mut twin);
-    assert_eq!(twin.load_state().phase, OwnerPhase::Idle, "a window that never landed is not loading");
+fn win_phase_after_last_interest_left() {
+    {
+        let mut twin = Twin::new();
+        twin.watch();
+        twin.respond(None);
+        twin.step(Input::InterestMinus { id: STREAM });
+        let request = twin.ref_landing();
+        twin.step(Input::Rejected { request, reason: Reject::StaleGeneration });
+        assert_eq!(twin.stage(), Some(WindowStage::Idle));
+        offline_watch(&mut twin);
+        assert_eq!(twin.load_state().phase, OwnerPhase::Idle, "a window that never landed is not loading");
+    }
+    {
+        let mut twin = Twin::new();
+        twin.watch();
+        twin.fail(Failure::Permanent);
+        assert!(twin.load_state().error.is_some());
+        twin.step(Input::InterestMinus { id: STREAM });
+        twin.step(Input::Online(false));
+        twin.watch();
+        let state = twin.load_state();
+        assert_eq!((state.phase, state.error.is_some(), state.settled), (OwnerPhase::Idle, false, false));
+    }
+    {
+        let mut twin = opening_twin();
+        twin.watch();
+        twin.step(Input::Read(saved(NOW - 1_000, true)));
+        assert_eq!(twin.stage(), Some(WindowStage::Loading));
+        twin.step(Input::InterestMinus { id: STREAM });
+        assert_eq!(twin.stage(), Some(WindowStage::Idle));
+        offline_watch(&mut twin);
+        assert_eq!(twin.load_state().phase, OwnerPhase::Idle);
+    }
+    {
+        let mut twin = Twin::new();
+        twin.watch();
+        twin.finish(None);
+        twin.step(Input::InterestMinus { id: STREAM });
+        twin.step(Input::Stale { in_keys: true });
+        offline_watch(&mut twin);
+        let state = twin.load_state();
+        assert_eq!((state.phase, state.settled), (OwnerPhase::Idle, false));
+    }
 }
 
-/// The last interest takes a refusal with it.
-#[test]
-fn win_phase_leaving_clears_the_refusal() {
-    let mut twin = Twin::new();
-    twin.watch();
-    twin.fail(Failure::Permanent);
-    assert!(twin.load_state().error.is_some());
-    twin.step(Input::InterestMinus { id: STREAM });
-    twin.step(Input::Online(false));
-    twin.watch();
-    let state = twin.load_state();
-    assert_eq!((state.phase, state.error.is_some(), state.settled), (OwnerPhase::Idle, false, false));
-}
 
-/// A load cancelled by the last interest leaves no outcome, the rows of the saved window do not make it Loaded.
-#[test]
-fn win_phase_cancelled_load_keeps_no_outcome() {
-    let mut twin = opening_twin();
-    twin.watch();
-    twin.step(Input::Read(saved(NOW - 1_000, true)));
-    assert_eq!(twin.stage(), Some(WindowStage::Loading));
-    twin.step(Input::InterestMinus { id: STREAM });
-    assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    offline_watch(&mut twin);
-    assert_eq!(twin.load_state().phase, OwnerPhase::Idle);
-}
 
-/// The outcome belongs to the current interest: after a landing and the last interest gone, an interest back into a not fresh window waits for a new outcome.
-#[test]
-fn win_phase_landing_does_not_outlive_the_interest() {
-    let mut twin = Twin::new();
-    twin.watch();
-    twin.finish(None);
-    twin.step(Input::InterestMinus { id: STREAM });
-    twin.step(Input::Stale { in_keys: true });
-    offline_watch(&mut twin);
-    let state = twin.load_state();
-    assert_eq!((state.phase, state.settled), (OwnerPhase::Idle, false));
-}
+
 
 /// Entering a fresh saved window is the outcome Fresh: Loaded and settled with no request.
 #[test]

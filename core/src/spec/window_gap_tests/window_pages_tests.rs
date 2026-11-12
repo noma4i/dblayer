@@ -9,30 +9,32 @@ pub(super) fn connection(direction: PageDirection, cursor: Option<CursorSpec>) -
 
 pub(super) fn variables(shape: &RemoteShape, cursor: Option<&str>) -> serde_json::Value { load_variables(&serde_json::Map::new(), shape, 20, cursor, &Default::default()) }
 
+/// The variables of a page request: backward asks the last items and before the cursor, a server cursor goes as a number or a text.
 #[test]
-fn win_idle_load_backward() {
-    let mut twin = Twin::new();
-    assert_eq!(requests(&twin.call(1, Goal::First)), 1, "a backward window asks its first page like a forward one");
-    assert_eq!(variables(&connection(PageDirection::Backward, None), None), serde_json::json!({"last": 20}), "the first page of a backward window asks the last items");
+fn win_page_variables_by_direction_and_cursor() {
+    {
+        let mut twin = Twin::new();
+        assert_eq!(requests(&twin.call(1, Goal::First)), 1, "a backward window asks its first page like a forward one");
+        assert_eq!(variables(&connection(PageDirection::Backward, None), None), serde_json::json!({"last": 20}), "the first page of a backward window asks the last items");
+    }
+    {
+        let mut twin = fresh_with_cursor();
+        assert_eq!(requests(&twin.call(2, Goal::Next)), 1);
+        let numeric = connection(PageDirection::Forward, Some(CursorSpec { variable: "afterId".into(), from: "id".into(), numeric: true }));
+        assert_eq!(variables(&numeric, None), serde_json::json!({}), "the first page of a server cursor window carries no pair");
+        assert_eq!(variables(&numeric, Some("42")), serde_json::json!({"afterId": 42}), "the next page carries the cursor as a number and no first or after");
+        let text = connection(PageDirection::Forward, Some(CursorSpec { variable: "afterId".into(), from: "id".into(), numeric: false }));
+        assert_eq!(variables(&text, Some("42")), serde_json::json!({"afterId": "42"}));
+    }
+    {
+        let mut twin = fresh_with_cursor();
+        assert_eq!(requests(&twin.call(2, Goal::Next)), 1);
+        assert_eq!(variables(&connection(PageDirection::Backward, None), Some("c2")), serde_json::json!({"last": 20, "before": "c2"}), "the next page of a backward window asks before the cursor");
+    }
 }
 
-#[test]
-fn win_idle_load_more_server_cursor() {
-    let mut twin = fresh_with_cursor();
-    assert_eq!(requests(&twin.call(2, Goal::Next)), 1);
-    let numeric = connection(PageDirection::Forward, Some(CursorSpec { variable: "afterId".into(), from: "id".into(), numeric: true }));
-    assert_eq!(variables(&numeric, None), serde_json::json!({}), "the first page of a server cursor window carries no pair");
-    assert_eq!(variables(&numeric, Some("42")), serde_json::json!({"afterId": 42}), "the next page carries the cursor as a number and no first or after");
-    let text = connection(PageDirection::Forward, Some(CursorSpec { variable: "afterId".into(), from: "id".into(), numeric: false }));
-    assert_eq!(variables(&text, Some("42")), serde_json::json!({"afterId": "42"}));
-}
 
-#[test]
-fn win_idle_load_more_backward() {
-    let mut twin = fresh_with_cursor();
-    assert_eq!(requests(&twin.call(2, Goal::Next)), 1);
-    assert_eq!(variables(&connection(PageDirection::Backward, None), Some("c2")), serde_json::json!({"last": 20, "before": "c2"}), "the next page of a backward window asks before the cursor");
-}
+
 
 #[test]
 fn win_wait_load_more_result() {

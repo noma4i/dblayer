@@ -22,29 +22,31 @@ pub(super) fn fresh_idle() -> Twin {
     twin
 }
 
+/// The load held in Opening starts after the read: a missing window, a window of another generation and a failed read all ask the network.
 #[test]
-fn win_opening_read() {
-    let mut twin = opening_twin();
-    assert_eq!(twin.call(1, Goal::First), [Effect::ReadWindow], "the saved window is read in the pool, nothing is asked");
-    assert_eq!(twin.stage(), Some(WindowStage::Opening));
-    assert_eq!(requests(&twin.step(Input::Read(Read::None))), 1, "the held load starts after the read");
-    assert_eq!(twin.stage(), Some(WindowStage::Loading));
+fn win_opening_read_decides_the_load() {
+    {
+        let mut twin = opening_twin();
+        assert_eq!(twin.call(1, Goal::First), [Effect::ReadWindow], "the saved window is read in the pool, nothing is asked");
+        assert_eq!(twin.stage(), Some(WindowStage::Opening));
+        assert_eq!(requests(&twin.step(Input::Read(Read::None))), 1, "the held load starts after the read");
+        assert_eq!(twin.stage(), Some(WindowStage::Loading));
+    }
+    {
+        let mut twin = opening_twin();
+        twin.watch();
+        let opened = twin.step(Input::Read(Read::Saved { landed_at: NOW - 1_000, fresh_until: NOW + LIFE, stale: false, generation_ok: false }));
+        assert_eq!(requests(&opened), 1, "a window of another generation is none: the first load asks the network");
+    }
+    {
+        let mut twin = opening_twin();
+        twin.watch();
+        assert_eq!(requests(&twin.step(Input::Read(Read::Failed))), 1, "the window loads from the network, the held input runs");
+    }
 }
 
-#[test]
-fn win_created_other_generation() {
-    let mut twin = opening_twin();
-    twin.watch();
-    let opened = twin.step(Input::Read(Read::Saved { landed_at: NOW - 1_000, fresh_until: NOW + LIFE, stale: false, generation_ok: false }));
-    assert_eq!(requests(&opened), 1, "a window of another generation is none: the first load asks the network");
-}
 
-#[test]
-fn win_opening_read_failed() {
-    let mut twin = opening_twin();
-    twin.watch();
-    assert_eq!(requests(&twin.step(Input::Read(Read::Failed))), 1, "the window loads from the network, the held input runs");
-}
+
 
 #[test]
 fn win_opening_read_stray() {
@@ -86,21 +88,24 @@ fn win_opening_end() {
     assert_eq!(twin.stage(), Some(WindowStage::Ended), "the call that waited is interrupted (the twin compares the outcome)");
 }
 
+/// The return of the network loads a watched window only when fresh_until has passed.
 #[test]
-fn win_idle_online_expired() {
-    let mut twin = fresh_watched();
-    twin.step(Input::Online(false));
-    twin.now = NOW + LIFE;
-    assert_eq!(requests(&twin.step(Input::Online(true))), 1, "the network returns after fresh_until: the watched window loads");
+fn win_idle_online_by_lifetime() {
+    {
+        let mut twin = fresh_watched();
+        twin.step(Input::Online(false));
+        twin.now = NOW + LIFE;
+        assert_eq!(requests(&twin.step(Input::Online(true))), 1, "the network returns after fresh_until: the watched window loads");
+    }
+    {
+        let mut twin = fresh_watched();
+        twin.step(Input::Online(false));
+        twin.now = NOW + LIFE - 1;
+        assert_eq!(requests(&twin.step(Input::Online(true))), 0, "the network returns inside the lifetime: no request");
+    }
 }
 
-#[test]
-fn win_idle_online_fresh() {
-    let mut twin = fresh_watched();
-    twin.step(Input::Online(false));
-    twin.now = NOW + LIFE - 1;
-    assert_eq!(requests(&twin.step(Input::Online(true))), 0, "the network returns inside the lifetime: no request");
-}
+
 
 #[test]
 fn win_idle_expiry_silent() {
