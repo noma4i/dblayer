@@ -33,7 +33,10 @@ class NetworkStatusTest {
     /** net_status_same_value_silent, net_status_ignores_server_and_session: the same value again and a server answer wake nobody, so the first frame after them is the next real change. */
     @Test
     fun net_status_kotlinAServerAnswerAndARepeatedValueGiveNoFrame() = bounded {
-        openSignedOffline(Config(null, null), modelsJSON)
+        val transport = MockTransport()
+        transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","text":"answered","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
+        openSigned(Config(null, null), modelsJSON, transport, SEND_MOMENT)
+        DBlayer.database.setOnline(false)
         DBlayer.database.setOnline(true)
         val status = NetworkStatus(org.robolectric.RuntimeEnvironment.getApplication())
         val reader = status.subscribe()
