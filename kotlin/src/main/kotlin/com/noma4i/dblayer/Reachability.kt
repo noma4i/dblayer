@@ -40,3 +40,12 @@ internal class SystemObservers(private val context: Context) : PlatformObserver 
         stops = emptyList()
     }
 }
+
+/** The observer of `NetworkStatus`: the core starts it once per process and never stops it. */
+internal class StatusObserver(private val context: Context) : PlatformObserver {
+    override fun start(sink: OnlineSink) {
+        Reachability.observe(context) { sink.setOnline(it) }
+    }
+
+    override fun stop() {}
+}

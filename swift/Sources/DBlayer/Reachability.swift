@@ -36,3 +36,10 @@ final class SystemObservers: PlatformObserver, @unchecked Sendable {
     stops = []
   }
 }
+
+/// The observer of `NetworkStatus`: the core starts it once per process and never stops it.
+final class StatusObserver: PlatformObserver, @unchecked Sendable {
+  func start(sink: OnlineSink) { _ = SystemPath().observe { sink.setOnline(online: $0) } }
+
+  func stop() {}
+}

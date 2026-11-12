@@ -1,7 +1,11 @@
 package com.noma4i.dblayer
 
+import android.content.Context
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+
+/** The first call starts the network observer of the platform once for the process. */
+fun NetworkStatus(context: Context): NetworkStatus = NetworkStatus(StatusObserver(context))
 
 /** The last network value of the platform, `null` before the first. */
 val NetworkStatus.isOnline: Boolean?

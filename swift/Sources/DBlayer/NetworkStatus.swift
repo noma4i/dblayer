@@ -18,6 +18,8 @@ public struct NetworkChanges: AsyncSequence, Sendable {
 }
 
 extension NetworkStatus {
+  public convenience init() { self.init(observer: StatusObserver()) }
+
   /// The last network value of the platform, `nil` before the first.
   public var isOnline: Bool? { current() }
   public var changes: NetworkChanges { NetworkChanges(status: self) }
