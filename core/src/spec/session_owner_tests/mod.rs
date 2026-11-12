@@ -205,7 +205,11 @@ struct Twin {
     reference: Ref,
     history: Vec<RefEffect>,
     replies: Vec<(u64, Result<String, Fail>)>,
-        raw_text: String,
+    raw_text: String,
+    seal: Option<u64>,
+    pending: Option<RefPending>,
+    attempt: Option<u64>,
+    op: Option<u64>,
 }
 
 impl Twin {
@@ -218,7 +222,7 @@ impl Twin {
         let mut det = DetScheduler::new(2);
         let log = new_log();
         let addr = det.add::<SessionCalls>("session", SessionState::with_operations(owner_operations(), online), Recorder::<SessionCalls>::new(&log));
-        let mut twin = Self { det, addr, log, reference: Ref::new(operations(), online), history: Vec::new(), replies: Vec::new(), raw_text: String::new() };
+        let mut twin = Self { det, addr, log, reference: Ref::new(operations(), online), history: Vec::new(), replies: Vec::new(), raw_text: String::new(), seal: None, pending: None, attempt: None, op: None };
         twin.feed(Input::Published { epoch: EPOCH, identity: None, state: PubState::Session });
         if let Some(online) = online { twin.feed(Input::Snapshot { epoch: EPOCH, online }); }
         let secret = credential.as_ref().map_or(Secret::Missing, |credential| Secret::Present(credential.digest));
@@ -228,10 +232,15 @@ impl Twin {
     }
 
     fn feed(&mut self, input: Input) -> Vec<RefEffect> {
-        if let RefState::Sealing { seal_id, .. } = self.reference.state {
+        if let Some(seal_id) = self.seal {
             if !matches!(input, Input::Sealed { .. } | Input::SealFailed { .. } | Input::AnswerTooLarge { .. } | Input::EpochEnded { cause: EndCause::Close, .. }) {
                 self.feed(Input::Sealed { seal_id, size: 1 });
             }
+        }
+        match &input {
+            Input::Sealed { .. } | Input::SealFailed { .. } => self.seal = None,
+            Input::Open { pending: Some(pending), .. } | Input::Restored { pending: Some(pending), .. } => self.pending = Some(pending.clone()),
+            _ => {}
         }
         let batch_of = |state: &RefState| match state {
             RefState::Persisting { batch, .. } | RefState::Landing { batch, .. } => *batch,
@@ -303,6 +312,15 @@ impl Twin {
             _ => None,
         }).collect();
         assert_eq!(replies, want.replies, "the same replies");
+        for effect in &effects {
+            match effect {
+                RefEffect::SealProbe { seal_id, pending, .. } => { self.seal = Some(*seal_id); self.pending = Some(pending.clone()); }
+                RefEffect::CommitPending { pending, .. } => self.pending = Some(pending.clone()),
+                RefEffect::HttpRequest { pending, attempt_id } => { self.attempt = Some(*attempt_id); self.pending = Some(pending.clone()); }
+                RefEffect::GenerateCredential { op } | RefEffect::StoreSecret { op, .. } | RefEffect::ClearSecret { op } | RefEffect::ReadSecret { op } => self.op = Some(*op),
+                _ => {}
+            }
+        }
         self.replies.extend(replies);
         self.history.extend(want.effects.iter().cloned());
         let state = self.det.state(self.addr).expect("the owner state");
@@ -318,29 +336,15 @@ impl Twin {
 
     fn feed_all(&mut self, inputs: impl IntoIterator<Item = Input>) { inputs.into_iter().for_each(|input| { self.feed(input); }); }
 
-    fn pending(&self) -> RefPending {
-        match &self.reference.state {
-            RefState::Sealing { pending, .. } | RefState::Persisting { pending, .. } | RefState::Calling { pending, .. } | RefState::Landing { pending, .. } | RefState::PendingHeld { pending } | RefState::Blocked { pending: Some(pending), .. } => pending.clone(),
-            other => panic!("no pending request in {other:?}"),
-        }
-    }
+    fn pending(&self) -> RefPending { self.pending.clone().expect("the owner has sent or stored a request") }
 
-    fn rid(&self) -> u64 { self.pending().request_id }
+    fn rid(&self) -> u64 { self.pending.as_ref().expect("the owner has sent or stored a request").request_id }
 
-    fn aid(&self) -> u64 {
-        match &self.reference.state {
-            RefState::Calling { phase: CallPhase::InFlight(attempt), .. } => *attempt,
-            other => panic!("no attempt in {other:?}"),
-        }
-    }
+    fn aid(&self) -> u64 { self.attempt.expect("the owner has sent a request") }
 
-    fn op(&self) -> u64 {
-        match &self.reference.state {
-            RefState::Generating { op, .. } | RefState::Storing { op, .. } | RefState::ClearingSecret { op, .. } => *op,
-            RefState::SecretUnavailable { read: Some(op), .. } => *op,
-            other => panic!("no secret operation in {other:?}"),
-        }
-    }
+    fn op(&self) -> u64 { self.op.expect("the owner asked for a secret operation") }
+
+    fn in_phase(&self, want: CallPhase) -> bool { matches!(&self.reference.state, RefState::Calling { phase, .. } if *phase == want) }
 
     fn response(&self, sequence: u64) -> Input { Input::Response { request_id: self.rid(), attempt_id: self.aid(), body: "{}".into(), sequence: Some(sequence), refusal: None } }
 
@@ -348,7 +352,6 @@ impl Twin {
 
     fn dropped(&self) -> Input { Input::Dropped { request_id: self.rid(), attempt_id: self.aid() } }
 
-    fn in_phase(&self, want: CallPhase) -> bool { matches!(&self.reference.state, RefState::Calling { phase, .. } if *phase == want) }
 }
 
 fn call(reply: u64) -> Input { Input::SessionCall { operation: "social".into(), body: "{}".into(), reply } }
@@ -365,12 +368,12 @@ fn retained(fail: Fail) -> Outcome { Outcome::Error(Kind::Permanent, fail, true)
 fn persisting() -> Twin {
     let mut twin = Twin::new();
     twin.feed(call(1));
-    if let RefState::Sealing { seal_id, .. } = twin.reference.state { twin.feed(Input::Sealed { seal_id, size: 1 }); }
+    if let Some(seal_id) = twin.seal { twin.feed(Input::Sealed { seal_id, size: 1 }); }
     twin
 }
 
 fn finish_seal(twin: &mut Twin) {
-    if let RefState::Sealing { seal_id, .. } = twin.reference.state { twin.feed(Input::Sealed { seal_id, size: 1 }); }
+    if let Some(seal_id) = twin.seal { twin.feed(Input::Sealed { seal_id, size: 1 }); }
 }
 
 fn calling() -> Twin {
