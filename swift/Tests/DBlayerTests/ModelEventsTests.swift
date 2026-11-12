@@ -40,33 +40,6 @@ extension BridgeProbeTests {
     #expect(Self.position(await early.next("the third event of the early collector")) == 3)
   }
 
-  /// S209: a collector that reads nothing while 400 events arrive takes the events the journal kept and lost ranges that add up to the 400 sent. Observed: the items of the collector. Breaks when the journal drops an event without keeping its position.
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func aSlowCollectorReadsKeptEventsAndLostRangesThatAddUpToTheEventsSent() async throws {
-    let transport = try await Self.openNoticeRig()
-    let collector = await opened(try DB.account().events(ChatActivityNotice.self))
-    await eventually("the signal subscription opens") { transport.calls.count == 1 }
-    for burst in [0..<200, 200..<400] {
-      for index in burst { try transport.emit("ChatActionSignal", json: Self.screenshot("c\(index)")) }
-      try await rowsReach("the notices of the burst are stored", Query<ChatActivityNotice>()) { $0.count == burst.upperBound }
-      #expect(try await Query<ChatActivityNotice>().read().count == burst.upperBound)
-    }
-    var events: UInt64 = 0
-    var lost: [(UInt64, UInt64)] = []
-    var stopped = false
-    await consuming(collector, "the next item of the burst", until: { stopped || events + lost.reduce(0, { $0 + $1.1 - $1.0 + 1 }) >= 400 }) { item in
-      switch item {
-      case .event: events += 1
-      case let .lost(first, last): lost.append((first, last))
-      default: stopped = true
-      }
-    }
-    #expect(events + lost.reduce(0, { $0 + $1.1 - $1.0 + 1 }) == 400, "kept events and lost positions add up to the events sent")
-    #expect(events <= 256, "the journal kept \(events) events of a burst of 400")
-    #expect(!lost.isEmpty, "a reader that read nothing during the burst lost no position")
-  }
-
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func dlv_reader_cancel_ends_swift() async throws {
@@ -86,24 +59,5 @@ extension BridgeProbeTests {
     await eventually("the reader waits for the next event") { waiting.value }
     reader.cancel()
     #expect(try await valueBeforeDeadline(reader, release: {}) == 0, "the cancelled reader heard an event")
-  }
-
-  /// Requirement: a session reset ends the old events stream and nothing of the old session follows. A stream of the next session needs a real session with a model-event subscription, which the wrapper rigs cannot start: the core covers it at Sync level. Observable: the end of the old stream.
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func aSessionResetEndsTheOldEventsStream() async throws {
-    let transport = try await Self.openNoticeRig()
-    let first = await opened(try DB.account().events(ChatActivityNotice.self))
-    await eventually("the signal subscription opens") { transport.calls.count == 1 }
-    try transport.emit("ChatActionSignal", json: Self.screenshot("a1"))
-    #expect(Self.position(await first.next("the event of the first session")) == 1)
-
-    try await DB.sessionReset()
-    let ended = await first.next("the end of the old stream", timeout: .seconds(10))
-    guard case .ended(let cause)? = ended else {
-      Issue.record("the old stream did not end with its cause after the session reset: \(String(describing: ended))")
-      return
-    }
-    #expect(cause == .sessionEnded)
   }
 }

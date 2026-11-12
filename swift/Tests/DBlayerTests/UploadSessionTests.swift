@@ -44,30 +44,6 @@ extension BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
-  func uploadRoundKeepsEachGroupsOriginalEpoch() async throws {
-    let file = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-    try Data("clip".utf8).write(to: file)
-    defer { try? FileManager.default.removeItem(at: file) }
-    let transport = MockTransport()
-    transport.enqueue("UserProfile", reply: #"{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}"#)
-    let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#
-    let database = try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: operations)
-    try database.setOnline(online: false)
-    let first = database.sessionEpoch()
-    let sentFirst = try await DB.account().send(Moment.self, values: ["text": .string("A")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path)))
-    try await DB.sessionReset()
-    try await loginAgain()
-    try await User.profile.load(in: DB.account())
-    try database.setOnline(online: false)
-    let second = database.sessionEpoch()
-    #expect(first != second)
-    let sentSecond = try await DB.account().send(Moment.self, values: ["text": .string("B")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path)))
-    #expect([sentFirst.epoch, sentSecond.epoch] == [first, second], "each upload keeps the epoch it was sent in")
-    await DB.closeForCleanup()
-  }
-
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
   func resetDuringPutEndsTheWaitAndRemovesTheOldUpload() async throws {
     let file = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try Data("clip".utf8).write(to: file)

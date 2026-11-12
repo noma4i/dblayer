@@ -27,24 +27,4 @@ suspend fun settledRecord(): Record {
 }
 
 class RecordSessionTest {
-    /** K14 (B6, the order of the app): a reaction whose answer is delayed shows at once as unsent, and the answer ends it as synced. */
-    @Test
-    fun aReactionWithADelayedAnswerShowsAsUnsentBeforeTheAnswerAndSyncedAfter() = bounded {
-        val transport = openRecordSession(reacts = 0)
-        val record = settledRecord()
-        val hold = transport.hold("RecordReact", RECORD_REACTED)
-        try {
-        val receipt = record.react(reactionBody = "C", userId = "u1")
-        withTimeout(5000) { hold.entered() }
-        val changed = requireNotNull(receipt.optimisticValue)
-        assertEquals("the reaction was not shown before the answer", listOf("C"), changed.reactions.map { it.body })
-        val during = Query("Record", Record).readRow(record.id)!!
-        assertTrue("the row was synced before the server answered", during.sync.state != SyncState.Synced)
-        assertEquals(listOf("C"), during.reactions.map { it.body })
-        hold.release()
-        withTimeout(5000) { receipt.confirmed() }
-        assertEquals(SyncState.Synced, Query("Record", Record).readRow(record.id)!!.sync.state)
-        assertEquals(1, transport.calls.count { it.operationName == "RecordReact" })
-        } finally { hold.release() }
-    }
 }

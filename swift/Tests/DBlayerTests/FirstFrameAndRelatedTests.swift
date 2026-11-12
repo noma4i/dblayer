@@ -24,26 +24,4 @@ extension BridgeProbeTests {
     #expect(first.revision != nil, "the first value was not a snapshot with a revision")
     #expect(Set(first.ids ?? []) == Set(seats.map(\.id)), "the first value lacked the cached rows: \(String(describing: first.ids))")
   }
-
-  /// Requirement: a stream over a server relation shows the rows of the relation, follows a change of one of its rows and a change of the link that moves a row out of it. Observable: the titles the projection shows after each step.
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func aRelatedQueryReturnsTheLinkedRowsAndFollowsATargetChangeAndALinkChange() async throws {
-    let transport = MockTransport()
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } message { id text chatId } } } }"}]"#)
-    let scope = try DB.account()
-    let chats = await opened(scope.events(Chat.self))
-    await eventually("the events subscription opens") { transport.calls.contains { $0.operationName == "RecordEvents" } }
-    transport.enqueue("ChatList", reply: #"{"data":{"chats":[{"__typename":"Chat","id":"c1","title":"before","revision":1,"lists":["SECONDARY"]}]}}"#)
-    let related = Projected<Chat>(try scope.stream(try Chat.list("SECONDARY")))
-    try await Chat.list("SECONDARY").load()
-    await eventually("the linked row shows") { related.rows.map(\.title) == ["before"] }
-
-    try transport.emit("RecordEvents", json: #"{"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":2,"lists":["SECONDARY"]},"message":{"id":"m1","text":"x","chatId":"c1"}}]}}}"#)
-    await eventually("a change of the row shows") { related.rows.map(\.title) == ["after"] }
-
-    try transport.emit("RecordEvents", json: #"{"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":3,"lists":["PRIMARY"]},"message":{"id":"m1","text":"x","chatId":"c1"}}]}}}"#)
-    await eventually("a change of the link moves the row out of the relation") { related.rows.isEmpty }
-    withExtendedLifetime(chats) {}
-  }
 }

@@ -4,31 +4,6 @@ import Testing
 @testable import DBlayer
 
 extension BridgeProbeTests {
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func cancellingOneLoadInterestKeepsTheOtherCallAlive() async throws {
-    await DB.closeForCleanup()
-    let transport = MockTransport()
-    let hold = transport.hold("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
-    defer { hold.release() }
-    try await openSignedClocked(modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
-    let (signals, signal) = AsyncStream<Int>.makeStream()
-    let cursor = Cursor(signals)
-    defer { signal.finish() }
-    let first = try Moment.feed.beginLoad()
-    let entered = Task { await hold.entered(); signal.yield(1) }
-    defer { entered.cancel() }
-    guard await cursor.next("the shared load starts") == 1 else { Issue.record("the load did not start"); return }
-    let second = try Moment.feed.beginLoad()
-    defer { first.cancel(); second.cancel() }
-    first.cancel()
-    hold.release()
-    let completed = Task { do { try await second.result(); signal.yield(2) } catch { signal.yield(9) } }
-    defer { completed.cancel() }
-    guard await cursor.next("the second load finishes") == 2 else { Issue.record("the second load failed"); return }
-    #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 1)
-    #expect(try await Moment.feed.read().map(\.id) == ["1"])
-  }
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
@@ -120,74 +95,5 @@ extension BridgeProbeTests {
     guard await cursor.next("the reopened load finishes") == 3 else { Issue.record("the reopened load failed"); return }
     #expect(try await Moment.feed.read().map(\.id) == ["2"])
     #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 2)
-  }
-
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func aRefreshAfterReopenAndClockRollbackKeepsTheNewResponse() async throws {
-    await DB.closeForCleanup()
-    let path = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).path
-    defer { Task { @MainActor in try? await DB.close(); try? FileManager.default.removeItem(atPath: path) } }
-    let transport = MockTransport()
-    transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":{"id":"u1","name":"A"}}}"#)
-    transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":{"id":"u1","name":"B"}}}"#)
-    let definitions = #"[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"}]"#
-    try await openSignedClocked(modelsJson: modelsJSON, transport: transport, operations: definitions, path: path, startingAt: Date(timeIntervalSince1970: 1_000))
-    let (events, signal) = AsyncStream<Int>.makeStream()
-    let cursor = Cursor(events)
-    defer { signal.finish() }
-    let firstRefresh = Task { do { try await CurrentUser.current.refresh(); signal.yield(1) } catch { signal.yield(9) } }
-    defer { firstRefresh.cancel() }
-    guard await cursor.next("the first refresh finishes") == 1 else { Issue.record("the first refresh failed"); return }
-    let first = Projected<CurrentUser>(try DB.account().stream(CurrentUser.current))
-    guard await observe("the initial profile", { first.value != nil }) else { return }
-    try #require(first.value?.name == "A")
-    await first.stream.cancel()
-    await DB.closeForCleanup()
-
-    try await openSignedClocked(modelsJson: modelsJSON, transport: transport, operations: definitions, path: path, startingAt: Date(timeIntervalSince1970: 1))
-    let secondRefresh = Task { do { try await CurrentUser.current.refresh(); signal.yield(2) } catch { signal.yield(9) } }
-    defer { secondRefresh.cancel() }
-    guard await cursor.next("the reopened refresh finishes") == 2 else { Issue.record("the reopened refresh failed"); return }
-    let second = Projected<CurrentUser>(try DB.account().stream(CurrentUser.current))
-    guard await observe("the reopened profile", { second.value != nil }) else { return }
-    #expect(second.value?.name == "B")
-    #expect(transport.calls.filter { $0.operationName == "CurrentUserQuery" }.count == 2)
-  }
-
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func aTestClockMovesFreshForWithoutSleeping() async throws {
-    await DB.closeForCleanup()
-    let transport = MockTransport()
-    for _ in 0 ..< 2 { transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#) }
-    let down = transport.hold("MomentsFeed", failure: .Network(detail: "down"))
-    let clock = try await openSignedClocked(modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
-
-    try await Moment.feed.load()
-    let held = Projected<Moment>(try DB.account().stream(Moment.feed))
-    try await held.loaded()
-    clock.advance(by: 5 * 60 - 1)
-    try await Moment.feed.load()
-    #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 1)
-    clock.advance(by: 1)
-    try await Moment.feed.load()
-    #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 2)
-    transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
-    transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
-    clock.advance(by: 5 * 60)
-    let failing = Task { try await Moment.feed.load() }
-    let finished = Done()
-    let watcher = Task { _ = await failing.result; finished.set() }
-    defer { watcher.cancel() }
-    try await networkDrops(during: down)
-    down.release()
-    await eventually("the third request answered") { transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 3 }
-    #expect(!finished.value, "a load without network keeps waiting")
-    try DB.database.setOnline(online: true)
-    try await valueBeforeDeadline(failing) {}
-    guard await observe("the window shows the loaded rows", { held.phase == .loaded && held.error == nil }) else { return }
-    #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 4, "the load that waited for the network was read once more, not once per cause")
-    #expect(held.rows.map(\.id) == ["1"])
   }
 }

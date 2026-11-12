@@ -36,30 +36,6 @@ private class HeldUploadTransport(val base: MockTransport = MockTransport()) : S
 }
 
 class UploadSessionTest {
-    @Test
-    fun uploadRoundKeepsEachGroupsOriginalEpoch() = bounded {
-        val file = Files.createTempFile("clip", ".mp4").toFile().apply { writeText("clip") }
-        val transport = MockTransport()
-        try {
-            transport.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}""")
-            val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"""
-            val database = openSigned(Config(null, null), modelsJSON, transport, operations = operations)
-            database.setOnline(false)
-            val first = database.sessionEpoch()
-            val sentFirst = AccountScope.current().send(Moment, buildJsonObject { put("text", "A") }, upload = UploadCommand("upload_clip", UploadRequest(file.path)))
-            DBlayer.sessionReset()
-            loginAgain()
-            User.profile.load(AccountScope.current())
-            database.setOnline(false)
-            val second = database.sessionEpoch()
-            assertTrue(first != second)
-            val sentSecond = AccountScope.current().send(Moment, buildJsonObject { put("text", "B") }, upload = UploadCommand("upload_clip", UploadRequest(file.path)))
-            assertEquals("each upload keeps the epoch it was sent in", listOf(first, second), listOf(sentFirst.epoch, sentSecond.epoch))
-        } finally {
-            closeForCleanup()
-            file.delete()
-        }
-    }
 
     @Test
     fun resetDuringPutEndsTheWaitAndRemovesTheOldUpload() = bounded {

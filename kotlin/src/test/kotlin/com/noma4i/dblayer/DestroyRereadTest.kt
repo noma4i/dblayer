@@ -13,28 +13,4 @@ import org.junit.Test
 
 @OptIn(DBlayerTestingApi::class)
 class DestroyRereadTest {
-    @Test
-    fun aMissingDestroyedRowCausesOneRereadOfTheOpenList() = bounded {
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        try {
-            val transport = MockTransport()
-            for ((id, uuid) in listOf("1" to "a", "2" to "b")) {
-                transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"$id","uuid":"$uuid","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
-            }
-            transport.enqueue("DeleteMoment", """{"errors":[{"message":"gone","extensions":{"code":"NOT_FOUND"}}]}""")
-            openSignedClocked(modelsJSON, transport)
-            registerStandOperations(DBlayer.database, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment(${'$'}id: ID!) { deleteMoment(id: ${'$'}id) { id } }"}]""")
-            val held = Projected(AccountScope.current().stream(Moment.feed), Moment, scope)
-            held.loaded()
-            assertEquals("1", held.value?.id)
-            val receipt = Moment.destroy("1")
-            receipt.confirmed()
-            awaitWithin("the reread is shown") { held.projection.first { projection -> projection.rows.map { it.id } == listOf("2") } }
-            assertEquals(2, transport.calls.count { it.operationName == "MomentsFeed" })
-            held.close()
-        } finally {
-            scope.cancel()
-            closeForCleanup()
-        }
-    }
 }

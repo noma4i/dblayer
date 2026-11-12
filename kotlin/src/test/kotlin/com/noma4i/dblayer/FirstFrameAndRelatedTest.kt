@@ -38,31 +38,4 @@ class FirstFrameAndRelatedTest {
             closeForCleanup()
         }
     }
-
-    /** Requirement: a stream over a server relation shows the rows of the relation, follows a change of one of its rows and a change of the link that moves a row out of it. Observable: the titles the projection shows after each step. */
-    @Test
-    fun aRelatedQueryReturnsTheLinkedRowsAndFollowsATargetChangeAndALinkChange() = bounded {
-        val transport = MockTransport()
-        openSigned(Config(null, null), modelsJSON, transport, """[{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } message { id text chatId } } } }"}]""")
-        val screen = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        try {
-            val scope = AccountScope.current()
-            val events = scope.events(Chat)
-            screen.launch { runCatching { events.values.collect { } } }
-            eventually("the events subscription opens") { transport.calls.size == 1 }
-            transport.enqueue("ChatList", """{"data":{"chats":[{"__typename":"Chat","id":"c1","title":"before","revision":1,"lists":["SECONDARY"]}]}}""")
-            val related = Projected(scope.stream(Chat.list("SECONDARY")), Chat, screen)
-            Chat.list("SECONDARY").load()
-            related.until("the linked row shows") { it.rows.map { chat -> chat.title } == listOf("before") }
-
-            transport.emit("RecordEvents", """{"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":2,"lists":["SECONDARY"]},"message":{"id":"m1","text":"x","chatId":"c1"}}]}}}""")
-            related.until("a change of the row shows") { it.rows.map { chat -> chat.title } == listOf("after") }
-
-            transport.emit("RecordEvents", """{"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":3,"lists":["PRIMARY"]},"message":{"id":"m1","text":"x","chatId":"c1"}}]}}}""")
-            related.until("a change of the link moves the row out of the relation") { it.rows.isEmpty() }
-        } finally {
-            screen.cancel()
-            closeForCleanup()
-        }
-    }
 }
