@@ -224,9 +224,11 @@ impl SessionState {
     }
 
     /// The author of `pending` hears `Dropped`, the pair goes on with no author (it keeps one only where its outcome lands after `Committed`).
-    fn detached(pending: PendingCall, keep_author: bool, fx: &mut Vec<SessionEffect>) -> PendingCall {
+    fn detached(pending: PendingCall, fx: &mut Vec<SessionEffect>) -> PendingCall {
         if let Some(author) = pending.author { fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome: AuthorOutcome::Dropped }); }
-        let author = pending.author.filter(|author| keep_author && *author != CALLS_AUTHOR);
+        let keeps = matches!(pending.owner, Some(MutateOwner::Operation { .. } | MutateOwner::Unmatched { .. } | MutateOwner::Transfer { step: crate::owners::write::upload::UploadStage::Init, .. }))
+            || (pending.owner == Some(MutateOwner::Detached) && pending.author == Some(OUTBOX_AUTHOR));
+        let author = pending.author.filter(|_| keeps);
         PendingCall { author, owner: Some(MutateOwner::Detached), ..pending }
     }
 
@@ -242,13 +244,13 @@ impl SessionState {
                 self.idle(fx);
             }
             SessionPhase::PendingHeld { pending } if pending.request_id == req_id => {
-                let pending = Self::detached(pending, false, fx);
+                let pending = Self::detached(pending, fx);
                 self.start_calling(pending, fx);
             }
-            SessionPhase::Persisting { pending, batch } if pending.request_id == req_id => self.phase = SessionPhase::Persisting { pending: Self::detached(pending, false, fx), batch },
-            SessionPhase::Calling { pending, attempts, phase } if pending.request_id == req_id => self.phase = SessionPhase::Calling { pending: Self::detached(pending, false, fx), attempts, phase },
-            SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended } if pending.request_id == req_id => self.phase = SessionPhase::Landing { pending: Self::detached(pending, true, fx), batch, answer, identity, sequence, server_ended },
-            SessionPhase::Blocked { pending: Some(pending), reason } if pending.request_id == req_id => self.phase = SessionPhase::Blocked { pending: Some(Self::detached(pending, true, fx)), reason },
+            SessionPhase::Persisting { pending, batch } if pending.request_id == req_id => self.phase = SessionPhase::Persisting { pending: Self::detached(pending, fx), batch },
+            SessionPhase::Calling { pending, attempts, phase } if pending.request_id == req_id => self.phase = SessionPhase::Calling { pending: Self::detached(pending, fx), attempts, phase },
+            SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended } if pending.request_id == req_id => self.phase = SessionPhase::Landing { pending: Self::detached(pending, fx), batch, answer, identity, sequence, server_ended },
+            SessionPhase::Blocked { pending: Some(pending), reason } if pending.request_id == req_id => self.phase = SessionPhase::Blocked { pending: Some(Self::detached(pending, fx)), reason },
             SessionPhase::Idle if !self.restored => {
                 self.released.insert(req_id);
                 self.phase = SessionPhase::Idle;
@@ -546,17 +548,10 @@ impl SessionState {
             }
             (SessionPhase::Blocked { pending, reason }, SessionInput::SessionCall { reply: id, .. }) => {
                 self.phase = SessionPhase::Blocked { pending, reason };
-                reply(fx, id, Err(SessionError::StateLost));
+                reply(fx, id, Err(blocked_error(reason)));
             }
-            (SessionPhase::Blocked { pending, reason }, SessionInput::Mutate { author, req_id, epoch, .. }) => {
+            (SessionPhase::Blocked { pending, reason }, SessionInput::Mutate { author, req_id, .. }) => {
                 let same = pending.as_ref().is_some_and(|pending| pending.request_id == req_id);
-                if same {
-                    if let Some(error) = self.admission(Some(epoch)) {
-                        self.phase = SessionPhase::Blocked { pending, reason };
-                        author_error(fx, author, req_id, ErrorClass::Permanent, error);
-                        return;
-                    }
-                }
                 match (same, pending.is_some()) {
                     (true, _) => author_error_retained(fx, author, req_id, ErrorClass::Permanent, blocked_error(reason), true),
                     (false, true) => author_error(fx, author, req_id, ErrorClass::Permanent, blocked_error(reason)),
@@ -576,14 +571,15 @@ impl SessionState {
                 RejectReason::Invalid(_) => {
                     self.write_settled();
                     self.detach_error = None;
-                    self.resume_finish(&pending, Err(SessionError::Rejected(reason)), fx);
+                    self.resume_finish(&pending, Err(SessionError::Invalid), fx);
                     self.idle(fx);
                 }
                 RejectReason::Storage(_) => {
                     self.phase = SessionPhase::Persisting { pending, batch };
                     self.write_refused(fx);
                 }
-                RejectReason::NoSession | RejectReason::Closed | RejectReason::StaleGeneration { .. } => self.phase = SessionPhase::Persisting { pending, batch },
+                RejectReason::NoSession | RejectReason::Closed => self.phase = SessionPhase::Persisting { pending, batch },
+                RejectReason::StaleGeneration { .. } => { self.phase = SessionPhase::Persisting { pending, batch }; fx.push(SessionEffect::ExecutorFailed); }
             },
             (SessionPhase::Persisting { pending, batch }, SessionInput::Tick) if !self.write_in_flight => {
                 self.write_in_flight = true;
@@ -654,7 +650,8 @@ impl SessionState {
                     self.phase = SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended };
                     self.write_refused(fx);
                 }
-                RejectReason::NoSession | RejectReason::Closed | RejectReason::StaleGeneration { .. } => self.phase = SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended },
+                RejectReason::NoSession | RejectReason::Closed => self.phase = SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended },
+                RejectReason::StaleGeneration { .. } => { self.phase = SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended }; fx.push(SessionEffect::ExecutorFailed); }
             },
             (SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended }, SessionInput::Tick) if !self.write_in_flight => {
                 self.land(pending, answer, identity, sequence, server_ended, fx);
