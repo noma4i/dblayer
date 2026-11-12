@@ -1,5 +1,20 @@
 use super::photo::{photo_turn, PhotoTurn};
-use crate::ffi::{decode_cost, PixelSize};
+
+const MAX_PIXELS: u32 = 16_384;
+
+/// A width and a height in pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct PixelSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+fn decode_cost(width: u32, height: u32) -> Option<u64> {
+    if width == 0 || height == 0 || width > MAX_PIXELS || height > MAX_PIXELS {
+        return None;
+    }
+    Some(u64::from(width) * u64::from(height) * 4)
+}
 
 /// A rectangle in fractions 0.0 to 1.0 of the upright photo.
 #[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
@@ -55,7 +70,6 @@ pub struct PhotoPlan {
 
 /// The one plan of a photo edit, in the order turn, crop, mirror, fit. No plan for a photo without size or above the pixel limit,
 /// a rotation that is not a multiple of 90, a crop that is not a number or holds no pixel, a size of zero or an output above the pixel limit.
-#[uniffi::export]
 pub fn photo_plan(width: u32, height: u32, exif_orientation: u32, edit: PhotoEdit) -> Option<PhotoPlan> {
     decode_cost(width, height)?;
     if !edit.rotation_degrees.is_multiple_of(90) {

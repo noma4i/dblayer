@@ -1,4 +1,4 @@
-use crate::api::MediaError;
+use crate::ffi::DbError;
 
 /// The bitrate band for target videos whose long side is at least `from_long_side`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
@@ -43,7 +43,6 @@ pub struct VideoPlan {
     pub rotation_degrees: u32,
 }
 
-#[uniffi::export]
 pub fn default_video_limits() -> VideoLimits {
     let step = |from_long_side, min_bps, max_bps| BitrateStep { from_long_side, min_bps, max_bps };
     VideoLimits {
@@ -65,11 +64,10 @@ pub fn default_video_limits() -> VideoLimits {
 }
 
 /// The one rule that turns a source video and the app tables into what the encoder does: upright even sides, the long side cut to the table without upscale, a bitrate inside the corridor, a frame rate inside the limits, and whether the file needs encoding at all.
-#[uniffi::export]
-pub fn plan_video(source: VideoSource, limits: VideoLimits) -> Result<VideoPlan, MediaError> {
+pub fn plan_video(source: VideoSource, limits: VideoLimits) -> Result<VideoPlan, DbError> {
     check(&limits)?;
     if source.width == 0 || source.height == 0 {
-        return Err(MediaError::InvalidSpec { detail: "the source video has an empty side".to_string() });
+        return Err(DbError::Invalid { detail: "the source video has an empty side".to_string() });
     }
     let rotation = source.rotation_degrees.rem_euclid(360) as u32;
     let (width, height) = if rotation % 180 == 90 { (source.height, source.width) } else { (source.width, source.height) };
@@ -98,7 +96,7 @@ pub fn plan_video(source: VideoSource, limits: VideoLimits) -> Result<VideoPlan,
     Ok(VideoPlan { reencode: !as_is, width: target_width, height: target_height, bitrate, frame_rate: rate, rotation_degrees: rotation })
 }
 
-fn check(limits: &VideoLimits) -> Result<(), MediaError> {
+pub fn check(limits: &VideoLimits) -> Result<(), DbError> {
     let reason = if limits.max_long_side < 2 {
         "max_long_side must be at least 2"
     } else if limits.corridors.is_empty() {
@@ -110,7 +108,7 @@ fn check(limits: &VideoLimits) -> Result<(), MediaError> {
     } else {
         return Ok(());
     };
-    Err(MediaError::InvalidSpec { detail: reason.to_string() })
+    Err(DbError::Invalid { detail: reason.to_string() })
 }
 
 fn even(value: f64) -> u32 {
@@ -138,7 +136,7 @@ fn frame_rate(frame_rate: f32, limits: &VideoLimits) -> u32 {
     }
 }
 
-fn corridor(limits: &VideoLimits, long_side: u32) -> Result<BitrateStep, MediaError> {
+fn corridor(limits: &VideoLimits, long_side: u32) -> Result<BitrateStep, DbError> {
     let steps = &limits.corridors;
     steps
         .iter()
@@ -146,5 +144,5 @@ fn corridor(limits: &VideoLimits, long_side: u32) -> Result<BitrateStep, MediaEr
         .max_by_key(|step| step.from_long_side)
         .or_else(|| steps.iter().min_by_key(|step| step.from_long_side))
         .copied()
-        .ok_or_else(|| MediaError::InvalidSpec { detail: "corridors must not be empty".to_string() })
+        .ok_or_else(|| DbError::Invalid { detail: "corridors must not be empty".to_string() })
 }
