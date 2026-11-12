@@ -308,6 +308,9 @@ impl Database {
         self.life.put_ended(identity, crate::owners::write::transfer_executor::put_result(outcome));
     }
 
+    /// The system task `identity` sent `sent` bytes of its file. Cheap and synchronous.
+    pub fn put_progress(&self, identity: crate::transport::PutIdentity, sent: u64) { self.life.put_sent(identity, sent); }
+
     /// The executor has no system task for `identity`: the step starts again. Cheap and synchronous.
     pub fn put_missing(&self, identity: crate::transport::PutIdentity) { self.life.put_missing(identity); }
 

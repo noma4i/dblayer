@@ -316,6 +316,8 @@ pub enum TransferInput {
     /// The whole percent of the run of the attempt.
     PrepareProgress { transfer_id: TransferId, attempt_id: AttemptId, percent: u32 },
     PutProgress { transfer_id: TransferId, attempt_id: AttemptId, sent: u64 },
+    /// The bytes of a PUT outside the process that the system reported: counted by `PutProgress` for the attempt that started the task.
+    PutSent { identity: PutIdentity, sent: u64 },
     Prepared { transfer_id: TransferId, attempt_id: AttemptId, outcome: crate::ffi::PrepareOutcome },
     Online(Online),
     PowerSaving(bool),

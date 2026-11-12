@@ -171,7 +171,7 @@ impl TransferState {
         self.start_in_order(now, fx);
     }
 
-    fn live_put(&self, identity: PutIdentity) -> Option<&Transfer> {
+    pub(super) fn live_put(&self, identity: PutIdentity) -> Option<&Transfer> {
         self.transfers.get(&identity.transfer_id).filter(|transfer| identity.epoch == self.epoch && transfer.put_detached && transfer.in_flight && transfer.stage == TransferStage::Uploading && u64::from(transfer.attempts) == identity.attempt_id)
     }
 

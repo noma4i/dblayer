@@ -19,6 +19,8 @@ impl Life {
 
     pub fn put_ended(&self, identity: crate::transport::PutIdentity, result: Result<Option<String>, (bool, String)>) { if !self.shut.load(Ordering::SeqCst) { self.wiring.to_transfer(TransferInput::PutEnded { identity, result }); } }
 
+    pub fn put_sent(&self, identity: crate::transport::PutIdentity, sent: u64) { if !self.shut.load(Ordering::SeqCst) { self.wiring.to_transfer(TransferInput::PutSent { identity, sent }); } }
+
     pub fn put_missing(&self, identity: crate::transport::PutIdentity) { if !self.shut.load(Ordering::SeqCst) { self.wiring.to_transfer(TransferInput::PutMissing { identity }); } }
 
     pub fn accept_upload(&self, epoch: Epoch, item: BatchItem) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Accept { epoch, item: Box::new(item), reply }) }

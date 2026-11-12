@@ -922,6 +922,7 @@ impl TransferState {
             TransferInput::PrepareProgress { transfer_id, attempt_id, percent } => self.prepare_progress(transfer_id, attempt_id, percent, fx),
             TransferInput::PutStarted { transfer_id, attempt_id } => self.put_started(transfer_id, attempt_id, fx),
             TransferInput::PutProgress { transfer_id, attempt_id, sent } => self.put_progress(transfer_id, attempt_id, sent, fx),
+            TransferInput::PutSent { identity, sent } => { if let Some(attempt_id) = self.live_put(identity).map(|transfer| transfer.attempt_id) { self.put_progress(identity.transfer_id, attempt_id, sent, fx); } }
             TransferInput::Prepared { transfer_id, attempt_id, outcome } => self.prepared(now, transfer_id, attempt_id, outcome, fx),
             TransferInput::Online(Online(on)) => self.network_changed(now, Some(on), None, fx),
             TransferInput::PowerSaving(saving) => self.network_changed(now, None, Some(saving), fx),

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::crash_image_support::{copy_tree, drained, files_of, over_images, reopen_with, Capture};
 use super::rig_tests::bound;
-use super::upload_stand::{clip, Detached, Stand, SystemTask, CREATE_MOMENT};
+use super::upload_stand::{clip, Detached, Hold, Stand, SystemTask, CREATE_MOMENT};
 use crate::ffi::wire::WireUploadStatus;
 use crate::ffi::{Database, TestClock};
 use crate::owners::write::upload::MEBIBYTE;
@@ -13,12 +13,19 @@ const PRESIGN: &str = r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url"
 const COMPLETE: &str = r#"{"data":{"completeMultipart":{"signedId":"signed","blobId":"blob"}}}"#;
 const LANDED: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#;
 
-fn script(stand: &Stand) {
+fn script(stand: &Stand) { script_with(stand, false); }
+
+/// The script of the server. With `holds` the answers of `Complete` and of the final mutation wait for the test.
+fn script_with(stand: &Stand, holds: bool) -> Option<(Arc<Hold>, Arc<Hold>)> {
     stand.script.data("InitMultipart", INIT);
     for _ in 0..6 { stand.script.data("PresignParts", PRESIGN); }
-    stand.script.data("CompleteMultipart", COMPLETE);
     stand.script.data("AbortMultipart", r#"{"data":{"abortMultipart":{"ok":true}}}"#);
-    stand.script.data("CreateMoment", LANDED);
+    if !holds {
+        stand.script.data("CompleteMultipart", COMPLETE);
+        stand.script.data("CreateMoment", LANDED);
+        return None;
+    }
+    Some((stand.script.hold("CompleteMultipart", COMPLETE), stand.script.hold("CreateMoment", LANDED)))
 }
 
 fn status(database: &Database, id: &str) -> Option<WireUploadStatus> {
@@ -45,15 +52,17 @@ struct Started {
     live: std::path::PathBuf,
 }
 
-async fn opened() -> Started {
+async fn opened() -> Started { opened_with(false).await.0 }
+
+async fn opened_with(holds: bool) -> (Started, Option<(Arc<Hold>, Arc<Hold>)>) {
     let detached = Arc::new(Detached::default());
     let stand = Stand::new().detached_through(detached.clone());
-    script(&stand);
+    let held = script_with(&stand, holds);
     let directory = tempfile::tempdir().unwrap();
     let live = directory.path().join("live.sqlite");
     let clock = TestClock::new(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64);
     let database = stand.open_with(Some(&live), &[CREATE_MOMENT], Some(clock.clone())).await;
-    Started { stand, detached, database, clock, temporary: String::new(), directory, live }
+    (Started { stand, detached, database, clock, temporary: String::new(), directory, live }, held)
 }
 
 /// The clip is sent and the executor got the start of its PUT.
@@ -270,4 +279,35 @@ fn twin(image: &std::path::Path) -> std::path::PathBuf {
     if wal(image).exists() { std::fs::copy(wal(image), wal(&twin)).unwrap(); }
     copy_tree(&files_of(image), &files_of(&twin));
     twin
+}
+
+/// The progress of the row of a transfer: the share the system task reported, never below the share shown, 1.0 only after the server confirmed the file.
+fn progress(database: &Database, id: &str) -> Option<f64> {
+    let row = database.peek_row(database.session_epoch(), "Moment".into(), id.into()).unwrap()?;
+    row.uploads.iter().find(|entry| entry.action == "upload_clip").map(|entry| entry.upload.progress)
+}
+
+/// The bytes a system task sent show on the row through the one count of the PUT in the process.
+/// Observable: `uploads[action].progress` after `put_progress`. Catches: a progress that falls after a smaller value, a stray input that moves a row, a share of 1.0 before `Complete` and the final mutation are confirmed.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_detached_progress_reaches_the_row() {
+    let (mut run, held) = opened_with(true).await;
+    let (complete, landed_hold) = held.unwrap();
+    launch(&mut run, MEBIBYTE).await;
+    let live = run.detached.started()[0].0;
+    let stray_attempt = PutIdentity { attempt_id: live.attempt_id + 1, ..live };
+    let stray_transfer = PutIdentity { transfer_id: live.transfer_id + 90, ..live };
+    for (identity, sent, shown) in [(live, MEBIBYTE / 2, 0.5), (live, MEBIBYTE / 4, 0.5), (stray_attempt, MEBIBYTE - 1, 0.5), (stray_transfer, MEBIBYTE - 1, 0.5), (live, MEBIBYTE, 0.99)] {
+        run.database.put_progress(identity, sent);
+        crate::test_wait::settled(&run.database, "the progress was counted", || progress(&run.database, &run.temporary) == Some(shown)).await;
+    }
+    run.detached.finish(0, Detached::ok());
+    complete.entered().await;
+    assert_eq!(progress(&run.database, &run.temporary), Some(0.99), "before the server confirmed the file");
+    complete.release();
+    landed_hold.entered().await;
+    assert_eq!(progress(&run.database, &run.temporary), Some(1.0), "after the server confirmed the file");
+    landed_hold.release();
+    crate::test_wait::settled(&run.database, "the row landed", || landed(&run.database)).await;
+    run.database.close_now();
 }
