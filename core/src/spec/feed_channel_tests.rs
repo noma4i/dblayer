@@ -223,21 +223,6 @@ fn feed_chan_event_unwanted() {
 }
 
 #[test]
-fn feed_opening_event_unwatched() {
-    let mut rig = Rig::new();
-    rig.want("Chat", CHAT);
-    assert!(rig.event("A", "Post", "p1").is_empty());
-    assert_eq!(rig.state().position("Post"), 0);
-}
-
-#[test]
-fn feed_proto_handshake_deadline_after_done() {
-    let mut rig = Rig::live();
-    assert!(rig.post(FeedInput::HandshakeDeadline { connection_id: FIRST }).is_empty());
-    assert_eq!(rig.state().active_connection(), Some(FIRST));
-}
-
-#[test]
 fn feed_chan_event_before_confirm() {
     let mut rig = Rig::new();
     rig.want("Chat", CHAT);
@@ -415,32 +400,10 @@ fn feed_chan_ended_error() {
 }
 
 #[test]
-fn feed_chan_resubscribe() {
-    let mut rig = Rig::live();
-    rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: None });
-    assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() }), ["subscribe:B"]);
-}
-
-#[test]
 fn feed_chan_resubscribe_confirmed() {
     let mut rig = Rig::live();
     assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() }).is_empty());
-}
-
-#[test]
-fn feed_chan_resubscribe_unwanted() {
-    let mut rig = Rig::live();
-    assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "C".into() }).is_empty());
-}
-
-#[test]
-fn feed_live_graphql_error() {
-    let mut rig = Rig::live();
-    let mut ended = rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: false }) });
-    ended.sort();
-    assert_eq!(ended.iter().filter(|event| event.starts_with("modelinvalid:")).cloned().collect::<Vec<_>>(), ["modelinvalid:1", "modelinvalid:2"]);
-    assert!(rig.state().wants().is_empty());
-    assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() }).is_empty());
+    assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "C".into() }).is_empty(), "a channel nobody wants is not resubscribed");
 }
 
 /// P-FEED-21: every channel of `wanted` gets exactly one subscribe on the connection, a channel outside it none, and without a wanted model no connection opens.

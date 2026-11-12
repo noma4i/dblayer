@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::delivery_words::{self as r, rows, Cause, Effect, Fetch, Input, Kind, Phase, Pulled, Val, Ws, insert, remove, Ed};
-use crate::owners::contract::{Committed, EpochEnded, Models, WindowPhase, WindowState};
+use crate::owners::contract::{Committed, Models, WindowPhase, WindowState};
 use crate::owners::read::deliveries::{self as d, DeliveryEffect, DeliveryPeers, Deliveries, PullAnswer, StreamEffect};
 use crate::owners::read::feed::Feed;
 use crate::owners::read::windows::{WindowKey, Windows};

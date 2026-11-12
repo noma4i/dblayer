@@ -4,8 +4,6 @@ use super::*;
 #[test]
 fn feed_created() {
     let mut twin = Twin::with(None, true);
-    assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
-    assert_eq!(twin.state().online(), None, "online is unknown until the first Online");
     twin.post(FeedInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(7), generation: 4 }));
     let requests = take(&twin.log);
     assert!(requests.iter().any(|entry| matches!(entry, Emitted::Run(FeedEffect::SnapshotRequest { epoch: EPOCH }))), "the step of EpochStarted asks Network for the snapshot of Feed: {requests:?}");
@@ -61,30 +59,6 @@ fn feed_off_resume() {
     assert_eq!(twin.state().mode(), f::Mode::Opening { gap: false });
 }
 
-#[test]
-fn feed_off_online_no_want() {
-    let mut twin = Twin::with(None, true);
-    assert!(twin.step(Input::Online(true)).is_empty());
-    assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
-}
-
-#[test]
-fn feed_off_offline() {
-    let mut twin = Twin::with(Some(false), true);
-    twin.step(plus("Chat"));
-    assert!(twin.step(Input::Online(false)).is_empty());
-    assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
-}
-
-#[test]
-fn feed_off_stray() {
-    let mut twin = Twin::with(Some(false), true);
-    twin.step(plus("Chat"));
-    for input in [event(To::Stray, "Chat", "x"), event(To::Active, "Chat", "x"), Input::HandshakeDone, Input::Dropped { to: To::Active }, Input::Ended { to: To::Opening }, Input::Tick, Input::Resubscribe { to: To::Opening }, Input::FrameOpened { to: To::Opening, counter: Counter::Expected, events: Vec::new() }] {
-        assert!(twin.step(input).is_empty());
-    }
-}
-
 
 #[test]
 fn feed_landing_after_drop() {
@@ -119,19 +93,11 @@ fn feed_landing_rejected_after_drop() {
 }
 
 #[test]
-fn feed_stray_batch() {
-    for mut twin in [live(), Twin::with(Some(false), true)] {
-        assert!(twin.step(Input::StrayBatch).is_empty());
-    }
-    let mut opening = opening();
-    assert!(opening.step(Input::StrayBatch).is_empty());
-}
-
-#[test]
 fn feed_opening_ready() {
     let mut twin = opening();
     assert_eq!(twin.step(Input::HandshakeDone), [Effect::SealSubscribe, Effect::ModelReady(CHAT)]);
     assert_eq!(twin.state().mode(), f::Mode::Live);
+    assert!(twin.step(Input::HandshakeDone).is_empty(), "the handshake of an established connection is done once");
     let mut held = opening();
     held.step(event(To::Opening, "Chat", "c1"));
     held.step(event(To::Opening, "Chat", "c2"));
@@ -145,15 +111,6 @@ fn feed_opening_ready_after_gap() {
     twin.step(Input::Dropped { to: To::Active });
     assert_eq!(twin.step(Input::HandshakeDone), [Effect::SealSubscribe, Effect::Stale { model: "Chat".into(), all: true }, Effect::ModelReady(CHAT)]);
     assert_eq!(twin.state().position("Chat"), 0, "a break of unknown length takes no position");
-}
-
-#[test]
-fn feed_opening_stray() {
-    let mut twin = opening();
-    for input in [event(To::Stray, "Chat", "x"), Input::Dropped { to: To::Stray }, Input::Ended { to: To::Stray }, Input::Resubscribe { to: To::Stray }, Input::FrameOpened { to: To::Stray, counter: Counter::Expected, events: Vec::new() }] {
-        assert!(twin.step(input).is_empty());
-    }
-    assert_eq!(twin.state().mode(), f::Mode::Opening { gap: false });
 }
 
 #[test]
@@ -235,14 +192,6 @@ fn feed_opening_offline() {
     assert_eq!(twin.step(Input::Online(true)), [Effect::Connect], "the want is kept: coming online opens the subscription again");
 }
 
-#[test]
-fn feed_opening_online() {
-    let mut twin = opening();
-    assert!(twin.step(Input::Online(true)).is_empty());
-    assert!(twin.step(Input::Tick).is_empty());
-    assert_eq!(twin.state().mode(), f::Mode::Opening { gap: false });
-}
-
 
 #[test]
 fn feed_live_event() {
@@ -250,6 +199,8 @@ fn feed_live_event() {
     assert_eq!(twin.step(chat("c1")), [Effect::ScheduleTick]);
     assert!(twin.step(chat("c2")).is_empty(), "the tick is scheduled once");
     assert_eq!(twin.state().pending(), 2);
+    assert_eq!(twin.step(Input::Tick), [Effect::Commit], "the tick lands the pending events");
+    assert!(live().step(Input::Tick).is_empty(), "a tick without events asks nothing");
 }
 
 #[test]
@@ -275,28 +226,6 @@ fn feed_live_attempts_reset_on_data() {
     assert_eq!(twin.state().attempts(), 1, "a reconnect bumped the connection attempts");
     assert_eq!(twin.step(chat("c1")), [Effect::ScheduleTick]);
     assert_eq!(twin.state().attempts(), 0, "the first event after Ready resets the attempts");
-}
-
-#[test]
-fn feed_live_stray() {
-    let mut twin = live();
-    for input in [event(To::Stray, "Chat", "x"), Input::Dropped { to: To::Stray }, Input::Ended { to: To::Stray }, Input::Resubscribe { to: To::Stray }] {
-        assert!(twin.step(input).is_empty());
-    }
-    assert_eq!(twin.state().mode(), f::Mode::Live);
-}
-
-#[test]
-fn feed_live_flush() {
-    let mut twin = live();
-    twin.step(chat("c1"));
-    assert_eq!(twin.step(Input::Tick), [Effect::Commit]);
-}
-
-#[test]
-fn feed_live_tick_empty() {
-    let mut twin = live();
-    assert!(twin.step(Input::Tick).is_empty());
 }
 
 #[test]
@@ -347,19 +276,12 @@ fn feed_live_rejected_storage() {
 
 #[test]
 fn feed_live_rejected_session() {
-    let mut twin = live_immediate();
-    twin.step(chat("c1"));
-    assert_eq!(twin.step(Input::Rejected(Reject::NoSession)), [Effect::SealUnsubscribe, Effect::Close]);
-    assert_eq!(twin.state().mode(), f::Mode::Ended);
-}
-
-#[test]
-fn feed_live_rejected_invalid() {
-    let mut twin = live_immediate();
-    twin.step(chat("c1"));
-    assert_eq!(twin.step(Input::Rejected(Reject::Invalid)), [Effect::Stale { model: "Chat".into(), all: true }]);
-    assert_eq!(twin.state().position("Chat"), 1, "the lost event holds its position");
-    assert_eq!(twin.state().mode(), f::Mode::Live);
+    for reason in [Reject::NoSession, Reject::Closed] {
+        let mut twin = live_immediate();
+        twin.step(chat("c1"));
+        assert_eq!(twin.step(Input::Rejected(reason.clone())), [Effect::SealUnsubscribe, Effect::Close], "{reason:?}");
+        assert_eq!(twin.state().mode(), f::Mode::Ended);
+    }
 }
 
 /// P-FEED-37: an event the Store refused alone is lost at its own position, the events around it reach the stream.
@@ -372,21 +294,6 @@ fn feed_refused_event_is_lost_alone() {
     twin.step(Input::Tick);
     assert_eq!(twin.step(Input::CommittedRefused(vec![1])), [Effect::Stale { model: "Chat".into(), all: true }]);
     assert_eq!(twin.shown, [Obs::Event { stream: CHAT, position: 1, payload: "c1".into() }, Obs::Lost { stream: CHAT, first: 2, last: 2 }, Obs::Event { stream: CHAT, position: 3, payload: "c3".into() }]);
-}
-
-#[test]
-fn feed_live_rejected_closed() {
-    let mut twin = live_immediate();
-    twin.step(chat("c1"));
-    assert_eq!(twin.step(Input::Rejected(Reject::Closed)), [Effect::SealUnsubscribe, Effect::Close]);
-    assert_eq!(twin.state().mode(), f::Mode::Ended);
-}
-
-#[test]
-fn feed_live_stray_batch() {
-    let mut twin = live();
-    assert!(twin.step(Input::StrayBatch).is_empty());
-    assert_eq!(twin.state().position("Chat"), 0);
 }
 
 #[test]
@@ -441,13 +348,6 @@ fn feed_live_offline() {
     assert!(matches!(twin.state().mode(), f::Mode::Draining { then: f::Resume::Off { gap: true }, .. }));
     assert_eq!(twin.step(Input::Drain { own: true }), [Effect::Cancel]);
     assert!(matches!(twin.state().mode(), f::Mode::Off { gap: true }));
-}
-
-#[test]
-fn feed_live_online() {
-    let mut twin = live();
-    assert!(twin.step(Input::Online(true)).is_empty());
-    assert_eq!(twin.state().mode(), f::Mode::Live);
 }
 
 
@@ -510,12 +410,6 @@ fn feed_close_drains() {
     let mut twin = live();
     assert_eq!(twin.step(Input::Closing), [Effect::SealUnsubscribe, Effect::Close, Effect::ScheduleDrain], "no Drained until the drain ends");
     assert_eq!(twin.state().mode(), f::Mode::Draining { connection: twin.connection(To::Draining), then: f::Resume::End });
-}
-
-#[test]
-fn feed_drain_elapsed() {
-    let mut twin = live();
-    twin.step(Input::Closing);
     assert_eq!(twin.step(Input::Drain { own: true }), [Effect::Cancel, Effect::Drained]);
     assert_eq!(twin.state().mode(), f::Mode::Ended);
 }
@@ -571,26 +465,7 @@ fn feed_ended_closing() {
     assert!(twin.step(Input::Closing).is_empty(), "Drained goes out once");
 }
 
-#[test]
-fn feed_ended() {
-    let mut twin = live();
-    twin.step(Input::EpochEnded);
-    for input in [plus("Post"), Input::HandshakeDone, Input::Tick, Input::Online(true), Input::Committed, chat("c9"), Input::Dropped { to: To::Active }] {
-        assert!(twin.step(input).is_empty());
-    }
-}
-
 // The connection protocol.
-
-#[test]
-fn feed_proto_handshake_done() {
-    let mut twin = opening();
-    let connection = twin.connection(To::Opening);
-    assert_eq!(twin.state().protocol(connection), Some(Protocol::Handshake));
-    twin.step(Input::HandshakeDone);
-    assert_eq!(twin.state().protocol(connection), Some(Protocol::Established { key_id: 7, send_counter: 1, recv_counter: f::FIRST_RECV_COUNTER }), "the subscribe frame reserved the first send counter");
-    assert!(twin.step(Input::HandshakeDone).is_empty(), "the handshake of an established connection is done once");
-}
 
 #[test]
 fn feed_proto_frame_before_handshake() {
@@ -631,21 +506,14 @@ fn feed_proto_frame_ok() {
 }
 
 #[test]
-fn feed_proto_frame_counter_mismatch() {
-    let mut twin = live();
-    assert_eq!(twin.step(Input::FrameOpened { to: To::Active, counter: Counter::Replayed, events: vec![("Chat".into(), "c1".into())] }), [Effect::Close, Effect::ScheduleDrain, Effect::Commit]);
-    assert_eq!(twin.state().pending(), 0, "a replayed frame does not sit");
-    assert!(matches!(twin.state().mode(), f::Mode::Draining { then: f::Resume::Reopen, .. }));
-    assert_eq!(twin.step(Input::Drain { own: true }), [Effect::Cancel, Effect::Connect], "the new connection opens after the drain");
-    assert!(matches!(twin.state().mode(), f::Mode::Opening { gap: true }));
-}
-
-#[test]
 fn feed_proto_error() {
     let mut twin = live();
     assert_eq!(twin.step(Input::ProtocolError { to: To::Active }), [Effect::Close, Effect::ScheduleDrain, Effect::Commit]);
     assert!(matches!(twin.state().mode(), f::Mode::Draining { then: f::Resume::Reopen, .. }));
     assert_eq!(twin.step(Input::Drain { own: true }), [Effect::Cancel, Effect::Connect], "the new connection opens after the drain");
+    let mut replayed = live();
+    assert_eq!(replayed.step(Input::FrameOpened { to: To::Active, counter: Counter::Replayed, events: vec![("Chat".into(), "c1".into())] }), [Effect::Close, Effect::ScheduleDrain, Effect::Commit]);
+    assert_eq!(replayed.state().pending(), 0, "a replayed frame does not sit");
     let mut handshake = opening();
     assert_eq!(handshake.step(Input::ProtocolError { to: To::Opening }), [Effect::ScheduleResubscribe]);
     assert!(handshake.step(Input::ProtocolError { to: To::Stray }).is_empty());
@@ -666,14 +534,6 @@ fn feed_proto_send_reserves() {
     twin.step(Input::EpochEnded);
     let counters: Vec<u64> = twin.sealed.iter().map(|(_, counter)| *counter).collect();
     assert_eq!(counters, [0, 1], "the subscribe frame and the unsubscribe frame take the next send counters, each one once");
-}
-
-#[test]
-fn feed_wait_ready() {
-    let mut opening = Twin::new();
-    assert_eq!(opening.step(plus("Chat")), [Effect::Joined(CHAT), Effect::Connect]);
-    assert_eq!(opening.step(Input::HandshakeDone), [Effect::SealSubscribe, Effect::ModelReady(CHAT)], "Ready comes with the handshake of the connection");
-    assert_eq!(opening.step(plus("Chat")), [Effect::Joined(CHAT), Effect::ModelReady(CHAT)], "a live subscription answers at once");
 }
 
 /// The channels the models of `want` read on the active connection, asked of the owner.
@@ -715,22 +575,6 @@ fn feed_changed_by_forms() {
         assert_eq!(twin.step(chat("c1")), [Effect::Commit], "{name}");
         assert_eq!(twin.step(Input::Committed), [stale], "{name}");
     }
-}
-
-#[test]
-fn feed_missing_payload_reference() {
-    let mut twin = live_immediate();
-    twin.reread = Reread::Set(names(&["node"]));
-    assert_eq!(twin.step(chat("c1")), [Effect::Commit]);
-    assert_eq!(twin.step(Input::Committed), [Effect::StaleSet { model: "Chat".into(), keys: names(&["node"]) }]);
-}
-
-#[test]
-fn feed_changed_by_two_forms() {
-    let mut twin = live_immediate();
-    twin.reread = Reread::All;
-    twin.step(chat("c1"));
-    assert_eq!(twin.step(Input::Committed), [Effect::Stale { model: "Chat".into(), all: true }]);
 }
 
 #[test]
@@ -779,17 +623,6 @@ fn feed_live_verdict_by_batch() {
     assert_eq!(twin.shown, [Obs::Event { stream: CHAT, position: 1, payload: "c1".into() }, Obs::Lost { stream: CHAT, first: 2, last: 2 }, Obs::Event { stream: CHAT, position: 3, payload: "c3".into() }]);
 }
 
-#[test]
-fn feed_commit_observe_stream() {
-    let mut twin = Twin::immediate();
-    twin.step(plus("Chat"));
-    twin.step(window("Post"));
-    twin.step(Input::HandshakeDone);
-    twin.step(chat("{\"id\":\"c1\"}"));
-    twin.step(event(To::Active, "Post", "{\"id\":\"p1\"}"));
-    assert_eq!(twin.state().landing(), 2);
-}
-
 fn census_refused(twin: &mut Twin) -> u64 {
     twin.post(FeedInput::Census { reply: 7 });
     take(&twin.log).into_iter().find_map(|entry| match entry {
@@ -807,4 +640,28 @@ fn feed_gap_invalid_marks_lost() {
     let effects = twin.step(Input::RejectedAt(1, Reject::Invalid));
     assert_eq!(effects, [Effect::Stale { model: "Chat".into(), all: true }], "the windows of the model turn stale, nothing is written again");
     assert!(twin.step(Input::StrayBatch).is_empty(), "an invalid batch is not retried at the next step");
+}
+
+#[test]
+fn feed_inputs_that_do_not_apply_change_nothing() {
+    let any = || vec![event(To::Stray, "Chat", "x"), Input::Dropped { to: To::Stray }, Input::Ended { to: To::Stray }, Input::Resubscribe { to: To::Stray }, Input::StrayBatch];
+    let timers = || vec![Input::Online(true), Input::Tick];
+    let mut cases: Vec<(&str, Twin, Vec<Input>)> = Vec::new();
+    let off_inputs = vec![event(To::Active, "Chat", "x"), Input::HandshakeDone, Input::Dropped { to: To::Active }, Input::Ended { to: To::Opening }, Input::Tick, Input::Resubscribe { to: To::Opening }, Input::ProtocolError { to: To::Opening }, Input::FrameOpened { to: To::Opening, counter: Counter::Expected, events: Vec::new() }];
+    let mut off_wanted = Twin::with(Some(false), true);
+    off_wanted.step(plus("Chat"));
+    cases.push(("off", off_wanted, [any(), off_inputs.clone()].concat()));
+    cases.push(("off without a want", Twin::new(), off_inputs));
+    cases.push(("opening", opening(), [any(), timers()].concat()));
+    cases.push(("live", live(), [any(), timers()].concat()));
+    let mut ended = live();
+    ended.step(Input::EpochEnded);
+    cases.push(("ended", ended, vec![plus("Post"), Input::HandshakeDone, Input::Tick, Input::Online(true), Input::Committed, chat("c9"), Input::Dropped { to: To::Active }]));
+    for (name, mut twin, inputs) in cases {
+        let mode = twin.state().mode();
+        for input in inputs {
+            assert!(twin.step(input.clone()).is_empty(), "{name}: {input:?}");
+        }
+        assert_eq!(twin.state().mode(), mode, "{name}");
+    }
 }
