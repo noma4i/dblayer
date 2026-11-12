@@ -65,6 +65,25 @@ fn xfer_retry_source_marks_the_swap_in_the_row() {
     assert_eq!(out.staged_cleared(), vec![KEY.to_string()], "after the rename the marker goes");
 }
 
+/// P-XFER-51: a refused write that clears the marker of the swap changes nothing: the next open finishes the swap and clears the marker (xfer_restored_staged_finishes_the_swap).
+#[test]
+fn xfer_staged_cleared_refusal_is_quiet() {
+    for reason in [RejectReason::Storage("disk".into()), RejectReason::Invalid("bad row".into()), RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".to_string(), 7)].into() }, RejectReason::NoSession, RejectReason::Closed] {
+        let mut twin = Twin::new();
+        let id = twin.failed(KEY);
+        twin.retry(KEY, Some(fresh()));
+        twin.copy_done(id);
+        twin.commit();
+        let cleared = twin.post(TransferInput::StagedPromoted { transfer_id: id });
+        assert_eq!(cleared.staged_cleared(), vec![KEY.to_string()], "{reason:?}");
+        let stage = twin.stage(id);
+        let marker = cleared.batches.iter().find(|batch| batch.ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::UploadStaged { .. }))).expect("the batch that clears the marker").id;
+        let refused = twin.refuse_shown(marker, reason.clone());
+        assert!(Twin::quiet(&refused) && refused.shown.is_empty(), "{reason:?}: the marker write is not repeated: {refused:?}");
+        assert_eq!(twin.stage(id), stage, "{reason:?}: the transfer goes on");
+    }
+}
+
 #[test]
 fn xfer_restored_staged_finishes_the_swap() {
     let mut row = stored(1, KEY, 2);

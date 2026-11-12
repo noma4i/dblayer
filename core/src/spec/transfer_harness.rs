@@ -390,7 +390,9 @@ impl Twin {
     /// `Committed` for a batch of shown values: the Store answers them apart from the batches the tests answer in order.
     pub fn commit_shown(&mut self, batch: BatchId) -> Out { self.post_held(TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() })) }
 
-    pub fn reject_shown(&mut self, batch: BatchId) -> Out { self.post_held(TransferInput::Rejected(Rejected { batch, reason: RejectReason::Storage("disk".into()) })) }
+    pub fn reject_shown(&mut self, batch: BatchId) -> Out { self.refuse_shown(batch, RejectReason::Storage("disk".into())) }
+
+    pub fn refuse_shown(&mut self, batch: BatchId, reason: RejectReason) -> Out { self.post_held(TransferInput::Rejected(Rejected { batch, reason })) }
 
     pub fn has_pending(&self) -> bool { !self.unanswered.is_empty() }
 
