@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 6.27.0 - 2026-11-12
 
 ### Added
 
@@ -8,9 +8,9 @@
 
 ### Changed
 
-- Keep the server outcome of an operation when the disk refuses its answer rows as invalid: the outcome lands by a write without rows.
-- Retry the rollback of a refused operation after a disk refusal, also for a discard of an upload.
-- Return an operation that waits to retry to the queue when the network is lost, and retry at once when it returns.
+- Keep the server outcome of an operation when the database refuses its answer rows.
+- Retry the rollback of a refused operation after a database refusal.
+- Requeue an operation waiting to retry when the network drops, and retry on return.
 - Carry the reason text of a refused invalid write in `Invalid` errors.
 - Fail generation when `insert_on` lists `:node` and the model has no `node` scope.
 - Fail generation when a scope without `node:` declares the parameter `nodeId`.
@@ -25,7 +25,7 @@
 ### Fixed
 
 - Derive parent fields set by children once per commit from the server value and children.
-- Retry a disk write of a confirmed upload part, completion or removal instead of failing it.
+- Retry a database write of a confirmed upload part, completion or removal.
 - Grow the retry pause of a write while the database refuses it in a row.
 - Deliver the upload status to readers after a failed database write of it.
 - Keep a finished multipart upload when a session ends after its upload id write failed.
