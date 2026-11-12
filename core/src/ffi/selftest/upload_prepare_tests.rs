@@ -16,7 +16,7 @@ struct Refusing;
 
 #[async_trait]
 impl Preparer for Refusing {
-    async fn probe(&self, _: String) -> ProbeOutcome { ProbeOutcome::Failed { message: "unused".into() } }
+    async fn probe(&self, _: String, _: crate::ffi::PrepareKind) -> ProbeOutcome { ProbeOutcome::Failed { message: "unused".into() } }
     async fn run(&self, _: PrepareJob, _: Arc<PrepareProgress>) -> PrepareOutcome { PrepareOutcome::Failed { message: "unused".into() } }
     fn cancel(&self, _: u64) {}
 }
@@ -24,13 +24,13 @@ impl Preparer for Refusing {
 fn video(change: impl FnOnce(&mut VideoLimits)) -> WirePrepare {
     let mut limits = default_video_limits();
     change(&mut limits);
-    WirePrepare::Video { limits: Some(limits), mirror: false, on_cannot_decode: crate::ffi::upload_wire::CannotDecode::Fail }
+    WirePrepare::Video { limits: Some(limits), mirror: false, on_cannot_decode: crate::ffi::upload_wire::CannotDecode::Fail, max_bytes: None }
 }
 
 pub(super) fn image(change: impl FnOnce(&mut PhotoEdit)) -> WirePrepare {
     let mut edit = PhotoEdit { max_size: None, enlarge: false, crop: None, output_size: None, mirror: false, rotation_degrees: 0 };
     change(&mut edit);
-    WirePrepare::Image { edit, quality: None, format: ImageFormat::Jpeg }
+    WirePrepare::Image { edit, quality: None, format: ImageFormat::Jpeg, max_bytes: None }
 }
 
 pub(super) fn send(epoch: u64, path: &std::path::Path, prepare: WirePrepare) -> CommandRequest {
@@ -62,7 +62,8 @@ async fn xfer_prepare_invalid_settings() {
         ("crop without pixels", image(|edit| edit.crop = Some(CropFractions { x: 0.0, y: 0.0, width: 0.0, height: 0.5 }))),
         ("rotation 45", image(|edit| edit.rotation_degrees = 45)),
         ("rotation 360", image(|edit| edit.rotation_degrees = 360)),
-        ("quality 1.5", WirePrepare::Image { edit: PhotoEdit { max_size: None, enlarge: false, crop: None, output_size: None, mirror: false, rotation_degrees: 0 }, quality: Some(1.5), format: ImageFormat::Jpeg }),
+        ("quality 1.5", WirePrepare::Image { edit: PhotoEdit { max_size: None, enlarge: false, crop: None, output_size: None, mirror: false, rotation_degrees: 0 }, quality: Some(1.5), format: ImageFormat::Jpeg, max_bytes: None }),
+        ("max bytes of 0", limited(video(|_| {}), 0)),
     ];
     for (name, prepare) in invalid {
         let refused = bound(database.send(send(epoch, &source, prepare))).await.map(|_| ());
@@ -73,7 +74,7 @@ async fn xfer_prepare_invalid_settings() {
 
     let without = Stand::new();
     let database = without.open(Some(&directory.path().join("other.sqlite")), &[CREATE_MOMENT]).await;
-    let refused = bound(database.send(send(database.session_epoch(), &source, WirePrepare::Video { limits: None, mirror: false, on_cannot_decode: crate::ffi::upload_wire::CannotDecode::Fail }))).await.map(|_| ());
+    let refused = bound(database.send(send(database.session_epoch(), &source, WirePrepare::Video { limits: None, mirror: false, on_cannot_decode: crate::ffi::upload_wire::CannotDecode::Fail, max_bytes: None }))).await.map(|_| ());
     assert!(matches!(refused, Err(DbError::Invalid { .. })), "no preparer: {refused:?}");
     database.close_now();
 }

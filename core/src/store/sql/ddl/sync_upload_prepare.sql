@@ -21,5 +21,6 @@ CREATE TABLE IF NOT EXISTS sync_upload_prepare (
   rotation_degrees INTEGER,
   quality REAL,
   format TEXT,
-  on_cannot_decode TEXT
+  on_cannot_decode TEXT,
+  max_bytes INTEGER
 ) STRICT

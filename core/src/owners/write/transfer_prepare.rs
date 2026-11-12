@@ -22,7 +22,7 @@ fn plan_of(settings: &WirePrepare, probed: &ProbeOutcome) -> Result<Option<Prepa
             if !plan.reencode && !*mirror && strip_metadata.is_empty() { return Ok(None); }
             Ok(Some(PreparePlan::Video { plan, strip_metadata, audio_bitrate: limits.audio_bitrate, audio_channels: limits.audio_channels, audio_sample_rate: limits.audio_sample_rate, mirror: *mirror }))
         }
-        (WirePrepare::Image { edit, quality, format }, ProbeOutcome::Image { width, height, exif_orientation, .. }) => {
+        (WirePrepare::Image { edit, quality, format, .. }, ProbeOutcome::Image { width, height, exif_orientation, .. }) => {
             let plan = crate::prepare::photo_plan(*width, *height, *exif_orientation, *edit).ok_or_else(|| "the image cannot be planned".to_string())?;
             Ok(Some(PreparePlan::Image { plan, quality: crate::prepare::jpeg_quality(quality.unwrap_or(f64::NAN)), format: *format }))
         }
@@ -91,9 +91,10 @@ impl TransferState {
         let Some(id) = next else { return };
         let attempt_id = self.attempt();
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        let Some(kind) = transfer.prepare.as_ref().map(WirePrepare::kind) else { return };
         transfer.attempt_id = attempt_id;
         if let Some(prep) = transfer.prep.as_mut() { prep.phase = PreparePhase::Probe; }
-        run(fx, TransferEffect::Probe { transfer_id: id, attempt_id });
+        run(fx, TransferEffect::Probe { transfer_id: id, attempt_id, kind });
     }
 
     /// An input of an attempt the owner does not know: the platform is told to stop it (R2), an old attempt of a live step changes nothing (R4).
@@ -131,6 +132,7 @@ impl TransferState {
     /// The source goes as it is: its copy is the file of the transfer.
     fn pass_through(&mut self, now: Time, id: TransferId, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        if transfer.prepare.as_ref().and_then(WirePrepare::max_bytes).is_some_and(|limit| transfer.size > limit) { return self.fail_prepare(now, id, PrepareReason::TooLarge, "the file is larger than the size limit of the prepare step".into(), fx); }
         let key = transfer.key.clone();
         transfer.prepare = None;
         transfer.prep = None;
@@ -183,9 +185,10 @@ impl TransferState {
     }
 
     /// The result is read: the row of the transfer takes its size and hash, the copy of the source stays until `Committed`.
-    pub(super) fn measured(&mut self, id: TransferId, attempt_id: AttemptId, copy: CopiedBlob, fx: &mut Fx) {
+    pub(super) fn measured(&mut self, now: Time, id: TransferId, attempt_id: AttemptId, copy: CopiedBlob, fx: &mut Fx) {
         if !self.current(id, attempt_id, &[TransferStage::Measuring], fx) { return; }
         let sizing = self.sizing;
+        if self.transfers.get(&id).and_then(|transfer| transfer.prepare.as_ref()).and_then(WirePrepare::max_bytes).is_some_and(|limit| copy.size > limit) { return self.fail_prepare(now, id, PrepareReason::TooLarge, "the prepared file is larger than the size limit of the prepare step".into(), fx); }
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let mut before = transfer.clone();
         before.previous = None;

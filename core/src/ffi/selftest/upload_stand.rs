@@ -337,7 +337,7 @@ pub(super) fn shows(rows: &Rows, wanted: WireSyncState) -> bool { rows.0.lock().
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum PrepareEvent {
-    Probe(Vec<u8>),
+    Probe(Vec<u8>, crate::ffi::PrepareKind),
     Run(u64),
     Cancel(u64),
 }
@@ -371,7 +371,8 @@ impl ScriptedPreparer {
     pub(super) fn outcome_next(&self, outcome: PrepareOutcome) { self.outcomes.lock().unwrap().push_back(outcome) }
     pub(super) fn jobs(&self) -> Vec<PrepareJob> { self.jobs.lock().unwrap().clone() }
     pub(super) fn events(&self) -> Vec<PrepareEvent> { self.events.lock().unwrap().clone() }
-    pub(super) fn probes(&self) -> Vec<Vec<u8>> { self.events().into_iter().filter_map(|event| if let PrepareEvent::Probe(content) = event { Some(content) } else { None }).collect() }
+    pub(super) fn probes(&self) -> Vec<Vec<u8>> { self.events().into_iter().filter_map(|event| if let PrepareEvent::Probe(content, _) = event { Some(content) } else { None }).collect() }
+    pub(super) fn kinds(&self) -> Vec<crate::ffi::PrepareKind> { self.events().into_iter().filter_map(|event| if let PrepareEvent::Probe(_, kind) = event { Some(kind) } else { None }).collect() }
     pub(super) fn runs(&self) -> Vec<u64> { self.events().into_iter().filter_map(|event| if let PrepareEvent::Run(attempt) = event { Some(attempt) } else { None }).collect() }
     pub(super) fn cancels(&self) -> Vec<u64> { self.events().into_iter().filter_map(|event| if let PrepareEvent::Cancel(attempt) = event { Some(attempt) } else { None }).collect() }
     pub(super) fn peak_runs(&self) -> usize { self.peak.load(Ordering::SeqCst) }
@@ -386,8 +387,8 @@ impl Drop for Running<'_> {
 
 #[async_trait]
 impl Preparer for ScriptedPreparer {
-    async fn probe(&self, path: String) -> ProbeOutcome {
-        self.events.lock().unwrap().push(PrepareEvent::Probe(std::fs::read(&path).unwrap_or_default()));
+    async fn probe(&self, path: String, kind: crate::ffi::PrepareKind) -> ProbeOutcome {
+        self.events.lock().unwrap().push(PrepareEvent::Probe(std::fs::read(&path).unwrap_or_default(), kind));
         self.probe.clone()
     }
 
@@ -432,7 +433,7 @@ pub(super) fn video_probe(keys: &[&str], reencode: bool) -> ProbeOutcome {
 
 /// The settings of a video that say what a device that cannot decode the source does: the field of the settings comes with the type.
 pub(super) fn cannot_decode_settings(upload_source: bool) -> crate::ffi::upload_wire::WirePrepare {
-    crate::ffi::upload_wire::WirePrepare::Video { limits: Some(crate::prepare::default_video_limits()), mirror: false, on_cannot_decode: if upload_source { crate::ffi::upload_wire::CannotDecode::UploadSource } else { crate::ffi::upload_wire::CannotDecode::Fail } }
+    crate::ffi::upload_wire::WirePrepare::Video { limits: Some(crate::prepare::default_video_limits()), mirror: false, on_cannot_decode: if upload_source { crate::ffi::upload_wire::CannotDecode::UploadSource } else { crate::ffi::upload_wire::CannotDecode::Fail }, max_bytes: None }
 }
 
 /// The typed reason of a failed upload: the field of the failure comes with the type.

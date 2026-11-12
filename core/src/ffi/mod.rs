@@ -71,7 +71,7 @@ pub use command::CommandRequest;
 pub use crate::owners::read::deliveries::EndCause;
 pub use read::{SessionStanding, SessionStatus, ReadClaim, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, RowEdit};
 pub use upload_rounds::{RoundJob, RoundJobsSink, RoundRefusal};
-pub use preparer::{PrepareJob, PrepareOutcome, PrepareProgress, PreparePlan, Preparer, ProbeOutcome};
+pub use preparer::{PrepareKind, PrepareJob, PrepareOutcome, PrepareProgress, PreparePlan, Preparer, ProbeOutcome};
 pub use wire::{Cell, CellEntry, WireFailure, WireFile, WireModel, WireRow, WireSync, WireSyncState, WireProcessing, WireUpload, WireUploadStatus};
 pub use queue::{OperationInfo, OperationQueueStatus};
 pub use crate::transport::{PutFile, PutReply};

@@ -844,7 +844,7 @@ impl TransferState {
             TransferInput::RegisterOperations { declarations } => self.register(now, declarations, fx),
             TransferInput::RestoreReady { epoch } => self.restore_ready(now, epoch, fx),
             TransferInput::RoundStatus { epoch, transfer_ids, refused } => self.round_status(epoch, &transfer_ids, refused, fx),
-            TransferInput::CopyDone { transfer_id, attempt_id, size, sha256, place, cached } => self.copy_done(transfer_id, attempt_id, CopiedBlob { size, sha256, place, cached }, fx),
+            TransferInput::CopyDone { transfer_id, attempt_id, size, sha256, place, cached } => self.copy_done(now, transfer_id, attempt_id, CopiedBlob { size, sha256, place, cached }, fx),
             TransferInput::CopyFailed { transfer_id, attempt_id, error } => self.copy_failed(now, transfer_id, attempt_id, error, fx),
             TransferInput::StagedPromoted { transfer_id } => self.staged_promoted(now, transfer_id, fx),
             TransferInput::StepAnswer { request_id, outcome } => self.held_step_answered(now, request_id, outcome, fx),

@@ -283,8 +283,8 @@ impl TransferState {
 
     fn group_of(&self, id: TransferId) -> Option<u64> { self.transfers.get(&id).and_then(|transfer| transfer.batch_id) }
 
-    pub(super) fn copy_done(&mut self, id: TransferId, attempt_id: AttemptId, copy: CopiedBlob, fx: &mut Fx) {
-        if self.stage_of(id) == Some(TransferStage::Measuring) { return self.measured(id, attempt_id, copy, fx); }
+    pub(super) fn copy_done(&mut self, now: Time, id: TransferId, attempt_id: AttemptId, copy: CopiedBlob, fx: &mut Fx) {
+        if self.stage_of(id) == Some(TransferStage::Measuring) { return self.measured(now, id, attempt_id, copy, fx); }
         let CopiedBlob { size, sha256, place, cached } = copy;
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if transfer.stage != TransferStage::Copying || transfer.attempt_id != attempt_id {

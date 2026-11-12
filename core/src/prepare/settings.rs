@@ -21,6 +21,7 @@ fn edit_set(edit: &PhotoEdit) -> Result<(), DbError> {
 
 /// The settings of a prepare step the core can plan from: a refusal at the acceptance of the transfer.
 pub fn check_settings(prepare: &WirePrepare) -> Result<(), DbError> {
+    if prepare.max_bytes() == Some(0) { return Err(invalid("the size limit of the prepare step is 0")); }
     match prepare {
         WirePrepare::Video { limits, .. } => limits.as_ref().map_or(Ok(()), check),
         WirePrepare::Image { edit, quality, .. } => {

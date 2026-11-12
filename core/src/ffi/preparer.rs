@@ -7,12 +7,19 @@ use crate::prepare::{ImageFormat, PhotoPlan, VideoPlan, VideoSource};
 #[uniffi::export(with_foreign)]
 #[async_trait]
 pub trait Preparer: Send + Sync {
-    /// Reads the metadata of the file at `path`.
-    async fn probe(&self, path: String) -> ProbeOutcome;
+    /// Reads the file at `path` as the named `kind`: a file of another kind is `ProbeOutcome::Failed`.
+    async fn probe(&self, path: String, kind: PrepareKind) -> ProbeOutcome;
     /// Writes `job.destination` by `job.plan`, reports the done part of the work to `progress`.
     async fn run(&self, job: PrepareJob, progress: Arc<PrepareProgress>) -> PrepareOutcome;
     /// Stops the work of the attempt: no file stays and no outcome is needed.
     fn cancel(&self, attempt_id: u64);
+}
+
+/// The kind of file the prepare settings ask for: the platform reads the source as this kind and does not guess it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum PrepareKind {
+    Video,
+    Image,
 }
 
 /// What the platform read from a source file.

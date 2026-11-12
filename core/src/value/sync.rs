@@ -59,11 +59,12 @@ pub enum FailureKind {
 pub enum PrepareReason {
     Failed,
     DeviceCannotDecode,
+    TooLarge,
 }
 
 impl PrepareReason {
     pub fn name(self) -> &'static str {
-        match self { Self::Failed => "failed", Self::DeviceCannotDecode => "device_cannot_decode" }
+        match self { Self::Failed => "failed", Self::DeviceCannotDecode => "device_cannot_decode", Self::TooLarge => "too_large" }
     }
 }
 
@@ -111,7 +112,7 @@ impl FailureKind {
             "protocol" => Some(FailureKind::Protocol),
             "refused" => Some(FailureKind::Refused),
             "expired" => Some(FailureKind::Expired),
-            _ => text.strip_prefix(TOO_LARGE_PREFIX).and_then(|numbers| numbers.split_once(':')).and_then(|(size, limit)| Some(FailureKind::RequestTooLarge { size: size.parse().ok()?, limit: limit.parse().ok()? })).or_else(|| text.strip_prefix(RESPONSE_TOO_LARGE_PREFIX).and_then(|limit| limit.parse().ok()).map(|limit| FailureKind::ResponseTooLarge { limit })).or_else(|| text.strip_prefix(PREPARE_FAILED_PREFIX).and_then(|reason| match reason { "failed" => Some(PrepareReason::Failed), "device_cannot_decode" => Some(PrepareReason::DeviceCannotDecode), _ => None }).map(|reason| FailureKind::PrepareFailed { reason })).or_else(|| text.strip_prefix(SESSION_PREFIX).and_then(SessionCode::named).map(FailureKind::Session)),
+            _ => text.strip_prefix(TOO_LARGE_PREFIX).and_then(|numbers| numbers.split_once(':')).and_then(|(size, limit)| Some(FailureKind::RequestTooLarge { size: size.parse().ok()?, limit: limit.parse().ok()? })).or_else(|| text.strip_prefix(RESPONSE_TOO_LARGE_PREFIX).and_then(|limit| limit.parse().ok()).map(|limit| FailureKind::ResponseTooLarge { limit })).or_else(|| text.strip_prefix(PREPARE_FAILED_PREFIX).and_then(|reason| match reason { "failed" => Some(PrepareReason::Failed), "device_cannot_decode" => Some(PrepareReason::DeviceCannotDecode), "too_large" => Some(PrepareReason::TooLarge), _ => None }).map(|reason| FailureKind::PrepareFailed { reason })).or_else(|| text.strip_prefix(SESSION_PREFIX).and_then(SessionCode::named).map(FailureKind::Session)),
         }
     }
 }

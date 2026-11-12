@@ -374,7 +374,7 @@ pub enum TransferEffect {
     PromoteStaged { transfer_id: TransferId },
     CopyCancel { transfer_id: TransferId },
     /// The platform reads the source of the transfer: the answer comes back as `Probed`.
-    Probe { transfer_id: TransferId, attempt_id: AttemptId },
+    Probe { transfer_id: TransferId, attempt_id: AttemptId, kind: crate::ffi::PrepareKind },
     /// The platform writes the result by `plan`: the answers come back as `PrepareProgress` and `Prepared`.
     Prepare { transfer_id: TransferId, attempt_id: AttemptId, plan: crate::ffi::PreparePlan },
     PrepareCancel { transfer_id: TransferId, attempt_id: AttemptId },

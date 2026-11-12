@@ -241,7 +241,7 @@ impl TransferExecutor {
     /// The path of the copy of the library: the platform reads the source from it.
     fn copy_path(&self, transfer_id: TransferId) -> String { self.local(transfer_id, Source { path: String::new(), parts: 0 }).path }
 
-    fn probe(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64)) {
+    fn probe(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), kind: crate::ffi::PrepareKind) {
         let Some(preparer) = self.preparer.get().cloned() else {
             back.reply(stamp, TransferInput::Probed { transfer_id, attempt_id, outcome: crate::ffi::ProbeOutcome::Failed { message: "no preparer".into() } });
             return;
@@ -249,7 +249,7 @@ impl TransferExecutor {
         let (path, prepares, back, cancelled) = (self.copy_path(transfer_id), self.prepares.clone(), back.clone(), Arc::new(AtomicBool::new(false)));
         let flag = cancelled.clone();
         let _ = self.wire.tasks.start(Box::pin(async move {
-            let outcome = preparer.probe(path).await;
+            let outcome = preparer.probe(path, kind).await;
             prepares.done(&transfer_id);
             if !flag.load(Ordering::SeqCst) { back.reply(stamp, TransferInput::Probed { transfer_id, attempt_id, outcome }); }
         }));
@@ -445,7 +445,7 @@ impl EffectRunner<Transfers> for TransferExecutor {
                 }
             }
             TransferEffect::CopyCancel { transfer_id } => self.copies.cancel(&transfer_id),
-            TransferEffect::Probe { transfer_id, attempt_id } => self.probe(stamp, back, (transfer_id, attempt_id)),
+            TransferEffect::Probe { transfer_id, attempt_id, kind } => self.probe(stamp, back, (transfer_id, attempt_id), kind),
             TransferEffect::Prepare { transfer_id, attempt_id, plan } => self.prepare(stamp, back, (transfer_id, attempt_id), plan),
             TransferEffect::PrepareCancel { transfer_id, attempt_id } => self.prepare_cancel(transfer_id, attempt_id),
             TransferEffect::Measure { transfer_id, attempt_id } => self.measure(stamp, back, (transfer_id, attempt_id)),

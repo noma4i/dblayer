@@ -23,11 +23,26 @@ pub enum WireSource {
     Pending,
 }
 
-/// What the library makes of the source file before it uploads: `limits = None` takes `default_video_limits`.
+/// What the library makes of the source file before it uploads: `limits = None` takes `default_video_limits`, `max_bytes` is the largest file that may go to the network.
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum WirePrepare {
-    Video { limits: Option<VideoLimits>, mirror: bool, on_cannot_decode: CannotDecode },
-    Image { edit: PhotoEdit, quality: Option<f64>, format: ImageFormat },
+    Video { limits: Option<VideoLimits>, mirror: bool, on_cannot_decode: CannotDecode, max_bytes: Option<u64> },
+    Image { edit: PhotoEdit, quality: Option<f64>, format: ImageFormat, max_bytes: Option<u64> },
+}
+
+impl WirePrepare {
+    pub(crate) fn kind(&self) -> super::PrepareKind {
+        match self {
+            Self::Video { .. } => super::PrepareKind::Video,
+            Self::Image { .. } => super::PrepareKind::Image,
+        }
+    }
+
+    pub(crate) fn max_bytes(&self) -> Option<u64> {
+        match self {
+            Self::Video { max_bytes, .. } | Self::Image { max_bytes, .. } => *max_bytes,
+        }
+    }
 }
 
 /// What happens to a source the device cannot decode: the upload fails with a typed reason, or the source goes as it is.
