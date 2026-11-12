@@ -99,19 +99,9 @@ fn xfer_retry() {
     assert!(!out.batches.iter().flat_map(|batch| &batch.ops).any(|op| matches!(op, crate::owners::store::StoreOp::UploadShown { shown: Shown::Failed { .. }, .. })), "the retry batch must not restore the previous failed status");
     let out = twin.commit();
     assert!(out.steps().is_empty());
-    assert_eq!(out.shows(), vec![Shown::Queued]);
+    assert_eq!((out.shows(), out.round_needed()), (vec![Shown::Queued], vec![vec![id]]));
     assert!(!out.stored_shows().iter().any(|shown| matches!(shown, Shown::Failed { .. })), "the committed retry must not schedule the old failed status");
     assert_eq!(twin.commit().steps()[0].0, Some(2));
-}
-
-#[test]
-fn xfer_persisting_retry_committed() {
-    let (mut twin, id) = failed_with_upload();
-    let (reply, _) = twin.retry(KEY, None);
-    let out = twin.commit();
-    assert!(matches!(out.replies(reply).as_slice(), [TransferAnswer::Receipt(receipt)] if receipt.cycle_id == 2), "the new cycle starts only after the write");
-    assert_eq!((out.round_needed(), twin.t(id).cycle_id), (vec![vec![id]], 2));
-    assert_eq!(out.shows().first(), Some(&Shown::Queued));
 }
 
 #[test]
@@ -132,14 +122,6 @@ fn xfer_persisting_failure_committed() {
     let out = twin.commit();
     assert_eq!((twin.stage(id), out.shows(), out.round_idle()), (TransferStage::Failed, vec![Shown::Failed { error: super::transfer_harness::refusal() }], vec![id]));
     assert_eq!(out.replies(waiting), vec![failed_outcome(&super::transfer_harness::refusal())]);
-}
-
-#[test]
-fn xfer_persisting_failure_storage() {
-    let mut twin = Twin::new();
-    let id = twin.persisting_failure(KEY);
-    let out = twin.reject(RejectReason::Storage("disk".into()));
-    assert_eq!((twin.stage(id), out.timers, out.shows().len()), (TransferStage::PersistingFailure, 1, 0), "the mark is written again after a pause");
 }
 
 /// P-DATA-102: every Storage refusal in a row of the writes of the same transfer makes the pause before the next write longer, on each path that repeats a write.
@@ -203,7 +185,8 @@ fn xfer_storage_retry_pause_grows() {
 fn xfer_persisting_failure_tick() {
     let mut twin = Twin::new();
     let id = twin.persisting_failure(KEY);
-    twin.reject(storage());
+    let refused = twin.reject(storage());
+    assert_eq!((refused.timers, refused.shows().len()), (1, 0), "the mark is written again after a pause");
     let stray = twin.post(TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id: twin.attempt(id) + 1000 } });
     assert!(Twin::quiet(&stray), "a timer of another attempt writes nothing: {stray:?}");
     let out = twin.tick_retry(id);
@@ -483,39 +466,39 @@ fn xfer_expired() {
 }
 
 #[test]
-fn xfer_expiry_exact_week_keeps() {
-    let mut row = stored(2, KEY, 2);
-    row.restore_failed = Some("prior".into());
-    row.created_at = Time(0);
-    row.failed_at = Some(Time(2 * DAY));
-    let (mut restored, _) = Twin::opened(vec![row], Default::default());
-    restored.det.tick(Time(9 * DAY));
-    let kept = restored.post(TransferInput::Tick { kind: TransferTick::Expire });
-    assert!(Twin::quiet(&kept));
-    assert_eq!(restored.stage(2), TransferStage::Failed);
-    let mut twin = Twin::new();
-    let id = twin.failed(KEY);
-    twin.det.tick(Time(7 * DAY));
-    let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
-    assert!(Twin::quiet(&out), "{out:?}");
-    assert_eq!(twin.stage(id), TransferStage::Failed);
-    twin.det.tick(Time(7 * DAY + 1));
-    let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
-    assert_eq!((twin.stage(id), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]), "one millisecond over the week expires");
-}
-
-#[test]
-fn xfer_failed_no_failed_at_never_expires() {
-    let mut row = stored(1, KEY, 2);
-    row.restore_failed = Some("prior".into());
-    row.failed_at = None;
-    row.created_at = Time(0);
-    let (mut twin, _) = Twin::opened(vec![row], Default::default());
-    assert_eq!(twin.stage(1), TransferStage::Failed);
-    twin.det.tick(Time(8 * DAY));
-    let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
-    assert!(Twin::quiet(&out), "a Failed row that never recorded a failure time does not expire from created_at: {out:?}");
-    assert_eq!(twin.stage(1), TransferStage::Failed);
+fn xfer_a_failed_transfer_expires_one_week_after_its_failure_not_before() {
+    {
+        let mut row = stored(2, KEY, 2);
+        row.restore_failed = Some("prior".into());
+        row.created_at = Time(0);
+        row.failed_at = Some(Time(2 * DAY));
+        let (mut restored, _) = Twin::opened(vec![row], Default::default());
+        restored.det.tick(Time(9 * DAY));
+        let kept = restored.post(TransferInput::Tick { kind: TransferTick::Expire });
+        assert!(Twin::quiet(&kept));
+        assert_eq!(restored.stage(2), TransferStage::Failed);
+        let mut twin = Twin::new();
+        let id = twin.failed(KEY);
+        twin.det.tick(Time(7 * DAY));
+        let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
+        assert!(Twin::quiet(&out), "{out:?}");
+        assert_eq!(twin.stage(id), TransferStage::Failed);
+        twin.det.tick(Time(7 * DAY + 1));
+        let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
+        assert_eq!((twin.stage(id), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]), "one millisecond over the week expires");
+    }
+    {
+        let mut row = stored(1, KEY, 2);
+        row.restore_failed = Some("prior".into());
+        row.failed_at = None;
+        row.created_at = Time(0);
+        let (mut twin, _) = Twin::opened(vec![row], Default::default());
+        assert_eq!(twin.stage(1), TransferStage::Failed);
+        twin.det.tick(Time(8 * DAY));
+        let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
+        assert!(Twin::quiet(&out), "a Failed row that never recorded a failure time does not expire from created_at: {out:?}");
+        assert_eq!(twin.stage(1), TransferStage::Failed);
+    }
 }
 
 #[test]
