@@ -156,6 +156,7 @@ pub(super) fn apply_upsert(
     if hidden.contains(&(model.to_string(), id.clone())) {
         return Ok(());
     }
+    let paid = matches!(envelope.source, crate::schema::RowSource::Page | crate::schema::RowSource::NodeReread | crate::schema::RowSource::Event | crate::schema::RowSource::Response) && super::super::reread_owed::clear(connection, model.as_str(), &id)?;
     let existing = match prefetched.remove(&(model.to_string(), id.clone())) {
         Some(found) => found,
         None => fetch_stored(connection, info, std::slice::from_ref(&id), true)?.remove(&id),
@@ -191,6 +192,7 @@ pub(super) fn apply_upsert(
                 if let Ok(row_id) = crate::identity::RowId::new(&id) {
                     result.renewed.push(RowRef::new(model.clone(), row_id));
                 }
+                if paid { result.push(model, &id, RowChangeKind::Touched, BTreeSet::new()); }
                 prefetched.insert((model.to_string(), id.clone()), existing.clone());
                 return Ok(());
             }

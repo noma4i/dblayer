@@ -132,10 +132,12 @@ pub struct StreamRow {
     pub id: String,
     pub stamp: i64,
     pub row: Option<WireRow>,
+    /// The row owes a reread (store.md, D-393): internal, never in the value of the reader.
+    pub owes: bool,
 }
 
 impl StreamRow {
-    pub fn new(id: &str, stamp: i64) -> Self { Self { id: id.to_string(), stamp, row: None } }
+    pub fn new(id: &str, stamp: i64) -> Self { Self { id: id.to_string(), stamp, row: None, owes: false } }
 }
 
 impl EndCause {

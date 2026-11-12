@@ -1,4 +1,4 @@
-pub(super) const CACHE_STATEMENTS: [&str; 18] = [
+pub(super) const CACHE_STATEMENTS: [&str; 19] = [
     include_str!("../sql/ddl/scope_member.sql"),
     include_str!("../sql/ddl/scope_walk.sql"),
     include_str!("../sql/ddl/scope_order_unique.sql"),
@@ -17,6 +17,7 @@ pub(super) const CACHE_STATEMENTS: [&str; 18] = [
     include_str!("../sql/ddl/tombstone_age.sql"),
     include_str!("../sql/ddl/query_window.sql"),
     include_str!("../sql/ddl/window_marker.sql"),
+    include_str!("../sql/ddl/reread_owed.sql"),
 ];
 
 pub(super) const CORE_STATEMENTS: [&str; 41] = [

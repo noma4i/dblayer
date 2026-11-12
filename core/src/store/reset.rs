@@ -106,6 +106,7 @@ pub(crate) fn wipe_model_cache(connection: &Connection, model: &str, table: &str
     connection.execute(include_str!("sql/reset/wipe_model_cache_delete_scope_revision.sql"), params![model])?;
     clear_model(connection, model)?;
     connection.execute(include_str!("sql/reset/wipe_model_cache_delete_tombstone.sql"), params![model])?;
+    connection.execute(include_str!("sql/reset/wipe_model_cache_delete_reread_owed.sql"), params![model])?;
     connection.execute(include_str!("sql/reset/wipe_model_cache_delete_local_pending.sql"), params![model])?;
     connection.execute(include_str!("sql/reset/wipe_model_cache_delete_window_marker.sql"), params![like_pattern(ListKey::compose(&[model]).as_str())])?;
     connection.execute(include_str!("sql/reset/wipe_model_cache_delete_query_window.sql"), params![like_pattern(ListKey::compose(&[model]).as_str())])?;

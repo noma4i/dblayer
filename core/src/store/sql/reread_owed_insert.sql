@@ -1,0 +1,1 @@
+INSERT OR IGNORE INTO reread_owed (model, row_id) VALUES (?1, ?2)

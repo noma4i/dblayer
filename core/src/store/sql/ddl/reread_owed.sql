@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS reread_owed (
+  model TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  PRIMARY KEY (model, row_id)
+) STRICT, WITHOUT ROWID

@@ -124,6 +124,10 @@ impl Store {
                 continue;
             }
             if matches!(op, crate::owners::store::StoreOp::Show { .. }) { continue; }
+            if let crate::owners::store::StoreOp::OweReread { model, id } = op {
+                if let Some(result) = super::reread_owed::owe(&mut writer, model, id)? { results.push(result); writes_database = true; }
+                continue;
+            }
             writes_database = true;
             if let crate::owners::store::StoreOp::Swap { model, temp, real } = op {
                 results.push(super::swap::apply(&mut writer, model, temp, real, own)?);

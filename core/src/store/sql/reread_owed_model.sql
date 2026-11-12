@@ -1,0 +1,1 @@
+SELECT row_id FROM reread_owed WHERE model = ?1

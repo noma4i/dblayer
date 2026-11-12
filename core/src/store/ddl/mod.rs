@@ -23,7 +23,7 @@ pub(crate) const CARRIED_TABLES: [&str; 18] = ["op", "op_transfer", "transfer_ou
 pub const SERVICE_COLUMNS: [&str; 3] = ["id", "revision", "born_rev"];
 
 const FINGERPRINT_PREFIX: &str = "fingerprint:";
-const CACHE_TABLES: [&str; 6] = ["window_marker", "scope_member", "scope_revision", "scope_edge", "tombstone", "query_window"];
+const CACHE_TABLES: [&str; 7] = ["window_marker", "scope_member", "scope_revision", "scope_edge", "tombstone", "query_window", "reread_owed"];
 
 mod statements;
 use statements::{CACHE_STATEMENTS, CORE_STATEMENTS};

@@ -4,6 +4,7 @@ mod atomic_tests;
 mod follow_validate_tests;
 mod cells_tests;
 mod data_sets_tests;
+mod reread_owed_tests;
 mod data_sets_hidden_tests;
 mod data_sets_sources_tests;
 mod sets_reference_tests;

@@ -71,13 +71,13 @@ impl Snapshots for DbSnapshots {
         Ok((ReadVersion { revision, position, relevant }, match read {
             crate::store::ViewRead::Count(count) => ReadData::Count(u64::try_from(count).unwrap_or(0)),
             crate::store::ViewRead::Overflow => ReadData::Overflow,
-            crate::store::ViewRead::Rows(rows, total) => {
+            crate::store::ViewRead::Rows(rows, total, owed) => {
                 let wire = self.wire(&view.model)?;
-                ReadData::Rows { rows: rows.into_iter().map(|(id, stamp, row)| StreamRow { id, stamp, row: Some(wire.row(&row)) }).collect(), replaced: replaced(), total }
+                ReadData::Rows { rows: rows.into_iter().map(|(id, stamp, row)| StreamRow { owes: owed.contains(&id), id, stamp, row: Some(wire.row(&row)) }).collect(), replaced: replaced(), total }
             }
-            crate::store::ViewRead::Changes { keys, rows, total } => {
+            crate::store::ViewRead::Changes { keys, rows, total, owed } => {
                 let wire = self.wire(&view.model)?;
-                ReadData::Changes { keys, rows: rows.into_iter().map(|(id, stamp, row)| StreamRow { id, stamp, row: Some(wire.row(&row)) }).collect(), replaced: replaced(), total }
+                ReadData::Changes { keys, rows: rows.into_iter().map(|(id, stamp, row)| StreamRow { owes: owed.contains(&id), id, stamp, row: Some(wire.row(&row)) }).collect(), replaced: replaced(), total }
             }
         }))
     }

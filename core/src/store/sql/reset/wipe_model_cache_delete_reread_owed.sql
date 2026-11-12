@@ -1,0 +1,1 @@
+DELETE FROM reread_owed WHERE model = ?1

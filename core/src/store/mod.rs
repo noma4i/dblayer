@@ -47,6 +47,7 @@ mod error;
 mod file_ops;
 mod file_write;
 mod feed_write;
+pub(crate) mod reread_owed;
 mod touch_ancestors;
 mod correlate;
 mod intent_write;

@@ -1,1 +1,1 @@
-DELETE FROM scope_member; DELETE FROM scope_revision; DELETE FROM tombstone; DELETE FROM window_marker; DELETE FROM query_window; DELETE FROM local_pending;
+DELETE FROM scope_member; DELETE FROM scope_revision; DELETE FROM tombstone; DELETE FROM window_marker; DELETE FROM query_window; DELETE FROM local_pending; DELETE FROM reread_owed;

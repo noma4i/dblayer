@@ -34,7 +34,12 @@ impl Store {
         let has_rows = self.read(&[model], |reader| reader.scope_last_id(model, scope.key.as_str()))?.is_some();
         let policy = crate::runtime::selected_policy(!has_rows, &remote.stale_time, remote.empty_stale_time.as_deref());
         let lifetime = crate::runtime::parse_duration(policy).map_or(i64::MAX / 4, |window| i64::try_from(window.as_millis()).unwrap_or(i64::MAX / 4));
-        Ok(Some(crate::store::SavedWindow { landed_at: freshness.landed_at, fresh_until: freshness.landed_at.saturating_add(lifetime), stale: freshness.stale_since.is_some(), cursor: record.cursor, pages: u32::try_from(record.pages).unwrap_or(u32::MAX), has_rows, generation: u64::try_from(record.generation).unwrap_or(0), marker: super::windows::read_marker(&self.lock().connection, &key)?, members: self.read(&[model], |reader| reader.scope_member_count(model, scope.key.as_str()))? }))
+        let owed = match (declared.node, params.get(crate::schema::NODE_PARAM).and_then(Value::as_str)) {
+            (Some(crate::schema::NodeRead::One), Some(id)) => self.read(&[model], |reader| super::reread_owed::is_owed(reader.connection(), model, id))?,
+            _ => false,
+        };
+        let marker = super::windows::read_marker(&self.lock().connection, &key)?;
+        Ok(Some(crate::store::SavedWindow { landed_at: freshness.landed_at, fresh_until: freshness.landed_at.saturating_add(lifetime), stale: freshness.stale_since.is_some() || owed, cursor: record.cursor, pages: u32::try_from(record.pages).unwrap_or(u32::MAX), has_rows, generation: u64::try_from(record.generation).unwrap_or(0), marker, members: self.read(&[model], |reader| reader.scope_member_count(model, scope.key.as_str()))? }))
     }
 
     /// The edge values of the rows of a relation window, by row id.

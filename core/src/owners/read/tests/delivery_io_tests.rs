@@ -41,7 +41,7 @@ impl Snapshots for SqliteSnapshots {
         if seen < revision {
             return Err(format!("the snapshot is at revision {seen}, older than {revision}"));
         }
-        let rows = fetch_keys(&connection, &statement).map_err(|error| error.to_string())?.into_iter().map(|(id, stamp)| d::StreamRow { id, stamp, row: None }).collect();
+        let rows = fetch_keys(&connection, &statement).map_err(|error| error.to_string())?.into_iter().map(|(id, stamp)| d::StreamRow { id, stamp, row: None, owes: false }).collect();
         drop(snapshot);
         Ok((d::ReadVersion { revision: seen, position: 0, relevant: Some((seen, 0)) }, d::ReadData::Rows { rows, replaced: Vec::new(), total: None }))
     }

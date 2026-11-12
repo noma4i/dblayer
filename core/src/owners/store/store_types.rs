@@ -186,6 +186,8 @@ pub enum StoreOp {
     StaleFamilies { families: Vec<(String, String)> },
     /// The windows of `models` and the windows `keys` owe a reread: `stale_since` is set in the transaction of the batch.
     MarkStale { models: Vec<String>, keys: Vec<String> },
+    /// The event of a `via: :node` read owes the stored row a reread: the debt is written in the transaction of the batch.
+    OweReread { model: String, id: String },
     /// Set or clear the error shown on the row of the operation (`on_failure: keep`).
     MarkError { op_id: u64, error: Option<String> },
     /// Rows of the server answer of `model`.
