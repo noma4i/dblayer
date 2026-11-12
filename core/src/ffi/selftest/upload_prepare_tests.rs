@@ -386,8 +386,9 @@ async fn xfer_prepare_of_a_supplied_source() {
     for item in &batch.items {
         bound(database.supply_source(epoch, "Asset".into(), item.optimistic_value.id.clone(), "create_files".into(), source_of(&supplied, "{}", &shrink()))).await.unwrap();
     }
-    hold.entered().await;
+    quiet(&database).await;
     assert_eq!(upload_of_asset(&database, &first).map(|upload| upload.status), Some(WireUploadStatus::Preparing), "the supplied source goes through the step");
+    hold.entered().await;
     hold.release();
     for item in batch.items { bound(database.confirmed(item.receipt, false)).await.unwrap(); }
     assert_eq!(preparer.probes(), vec![SOURCE.to_vec(); 2]);
