@@ -68,7 +68,7 @@ while IFS= read -r candidate; do
     previous_tag="$candidate"
     break
   fi
-done < <(git tag --list --sort=-v:refname)
+done < <(git tag --list '[0-9]*' --sort=-v:refname)
 [ -n "$previous_tag" ] || fail 'previous tag not found'
 subjects="$(git log --format=%s "$previous_tag"..HEAD)" || fail 'cannot read commits since previous tag'
 [ "$(printf '%s\n' "$subjects" | grep -Fxc "Release $version" || true)" = 1 ] || fail "expected exactly one Release $version commit since $previous_tag"
@@ -279,6 +279,11 @@ if [ "$publish" = --publish ]; then
   git show "$version":swift/Sources/DBlayer/dblayer.swift > "$tmp/tagged-dblayer.swift"
   bash scripts/check_artifact_provenance.sh --bindings "$stage/dblayer.swift" "$tmp/tagged-dblayer.swift" || fail 'tagged dblayer.swift differs from the release package'
   require_source
+  if git rev-parse --verify -q "refs/tags/release-$version^{commit}" > "$tmp/marker-sha"; then
+    [ "$(cat "$tmp/marker-sha")" = "$source_sha" ] || fail "tag release-$version already points elsewhere"
+  else
+    git tag "release-$version" "$source_sha"
+  fi
 else
   printf '%s\n' 'Package.swift to be written:'
   cat "$tmp/Package.swift"
@@ -316,6 +321,7 @@ push_maven_branch() {
 if [ "$publish" = --publish ]; then
   git push origin "$source_sha:refs/heads/master"
   git push origin "$package_sha:refs/tags/$version"
+  git push origin "$source_sha:refs/tags/release-$version"
   push_maven_branch "$(git remote get-url origin)"
   files=(); for file in "${attachments[@]}"; do files+=("$stage/$file"); done
   if ! gh release view "$version" >/dev/null 2>&1; then

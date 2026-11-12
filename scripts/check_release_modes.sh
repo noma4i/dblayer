@@ -243,6 +243,9 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     head_now = subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
     package_now = package_head
     assert f"git push origin {head_now}:refs/heads/master" in events and f"git push origin {package_now}:refs/tags/{version}" in events, events
+    assert f"git push origin {head_now}:refs/tags/release-{version}" in events, events
+    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", f"release-{version}^{{commit}}"], text=True).strip() == head_now
+    print("ok the Release commit on master carries the tag release-X.Y.Z")
     assert any(line.startswith("git -C ") and line.endswith("push -u origin maven") for line in events), events
     assert any(line.startswith("gh release create 1.2.3 ") and all(name in line for name in attachments) for line in events), events
     assert any(line.startswith("gh release download 1.2.3 ") for line in events), events
