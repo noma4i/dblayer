@@ -11,7 +11,7 @@ struct FailureValuesTests {
     #expect((failure.kind, failure.reason, failure.message, failure.sessionCode, failure.requestSize) == ("Invalid", "the cell is empty", "refused", nil, nil))
     let sync = syncInfo(state: .failed, error: failure)
     #expect((sync.state, sync.error, sync.actions, sync.attempts) == (.failed, failure, [], 0))
-    let upload = uploadInfo(status: .failed, progress: 40, error: failure)
+    let upload = uploadInfo(.failed, progress: 40, error: failure)
     #expect((upload.status, upload.progress, upload.error) == (.failed, 40, failure))
     #expect(try JSONDecoder().decode(OperationFailure.self, from: JSONEncoder().encode(failure)) == failure)
     #expect(try JSONDecoder().decode(SyncInfo.self, from: JSONEncoder().encode(sync)) == sync)
