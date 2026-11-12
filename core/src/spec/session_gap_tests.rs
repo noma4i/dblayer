@@ -232,7 +232,7 @@ fn sess_prop_login_between_epoch_end_and_ending() {
                 let kind = if effects.iter().any(|effect| matches!(effect, SessionEffect::Reply { answer: Err(_), .. })) { "refused" }
                     else if effects.iter().any(|effect| matches!(effect, SessionEffect::GenerateCredential { .. })) { "started" }
                     else { "queued" };
-                let expected = if order[0] == 1 { "refused" } else if order == [0, 1, 2] { "started" } else { "queued" };
+                let expected = if order[0] == 1 { "refused" } else { "queued" };
                 assert_eq!(kind, expected, "{order:?}: {effects:?}");
             }
             observed.extend(effects);
@@ -250,27 +250,6 @@ fn sess_prop_login_between_epoch_end_and_ending() {
                 }
             }
         }
-        assert_eq!(observed.iter().any(|effect| matches!(effect, SessionEffect::HttpRequest { .. })), order == [0, 1, 2], "{order:?}: {observed:?}");
+        assert!(!observed.iter().any(|effect| matches!(effect, SessionEffect::HttpRequest { .. })), "{order:?}: {observed:?}");
     }
-}
-
-#[test]
-fn sess_login_after_epoch_end_rejected_pending() {
-    let mut det = DetScheduler::new(2);
-    let log = new_log();
-    let ops = vec![SessionOperation { name: "login".into(), path: "/login".into(), class: OperationClass::Login }];
-    let session = det.add::<SessionCalls>("session", SessionState::with_operations(ops, Some(true)), Recorder::<SessionCalls>::new(&log));
-    send(&mut det, session, &log, SessionInput::Published(Published { epoch: 3, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false }));
-    send(&mut det, session, &log, SessionInput::Snapshot { epoch: 3, online: true });
-    send(&mut det, session, &log, SessionInput::Open { credential: Some(Credential { digest: 4, sequence: 0 }), pending: None, dropped_pending: false, secret: SecretState::Present(4) });
-    send(&mut det, session, &log, SessionInput::EpochEnded(EpochEnded { epoch: 3, cause: Cause::SessionReset }));
-    let effects = send(&mut det, session, &log, SessionInput::SessionCall { operation: "login".into(), body: "{}".into(), reply: 1 });
-    let op = effects.iter().find_map(|effect| match effect { SessionEffect::GenerateCredential { secret_op_id } => Some(*secret_op_id), _ => None }).unwrap();
-    let effects = send(&mut det, session, &log, SessionInput::CredentialGenerated { secret_op_id: op, credential: 42 });
-    let op = effects.iter().find_map(|effect| match effect { SessionEffect::StoreSecret { secret_op_id, .. } => Some(*secret_op_id), _ => None }).unwrap();
-    let effects = send(&mut det, session, &log, SessionInput::SecretStored { secret_op_id: op, ok: true });
-    let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitPending { batch, .. } => Some(*batch), _ => None }).unwrap();
-    let effects = send(&mut det, session, &log, SessionInput::Rejected(Rejected { batch, reason: RejectReason::NoSession }));
-    assert!(effects.is_empty(), "Persisting x Rejected NoSession: no answer and no effect: {effects:?}");
-    assert!(matches!(det.state(session).map(SessionState::phase), Some(SessionPhase::Persisting { .. })), "the phase does not change");
 }

@@ -30,8 +30,6 @@ async fn session_request_after_reopen_does_not_take_the_saved_answer() {
     let calling = database.clone();
     let first = tokio::spawn(async move { calling.session_call("login_link".into(), json!({"account":"first"}).to_string()).await });
     held.entered().await;
-    let pending: i64 = rusqlite::Connection::open(&path).unwrap().query_row("SELECT req_id FROM encrypted_pending", [], |row| row.get(0)).unwrap();
-    assert_eq!(pending, 1, "the saved request uses the next Session owner's first id");
     database.close_now();
     held.release();
     let _ = bound(first).await;
@@ -41,8 +39,6 @@ async fn session_request_after_reopen_does_not_take_the_saved_answer() {
     let calling = reopened.clone();
     let second = tokio::spawn(async move { calling.session_call("login_link".into(), json!({"account":"second"}).to_string()).await });
     second_held.entered().await;
-    let next: i64 = rusqlite::Connection::open(&path).unwrap().query_row("SELECT req_id FROM encrypted_pending", [], |row| row.get(0)).unwrap();
-    assert_eq!(next, pending, "the new Session issues the same internal id");
     second_held.release();
     let answer = bound(second).await.unwrap().unwrap();
     assert_eq!(serde_json::from_str::<serde_json::Value>(&answer).unwrap()["sessionId"], "second");

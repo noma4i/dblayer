@@ -356,7 +356,7 @@ fn dlv_open_rows() {
     assert!(twin.read_all().is_empty(), "no value before the first read");
     for (kind, effects) in [
         (Kind::Count, vec![Effect::Read(0), Effect::InterestPlus]),
-        (Kind::Entity(Fetch::Never), vec![Effect::Read(0)]),
+        (Kind::Entity(Fetch::Never), vec![Effect::Read(0), Effect::InterestPassive]),
         (Kind::Entity(Fetch::Stale), vec![Effect::Read(0), Effect::InterestPlus]),
         (Kind::Entity(Fetch::Force), vec![Effect::Read(0), Effect::InterestPlus, Effect::Load { force: true }]),
         (Kind::Entity(Fetch::IfMissing), vec![Effect::Read(0), Effect::InterestPassive]),
@@ -439,6 +439,7 @@ fn dlv_snapshot_total() {
     assert_eq!(TOTALS.with(|totals| totals.borrow().clone()), [Some(53), Some(54)], "a snapshot and a delta carry the total of the window read with their rows");
     let mut entity = open_as(Kind::Entity(Fetch::Never));
     entity.total = Some(7);
+    entity.step(Input::WindowState(Ws::loaded_at(1)));
     TOTALS.with(|totals| totals.borrow_mut().clear());
     entity.step_read(Input::ReadDone { revision: 1, rows: rows(&["r1"]) });
     assert_eq!(TOTALS.with(|totals| totals.borrow().clone()), [None], "a row by id has no total");
