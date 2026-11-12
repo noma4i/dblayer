@@ -51,7 +51,7 @@ fn sess_open_pending_lost() {
 fn sess_open_secret_unavailable() {
     let mut twin = opened(open(Some((CRED, 6)), None, false, Secret::Error("locked".into())));
     twin.feed(call(1));
-    assert_eq!(twin.replies, vec![(1, Err(Fail::Storage))]);
+    assert!(twin.replies.is_empty(), "the call waits for the read of the secret");
 }
 
 #[test]
@@ -282,12 +282,13 @@ fn sess_mismatch_closing() {
 #[test]
 fn sess_mismatch_other() {
     for secret in [Secret::Present(9), Secret::Error("locked".into())] {
+        let refused = matches!(secret, Secret::Present(_));
         let mut twin = opened(open(Some((CRED, 6)), None, false, secret));
         for input in [Input::Online(false), Input::Tick, published(PubState::Session), Input::Cancel { req_id: 3 }, ended(EndCause::Other)] {
             assert!(twin.feed(input).is_empty());
         }
         twin.feed(call(1));
-        assert_eq!(twin.replies.len(), 1, "the call is still refused");
+        assert_eq!(twin.replies.len(), usize::from(refused), "a call is refused at a mismatch and waits while the secret is unavailable");
     }
 }
 
@@ -313,17 +314,41 @@ fn sess_stored_pair_of_a_transfer_gets_the_state_outcome() {
     assert_eq!(answers(&restore(&mut blocked)), expected, "BlockedPending");
 }
 
+/// sess_unavailable_call: a call with the session waits in the queue until `SecretRead`: Present sends it as in Idle, Mismatch answers `StateLost`, the end of the epoch and `Closing` answer the end.
 #[test]
 fn sess_unavailable_call() {
     let mut twin = opened(open(Some((CRED, 6)), None, false, Secret::Error("locked".into())));
     for operation in ["social", "logout", "login"] { twin.feed(call_of(operation, 1)); }
-    assert!(twin.replies.iter().all(|(_, answer)| *answer == Err(Fail::Storage)));
+    assert!(twin.replies.is_empty(), "no immediate refusal: {:?}", twin.replies);
+    twin.feed(Input::Foreground);
+    let op = twin.op();
+    assert!(matches!(&twin.feed(Input::SecretRead { op, read: Secret::Present(CRED) })[..], [RefEffect::SealProbe { .. }, ..]), "the first queued call goes as in Idle");
+    let mut mismatch = unavailable_reading();
+    mismatch.feed(call(2));
+    let op = mismatch.op();
+    mismatch.feed(Input::SecretRead { op, read: Secret::Present(9) });
+    assert_eq!(mismatch.replies, vec![(2, Err(Fail::StateLost))]);
+    let mut finished = opened(open(Some((CRED, 6)), None, false, Secret::Error("locked".into())));
+    finished.feed(call(3));
+    finished.feed(ended(EndCause::SessionReset));
+    assert_eq!(finished.replies, vec![(3, Err(Fail::NoSession))]);
+    let mut closing = opened(open(Some((CRED, 6)), None, false, Secret::Error("locked".into())));
+    closing.feed(call(4));
+    closing.feed(Input::Closing);
+    assert_eq!(closing.replies, vec![(4, Err(Fail::Closed))]);
 }
 
+/// sess_unavailable_mutate: a write with a sequence waits in the queue as a call does and gets the outcome of the read.
 #[test]
 fn sess_unavailable_mutate() {
-    let mut twin = opened(open(Some((CRED, 6)), None, false, Secret::Error("locked".into())));
-    assert_eq!(twin.feed(mutate(7, 11)), vec![answer(7, 11, Outcome::Error(Kind::Temporary, Fail::Storage, false))]);
+    let mut twin = unavailable_reading();
+    assert!(twin.feed(mutate(7, 11)).is_empty(), "no immediate refusal");
+    let op = twin.op();
+    assert!(matches!(&twin.feed(Input::SecretRead { op, read: Secret::Present(CRED) })[..], [RefEffect::SealProbe { .. }, ..]), "the queued write goes as in Idle");
+    let mut mismatch = unavailable_reading();
+    mismatch.feed(mutate(7, 11));
+    let op = mismatch.op();
+    assert_eq!(mismatch.feed(Input::SecretRead { op, read: Secret::Present(9) }), vec![answer(7, 11, permanent(Fail::StateLost))]);
 }
 
 pub(super) fn unavailable_reading() -> Twin {
@@ -335,7 +360,6 @@ pub(super) fn unavailable_reading() -> Twin {
 #[test]
 fn sess_unavailable_read_present() {
     let mut twin = unavailable_reading();
-    twin.feed(call(2));
     let op = twin.op();
     twin.feed(Input::SecretRead { op, read: Secret::Present(CRED) });
     assert!(matches!(&twin.feed(call(3))[..], [RefEffect::SealProbe { .. }]), "calls with the session work again");

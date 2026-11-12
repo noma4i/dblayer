@@ -61,8 +61,7 @@ impl SessionState {
         self.phase = SessionPhase::Idle;
         self.write_settled();
         if let Some(held) = self.held.take() {
-            let error = if matches!(held, SessionPhase::SecretMismatch) { SessionError::StateLost } else { SessionError::Storage("the secret is unavailable".into()) };
-            self.refuse_queue(fx, error);
+            if matches!(held, SessionPhase::SecretMismatch) { self.refuse_queue(fx, SessionError::StateLost); }
             self.phase = held;
             return;
         }

@@ -5,7 +5,9 @@
 ### Fixed
 
 - Fix upload attempts burning while a step waits for the session queue.
-- Fix a saved write without its declared operation waiting silently: it now fails with `refused`.
+- Fail a saved write whose operation is not declared with `refused` instead of waiting.
+- Fail a stored upload step with the state of the session instead of leaving it queued.
+- Queue calls and writes while the secret is unavailable instead of refusing them.
 
 ## 6.31.0 - 2026-11-13
 

@@ -474,12 +474,16 @@ impl SessionState {
                 author_error(fx, author, req_id, ErrorClass::Permanent, SessionError::StateLost);
             }
             (phase @ SessionPhase::SecretUnavailable { .. }, SessionInput::SessionCall { operation, body, reply: id }) => {
-                let error = SessionError::Storage("the secret is unavailable".into());
-                self.held_call(phase, operation, body, id, error, fx);
+                if self.def(&operation).is_some_and(|def| def.class != OperationClass::Sessionless) {
+                    self.queue.push_back(Queued::Call { operation, body, reply: id });
+                    self.phase = phase;
+                } else {
+                    self.held_call(phase, operation, body, id, SessionError::Storage("the secret is unavailable".into()), fx);
+                }
             }
-            (SessionPhase::SecretUnavailable { error, read }, SessionInput::Mutate { author, req_id, .. }) => {
-                self.phase = SessionPhase::SecretUnavailable { error, read };
-                author_error(fx, author, req_id, ErrorClass::Network, SessionError::Storage("the secret is unavailable".into()));
+            (phase @ SessionPhase::SecretUnavailable { .. }, SessionInput::Mutate { author, owner, req_id, epoch, path, body, purpose }) => {
+                self.phase = phase;
+                self.queue_mutate(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
             }
             (SessionPhase::SecretUnavailable { error, .. }, SessionInput::Foreground { .. }) => {
                 let op = self.secret_op();
@@ -488,7 +492,10 @@ impl SessionState {
             }
             (SessionPhase::SecretUnavailable { error, read }, SessionInput::SecretRead { secret_op_id, read: found }) if read == Some(secret_op_id) => match found {
                 SecretState::Present(digest) if self.credential.as_ref().is_some_and(|credential| credential.digest == digest) => self.idle(fx),
-                SecretState::Present(_) => self.phase = SessionPhase::SecretMismatch,
+                SecretState::Present(_) => {
+                    self.phase = SessionPhase::SecretMismatch;
+                    self.refuse_queue(fx, SessionError::StateLost);
+                }
                 SecretState::Missing => {
                     self.phase = SessionPhase::Idle;
                     self.missing_secret(fx);
