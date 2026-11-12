@@ -100,6 +100,7 @@ mod source_ownership_tests;
 mod crash_image_prepare_tests;
 mod crash_image_end_tests;
 mod crash_image_pair_tests;
+mod crash_image_document_missing_tests;
 mod crash_image_retry_tests;
 mod crash_image_revoked_tests;
 mod crash_image_group_tests;

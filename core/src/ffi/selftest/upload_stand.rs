@@ -69,17 +69,19 @@ pub(super) struct Call {
     pub(super) pair: (String, Option<i64>),
     pub(super) variables: Value,
     pub(super) purpose: NetworkPurpose,
+    pub(super) full: bool,
 }
 
 pub(super) struct Script {
     contract: Mutex<Contract<Answer>>,
+    forgotten: AtomicBool,
     calls: Mutex<Vec<Call>>,
     wires: Mutex<Vec<(crate::transport::Author, u64, u32)>>,
 }
 
 impl Default for Script {
     fn default() -> Self {
-        Script { contract: Mutex::new(Contract::adopting()), calls: Mutex::default(), wires: Mutex::default() }
+        Script { contract: Mutex::new(Contract::adopting()), forgotten: AtomicBool::new(false), calls: Mutex::default(), wires: Mutex::default() }
     }
 }
 
@@ -112,8 +114,16 @@ impl Script {
     pub(super) fn operation_pairs(&self, operation: &str) -> Vec<(String, Option<i64>)> { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation).map(|call| call.pair.clone()).collect() }
     pub(super) fn variables(&self, operation: &str) -> Vec<Value> { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation).map(|call| call.variables.clone()).collect() }
     pub(super) fn purposes(&self, operation: &str) -> Vec<NetworkPurpose> { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation).map(|call| call.purpose).collect() }
+    /// The server registry loses every hash and registers none from now on: only a full document registers again.
+    pub(super) fn forget_documents(&self) {
+        self.forgotten.store(true, Ordering::SeqCst);
+        self.contract.lock().unwrap().forget();
+    }
+    /// For each send of the operation: does it carry the full document.
+    pub(super) fn full_pairs(&self, operation: &str) -> Vec<bool> { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation).map(|call| call.full).collect() }
     /// The documents the app declared: a real server knows them, an undeclared document gets `PERSISTED_QUERY_NOT_FOUND`.
     pub(super) fn register_documents(&self, named: &[(&str, &str)]) {
+        if self.forgotten.load(Ordering::SeqCst) { return }
         let mut contract = self.contract.lock().unwrap();
         for (_, document) in named { contract.register(&document_hash(document)); }
     }
@@ -131,7 +141,7 @@ impl FakeHttp for ScriptedHttp {
     async fn post(&self, path: String, body: String, purpose: NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         let Some(operation) = request["body"]["operationName"].as_str().map(str::to_string) else { return self.session.post(path, body, purpose).await };
-        self.script.calls.lock().unwrap().push(Call { operation: operation.clone(), pair: (request["requestId"].as_str().unwrap_or_default().to_string(), request["sequence"].as_i64()), variables: request["body"]["variables"].clone(), purpose });
+        self.script.calls.lock().unwrap().push(Call { operation: operation.clone(), pair: (request["requestId"].as_str().unwrap_or_default().to_string(), request["sequence"].as_i64()), variables: request["body"]["variables"].clone(), purpose, full: request["body"]["query"].is_string() });
         let contract_request = Request::from_wire("upload", &request);
         let admission = self.script.contract.lock().unwrap().admit(&contract_request);
         let mut answer = match admission {
