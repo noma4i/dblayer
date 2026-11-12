@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::store::ddl::{fts_name, table_name};
-use crate::identity::{permanent_row_flag, ModelKey, ListKey};
+use crate::identity::{id_order_sql, permanent_row_flag, ModelKey, ListKey};
 use crate::schema::ModelSpec;
 use crate::value::SortDirection;
 
@@ -194,7 +194,7 @@ fn sort_terms(query: &Query, model: &ModelSpec) -> Result<Vec<SortTerm>, QueryEr
     }
     let mut terms = Vec::new();
     for order in &query.order {
-        let column = column_sql(model, &order.field)?;
+        let column = if order.field == "id" { format!("({})", id_order_sql("r.id")) } else { column_sql(model, &order.field)? };
         let flag = |expression: String| SortTerm { clause: expression.clone(), expression, descending: false };
         let value = |suffix: &str, descending: bool| SortTerm { clause: format!("{column} {suffix}"), expression: column.clone(), descending };
         match order.direction {
@@ -211,14 +211,14 @@ fn order_clause(query: &Query, model: &ModelSpec) -> Result<String, QueryError> 
     if query.order.is_empty() {
         return Ok(match (query.scope.is_some(), searching(query)) {
             (true, _) => " ORDER BY m.order_key, m.row_id".to_string(),
-            (false, true) => format!(" ORDER BY q.match_rank, {}, r.id", permanent_row_flag("r.id")),
+            (false, true) => format!(" ORDER BY q.match_rank, {}, ({})", permanent_row_flag("r.id"), id_order_sql("r.id")),
             (false, false) => String::new(),
         });
     }
     let mut parts: Vec<String> = sort_terms(query, model)?.into_iter().map(|term| term.clause).collect();
     if !query.order.iter().any(|order| order.field == "id") {
         parts.push(permanent_row_flag("r.id"));
-        parts.push("r.id".to_string());
+        parts.push(format!("({})", id_order_sql("r.id")));
     }
     Ok(format!(" ORDER BY {}", parts.join(", ")))
 }

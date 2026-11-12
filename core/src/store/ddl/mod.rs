@@ -150,12 +150,13 @@ pub fn create_index_statements(model: &ModelSpec) -> Vec<String> {
                         crate::value::SortDirection::DescNullsFirst => fields.push((format!("{name} IS NOT NULL"), false)),
                         _ => {}
                     }
+                    let name = if name == "\"id\"" { id_order_term() } else { name };
                     fields.push((name, matches!(field.direction, crate::value::SortDirection::Desc | crate::value::SortDirection::DescNullsFirst)));
                 }
             }
-            if !order.is_empty() && !fields.iter().any(|(name, _)| name == "\"id\"") {
+            if !order.is_empty() && !fields.iter().any(|(name, _)| name == "\"id\"" || *name == id_order_term()) {
                 fields.push((format!("({})", crate::identity::permanent_row_flag(&sql_ident("id"))), false));
-                fields.push((sql_ident("id"), false));
+                fields.push((id_order_term(), false));
             }
         }
         if !fields.is_empty() { indexes.push(fields); }
@@ -169,10 +170,14 @@ pub fn create_index_statements(model: &ModelSpec) -> Vec<String> {
         }).collect()
 }
 
+fn id_order_term() -> String {
+    format!("({})", crate::identity::id_order_sql(&sql_ident("id")))
+}
+
 pub(crate) fn newer_order(association: &AssociationSpec) -> Vec<(String, bool)> {
     std::iter::once((format!("({})", crate::identity::permanent_row_flag(&sql_ident("id"))), false))
         .chain(association.newer.iter().map(|newer| (sql_ident(&column_name(&newer.child)), true)))
-        .chain(std::iter::once((format!("({})", crate::identity::id_order_sql(&sql_ident("id"))), true)))
+        .chain(std::iter::once((id_order_term(), true)))
         .collect()
 }
 
