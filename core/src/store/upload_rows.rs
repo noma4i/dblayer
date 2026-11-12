@@ -151,7 +151,7 @@ impl Store {
         let copying = raw.size == 0 && raw.source.is_some();
         let seq: u64 = unsigned(raw.seq, "seq")?;
         let transfer_id: u64 = unsigned(raw.transfer_id, "transfer_id")?;
-        let file_present = if copying { raw.source.as_ref().is_some_and(|source| std::path::Path::new(source).exists()) } else if awaiting_source { false } else { self.file_present(transfer_id, place)? };
+        let file_present = if copying { true } else if awaiting_source { false } else { self.file_present(transfer_id, place)? };
         Ok(StoredTransfer {
             transfer_id,
             key,

@@ -109,7 +109,7 @@ impl TransferState {
             return self.begin_failure(now, id, "missing_file".into(), false, fx);
         }
         if row.copying {
-            return self.restore_copy(now, id, &row, fx);
+            return self.restore_copy(id, fx);
         }
         if row.completed {
             if let Some(saved) = outcomes.get(&id).and_then(|cycles| cycles.get(&row.cycle_id.max(1))) {
@@ -144,19 +144,9 @@ impl TransferState {
         self.schedule_expire(fx);
     }
 
-    fn restore_copy(&mut self, now: crate::runtime::Time, id: TransferId, row: &StoredTransfer, fx: &mut Fx) {
-        if !row.file_present {
-            return self.begin_failure(now, id, "missing_file".into(), false, fx);
-        }
-        let attempt_id = self.attempt();
-        let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        transfer.stage = TransferStage::Copying;
-        transfer.attempt_id = attempt_id;
-        let Some(source) = transfer.source.clone() else { return };
-        let effect = TransferEffect::Copy { transfer_id: id, attempt_id, key: transfer.key.clone(), source, staged: false };
-        self.show(id, Shown::Copying, fx);
-        run(fx, effect);
-        self.rounds_needed(vec![id], fx);
+    fn restore_copy(&mut self, id: TransferId, fx: &mut Fx) {
+        self.remove_with(id, Removal::CopyFailed { error: "unaccepted".into() }, fx);
+        self.store(&[id], StoreKind::Removed, fx);
     }
 
     fn restore_completed(&mut self, now: crate::runtime::Time, id: TransferId, row: &StoredTransfer, saved: Option<&OutboxOutcome>, fx: &mut Fx) {

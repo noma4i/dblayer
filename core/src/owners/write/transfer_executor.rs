@@ -282,14 +282,11 @@ impl TransferExecutor {
         if let Some(preparer) = self.preparer.get() { preparer.cancel(attempt_id); }
     }
 
-    /// The copy of the library when it exists: the original file may be gone after the call of `upload`.
+    /// The copy of the library: the file of the caller is read only during the call that brought it.
     fn local(&self, transfer_id: TransferId, source: Source) -> Source {
         let id = file_id(transfer_id);
-        let copy = self.files.path(&id).filter(|path| path.exists()).or_else(|| Some(self.files.cache_target(&id, "source")).filter(|path| path.exists()));
-        match copy {
-            Some(path) => Source { path: path.to_string_lossy().into_owned(), ..source },
-            None => source,
-        }
+        let path = self.files.path(&id).filter(|path| path.exists()).unwrap_or_else(|| self.files.cache_target(&id, "source"));
+        Source { path: path.to_string_lossy().into_owned(), ..source }
     }
 
     fn link(&self, stamp: EpochStamp) -> Option<Link> {
