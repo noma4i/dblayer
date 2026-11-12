@@ -136,29 +136,6 @@ fn xfer_restored() {
 }
 
 #[test]
-fn xfer_restoring_register() {
-    let mut twin = Twin::bare(1);
-    let out = twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
-    assert!(Twin::quiet(&out), "{out:?}");
-    twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
-    assert_eq!(twin.stage(1), TransferStage::Ready, "the declaration of the Restoring phase counts");
-}
-
-/// xfer_calls_held_while_restoring: a call that arrives before RestoreReady is held and replayed on RestoreReady against the row the transfer was classified into.
-#[test]
-fn xfer_calls_held_while_restoring() {
-    let mut twin = Twin::bare(1);
-    twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
-    let reply = twin.reply();
-    let held = twin.post(TransferInput::Cancel { key: KEY.into(), reply });
-    assert!(Twin::quiet(&held), "a call is held during Restoring: {held:?}");
-    let restored = twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
-    assert!(restored.removed().is_empty(), "the held call waits for RestoreReady, not classification: {restored:?}");
-    let ready = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
-    assert_eq!(ready.removed(), vec![KEY.to_string()], "on RestoreReady the held cancel replays against the classified transfer");
-}
-
-#[test]
 fn xfer_prop_online_before_declaration() {
     #[derive(Clone, Copy, Debug, PartialEq)]
     enum Event { Online, Offline, Restored, RestoreReady, Register }
@@ -181,17 +158,6 @@ fn xfer_prop_online_before_declaration() {
         steps += twin.commit().steps().len();
         assert_eq!(steps, 1, "{order:?}: the saved step of the restored transfer goes out once");
     }
-}
-
-#[test]
-fn xfer_restore_ready() {
-    let (mut twin, _) = Twin::opened(vec![partly(1, KEY), partly(2, OTHER)], Default::default());
-    twin.online(true);
-    let out = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
-    assert_eq!(out.steps().len(), 0);
-    assert_eq!(twin.stage(1), TransferStage::PersistingAttempt);
-    assert_eq!(twin.stage(2), TransferStage::Ready);
-    assert_eq!(twin.commit().steps().len(), 1);
 }
 
 #[test]
@@ -398,8 +364,8 @@ fn xfer_restore_ready_other() {
 
 #[test]
 fn xfer_register_rechecks_waiting() {
-    let (mut twin, _) = undeclared(vec![partly(1, KEY)]);
-    assert_eq!(twin.stage(1), TransferStage::WaitingDeclaration);
+    let (mut twin, opened) = undeclared(vec![partly(1, KEY)]);
+    assert_eq!((twin.stage(1), opened.shows().len(), opened.writes(), opened.copies(), opened.classified()), (TransferStage::WaitingDeclaration, 0, 0, 0, 1));
     let out = twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
     assert_eq!((twin.stage(1), out.shows(), out.round_needed()), (TransferStage::Ready, vec![Shown::Queued], vec![vec![1]]), "the row is classified again, only this one");
 }
@@ -447,13 +413,6 @@ fn xfer_open_restore_failed() {
 }
 
 #[test]
-fn xfer_open_waiting_declaration() {
-    let (twin, out) = undeclared(vec![partly(1, KEY)]);
-    assert_eq!((twin.stage(1), out.shows().len(), out.writes(), out.copies()), (TransferStage::WaitingDeclaration, 0, 0, 0));
-    assert_eq!(out.classified(), 1);
-}
-
-#[test]
 fn xfer_open_copying() {
     let mut found = row(1, KEY);
     found.copying = true;
@@ -464,22 +423,22 @@ fn xfer_open_copying() {
 }
 
 #[test]
-fn xfer_open_ready() {
-    let (mut twin, out) = Twin::opened(vec![partly(1, KEY)], Default::default());
-    assert_eq!((twin.stage(1), twin.next_step(1), out.shows(), out.round_needed(), out.timers), (TransferStage::Ready, NextStep::Part(2), vec![Shown::Queued], vec![vec![1]], 1));
-    twin.online(true);
-    let out = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
-    assert!(out.steps().is_empty());
-    assert_eq!(twin.commit().steps().iter().map(|step| step.0).collect::<Vec<_>>(), vec![Some(2)]);
-}
-
-#[test]
-fn xfer_open_pending_step() {
-    let (mut twin, out) = Twin::opened(vec![row(1, KEY)], Default::default());
-    assert_eq!((twin.stage(1), twin.next_step(1), out.shows(), out.round_needed(), out.steps().len()), (TransferStage::Ready, NextStep::Part(1), vec![Shown::Queued], vec![vec![1]], 0), "the opening asks for no step: the step of the saved pair runs once, after the round");
-    twin.online(true);
-    assert!(twin.post(TransferInput::RestoreReady { epoch: EPOCH }).steps().is_empty());
-    assert_eq!(twin.commit().steps().iter().map(|step| step.0).collect::<Vec<_>>(), vec![Some(1)], "one step request, which carries the owner of its saved pair");
+fn xfer_open_restored_row_waits_for_the_round_then_runs_its_next_step() {
+    let mut full = row(1, KEY);
+    full.confirmed_parts = 2;
+    for (found, next, shown, part) in [
+        (partly(1, KEY), NextStep::Part(2), Shown::Queued, Some(2)),
+        (row(1, KEY), NextStep::Part(1), Shown::Queued, Some(1)),
+        (full, NextStep::Complete, Shown::Uploading { progress: 100 }, None),
+    ] {
+        let (mut twin, out) = Twin::opened(vec![found], Default::default());
+        assert_eq!((twin.stage(1), twin.next_step(1), out.shows(), out.round_needed(), out.steps().len()), (TransferStage::Ready, next, vec![shown], vec![vec![1]], 0), "{part:?}");
+        twin.online(true);
+        let out = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+        assert!(out.steps().is_empty() && out.completes() == 0, "{part:?}");
+        let out = twin.commit();
+        assert_eq!((out.steps().iter().map(|step| step.0).collect::<Vec<_>>(), out.completes()), (part.map(Some).into_iter().collect::<Vec<_>>(), usize::from(part.is_none())), "{part:?}");
+    }
 }
 
 #[test]
@@ -494,17 +453,6 @@ fn xfer_open_pending_step_session_drives() {
     let again = twin.online(true);
     let repeated = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
     assert_eq!((again.steps().len(), repeated.steps().len(), twin.stage(1)), (0, 0, TransferStage::Ready), "no second request while the held pair is outstanding");
-}
-
-#[test]
-fn xfer_open_completing() {
-    let mut found = row(1, KEY);
-    found.confirmed_parts = 2;
-    let (mut twin, out) = Twin::opened(vec![found], Default::default());
-    assert_eq!((twin.stage(1), twin.next_step(1), out.shows(), out.round_needed()), (TransferStage::Ready, NextStep::Complete, vec![Shown::Uploading { progress: 100 }], vec![vec![1]]));
-    twin.online(true);
-    assert_eq!(twin.post(TransferInput::RestoreReady { epoch: EPOCH }).completes(), 0);
-    assert_eq!(twin.commit().completes(), 1);
 }
 
 #[test]
@@ -574,7 +522,8 @@ fn xfer_calls_held_cancel_wins() {
     let reply = twin.reply();
     let held = twin.post(TransferInput::Cancel { key: KEY.into(), reply });
     assert!(Twin::quiet(&held), "a call during Restoring is held: {held:?}");
-    twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
+    let restored = twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
+    assert!(restored.removed().is_empty(), "the held call waits for RestoreReady, not classification: {restored:?}");
     twin.online(true);
     let out = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
     assert_eq!(
