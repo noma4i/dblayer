@@ -2,7 +2,6 @@ use super::fixtures::*;
 use super::*;
 
 use crate::identity::ListKey;
-use crate::schema::PageDirection;
 
 #[test]
 fn win_store_landed_at_uses_response_time() {

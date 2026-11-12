@@ -38,15 +38,6 @@ fn names(connection: &Connection, kind: &str) -> BTreeSet<String> {
     statement.query_map([kind], |row| row.get::<_, String>(0)).unwrap().map(Result::unwrap).collect()
 }
 
-fn columns(connection: &Connection, table: &str) -> BTreeMap<String, (String, bool)> {
-    let mut statement = connection.prepare(&format!("pragma table_info({table})")).unwrap();
-    statement
-        .query_map([], |row| Ok((row.get::<_, String>(1)?, (row.get::<_, String>(2)?, row.get::<_, i64>(3)? == 1))))
-        .unwrap()
-        .map(Result::unwrap)
-        .collect()
-}
-
 #[test]
 fn column_and_table_names_follow_the_spec() {
     assert_eq!(column_name("chatId"), "chat_id");

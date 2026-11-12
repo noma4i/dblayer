@@ -1,7 +1,7 @@
 use crate::check::model::Owner;
 
 use super::sets_reference_tests::red_of;
-use super::snapshot_world_tests::{SnapshotOwner, CASES, LANDS};
+use super::snapshot_world_tests::{SnapshotOwner, CASES};
 
 const SEEDS: u64 = 3;
 

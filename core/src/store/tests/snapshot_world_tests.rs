@@ -19,7 +19,7 @@ use crate::store::Store;
 
 use super::data_sets_tests::deliver;
 
-pub(super) const LANDS: &str = "P-DATA-104 lands";
+const LANDS: &str = "P-DATA-104 lands";
 
 #[derive(Clone, Copy)]
 pub(super) struct Case {
