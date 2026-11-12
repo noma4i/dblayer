@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A window at its page limit reports no more pages and ends `loadMore`.
+
 ## 6.28.0 - 2026-11-13
 
 ### Changed

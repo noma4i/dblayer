@@ -585,7 +585,7 @@ val audio = Message.audioSince(chatId, afterSequence = 120)
 | `paginate size: 20, direction: :forward` | Relay-style pages of 20 | whole response |
 | `paginate size: 20, direction: :backward` | pages backward | forward |
 | `paginate size: 20, direction: :forward, cursor: { parameter: :afterSequence, from: "lastSequenceNumber", type: :int }` | the server pages by its own variable: the next page sends `afterSequence`, taken from `lastSequenceNumber` of the connection. `parameter`, `from` and `type` are all required | Relay `first`/`after` |
-| `paginate ..., max_pages: 5` | page limit per load | none |
+| `paginate ..., max_pages: 5` | page limit per load, the list ends there | none |
 | `total from: "node.membersCount"` | `total` of the list state comes from this field of the response, after `paginate` | `totalCount` of the connection |
 | `freshness expires_in: 5.minutes` | how long a response counts as fresh | `5.minutes` |
 | `freshness expires_in: 5.minutes, empty_in: 30.seconds` | shorter freshness for an empty response | same |

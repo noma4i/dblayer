@@ -147,7 +147,7 @@ val secondary = Projected(scope.stream(Chat.list("SECONDARY")), Chat, screenScop
 | `phase` | `idle`, `loading`, `loaded` or `failed`. `failed` shows only while the stream has no rows. |
 | `error` | The typed `DbError` (`DbException` on Kotlin) of the last load, `nil` when it succeeded. |
 | `loaded` | The revision of the commit of the last load, to compare with the `revision` of a value. It is not a point in time. It is empty before the first load, and 0 for a fresh saved window that has not loaded since `open`. |
-| `hasMore` | The relation has a next page. |
+| `hasMore` | The relation has a next page that can be loaded. At `max_pages` it is false. |
 | `settled` | The first load of the stream ended with an outcome. |
 | `total` | The server total of the window, `nil` when the server sent none. |
 

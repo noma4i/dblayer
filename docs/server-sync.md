@@ -523,7 +523,7 @@ Moment.feed.refresh()            // pull to refresh, replaces in one commit
 - Loads and mutations use the [retry policy](#retries). Terminal refusals return immediately.
 - A response older than the data already stored never overwrites it.
 - A row that another response stored while this one was in flight keeps its stored data and still joins the list this response names.
-- `paginate max_pages:` limits how many pages `loadMore()` fetches from the network for one list. The count is stored with the cursor and starts again at 1 when the first page is fetched again.
+- `paginate max_pages:` limits how many pages `loadMore()` fetches from the network for one list. At the limit the list ends: `hasMore` is false and `loadMore()` answers no more pages. Only loading all pages fails. The count is stored with the cursor and starts again at 1 when the first page is fetched again.
 
 ## Refresh merges, it does not replace
 
