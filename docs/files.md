@@ -60,17 +60,41 @@ receipt.optimisticValue?.supplySource("upload", UploadSource(path, values = valu
 
 A restart before supply marks the transfer `missing_file`. Cancellation or account reset removes its row. A pending batch waits for all remaining sources before its final mutation.
 
-### Wire sources
+### Source preparation
 
-The public `UploadRequest` and `UploadItem` keep their form. A direct user of the bridge passes `WireUploadRequest` and `WireUploadItem`, which carry a `WireSource`: `file` with the path, name and mime type, or `pending` for a source that is supplied later.
+A file source with `prepare` settings is recompressed by the library before its transfer. The app passes the settings only. The upload shows `preparing` with `progress`, then it sends the prepared file. A restart during the preparation starts it again from the source.
 
 ```swift
-let request = WireUploadRequest(source: .file(path: path, name: "a.png", mime: "image/png"), variablesJson: "{}")
+let clip = UploadRequest(path: path, prepare: .video())
+let edit = PhotoEdit(maxSize: PixelSize(width: 1080, height: 1920), enlarge: false, crop: nil, outputSize: nil, mirror: false, rotationDegrees: 0)
+let photo = UploadRequest(path: path, prepare: .image(edit: edit, quality: 0.8))
+```
+
+```kotlin
+val clip = UploadRequest(path, prepare = Prepare.video())
+val edit = PhotoEdit(PixelSize(1080u, 1920u), enlarge = false, crop = null, outputSize = null, mirror = false, rotationDegrees = 0u)
+val photo = UploadRequest(path, prepare = Prepare.image(edit, quality = 0.8))
+```
+
+- `Prepare.video(limits, mirror, onCannotDecode)`: without `limits` the library uses its default limits. A video above the limits, or with `mirror`, is encoded again. A video inside the limits that carries private metadata of the source is written again without it and without a new encode. Any other video goes as it is.
+- `Prepare.image(edit, quality, format)`: the image is always written again, upright and without the metadata of the source. `format` is JPEG or PNG.
+- A video that the device cannot decode fails with the error kind `prepare_failed:device_cannot_decode`. With `onCannotDecode` set to `uploadSource` the source goes as it is.
+- Any other failure of the preparation gives the error kind `prepare_failed:failed`. `retry(action)` prepares the source again.
+- One preparation runs at a time, in the order of the operations. It does not need the network.
+- `cancelUpload(action)` stops a running preparation and removes its file.
+- An `UploadSource` of a [deferred source](#deferred-source) takes `prepare` too.
+
+### Wire sources
+
+The public `UploadRequest` and `UploadItem` keep their form. A direct user of the bridge passes `WireUploadRequest` and `WireUploadItem`, which carry a `WireSource`: `file` with the path, name, mime type and optional `prepare` settings, or `pending` for a source that is supplied later.
+
+```swift
+let request = WireUploadRequest(source: .file(path: path, name: "a.png", mime: "image/png", prepare: nil), variablesJson: "{}")
 let later = WireUploadRequest(source: .pending, variablesJson: "{}")
 ```
 
 ```kotlin
-val request = WireUploadRequest(WireSource.File(path, "a.png", "image/png"), "{}")
+val request = WireUploadRequest(WireSource.File(path, "a.png", "image/png", null), "{}")
 val later = WireUploadRequest(WireSource.Pending, "{}")
 ```
 
@@ -317,7 +341,7 @@ The final content mutation does not hold a file permit.
 
 An upload of a local record starts as `waiting` with `totalBytes` set from the file size and `sentBytes` and `progress` at zero. When the `create` is confirmed the real id replaces the local id in the upload variables and the status moves on through `preparing` or `queued` to `uploading`, `sending` and the end. If the `create` is refused the upload is discarded with the record. Every change of status, stage, bytes or reason reaches observers as a new row.
 
-A finished upload closes its operation and removes its entry from `uploads`, except that an action with a declared `processing` keeps an entry with status `done` and the `processing` progress while the server works on the file. The record becomes `synced` when no other operation remains open. Progress advances when a part is confirmed and never decreases within a phase. A restarted phase begins with its confirmed parts.
+A finished upload closes its operation and removes its entry from `uploads`, except that an action with a declared `processing` keeps an entry with status `done` and the `processing` progress while the server works on the file. The record becomes `synced` when no other operation remains open. While `preparing`, `progress` is the share of the preparation. While `uploading`, it counts the bytes of the confirmed parts and the bytes in flight. A retried part, a lost connection and a restart keep the shown value, and it grows again when the real share passes it. It stays below 1 until the server confirmed the whole file.
 
 ### Rules
 

@@ -32,6 +32,7 @@ Every read is a stream of an `AccountScope` shown through `Projected`. See [live
 - Give each caller of a shared load its own `beginLoad()` request and cancel it when the caller leaves.
 - `Query.read()` and `Query.readRow(id)` read storage once. `Query.cachedRow(id)` reads what the core already holds.
 - The state of an upload is `uploads[action]` on the record and `scope.uploadStatus(row, action)`. See [files](files.md#state).
+- `progress` of an upload is a share from 0 to 1, not a percent.
 
 ## 5. Writes
 
@@ -39,8 +40,9 @@ Every read is a stream of an `AccountScope` shown through `Projected`. See [live
 - `OperationFailure` takes `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message`, `extensions` and `responseLimit`, in this order.
 - `FileInfo.size` is `UInt64` in Swift and `ULong` in Kotlin.
 - `RetryProgress` is read by pull: `RetryProgress.changes` in Swift and `RetryProgress.flow` in Kotlin. See [server sync](server-sync.md#retries).
-- `upload` on a missing row fails with `NotFound`. See [files](files.md#rules-1).
+- `upload` on a row that does not exist is accepted, and the answer of the final mutation writes the row. See [files](files.md#upload-to-a-row-that-does-not-exist).
 - Send a file with `upload: UploadCommand(action:, request:)` on a send, or call `scope.upload(row, action:, request)` for an existing record. The `.dbl` files declare the upload steps once per project in `uploads do ... end`.
+- Pass `prepare` settings in the source to recompress a video or an image, and remove the recompression of the app before an upload. See [files](files.md#source-preparation).
 
 ## 6. Models in `.dbl`
 

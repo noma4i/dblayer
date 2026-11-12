@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- Source preparation: `prepare` settings recompress a video or an image before its upload.
+- Error kinds `prepare_failed:failed` and `prepare_failed:device_cannot_decode` of an upload.
+
 ### Changed
 
 - Upload `progress` is a share from 0 to 1 that never decreases.
