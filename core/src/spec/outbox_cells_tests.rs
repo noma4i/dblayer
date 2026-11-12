@@ -343,6 +343,23 @@ fn out_landing_retry() {
     assert_eq!(twin.stage(id), Some(St::Landing));
     assert!(matches!(answers(&effects, RETRY_REPLY).as_slice(), [OutboxAnswer::Receipt(receipt)] if receipt.op_id == id));
     assert_eq!(effects.len(), 1);
+    for invalid_first in [false, true] {
+        let mut twin = Twin::new();
+        let id = sending(&mut twin, Policy::Rollback, false);
+        twin.waiter(id);
+        twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+        if invalid_first { refuse(&mut twin, id, RejectReason::Invalid("bad row".into())); }
+        let retried = retry(&mut twin);
+        assert_eq!((twin.stage(id), sends(&retried)), (Some(St::Landing), 0), "invalid_first={invalid_first}: {retried:?}");
+        for _ in 0..3 {
+            let refused = refuse(&mut twin, id, RejectReason::Storage("disk".into()));
+            let again = tick(&mut twin, id);
+            assert_eq!((sends(&refused), sends(&again), twin.stage(id)), (0, 0, Some(St::Landing)));
+            assert!(retry(&mut twin).iter().all(|effect| !matches!(effect, OutboxEffect::Send { .. })));
+        }
+        let done = twin.committed(id);
+        assert!(answers(&done, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. }))), "{done:?}");
+    }
 }
 
 #[test]
@@ -978,10 +995,12 @@ fn out_landing_committed_stale() {
 #[test]
 fn out_rollback_invalid() {
     let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
+    let id = failed(&mut twin);
+    let started = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD_REPLY });
+    assert_eq!((twin.stage(id), kinds(&started)), (Some(St::RollingBack(RWhy::Discarded)), vec![CommitKind::Rollback]));
     let effects = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
+    assert_eq!(answers(&effects, DISCARD_REPLY), vec![OutboxAnswer::Err(Fault::Invalid)], "the waiting Discard gets Err(Invalid)");
     assert!(twin.store_text.contains(&format!("MarkError {{ op_id: {id}, error: Some(\"Internal(Invalid): bad row\")")), "{}", twin.store_text);
 }
 

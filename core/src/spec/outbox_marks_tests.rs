@@ -293,21 +293,11 @@ fn out_mark_failed_rejected_no_outcome() {
     assert!(matches!(transfer_outcomes(&done).as_slice(), [OutboxOutcome::Failed { .. }]), "Failed reaches the waiter and Transfer only after Committed: {done:?}");
 }
 
-/// P-OUT-60: a data error of an operation batch ends the operation with the `invalid` mark, the batch is not written again and no timer is set; a storage failure is retried by the timer.
+/// P-OUT-60: a data error of an operation batch without a server outcome ends the operation with the `invalid` mark (a landing and a rollback by a server rejection keep the server outcome: out_landing_invalid, out_rollback_invalid_server_outcome), the batch is not written again and no timer is set; a storage failure is retried by the timer.
 #[test]
 fn out_invalid_plan_is_not_retried() {
-    let reach: [(&str, CommitKind, fn(&mut Twin) -> OpId); 3] = [
+    let reach: [(&str, CommitKind, fn(&mut Twin) -> OpId); 1] = [
         ("attempt", CommitKind::Attempt, |twin| persisting(twin, false)),
-        ("landing", CommitKind::Land, |twin| {
-            let id = sending(twin, Policy::Rollback, false);
-            twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-            id
-        }),
-        ("rollback", CommitKind::Rollback, |twin| {
-            let id = sending(twin, Policy::Rollback, false);
-            twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
-            id
-        }),
     ];
     for (name, kind, arrive) in reach {
         let mut twin = Twin::new();
@@ -325,4 +315,24 @@ fn out_invalid_plan_is_not_retried() {
         let again = tick(&mut twin, id);
         assert_eq!(kinds(&again), vec![kind], "{name}: the same batch is written again");
     }
+    for (name, kind, arrive) in [("landing", CommitKind::Land, landing_arrive as fn(&mut Twin) -> OpId), ("rollback", CommitKind::Rollback, rollback_arrive)] {
+        let mut twin = Twin::new();
+        let id = arrive(&mut twin);
+        let storage = refuse(&mut twin, id, RejectReason::Storage("disk".into()));
+        assert_eq!(timers(&storage), 1, "{name}: a storage failure sets the retry timer");
+        let again = tick(&mut twin, id);
+        assert_eq!(kinds(&again), vec![kind], "{name}: the same batch is written again");
+    }
+}
+
+fn landing_arrive(twin: &mut Twin) -> OpId {
+    let id = sending(twin, Policy::Rollback, false);
+    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    id
+}
+
+fn rollback_arrive(twin: &mut Twin) -> OpId {
+    let id = sending(twin, Policy::Rollback, false);
+    twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
+    id
 }
