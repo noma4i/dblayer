@@ -227,3 +227,31 @@ impl Store {
         self.write_batch(&batch, self.files(), self.pointer_guards(), min_pin_revision)
     }
 }
+
+pub fn posts_spec() -> ModelSpec {
+    use crate::schema::{Coverage, RelationSpec, RemoteShape, RemoteSpec};
+    let mut spec = ModelSpec::new(
+        "posts",
+        vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional(), FieldSpec::scalar("groupId", ScalarKind::Str).nullable().indexed()],
+    );
+    let window = |name: &str, events: bool, columns: bool| {
+        let mut relation = RelationSpec::global(name);
+        relation.joins_events = events;
+        if columns {
+            relation.is_global = false;
+            relation.by_columns = vec!["groupId".into()];
+        }
+        relation.remote = Some(RemoteSpec {
+            operation: "Feed".into(), shape: RemoteShape::List { coverage: Coverage::Complete },
+            stale_time: "5.minutes".into(), empty_stale_time: None, selects_page_info: false,
+            page_size: None, variables: Default::default(), root: None, total_from: None,
+        });
+        relation
+    };
+    spec.relations.extend([window("pager", false, false), window("evt", true, false), window("cols", true, true)]);
+    spec
+}
+
+pub fn snapshot_specs() -> Vec<ModelSpec> {
+    vec![chats_spec(), chat_messages_spec(), posts_spec()]
+}
