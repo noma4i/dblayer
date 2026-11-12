@@ -24,7 +24,7 @@ use crate::transport::{NetworkPurpose, PutFile, TransferIdentity};
 
 pub(super) const BLOB: &str = r#"{"data":{"blobCreate":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}"#;
 
-const STEPS: [(&str, &str); 6] = [
+pub(super) const STEPS: [(&str, &str); 6] = [
     ("CreateBlob", "mutation CreateBlob { createBlob { url headers signedId blobId } }"),
     ("InitMultipart", "mutation InitMultipart { initMultipart { key uploadId } }"),
     ("PresignParts", "mutation PresignParts { presignParts { parts { partNumber url } } }"),
@@ -253,6 +253,8 @@ pub(super) struct Stand {
     keep_moment: bool,
     preparer: Option<Arc<dyn Preparer>>,
     signed_out: bool,
+    /// The registration of the app is complete: the open checks the operations, as an app does.
+    pub(super) complete: AtomicBool,
 }
 
 impl Drop for Stand {
@@ -260,7 +262,7 @@ impl Drop for Stand {
 }
 
 impl Stand {
-    pub(super) fn new() -> Self { Self { rig: SessionRig::new(), script: Arc::default(), puts: Arc::default(), root: None, keep_moment: false, preparer: None, signed_out: false } }
+    pub(super) fn new() -> Self { Self { rig: SessionRig::new(), script: Arc::default(), puts: Arc::default(), root: None, keep_moment: false, preparer: None, signed_out: false, complete: AtomicBool::new(false) } }
 
     /// The open does not sign in: the test signs in itself.
     pub(super) fn signed_out(mut self) -> Self { self.signed_out = true; self }
@@ -308,7 +310,7 @@ impl Stand {
     pub(super) async fn open_ordered(&self, path: Option<&Path>, operations: &[(&str, &str)], clock: Option<Arc<TestClock>>, order: OpenOrder) -> Arc<Database> {
         let restored = self.signed_out || self.rig.credentials.inner.value().is_some();
         let models = self.models();
-        let ports = OpenPorts { partial_operations: true, transport: Some(self.puts.clone()), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(self.rig.credentials.clone()), http: Some(Arc::new(ScriptedHttp { script: self.script.clone(), session: ThroughServer(self.rig.server.clone()) })), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), preparer: self.preparer.clone(), ..Default::default() };
+        let ports = OpenPorts { partial_operations: !self.complete.load(Ordering::SeqCst), transport: Some(self.puts.clone()), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(self.rig.credentials.clone()), http: Some(Arc::new(ScriptedHttp { script: self.script.clone(), session: ThroughServer(self.rig.server.clone()) })), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), preparer: self.preparer.clone(), ..Default::default() };
         let config = Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None };
         let database = match clock {
             Some(clock) => Database::open_with_clock(config, crate::ffi::specs(models), ports, clock).await,
