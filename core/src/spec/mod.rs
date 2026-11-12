@@ -81,4 +81,5 @@ mod transfer_pending_tests;
 mod transfer_shown_tests;
 mod transfer_staged_tests;
 mod transfer_select_tests;
+mod transfer_replace_retry_tests;
 mod transfer_step_answer_tests;
