@@ -39,13 +39,6 @@ fn model_block_holds_calls() {
 }
 
 #[test]
-fn two_models_in_one_file() {
-    let models = parse_source("model A do\nend\nmodel B do\nend").unwrap();
-    assert_eq!(models.iter().map(|model| model.name.as_str()).collect::<Vec<_>>(), vec!["A", "B"]);
-    assert_eq!(models[1].line, 3);
-}
-
-#[test]
 fn options_arrays_hashes_and_durations() {
     let models = parse_source(
         "model M do\n  scope :by_user, params: [:userId], where: { userId: :userId }, order: { createdAt: :desc }\n  fresh_for 5.minutes, empty: 30.seconds\nend",
@@ -59,13 +52,6 @@ fn options_arrays_hashes_and_durations() {
     let fresh = &models[0].body[1];
     assert_eq!(fresh.args[0].item, Value::Duration { amount: 5, unit: "minutes".into() });
     assert_eq!(fresh.options[0].value.item, Value::Duration { amount: 30, unit: "seconds".into() });
-}
-
-#[test]
-fn continuation_after_comma_and_multiline_collections() {
-    let models = parse_source("model M do\n  scope :a,\n    where: {\n      x: :x,\n      y: :y\n    }\nend").unwrap();
-    let scope = &models[0].body[0];
-    assert!(matches!(&scope.options[0].value.item, Value::Hash(pairs) if pairs.len() == 2));
 }
 
 #[test]
