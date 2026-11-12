@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::crash_image_support::{copy_tree, drained, files_of, over_images, reopen, reopen_preparing, Capture};
+use super::crash_image_support::{copy_tree, drained, files_of, over_images, reopen, reopen_preparing, unaccepted, Capture};
 use super::rig_tests::bound;
 use super::upload_batch_shift_tests::{blob, items, OPERATIONS};
 use super::upload_prepare_tests::{probed_image, send, shrink, PREPARED, SOURCE};
@@ -12,9 +12,6 @@ const LANDED: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m77
 fn count(image: &Path, table: &str) -> i64 {
     rusqlite::Connection::open(image).unwrap().query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0)).unwrap()
 }
-
-/// A row of `sync_upload` that is still copying: the call that brought the path did not return.
-fn copying(image: &Path) -> bool { count(image, "sync_upload WHERE size = 0 AND source IS NOT NULL") > 0 }
 
 fn transfer_files(image: &Path) -> usize {
     std::fs::read_dir(files_of(image).join("transfers")).map_or(0, |entries| entries.count())
@@ -102,7 +99,7 @@ async fn source_unaccepted_copy_is_removed_at_the_open() {
         let results = over_images(&capture, &kept_files, |index, image: PathBuf| {
             let (secret, operations) = (secret.clone(), operations.clone());
             async move {
-                if !copying(&image) { return None; }
+                if !unaccepted(&image) { return None; }
                 let (fresh, reopened) = reopen(&image, &secret, &operations, |_| {}).await;
                 crate::test_wait::settled(&reopened, "opened", || true).await;
                 let state = (count(&image, "sync_upload"), count(&image, "op"), count(&image, table), transfer_files(&image), fresh.script.names().len());

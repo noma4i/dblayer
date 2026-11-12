@@ -1,4 +1,4 @@
-use super::crash_image_support::{copy_tree, drained, files_of, over_images, saved_work, Capture};
+use super::crash_image_support::{copy_tree, drained, files_of, over_images, saved_work, unaccepted, Capture};
 use super::rig_tests::bound;
 use super::upload_batch_shift_tests::{blob, items, OPERATIONS};
 use super::upload_stand::Stand;
@@ -36,6 +36,7 @@ async fn a_file_cut_at_any_commit_of_a_group_upload_reopens_with_the_group_finis
         let secret = secret.clone();
         async move {
             let (saved, _) = saved_work(&image);
+            let unaccepted = unaccepted(&image);
             let mut fresh = Stand::new();
             fresh.rig.credentials = std::sync::Arc::new(crate::ffi::tests::session_guards_tests::WatchedHeld::default());
             crate::ffi::CredentialStore::set(fresh.rig.credentials.as_ref(), secret.clone()).unwrap();
@@ -46,7 +47,7 @@ async fn a_file_cut_at_any_commit_of_a_group_upload_reopens_with_the_group_finis
             drained(&reopened).await;
             let whole = landed(&reopened);
             assert!(whole == 0 || whole == 3, "cut {index}: the batch lands whole or not at all: {whole}");
-            assert!(whole == 3 || saved == 0, "cut {index}: a saved batch is finished");
+            assert!(whole == 3 || saved == 0 || unaccepted, "cut {index}: a saved batch is finished");
             let pairs: std::collections::HashSet<_> = fresh.script.operation_pairs("CreateAssets").into_iter().map(|pair| pair.0).collect();
             assert!(pairs.len() <= 1, "cut {index}: the rows are created by one request: {pairs:?}");
             for key in 0..3 {

@@ -279,19 +279,6 @@ fn xfer_copy_failed() {
 }
 
 #[test]
-fn xfer_copy_failed_restored() {
-    let mut row = stored(1, KEY, 2);
-    row.copying = true;
-    let (mut twin, out) = Twin::opened(vec![row], Default::default());
-    assert_eq!((out.copies(), twin.stage(1)), (1, TransferStage::Copying));
-    let out = twin.copy_failed(1);
-    assert_eq!(twin.stage(1), TransferStage::PersistingFailure);
-    assert_eq!((out.kinds(), out.removed().len()), (vec![UploadKind::Failed], 0), "a restored transfer has no call that waits: it is failed, not removed");
-    twin.commit();
-    assert_eq!(twin.stage(1), TransferStage::Failed);
-}
-
-#[test]
 fn xfer_copy_cancel() {
     for cancel in [true, false] {
         let mut twin = Twin::new();

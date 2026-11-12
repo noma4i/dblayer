@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::crash_image_support::{copy_tree, drained, files_of, over_images, reopen_preparing, saved_work, Capture};
+use super::crash_image_support::{copy_tree, drained, files_of, over_images, reopen_preparing, saved_work, unaccepted, Capture};
 use super::rig_tests::bound;
 use super::upload_prepare_tests::{probed_image, send, shrink, upload_of, PREPARED, SOURCE};
 use crate::ffi::wire::WireUploadStatus;
@@ -48,6 +48,7 @@ async fn crash_image_prepare() {
         let secret = secret.clone();
         async move {
             let (saved, _) = saved_work(&image);
+            let unaccepted = unaccepted(&image);
             let fresh_preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[]);
             let (fresh, reopened) = reopen_preparing(&image, &secret, &operations, Some(fresh_preparer.clone() as Arc<dyn crate::ffi::Preparer>), |fresh| {
                 fresh.script.data("CreateBlob", BLOB);
@@ -58,7 +59,7 @@ async fn crash_image_prepare() {
             let pairs: std::collections::HashSet<_> = fresh.script.operation_pairs("CreateMoment").into_iter().map(|pair| pair.0).collect();
             assert!(pairs.len() <= 1, "cut {index}: the row is created by one request: {pairs:?}");
             let is_landed = landed(&reopened);
-            assert!(is_landed || saved == 0, "cut {index}: a saved upload is finished");
+            assert!(is_landed || saved == 0 || unaccepted, "cut {index}: a saved upload is finished");
             assert!(fresh.puts.bodies.lock().unwrap().iter().all(|body| body.as_slice() == PREPARED), "cut {index}: no byte of the source goes");
             assert!(fresh_preparer.runs().len() <= 1, "cut {index}: the step runs at most once");
             let runs = fresh_preparer.runs().len();

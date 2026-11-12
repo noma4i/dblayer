@@ -105,6 +105,12 @@ pub(super) fn saved_work(image: &Path) -> (i64, i64) {
     (count("op"), count("encrypted_answer"))
 }
 
+/// The image holds a transfer whose copy was not durable: the call that brought the path did not return, so the open removes the transfer (D-376).
+pub(super) fn unaccepted(image: &Path) -> bool {
+    let connection = rusqlite::Connection::open(image).unwrap();
+    connection.query_row("SELECT count(*) FROM sync_upload WHERE size = 0 AND source IS NOT NULL", [], |row| row.get::<_, i64>(0)).unwrap() > 0
+}
+
 /// The request id of the pair the image holds for its unanswered request.
 pub(super) fn saved_pair(image: &std::path::Path) -> Option<String> {
     let connection = rusqlite::Connection::open(image).unwrap();

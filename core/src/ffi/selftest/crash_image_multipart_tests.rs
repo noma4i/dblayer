@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use super::crash_image_support::{copy_tree, drained, files_of, over_images, reopen, saved_work, Capture};
+use super::crash_image_support::{copy_tree, drained, files_of, over_images, reopen, saved_work, unaccepted, Capture};
 use super::rig_tests::bound;
 use super::upload_stand::{clip, Stand, CREATE_MOMENT};
 use crate::owners::write::upload::MEBIBYTE;
@@ -51,11 +51,12 @@ async fn a_file_cut_at_any_commit_of_a_multipart_upload_reopens_with_the_upload_
         let secret = secret.clone();
         async move {
             let (saved, _) = saved_work(&image);
+            let unaccepted = unaccepted(&image);
             let confirmed = confirmed_parts(&image);
             let (fresh, reopened) = reopen(&image, &secret, &operations, script).await;
             if saved > 0 { drained(&reopened).await; } else { crate::test_wait::settled(&reopened, "opened", || true).await; }
             let landed = reopened.peek_row(reopened.session_epoch(), "Moment".into(), "m77".into()).unwrap().is_some();
-            assert!(landed || saved == 0, "cut {index}: a saved upload is finished");
+            assert!(landed || saved == 0 || unaccepted, "cut {index}: a saved upload is finished");
             let offsets: Vec<u64> = fresh.puts.seen.lock().unwrap().iter().map(|put| put.offset).collect();
             assert_eq!(offsets.iter().collect::<HashSet<_>>().len(), offsets.len(), "cut {index}: no part goes out twice: {offsets:?}");
             assert!(offsets.len() <= 3 - confirmed, "cut {index}: parts confirmed before the cut ({confirmed}) are not sent again: {offsets:?}");

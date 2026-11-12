@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use super::crash_image_support::{copy_tree, drained, files_of, over_images, reopen, saved_work, Capture};
+use super::crash_image_support::{copy_tree, drained, files_of, over_images, reopen, saved_work, unaccepted, Capture};
 use super::rig_tests::bound;
 use super::upload_stand::{clip, Stand, BLOB, CREATE_MOMENT};
 use crate::ffi::wire::WireUploadStatus;
@@ -62,6 +62,7 @@ async fn a_file_cut_at_any_commit_of_a_single_upload_finishes_it_once_or_keeps_i
             let (secret, temporary) = (secret.clone(), temporary.clone());
             async move {
                 let (saved, _) = saved_work(&image);
+                let unaccepted = unaccepted(&image);
                 let (fresh, reopened) = reopen(&image, &secret, &operations, |fresh| {
                     fresh.script.data("CreateBlob", BLOB);
                     fresh.script.data("CreateMoment", LANDED);
@@ -76,7 +77,7 @@ async fn a_file_cut_at_any_commit_of_a_single_upload_finishes_it_once_or_keeps_i
                 let pairs: std::collections::HashSet<_> = fresh.script.operation_pairs("CreateMoment").into_iter().map(|pair| pair.0).collect();
                 assert!(pairs.len() <= 1, "cut {index}: the row is created by one request: {pairs:?}");
                 let is_landed = landed(&reopened);
-                assert!(is_landed || saved == 0, "cut {index}: a saved upload is finished");
+                assert!(is_landed || saved == 0 || unaccepted, "cut {index}: a saved upload is finished");
                 if is_landed { assert_eq!(status(&reopened, "m77"), None, "cut {index}: the landed row has no upload left"); }
                 bound(reopened.close_database()).await.unwrap();
                 (is_landed, saved)
