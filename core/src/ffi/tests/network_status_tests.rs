@@ -284,3 +284,106 @@ fn net_prop_status_newest_wins() {
         assert!(poll_once(&mut slow_idle).is_pending() && poll_once(&mut fast_idle).is_pending(), "{target}: idle gives no frame");
     }));
 }
+
+struct Answering;
+
+#[async_trait::async_trait]
+impl super::FakeHttp for Answering {
+    async fn post(&self, _: String, body: String, _: crate::transport::NetworkPurpose) -> Result<super::EncryptedReply, super::DbError> {
+        let reply = crate::transport::encrypted::tests::bootstrap_tests::good_reply(&body);
+        Ok(super::EncryptedReply { status: reply.status, body: reply.body })
+    }
+}
+
+/// Reports one value when the bootstrap starts it, like the observer of the platform does.
+struct Reporting;
+
+impl super::PlatformObserver for Reporting {
+    fn start(&self, sink: Arc<OnlineSink>) { sink.set_online(true); }
+    fn stop(&self) {}
+}
+
+/// Requirement D-340: the value follows the platform with no database and no `serverConfig`. Observable: `current` and the frames. Assert: `None` and no frame before, then each value of the status input arrives once.
+#[test]
+fn net_status_follows_without_database() {
+    in_own_process(module_path!(), "net_status_follows_without_database", &["status"], |_| run(async {
+        let sink = OnlineSink::of_status();
+        let status = NetworkStatus::new();
+        assert_eq!(status.current(), None, "no value before the first input");
+        let reader = status.subscribe();
+        let mut first = reading!(&reader);
+        assert!(poll_once(&mut first).is_pending(), "no frame before the first input");
+        sink.set_online(false);
+        assert_eq!(within(first).await, Some(false), "the first value arrives without a database");
+        let mut next = reading!(&reader);
+        assert!(poll_once(&mut next).is_pending());
+        sink.set_online(true);
+        assert_eq!(within(next).await, Some(true), "the change arrives without a database");
+        assert_eq!(status.current(), Some(true));
+    }));
+}
+
+/// Requirement D-340: the value follows the platform after `serverConfig` ended and before `open`. Observable: `current` and the frames. Assert: after the fetch returned and before any database, a status value reaches the reader, and the open that follows neither moves it nor wakes the reader.
+#[test]
+fn net_status_follows_between_bootstrap_and_open() {
+    in_own_process(module_path!(), "net_status_follows_between_bootstrap_and_open", &["status"], |_| run(async {
+        let sink = OnlineSink::of_status();
+        let status = NetworkStatus::new();
+        let reader = status.subscribe();
+        let ports = super::FetchPorts { http: Arc::new(Answering), retries: None, observers: Some(Arc::new(Reporting)) };
+        within(super::fetch_server_config_with_clock(crate::transport::encrypted::tests::bootstrap_tests::configuration(), crate::transport::AppPlatform::Ios, "1.2".into(), None, ports, TestClock::new(1_800_000_000_000))).await.unwrap();
+        assert_eq!(within(reader.next()).await, Some(true), "the value of the fetch is the public value");
+        let mut held = reading!(&reader);
+        assert!(poll_once(&mut held).is_pending());
+        sink.set_online(false);
+        assert_eq!(within(held).await, Some(false), "a status value after the fetch and before the open");
+        let rig = Rig::new();
+        let database = open_database(&rig).await;
+        let mut after_open = reading!(&reader);
+        assert!(poll_once(&mut after_open).is_pending(), "the open woke the reader");
+        assert_eq!(status.current(), Some(false), "the open moved the value");
+        sink.set_online(true);
+        assert_eq!(within(after_open).await, Some(true), "the status input still reaches the reader after the open");
+        within(database.close_database()).await.unwrap();
+    }));
+}
+
+/// Requirement D-340: the value follows the platform after `close`. Observable: `current` and the frames. Assert: the status input after the close of the database reaches the reader, and the close itself neither moves the value nor wakes the reader.
+#[test]
+fn net_status_follows_after_close() {
+    in_own_process(module_path!(), "net_status_follows_after_close", &["status"], |_| run(async {
+        let rig = Rig::new();
+        let database = open_database(&rig).await;
+        let status = NetworkStatus::new();
+        database.online_sink().unwrap().set_online(true);
+        let reader = status.subscribe();
+        assert_eq!(within(reader.next()).await, Some(true));
+        let mut held = reading!(&reader);
+        within(database.close_database()).await.unwrap();
+        assert!(poll_once(&mut held).is_pending(), "the close woke the reader");
+        assert_eq!(status.current(), Some(true), "the close moved the value");
+        let sink = OnlineSink::of_status();
+        sink.set_online(false);
+        assert_eq!(within(held).await, Some(false), "a status value after the close");
+        assert_eq!(status.current(), Some(false));
+    }));
+}
+
+/// Requirement D-340 (core side of "starts once"): another `NetworkStatus` is another view of the one process value, it is no new start. Observable: `current` and a waiting read. Assert: creating further statuses keeps the value and wakes nobody, and every status reads the later input.
+#[test]
+fn net_status_observer_starts_once() {
+    in_own_process(module_path!(), "net_status_observer_starts_once", &["status"], |_| run(async {
+        let sink = OnlineSink::of_status();
+        let first = NetworkStatus::new();
+        sink.set_online(true);
+        let reader = first.subscribe();
+        assert_eq!(within(reader.next()).await, Some(true));
+        let mut held = reading!(&reader);
+        let (second, third) = (NetworkStatus::new(), NetworkStatus::new());
+        assert!(poll_once(&mut held).is_pending(), "a second status woke the reader");
+        assert_eq!((first.current(), second.current(), third.current()), (Some(true), Some(true), Some(true)), "a second status reset the value");
+        sink.set_online(false);
+        assert_eq!(within(held).await, Some(false));
+        assert_eq!((second.current(), third.current()), (Some(false), Some(false)));
+    }));
+}
