@@ -19,7 +19,6 @@ pub(super) fn write(db: &Arc<Store>, author: BatchAuthor, rows: Vec<(String, Str
     write_as(db, 1, author, rows, ops);
 }
 
-/// The row of a model delivered the way the path hands it to Store: a Feed event, the answer of a mutation, a page or a reread of a node.
 pub(super) fn deliver(db: &Arc<Store>, batch: u64, path: &str, model: &str, row: RowValue, related: Vec<(String, RowValue)>) -> crate::store::batch_write::BatchWritten {
     match path {
         "event" => {
@@ -349,7 +348,6 @@ fn shown(id: &str, at: i64, seq: Option<i64>, body: &str) -> Sets {
     Sets { id: Some(id.into()), at: Some(at), seq, body: Some(body.into()) }
 }
 
-/// P-DATA-118, P-DATA-57: whatever the order of landing, with equal times the pointer is the greatest id by the order of the spec, and the order of 2 ids seen through the pointer has no cycle.
 #[test]
 fn data_id_order_is_total() {
     let ids = ["0", "7", "9", "10", "007", "+5", "-3", "m1", "m2", "1a", "Z", "18446744073709551615", "18446744073709551616", "99999999999999999999"];
@@ -396,7 +394,6 @@ fn permutations(items: &[usize]) -> Vec<Vec<usize>> {
     }).collect()
 }
 
-/// P-DATA-59 (д): the destroy of the child the server value names leaves the value out of F and marks the parent stale until the next row of the parent.
 #[test]
 fn data_sets_destroy_of_the_named_child_marks_the_parent_stale() {
     for remaining in [false, true] {
@@ -414,7 +411,6 @@ fn data_sets_destroy_of_the_named_child_marks_the_parent_stale() {
     }
 }
 
-/// P-DATA-59 (в): the winner lacks a field, the second side gives it, also when the server value wins.
 #[test]
 fn data_sets_server_winner_takes_the_empty_field_of_the_second() {
     let server = |values: Value| {
@@ -435,7 +431,6 @@ fn data_sets_server_winner_takes_the_empty_field_of_the_second() {
     }
 }
 
-/// P-DATA-56: the parent of a child changes, the old and the new parent are derived again.
 #[test]
 fn data_sets_child_moves_to_another_parent() {
     let db = open();
@@ -448,7 +443,6 @@ fn data_sets_child_moves_to_another_parent() {
     assert_eq!((sets_of_chat("c1"), sets_of_chat("c2")), (Sets::default(), shown("m2", 2, None, "m2")), "the old parent has no child left");
 }
 
-/// P-DATA-57: a child hidden by an open operation is not newest, a rollback of the operation shows it again.
 #[test]
 fn data_sets_hidden_child_does_not_count() {
     let db = open();
@@ -459,7 +453,6 @@ fn data_sets_hidden_child_does_not_count() {
     assert_eq!(sets(&db), shown("m2", 2, None, "m2"), "the child is back after the rollback");
 }
 
-/// P-DATA-61: a rejected edit of a stored child gives the fields of the parent back.
 #[test]
 fn data_sets_rollback_of_an_edit_of_a_stored_child() {
     let db = open();
@@ -470,7 +463,6 @@ fn data_sets_rollback_of_an_edit_of_a_stored_child() {
     assert_eq!(sets(&db), shown("m2", 5, None, "m2"), "the fields of the parent follow the stored rows");
 }
 
-/// P-DATA-58: the server value is accepted like a server field: a lower server revision of the parent row is dropped, a page with an early `base_revision` leaves the later fields.
 #[test]
 fn data_sets_server_value_is_accepted_like_a_server_field() {
     let mut specs = crate::store::fixtures::all_specs();

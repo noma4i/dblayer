@@ -41,7 +41,6 @@ impl Sets {
     }
 }
 
-/// P-DATA-118: digits without a leading zero that fit 64 bits are numeric.
 fn numeric(id: &str) -> Option<u64> {
     let plain = !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()) && (id.len() == 1 || !id.starts_with('0'));
     if plain { id.parse().ok() } else { None }
