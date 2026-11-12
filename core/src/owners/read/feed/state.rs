@@ -209,6 +209,7 @@ impl FeedState {
                 ledger.emit(model, fx);
             }
         }
+        if !models.is_empty() { fx.push(Fx::Gap(models.clone())); }
         models
     }
 
@@ -227,9 +228,7 @@ impl FeedState {
 
     pub(super) fn lose_held(&mut self, fx: &mut Vec<Fx>) -> Vec<String> {
         let lost = std::mem::take(&mut self.held);
-        let models = self.mark_lost(&lost, fx);
-        fx.push(Fx::Gap(models.clone()));
-        models
+        self.mark_lost(&lost, fx)
     }
 
     pub(super) fn commit(&mut self, events: Vec<FeedEvent>, fx: &mut Vec<Fx>) {

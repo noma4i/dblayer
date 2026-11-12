@@ -277,7 +277,7 @@ impl Twin {
                     let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
                     if *read == Read::Stray { held.last().cloned() } else { held.pop() }
                 }.expect("a read waits");
-                let saved = |landed_at: i64, fresh_until: i64, stale: bool, generation: u64| w::SavedWindow { landed_at, fresh_until, stale, cursor: None, pages: 1, has_rows: true, generation, marker: None, members: 0 };
+                let saved = |landed_at: i64, fresh_until: i64, stale: bool, generation: u64| w::SavedWindow { landed_at, fresh_until, stale, owed: false, cursor: None, pages: 1, has_rows: true, generation, marker: None, members: 0 };
                 let (read_id, result) = match read {
                     Read::Saved { landed_at, fresh_until, stale, generation_ok } => (read_id, Ok(Some(saved(*landed_at, *fresh_until, *stale, if *generation_ok { 0 } else { 7 })))),
                     Read::Media { marker, members } => (read_id, Ok(Some(w::SavedWindow { marker: Some(w::Marker { sequence: marker.sequence, values: [("revision".to_string(), marker.revision), ("count".to_string(), marker.count)].into() }), members: *members, ..saved(NOW - 1_000, NOW - 1_000, false, 0) }))),

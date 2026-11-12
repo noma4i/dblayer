@@ -28,6 +28,7 @@ impl Delivery {
             ReadData::Count(count) => Some(Whole::Count(count)),
             ReadData::Operations(items) => Some(Whole::Operations(items)),
             ReadData::Upload { .. } => None,
+            ReadData::Owed(..) => None,
             ReadData::Changes { keys, rows, replaced, total } => {
                 let changed: HashMap<&str, &StreamRow> = rows.iter().map(|row| (row.id.as_str(), row)).collect();
                 let held: HashMap<&str, &StreamRow> = self.rows.iter().map(|row| (row.id.as_str(), row)).collect();
@@ -161,6 +162,24 @@ impl Delivery {
         self.window.clone()
     }
 
+    /// The stream leaves its window and gives back the interests it holds in the windows of rows in debt.
+    pub(super) fn leave_all(&mut self, fx: &mut Vec<Emit>) {
+        fx.extend(self.leave());
+        fx.extend(std::mem::take(&mut self.debts).into_iter().map(Emit::DebtMinus));
+    }
+
+    /// D-393: a live stream holds one interest in the `node` window of each shown row that owes a reread, and gives it back when the row left the value or paid.
+    pub(super) fn settle_debts(&mut self, fx: &mut Vec<Emit>) {
+        let owing: BTreeSet<String> = match &self.owed_deps {
+            _ if self.stage != DeliveryStage::Live || self.view.node.is_none() => BTreeSet::new(),
+            Some(ids) => ids.clone(),
+            None => self.rows.iter().filter(|row| row.owes).map(|row| row.id.clone()).collect(),
+        };
+        fx.extend(self.debts.difference(&owing).cloned().map(Emit::DebtMinus));
+        fx.extend(owing.difference(&self.debts).cloned().map(Emit::DebtPlus));
+        self.debts = owing;
+    }
+
     pub(super) fn unwant(&mut self) -> Option<Emit> { std::mem::take(&mut self.wants).then_some(Emit::WantMinus) }
 
     pub(super) fn leave(&mut self) -> Option<Emit> {
@@ -210,13 +229,16 @@ impl Delivery {
             return;
         }
         if self.stage == DeliveryStage::Live && (version.revision, version.position) < (self.read_seen, self.read_position) { return; }
+        let (data, deps) = match data { ReadData::Owed(inner, ids) => (*inner, Some(ids)), other => (other, None) };
         let Some(data) = self.whole(data) else {
             if self.stage == DeliveryStage::Live {
                 fx.push(self.new_read(self.read_revision));
             }
             return;
         };
+        self.owed_deps = deps;
         self.settle_read(read_id, version, data, fx);
+        self.settle_debts(fx);
     }
 
     /// The view with the server ids when the data tells that a temporary id of the request was swapped and none is left.
@@ -250,7 +272,7 @@ impl Delivery {
         let revision = version.revision;
         (self.read_seen, self.read_position) = (revision, version.position);
         let changed = match &data {
-            Whole::Rows { rows, total, .. } => *rows != self.rows || *total != self.total,
+            Whole::Rows { rows, total, .. } => !same_shown(rows, &self.rows) || *total != self.total,
             Whole::Count(count) => self.count != Some(*count),
             Whole::Operations(items) => self.operations.as_ref() != Some(items),
         };
@@ -264,7 +286,7 @@ impl Delivery {
         self.value_position = value.1;
         if self.stage == DeliveryStage::Live && self.read_error.take().is_some() {
             let unchanged = match &data {
-                Whole::Rows { rows, total, .. } => *rows == self.rows && *total == self.total,
+                Whole::Rows { rows, total, .. } => same_shown(rows, &self.rows) && *total == self.total,
                 Whole::Count(count) => self.count == Some(*count),
                 Whole::Operations(items) => self.operations.as_ref() == Some(items),
             };
@@ -281,6 +303,7 @@ impl Delivery {
                 self.rows = rows.clone();
                 self.revision = revision;
                 self.stage = DeliveryStage::Live;
+                self.settle_debts(fx);
                 let snapshot = self.snapshot(revision, rows, &[], state);
                 self.push(snapshot, fx);
                 if missing {
@@ -314,6 +337,7 @@ impl Delivery {
                 self.rows = rows.clone();
                 let state = self.state_at(revision);
                 self.revision = value.0;
+                self.settle_debts(fx);
                 let snapshot = self.snapshot(value.0, rows, &replaced, state);
                 self.push(snapshot, fx);
             }
@@ -341,7 +365,9 @@ impl Delivery {
     }
 
     pub(super) fn live_rows(&mut self, seen: i64, revision: i64, rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64>, fx: &mut Vec<Emit>) {
-        if rows == self.rows && total == self.total {
+        if same_shown(&rows, &self.rows) && total == self.total {
+            self.rows = rows;
+            self.settle_debts(fx);
             self.same_rows(seen, fx);
             return;
         }
@@ -349,6 +375,7 @@ impl Delivery {
         self.rows = rows.clone();
         self.total = total;
         self.revision = revision;
+        self.settle_debts(fx);
         let unread_snapshot = self.journal.iter().any(|kept| matches!(kept, Value::Snapshot { .. }));
         let Some(base) = self.acknowledged.filter(|_| !unread_snapshot) else {
             let snapshot = self.snapshot(revision, rows, &replaced, state);

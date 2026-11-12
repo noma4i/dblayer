@@ -30,16 +30,18 @@ impl Store {
         let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| CoreError::Internal(format!("{model} has no relation {relation}")))?;
         let remote = declared.remote.as_ref().ok_or_else(|| CoreError::Internal(format!("{model}.{relation} is no remote relation")))?;
         let (scope, key) = window_identity(spec, model, relation, remote, params)?;
-        let (Some(record), Some(freshness)) = (self.window(&key)?, self.window_freshness(&key)?) else { return Ok(None) };
-        let has_rows = self.read(&[model], |reader| reader.scope_last_id(model, scope.key.as_str()))?.is_some();
-        let policy = crate::runtime::selected_policy(!has_rows, &remote.stale_time, remote.empty_stale_time.as_deref());
-        let lifetime = crate::runtime::parse_duration(policy).map_or(i64::MAX / 4, |window| i64::try_from(window.as_millis()).unwrap_or(i64::MAX / 4));
         let owed = match (declared.node, params.get(crate::schema::NODE_PARAM).and_then(Value::as_str)) {
             (Some(crate::schema::NodeRead::One), Some(id)) => self.read(&[model], |reader| super::reread_owed::is_owed(reader.connection(), model, id))?,
             _ => false,
         };
+        let (Some(record), Some(freshness)) = (self.window(&key)?, self.window_freshness(&key)?) else {
+            return Ok(owed.then(|| crate::store::SavedWindow { landed_at: 0, fresh_until: 0, stale: true, owed, cursor: None, pages: 0, has_rows: false, generation: self.generation().value(), marker: None, members: 0 }));
+        };
+        let has_rows = self.read(&[model], |reader| reader.scope_last_id(model, scope.key.as_str()))?.is_some();
+        let policy = crate::runtime::selected_policy(!has_rows, &remote.stale_time, remote.empty_stale_time.as_deref());
+        let lifetime = crate::runtime::parse_duration(policy).map_or(i64::MAX / 4, |window| i64::try_from(window.as_millis()).unwrap_or(i64::MAX / 4));
         let marker = super::windows::read_marker(&self.lock().connection, &key)?;
-        Ok(Some(crate::store::SavedWindow { landed_at: freshness.landed_at, fresh_until: freshness.landed_at.saturating_add(lifetime), stale: freshness.stale_since.is_some() || owed, cursor: record.cursor, pages: u32::try_from(record.pages).unwrap_or(u32::MAX), has_rows, generation: u64::try_from(record.generation).unwrap_or(0), marker, members: self.read(&[model], |reader| reader.scope_member_count(model, scope.key.as_str()))? }))
+        Ok(Some(crate::store::SavedWindow { landed_at: freshness.landed_at, fresh_until: freshness.landed_at.saturating_add(lifetime), stale: freshness.stale_since.is_some() || owed, owed, cursor: record.cursor, pages: u32::try_from(record.pages).unwrap_or(u32::MAX), has_rows, generation: u64::try_from(record.generation).unwrap_or(0), marker, members: self.read(&[model], |reader| reader.scope_member_count(model, scope.key.as_str()))? }))
     }
 
     /// The edge values of the rows of a relation window, by row id.

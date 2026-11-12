@@ -268,7 +268,7 @@ impl Delivery {
         self.waiting = None;
         fx.push(Emit::Run(StreamEffect::Answer { outcome, answer: PullAnswer::Interrupted }));
         if matches!(self.stage, DeliveryStage::Opening | DeliveryStage::Live) {
-            fx.extend(self.leave());
+            self.leave_all(fx);
             fx.extend(self.unwant());
             self.stage = DeliveryStage::Cancelling;
             self.cause = EndCause::Cancelled;
@@ -280,7 +280,7 @@ impl Delivery {
     pub(super) fn cancel(&mut self, reply: ReplyId, fx: &mut Vec<Emit>) {
         match self.stage {
             DeliveryStage::Opening | DeliveryStage::Live => {
-                fx.extend(self.leave());
+                self.leave_all(fx);
                 fx.extend(self.unwant());
                 self.stage = DeliveryStage::Cancelling;
                 self.cause = EndCause::Cancelled;
@@ -299,7 +299,7 @@ impl Delivery {
     pub(super) fn release(&mut self, fx: &mut Vec<Emit>) {
         match self.stage {
             DeliveryStage::Opening | DeliveryStage::Live => {
-                fx.extend(self.leave());
+                self.leave_all(fx);
                 fx.extend(self.unwant());
                 self.stage = DeliveryStage::Cancelling;
                 self.cause = EndCause::Cancelled;
@@ -312,7 +312,7 @@ impl Delivery {
     }
 
     pub(super) fn finish(&mut self, cause: EndCause, closing: bool, fx: &mut Vec<Emit>) {
-        fx.extend(self.leave());
+        self.leave_all(fx);
                 fx.extend(self.unwant());
         self.stage = DeliveryStage::Ended;
         self.cause = cause.clone();

@@ -19,6 +19,8 @@ impl Delivery {
             read_error: None,
             rows: Vec::new(),
             acked_rows: Vec::new(),
+            debts: BTreeSet::new(),
+            owed_deps: None,
             temporary: BTreeMap::new(),
             count: None,
             operations: None,

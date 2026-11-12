@@ -83,6 +83,7 @@ impl Facts {
             Ev::Saved(Some(saved)) => {
                 self.fresh = !saved.stale;
                 if saved.stale { self.stale_marked.set(true); }
+                if saved.owed && self.reads_node { self.reread_by_event.set(true); }
                 self.landed_at = saved.landed_at;
                 self.fresh_until = saved.fresh_until;
                 self.cursor.clone_from(&saved.cursor);

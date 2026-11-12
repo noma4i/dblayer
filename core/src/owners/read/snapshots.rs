@@ -67,8 +67,9 @@ impl Snapshots for DbSnapshots {
             ReadMode::Changes { from_revision, from_position, limit } => Some(crate::store::HeldVersion { from: (from_revision, from_position), limit }),
         };
         let (revision, position, relevant, read, swapped) = self.db.read_view(&query, count, revision, after, view.remote.then_some(&view.window), held, view, from).map_err(|error| error.to_string())?;
+        let owed = self.db.owed_dependencies(view).map_err(|error| error.to_string())?;
         let replaced = || swapped.into_iter().map(|(from, to)| (from.to_string(), to.to_string())).collect();
-        Ok((ReadVersion { revision, position, relevant }, match read {
+        let data = match read {
             crate::store::ViewRead::Count(count) => ReadData::Count(u64::try_from(count).unwrap_or(0)),
             crate::store::ViewRead::Overflow => ReadData::Overflow,
             crate::store::ViewRead::Rows(rows, total, owed) => {
@@ -79,6 +80,7 @@ impl Snapshots for DbSnapshots {
                 let wire = self.wire(&view.model)?;
                 ReadData::Changes { keys, rows: rows.into_iter().map(|(id, stamp, row)| StreamRow { owes: owed.contains(&id), id, stamp, row: Some(wire.row(&row)) }).collect(), replaced: replaced(), total }
             }
-        }))
+        };
+        Ok((ReadVersion { revision, position, relevant }, match owed { Some(ids) => ReadData::Owed(Box::new(data), ids), None => data }))
     }
 }

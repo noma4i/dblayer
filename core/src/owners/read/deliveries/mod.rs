@@ -19,6 +19,8 @@ use crate::runtime::{Address, Cause, Effect, EffectId, Effects, Epoch, Outbound,
 pub const JOURNAL_LIMIT: usize = 256;
 
 const READ_TASK: EffectId = 1 << 62;
+/// The bit that tells the interest of a stream in a row in debt from its interest in its own window (D-393).
+const DEBT_INTEREST: u64 = 1 << 61;
 
 pub fn read_task(stream: StreamId, read_id: u64) -> EffectId { READ_TASK | (stream << 32) | (read_id & 0xFFFF_FFFF) }
 
@@ -59,6 +61,8 @@ pub enum ReadData {
     /// The membership in order with the stamp of each member, and the rows that changed after the version the owner holds: the others are the rows the owner holds.
     Changes { keys: Vec<(String, i64)>, rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64> },
     Count(u64),
+    /// The read and the rows in debt its value depends on, for a read whose value rows do not tell them (a count, a read of a local table).
+    Owed(Box<ReadData>, BTreeSet<String>),
     Operations(Vec<crate::ffi::OperationInfo>),
     /// The copy URL and the processing that the row of a transfer shows.
     Upload { wait_reason: Option<crate::owners::write::upload::WaitReason>, local_url: Option<String>, processing: Option<crate::ffi::WireProcessing> },
@@ -102,6 +106,8 @@ pub struct View {
     /// The stream loads its window again each time the network returns.
     pub reload: bool,
     pub window: WindowKey,
+    /// The relation of the model that reads one row by its id: a shown row in debt is read through it (D-393).
+    pub node: Option<String>,
     pub subject: String,
     /// What a list or count reads, already resolved against its relation.
     pub query: Option<std::sync::Arc<crate::store::query::Query>>,
@@ -258,6 +264,9 @@ enum Emit {
     InterestPassive,
     ReloadOnConnect,
     InterestMinus,
+    /// The stream shows the row in debt: it holds the interest of the `node` window of the row.
+    DebtPlus(String),
+    DebtMinus(String),
     WantPlus,
     WantMinus,
 }
@@ -348,6 +357,10 @@ struct Delivery {
     read_error: Option<String>,
     rows: Vec<StreamRow>,
     acked_rows: Vec<StreamRow>,
+    /// The ids of the shown rows in debt that hold an interest of this stream.
+    debts: BTreeSet<String>,
+    /// The rows in debt the last read named, when the value rows do not tell them.
+    owed_deps: Option<BTreeSet<String>>,
     /// Server id to the temporary id of the rows the reader took.
     temporary: BTreeMap<String, String>,
     count: Option<u64>,
@@ -411,6 +424,11 @@ fn shown_hash(row: &WireRow) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     format!("{:?}{:?}", row.cells, row.sync).hash(&mut hasher);
     hasher.finish()
+}
+
+/// What the reader sees of the rows: the debt of a row is no part of it.
+fn same_shown(left: &[StreamRow], right: &[StreamRow]) -> bool {
+    left.len() == right.len() && left.iter().zip(right).all(|(left, right)| left.id == right.id && left.stamp == right.stamp && left.row == right.row)
 }
 
 fn entry(row: &StreamRow) -> Result<Entry, String> {
@@ -552,6 +570,7 @@ pub struct Deliveries;
 
 fn lower(peers: DeliveryPeers, revision: i64, stream: StreamId, machine: &Delivery, emits: Vec<Emit>, out: &mut Effects<Deliveries>) {
     for emit in emits {
+        let plus = matches!(emit, Emit::DebtPlus(_));
         let effect = match emit {
             Emit::Run(effect) => Effect::Run(DeliveryEffect::Stream { stream, effect }),
             Emit::InterestPlus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestPlus { key: machine.view.window.clone(), id: stream })),
@@ -559,6 +578,12 @@ fn lower(peers: DeliveryPeers, revision: i64, stream: StreamId, machine: &Delive
             Emit::ReloadOnConnect => Effect::Send(Outbound::new(peers.windows, WindowsInput::ReloadOnConnect { key: machine.view.window.clone(), id: stream })),
             Emit::Load { force } => Effect::Send(Outbound::new(peers.windows, WindowsInput::Load { key: machine.view.window.clone(), id: stream, goal: Goal::First, force, store_revision: revision })),
             Emit::InterestMinus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestMinus { key: machine.view.window.clone(), id: stream })),
+            Emit::DebtPlus(row) | Emit::DebtMinus(row) => {
+                let Some(relation) = machine.view.node.as_ref() else { continue };
+                let params = serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(row))]);
+                let (key, id) = (WindowKey::relation(&machine.view.model, relation, &params), stream | DEBT_INTEREST);
+                Effect::Send(Outbound::new(peers.windows, if plus { WindowsInput::InterestPlus { key, id } } else { WindowsInput::InterestMinus { key, id } }))
+            }
             Emit::WantPlus => Effect::Run(DeliveryEffect::WantPlus { model: machine.view.model.clone(), id: stream, stream: machine.view.kind == Kind::Events, scoped: machine.view.scoped.to_vec() }),
             Emit::WantMinus => Effect::Run(DeliveryEffect::WantMinus { model: machine.view.model.clone(), id: stream }),
         };

@@ -262,7 +262,7 @@ fn feed_live_rejected_generation() {
     twin.step(event(To::Active, "Post", "p1"));
     twin.step(Input::Tick);
     let effects = twin.step(Input::Rejected(Reject::StaleGeneration(names(&["Chat"]))));
-    assert_eq!(effects, [Effect::Stale { model: "Chat".into(), all: true }, Effect::Commit], "the events of the other models land in a new batch");
+    assert_eq!(effects, [Effect::Commit, Effect::Stale { model: "Chat".into(), all: true }, Effect::Commit], "the lost event has its own debt batch, the events of the other models land in a new batch");
     twin.step(Input::Committed);
 }
 
@@ -270,7 +270,7 @@ fn feed_live_rejected_generation() {
 fn feed_live_rejected_storage() {
     let mut twin = live_immediate();
     twin.step(chat("c1"));
-    assert_eq!(twin.step(Input::Rejected(Reject::Storage)), [Effect::Stale { model: "Chat".into(), all: true }]);
+    assert_eq!(twin.step(Input::Rejected(Reject::Storage)), [Effect::Commit, Effect::Stale { model: "Chat".into(), all: true }]);
     assert_eq!(twin.state().position("Chat"), 1, "the lost event holds its position");
 }
 
@@ -292,7 +292,7 @@ fn feed_refused_event_is_lost_alone() {
         twin.step(chat(payload));
     }
     twin.step(Input::Tick);
-    assert_eq!(twin.step(Input::CommittedRefused(vec![1])), [Effect::Stale { model: "Chat".into(), all: true }]);
+    assert_eq!(twin.step(Input::CommittedRefused(vec![1])), [Effect::Commit, Effect::Stale { model: "Chat".into(), all: true }]);
     assert_eq!(twin.shown, [Obs::Event { stream: CHAT, position: 1, payload: "c1".into() }, Obs::Lost { stream: CHAT, first: 2, last: 2 }, Obs::Event { stream: CHAT, position: 3, payload: "c3".into() }]);
 }
 
@@ -306,7 +306,7 @@ fn feed_dropped_gap_batches_reject_independently() {
         let before = twin.history.len();
         let effects = twin.step(Input::RejectedAt(rejected, reason.clone()));
         if rejected == 0 {
-            assert!(effects.iter().all(|effect| *effect != Effect::Commit));
+            assert_eq!(effects.iter().filter(|effect| **effect == Effect::Commit).count(), 1, "only the debt batch of the lost event");
             twin.step(Input::Committed);
             assert!(twin.shown.iter().any(|observation| matches!(observation, Obs::Lost { .. })));
         } else {
@@ -622,7 +622,7 @@ fn feed_live_verdict_by_batch() {
     assert_eq!(twin.shown, [], "the third position waits for the first two");
     twin.step(Input::RejectedAt(1, Reject::Storage));
     assert!(twin.step(Input::StrayRepeat).is_empty(), "the verdict of a batch that landed changes nothing");
-    assert_eq!(twin.state().landing(), 1);
+    assert_eq!(twin.state().landing(), 2, "the debt batch of the lost event waits too");
     twin.step(Input::Committed);
     assert_eq!(twin.shown, [Obs::Event { stream: CHAT, position: 1, payload: "c1".into() }, Obs::Lost { stream: CHAT, first: 2, last: 2 }, Obs::Event { stream: CHAT, position: 3, payload: "c3".into() }]);
 }

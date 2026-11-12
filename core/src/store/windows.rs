@@ -26,6 +26,8 @@ pub struct SavedWindow {
     pub landed_at: i64,
     pub fresh_until: i64,
     pub stale: bool,
+    /// The row of a `node` window owes a reread (D-393): the load is marked as the reread of an event.
+    pub owed: bool,
     pub cursor: Option<String>,
     pub pages: u32,
     pub has_rows: bool,
