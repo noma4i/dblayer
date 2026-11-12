@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use super::fake_server_tests::{open_request, seal_response};
+use super::fake_server_tests::{open_request};
 use super::vectors_tests::*;
 use super::*;
 

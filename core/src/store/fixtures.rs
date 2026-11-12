@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Map, Value};
@@ -189,16 +189,6 @@ pub fn all_specs() -> Vec<ModelSpec> {
 pub fn booted() -> Arc<Store> {
     let db = Arc::new(Store::open_models(None, all_specs(), None, Arc::new(ManualClock::new(Duration::from_millis(1_000_000)))).unwrap());
     db
-}
-
-pub fn poison<T: Send>(mutex: &Mutex<T>) {
-    std::thread::scope(|scope| {
-        let _ = scope.spawn(|| {
-            let _held = mutex.lock().unwrap();
-            panic!("poisoning the lock on purpose");
-        }).join();
-    });
-    assert!(mutex.is_poisoned());
 }
 
 pub fn put(db: &Store, model: &str, value: Value) {

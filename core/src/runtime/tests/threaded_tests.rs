@@ -64,12 +64,6 @@ impl EffectRunner<OrderedSource> for ObservePending {
     fn run(&mut self, _: EpochStamp, _: OrderedSourceEffect, _: &Back<OrderedSource>) { self.count.send(self.handle.pending()).unwrap(); }
 }
 
-struct ObserveRuns(Arc<Mutex<usize>>);
-
-impl EffectRunner<OrderedSource> for ObserveRuns {
-    fn run(&mut self, _: EpochStamp, _: OrderedSourceEffect, _: &Back<OrderedSource>) { *self.0.lock().unwrap() += 1; }
-}
-
 #[test]
 fn mixed_effects_enqueue_before_the_next_run_on_threads() {
     let (entered, held) = mpsc::channel();

@@ -1,4 +1,4 @@
-use super::screens_fixture::{elements, screen_variants, screens_spec};
+use super::screens_fixture::{elements, screen_variants};
 use super::*;
 use crate::value::ScalarKind;
 

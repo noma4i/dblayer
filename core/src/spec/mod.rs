@@ -14,7 +14,6 @@ mod ref_delivery;
 pub(crate) mod ref_delivery_fanout;
 mod ref_feed;
 mod ref_window;
-pub(crate) mod ref_runtime;
 
 mod lifecycle_tests;
 pub(crate) mod lifecycle_owner_tests;
