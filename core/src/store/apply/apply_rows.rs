@@ -205,7 +205,7 @@ pub(super) fn apply_upsert(
     }
     let row_id = crate::identity::RowId::new(&id).map_err(|error| StoreError::Constraint(error.to_string()))?;
     prefetched.insert((model.to_string(), id.clone()), Some(StoredRow { id: row_id, revision: row_revision, born_rev, field_rev, row: row.clone() }));
-    if quiet.is_none() { result.push(model, &id, kind, changed); }
+    if quiet.is_none() { result.push(model, &id, kind, changed.into_iter().filter(|field| !info.spec.server_values().any(|(_, hidden)| hidden == field)).collect()); }
     Ok(())
 }
 

@@ -50,7 +50,7 @@ fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, pa
     let mut stale = BTreeSet::new();
     let mut hidden: Option<super::apply::HiddenRows> = None;
     for parent in parents {
-        let Some(stored) = reader.point(parent.model.as_str(), parent.id.as_str())? else { continue };
+        let Some(stored) = reader.stored_row(parent.model.as_str(), parent.id.as_str())?.map(|stored| stored.row) else { continue };
         let info = models.get(parent.model.as_str()).ok_or_else(|| StoreError::UnknownModel(parent.model.to_string()))?;
         let server: Row = info.spec.server_values().filter_map(|(declared, hidden)| stored.get(hidden).map(|value| (declared.to_string(), value.clone()))).collect();
         let mut next = stored.clone();
