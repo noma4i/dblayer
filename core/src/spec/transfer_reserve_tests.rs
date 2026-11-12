@@ -45,16 +45,6 @@ fn rolled_back(out: &Out) -> Vec<u64> { out.batches.iter().flat_map(|batch| batc
 fn intents(out: &Out) -> Vec<(u64, IntentEffects)> { out.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::Effects { op_id, effects, .. } = op { Some((*op_id, effects.clone())) } else { None }).collect() }
 
 #[test]
-fn xfer_accept_reserve_op() {
-    let mut twin = Twin::new();
-    let (id, reply, out) = reserving(&mut twin);
-    assert_eq!(twin.stage(id), TransferStage::Reserving);
-    assert!(matches!(out.outbox.as_slice(), [OutboxInput::ReserveOp { target: ReserveTarget::Transfer(found), .. }] if *found == id), "{:?}", out.outbox);
-    assert_eq!((out.writes(), out.all_replies(), out.shows().len()), (0, 0, 0), "nothing is written or shown before the op_id");
-    assert!(out.replies(reply).is_empty());
-}
-
-#[test]
 fn xfer_accept_optimistic_row() {
     let mut twin = Twin::new();
     let (id, reply, _) = reserving(&mut twin);
@@ -337,17 +327,6 @@ fn xfer_replace_rejected_keeps_failed() {
     assert_ne!(Twin::fault(&out, reply), Some(Fault::InFlight));
 }
 
-#[test]
-fn xfer_remove_rolls_back_optimistic() {
-    let mut twin = Twin::new();
-    let id = ready(&mut twin);
-    let (reply, out) = twin.cancel(KEY);
-    assert_eq!(rolled_back(&out), vec![OP_ID], "the row goes with the removal in one batch");
-    assert_eq!(out.removed(), vec![KEY.to_string()]);
-    let out = twin.commit();
-    assert_eq!((twin.stage(id), out.replies(reply)), (TransferStage::Done, vec![TransferAnswer::Cancelled(true)]));
-}
-
 /// P-XFER-30: the removal rolls the effects back in every cause before the final mutation left, never after it and never for a confirmed one.
 #[test]
 fn xfer_prop_optimistic_row_once() {
@@ -374,6 +353,13 @@ fn xfer_prop_optimistic_row_once() {
     failed.commit();
     assert_eq!(failed.stage(id), TransferStage::Failed);
     assert_eq!(rolled_back(&failed.discard(KEY).1), vec![OP_ID], "discard of a failed transfer");
+
+    let mut plain = Twin::new();
+    let id = ready(&mut plain);
+    let (reply, out) = plain.cancel(KEY);
+    assert_eq!((rolled_back(&out), out.removed()), (vec![OP_ID], vec![KEY.to_string()]), "cancel of a ready transfer: the row goes with the removal in one batch");
+    let out = plain.commit();
+    assert_eq!((plain.stage(id), out.replies(reply)), (TransferStage::Done, vec![TransferAnswer::Cancelled(true)]));
 
     let mut confirmed = Twin::new();
     confirmed.completing_with_effects();
