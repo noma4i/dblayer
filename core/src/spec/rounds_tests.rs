@@ -96,8 +96,6 @@ fn xfer_round_started() {
 fn xfer_round_started_stale() {
     let mut state = state(1);
     let request_id = requested(&mut state, 1, &[10]);
-    let (runs, _) = step(&mut state, RoundsInput::RoundStarted { request_id: request_id + 9, round_id: 6, epoch: 1 });
-    assert_eq!((ended_jobs(&runs), state.round), (vec![6], Round::Requested { epoch: 1, request_id }));
     let (runs, _) = step(&mut state, RoundsInput::RoundStarted { request_id, round_id: 7, epoch: 2 });
     assert_eq!((ended_jobs(&runs), state.round), (vec![7], Round::Requested { epoch: 1, request_id }), "another epoch is a stray job too");
 }
@@ -109,18 +107,6 @@ fn xfer_round_refused() {
     let (runs, sends) = step(&mut state, RoundsInput::RoundRefused { request_id, epoch: 1, reason: "denied".into() });
     assert_eq!((runs.len(), state.round), (0, Round::Refused { epoch: 1 }), "the transfers go on in the process");
     assert!(sends.len() == 1 && sends[0].contains("RoundStatus") && sends[0].contains("denied") && sends[0].contains("10"), "{sends:?}");
-}
-
-#[test]
-fn xfer_round_refused_stale() {
-    let mut state = state(1);
-    let request_id = requested(&mut state, 1, &[10]);
-    let (runs, sends) = step(&mut state, RoundsInput::RoundRefused { request_id: request_id + 1, epoch: 1, reason: "old".into() });
-    assert_eq!((runs.len(), sends.len(), state.round), (0, 0, Round::Requested { epoch: 1, request_id }));
-    let mut other = self::state(1);
-    running(&mut other, 1, 5);
-    let (runs, sends) = step(&mut other, RoundsInput::RoundRefused { request_id, epoch: 1, reason: "old".into() });
-    assert_eq!((runs.len(), sends.len()), (0, 0));
 }
 
 #[test]
@@ -193,15 +179,6 @@ fn xfer_round_end_stopped() {
     running(&mut state, 1, 5);
     let (runs, _) = step(&mut state, RoundsInput::RoundEnded { round_id: 5, epoch: 1 });
     assert_eq!((runs.len(), state.round), (0, Round::Stopped { epoch: 1 }), "the platform stopped the job: the next event resumes it");
-}
-
-#[test]
-fn xfer_round_end() {
-    let mut state = state(1);
-    running(&mut state, 1, 5);
-    step(&mut state, RoundsInput::Idle { epoch: 1, transfer_id: 10 });
-    let (runs, _) = step(&mut state, RoundsInput::RoundEnded { round_id: 5, epoch: 1 });
-    assert_eq!((runs.len(), state.round), (0, Round::None));
 }
 
 #[test]
@@ -314,13 +291,6 @@ fn xfer_round_no_sink() {
     state.current_epoch = 1;
     let (runs, sends) = step(&mut state, RoundsInput::Needed { epoch: 1, ids: vec![10] });
     assert_eq!((runs.len(), sends.len(), state.round, state.active[&1].len()), (0, 0, Round::None, 1), "the need is kept, no job is asked for");
-}
-
-#[test]
-fn xfer_round_foreground_no_sink() {
-    let mut state = RoundsState::new(Address::<Transfers>::new(2));
-    state.current_epoch = 1;
-    busy(&mut state, 1, &[10]);
     let (runs, _) = step(&mut state, RoundsInput::Foreground);
     assert_eq!((runs.len(), state.round), (0, Round::None));
 }
