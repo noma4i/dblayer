@@ -155,10 +155,15 @@ pub fn store_reply(s: &mut State, batch: StoreBatch, epoch: u64, res: Result<u64
                     return;
                 }
             }
-            if res == Err(Reason::Storage) && ids.len() == 1 {
-                if let Some(t) = s.transfers.get_mut(&ids[0]) { t.write_ops = ops.clone(); }
-            }
             let input = match &res { Ok(rev) => Input::Committed { batch, epoch, revision: *rev }, Err(r) => Input::Rejected { batch, epoch, reason: r.clone() } };
+            if res == Err(Reason::Storage) && !ids.is_empty() {
+                // The batch of N transfers is one transaction: the first transfer keeps the whole batch and one retry commits it for all N.
+                if let Some(t) = s.transfers.get_mut(&ids[0]) { t.write_ops = ops.clone(); t.write_group = ids.clone(); }
+                if ids.len() > 1 {
+                    run_on(s, ids[0], &input, e);
+                    return;
+                }
+            }
             for id in ids { run_on(s, id, &input, e); }
         }
         BatchKind::Detached => row(e, "r3_detached_store_reply_ignored"),

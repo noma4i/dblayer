@@ -185,7 +185,15 @@ pub fn tick_retry(g: &mut G, t: &mut Transfer, aid: AttemptId, e: &mut Vec<Effec
             row(e, if matches!(t.st, St::PersistingAttempt { .. }) { "xfer_attempt_tick" } else { "xfer_persisting_write_tick" });
             t.write_retry = None;
             let ops = std::mem::take(&mut t.write_ops);
-            commit(g, t, e, ops);
+            let group = std::mem::take(&mut t.write_group);
+            if group.len() > 1 {
+                let b = g.next_batch;
+                g.next_batch += 1;
+                g.batches.insert(b, BatchKind::Own { ids: group, ops: ops.clone() });
+                e.push(Effect::Store { batch: b, generation: g.generation, basis: None, ops });
+            } else {
+                commit(g, t, e, ops);
+            }
         }
         St::PersistingFailure { error: _, abort } if t.write_retry == Some(aid) => {
             row(e, "xfer_persisting_failure_tick");
