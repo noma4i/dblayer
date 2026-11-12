@@ -1,6 +1,6 @@
 uploads do
   create_blob :CreateBlob, root: "blobCreate"
-  multipart initiate: :InitMultipart, presign: :PresignParts, complete: :CompleteMultipart, abort: :AbortMultipart
+  multipart initiate: :InitMultipart, presign: :PresignParts, complete: :CompleteMultipart, abort: :AbortMultipart, roots: { initiate: "initMultipart.multipartUpload" }
 end
 
 model Moment do

@@ -41,3 +41,16 @@ model Container do
     response from: "groupContainerUpdate.container"
   end
 end
+
+model ContainerHit do
+  attribute :id, :id, id_from: :container
+  attribute :containerId, :id
+  belongs_to :container, from: "container"
+  scope :search do
+    parameter :text, :string
+    query "ContainerSearch"
+    variables text: :text
+    response from: "search.containers", shape: :list
+    freshness expires_in: 1.minute
+  end
+end

@@ -89,6 +89,20 @@ model Record do
     paginate size: 30, direction: :backward
     freshness expires_in: 1.minute, empty_in: 10.seconds
   end
+  scope :recent_media, insert_on: [:event, :response], refresh_on_foreground: true do
+    parameter :containerId, :id
+    where containerId: :containerId
+    query "RecentMedia"
+    response from: "recentMedia"
+    paginate size: 20, direction: :forward, max_pages: 5
+  end
+  operation :pin do
+    mutation "RecordPin"
+    optimistic false
+    on_failure :keep
+    upsert Container, from: "recordPin.container"
+    response from: "recordPin.record"
+  end
   changed_by "RECORD", via: :observed
 end
 
