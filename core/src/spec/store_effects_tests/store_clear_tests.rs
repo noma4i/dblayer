@@ -32,8 +32,10 @@ fn store_clear_account_raises_every_generation() {
 #[test]
 fn store_clear_account_clears_the_secret_before_cleared() {
     let mut twin = Twin::live();
+    let first = twin.feed(Request::ClearAccount { epoch_old: 1, cause: Cause::SessionReset, generation_new: 4, erase_id: 1 });
+    assert_eq!(first, vec![Action::EraseAccount { io_id: 2, generation_new: 4, erase_encrypted: true }]);
+    let mut twin = Twin::live();
     let actions = twin.clear_account(Cause::SessionReset, 4, true);
-    assert!(actions.iter().any(|action| matches!(action, Action::EraseAccount { generation_new: 4, erase_encrypted: true, .. })));
     let secret = actions.iter().position(|action| matches!(action, Action::ClearSecret { .. })).expect("the secret is cleared after SQLite");
     let cleared = actions.iter().position(|action| matches!(action, Action::Cleared { .. })).expect("Cleared follows");
     assert!(secret < cleared, "Cleared waits for the secret");
