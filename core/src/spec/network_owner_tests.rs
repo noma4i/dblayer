@@ -167,15 +167,13 @@ fn net_prop_status_equals_the_owner_value() {
         let status = crate::ffi::NetworkStatus::new(std::sync::Arc::new(Idle));
         for seed in 1..=40 {
             let mut twin = Twin::new();
-            let mut owner_value = None;
             for input in random_inputs(seed, 30) {
                 if input == NetworkInput::Closing { break; }
                 let platform_value = if let NetworkInput::SetOnline { online, .. } = input { Some(online) } else { None };
                 twin.feed(input);
                 if let Some(value) = platform_value {
-                    owner_value = Some(value);
                     sink.set_online(value);
-                    assert_eq!(status.current(), owner_value, "seed {seed}: the public value equals the owner value after SetOnline({value})");
+                    assert_eq!(status.current(), Some(value), "seed {seed}: the public value equals the owner value after SetOnline({value})");
                 }
             }
         }
