@@ -1,0 +1,9 @@
+{"trace":"i2_force_entity_waits_for_network"}
+{"in":"open","args":{"encrypted":true},"out":[{"o":"opened"}]}
+{"in":"set_online","args":{"online":true},"out":[{"o":"online","v":true}]}
+{"in":"login","out":[{"o":"request","v":{"id":"r1","kind":"http","purpose":"standard"}},{"o":"sent","v":{"id":"r1","operation":"session/api/auth/social","variables":null}},{"o":"replied","v":{"how":"page","id":"r1"}},{"o":"session","v":{"answer":{"nextStep":"authenticated"},"operation":"social"}}]}
+{"in":"node","args":{"as":"nf","force":true,"named":true,"relation":"transcode_status","row":"m1"},"out":[{"o":"request","v":{"id":"r2","kind":"http","purpose":"standard"}},{"o":"sent","v":{"id":"r2","operation":"MomentTranscodeStatus","variables":{"momentId":"m1"}}}]}
+{"in":"answer_page","args":{"more":true,"rows":3},"out":[{"o":"replied","v":{"how":"page","id":"r2"}},{"o":"node","v":{"call":"nf","present":true,"row":"m1"}}]}
+{"in":"set_online","args":{"online":false},"out":[{"o":"online","v":false}]}
+{"in":"open_entity","args":{"as":"e3","fetch":"force","row":"m1"},"out":[]}
+{"in":"set_online","args":{"online":true},"out":[{"o":"online","v":true},{"o":"request","v":{"id":"r3","kind":"http","purpose":"standard"}},{"o":"sent","v":{"id":"r3","operation":"MomentTranscodeStatus","variables":{"momentId":"m1"}}},{"o":"request","v":{"id":"r4","kind":"subscription","purpose":"standard"}}]}

@@ -1,0 +1,6 @@
+{"trace":"i9_queued_login_after_refused_login"}
+{"in":"open","args":{"encrypted":true},"out":[{"o":"opened"}]}
+{"in":"login","out":[{"o":"error","v":{"kind":"no_request"}}]}
+{"in":"login","out":[{"o":"error","v":{"kind":"no_request"}}]}
+{"in":"set_online","args":{"online":true},"out":[{"o":"online","v":true},{"o":"request","v":{"id":"r1","kind":"http","purpose":"standard"}},{"o":"sent","v":{"id":"r1","operation":"session/api/auth/social","variables":null}}]}
+{"in":"answer_error","args":{"kind":"permanent"},"out":[{"o":"replied","v":{"how":"permanent","id":"r1"}},{"o":"error","v":{"kind":"graphql"}},{"o":"request","v":{"id":"r2","kind":"http","purpose":"standard"}},{"o":"sent","v":{"id":"r2","operation":"session/api/auth/social","variables":null}}]}

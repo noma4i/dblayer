@@ -5,6 +5,9 @@ use serde_json::Value;
 use crate::check::model::Property;
 use crate::check::value::{Observation, Step};
 
+/// The window of the entity row `m1` of the stand: its key is the one of `node(m1)` (library.md section 4).
+const ENTITY_OPERATION: &str = "MomentTranscodeStatus";
+
 /// Fresh-window lifetime of the stand schema (`stale_time` 5 minutes, the same for an empty page).
 const LIFETIME_MS: i64 = 300_000;
 
@@ -68,6 +71,10 @@ struct Walk {
     streaks: HashMap<String, (u32, u32)>,
     windows: HashMap<String, Window>,
     streams: HashMap<String, Interest>,
+    /// Login calls not finished yet: the second one queues behind the first (library.md section 7 `login`) and sends its own request after a refusal of the first.
+    logins: u32,
+    /// Entity streams opened with `fetch: force` without a network: the force request goes out at the network return (`load: Waiting{page, force}`).
+    waiting_force: HashMap<String, &'static str>,
 }
 
 fn kinds<'a>(observed: &'a [Observation], kind: &'a str) -> impl Iterator<Item = &'a Observation> {
@@ -105,6 +112,10 @@ fn describe(steps: &[Step], index: usize) -> String {
 fn fresh(window: &Window, now: i64) -> bool {
     let Some(landed) = window.landed else { return false };
     !window.failed && !window.lost && now >= landed && now - landed < LIFETIME_MS
+}
+
+fn session_sent(steps: &[Step], id: &str) -> bool {
+    steps.iter().flat_map(|step| kinds(&step.observed, "sent")).any(|item| item.value["id"] == id && item.value["operation"].as_str().is_some_and(|operation| operation.starts_with("session")))
 }
 
 fn sent_first_page(steps: &[Step], id: &str) -> bool {
@@ -208,10 +219,17 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
             }
         }
         let forcing = input.name == "refresh" || (input.name == "node" && input.flag("force") == Some(true)) || (input.name == "open_entity" && input.text("fetch") == Some("force"));
+        let refused_open = refused("not_open") || refused("arguments") || refused("no_session");
+        if input.name == "open_entity" && input.text("fetch") == Some("force") && !walk.online && walk.logged && sent.is_empty() && !refused_open {
+            if let Some(name) = input.text("as") {
+                walk.waiting_force.insert(name.to_string(), ENTITY_OPERATION);
+            }
+        }
         for item in kinds(observed, "sent") {
             let operation = item.value["operation"].as_str().unwrap_or("");
             if !operation.starts_with("session") {
-                if forcing {
+                if forcing || walk.waiting_force.values().any(|waiting| *waiting == operation) {
+                    walk.waiting_force.retain(|_, waiting| *waiting != operation);
                     walk.windows.entry(operation.to_string()).or_default().forced = true;
                 }
                 walk.held.push((item.value["id"].as_str().unwrap_or("").to_string(), operation.to_string()));
@@ -224,14 +242,27 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
         if kinds(observed, "closed").next().is_some() {
             walk.is_open = false;
             walk.streams.clear();
+            walk.waiting_force.clear();
+            walk.logins = 0;
         }
         if kinds(observed, "reset").next().is_some() {
             walk.logged = false;
             walk.streams.clear();
+            walk.waiting_force.clear();
+            walk.logins = 0;
             walk.windows.values_mut().for_each(|window| window.lost = true);
         }
         if kinds(observed, "session").next().is_some() {
             walk.logged = true;
+            walk.logins = 0;
+        }
+        let logins_before = walk.logins;
+        let session_refused = matches!(input.name.as_str(), "answer_error") && matches!(input.text("kind"), Some("permanent" | "auth")) && kinds(observed, "replied").any(|item| session_sent(steps, item.value["id"].as_str().unwrap_or("")));
+        if input.name == "login" && !before_logged && walk.is_open && kinds(observed, "error").all(|item| error_kind(item) == "no_request") {
+            walk.logins += 1;
+        }
+        if session_refused {
+            walk.logins = walk.logins.saturating_sub(1);
         }
         if LOADS.contains(&input.name.as_str()) && input.name != "node" && input.name != "nodes" && refused("offline") {
             if let Some(operation) = input.text("relation").and_then(operation_of) {
@@ -248,11 +279,13 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
         if input.name == "cancel" {
             if let Some(target) = input.text("target") {
                 walk.streams.remove(target);
+                walk.waiting_force.remove(target);
             }
         }
         for ended in kinds(observed, "ended") {
             if let Some(name) = ended.value["stream"].as_str() {
                 walk.streams.remove(name);
+                walk.waiting_force.remove(name);
             }
         }
 
@@ -281,7 +314,9 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
                 let quiet = matches!(input.name.as_str(), "pull" | "cancel" | "close")
                     || (input.name == "set_online" && input.flag("online") == Some(false))
                     || (input.name == "answer_error" && matches!(input.text("kind"), Some("permanent" | "auth")));
-                if quiet && all_requests > 0 {
+                let queued_login = session_refused && logins_before >= 2;
+                let allowed = usize::from(queued_login && sent.is_empty() && kinds(observed, "sent").count() == 1);
+                if quiet && all_requests > allowed {
                     return Err(format!("{}: {} request(s) after an input that asks for none", describe(steps, index), all_requests));
                 }
             }
