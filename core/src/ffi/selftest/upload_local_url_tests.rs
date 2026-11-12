@@ -1,0 +1,135 @@
+use std::path::Path;
+
+use super::rig_tests::bound;
+use super::upload_prepare_tests::{probed_image, send, shrink, PREPARED, SOURCE};
+use super::upload_stage_tests::{answers, COMPLETE, LANDED, OPERATIONS as STAGE_OPERATIONS};
+use super::upload_batch_shift_tests::{blob, OPERATIONS};
+use super::upload_stand::{request, ScriptedPreparer, Stand, BLOB};
+use crate::ffi::upload_wire::{WireSource, WireUploadBatch, WireUploadItem, WireUploadRequest};
+use crate::ffi::wire::WireUploadStatus;
+use crate::ffi::{Database, ReadRequest, ReadValue};
+
+const ASSETS: &str = r#"{"data":{"createAssets":{"assets":[{"id":"a0","clientKey":"key-0","size":3,"position":0},{"id":"a1","clientKey":"key-1","size":3,"position":1},{"id":"a2","clientKey":"key-2","size":3,"position":2}]}}}"#;
+
+#[derive(Clone, Copy, Debug)]
+enum Entry {
+    Upload,
+    Batch,
+    Stage,
+}
+
+/// What the places show of the uploads of a call: the file URL and whether the status is `sending`. The rows are read the way a window reads them, the staged file (no row yet) through the stream of its key.
+struct Places {
+    entry: Entry,
+}
+
+impl Places {
+    fn from_rows(&self, database: &Database, ids: &[String]) -> Vec<(Option<String>, bool)> {
+        let (model, action) = if matches!(self.entry, Entry::Batch) { ("Asset", "create_files") } else { ("Moment", "upload_clip") };
+        ids.iter().filter_map(|id| database.peek_row(database.session_epoch(), model.into(), id.clone()).unwrap()).filter_map(|row| row.uploads.into_iter().find(|upload| upload.action == action)).map(|upload| (upload.upload.local_url.clone(), upload.upload.status == WireUploadStatus::Sending)).collect()
+    }
+
+    async fn wait(&self, database: &Database, ids: &[String], what: &str, ready: impl Fn(&[(Option<String>, bool)]) -> bool) -> Vec<(Option<String>, bool)> {
+        if matches!(self.entry, Entry::Stage) && database.peek_row(database.session_epoch(), "Moment".into(), ids[0].clone()).unwrap().is_none() {
+            let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Blob { model: "Moment".into(), id: ids[0].clone(), action: "upload_clip".into() });
+            loop {
+                let Some(ReadValue::Status { state, local_url, .. }) = bound(stream.pull_next()).await else { panic!("{what}: the stream ended") };
+                let shown = vec![(local_url, state == "sending")];
+                if ready(&shown) { return shown; }
+            }
+        }
+        crate::test_wait::settled_showing(database, what, || format!(" {:?}", self.from_rows(database, ids)), || ready(&self.from_rows(database, ids))).await;
+        self.from_rows(database, ids)
+    }
+}
+
+/// Every upload of the call shows a file URL whose file exists and is not empty.
+async fn assert_url(database: &Database, places: &Places, ids: &[String], point: &str, prepared: bool) -> Vec<String> {
+    let entry = places.entry;
+    let count = ids.len();
+    let shown = places.wait(database, ids, point, |shown| shown.len() == count).await;
+    shown.into_iter().map(|(url, _)| {
+        let url = url.unwrap_or_else(|| panic!("{entry:?} prepared={prepared} {point}: localUrl is None"));
+        let path = url.strip_prefix("file://").unwrap();
+        assert!(std::fs::metadata(path).is_ok_and(|meta| meta.len() > 0), "{entry:?} prepared={prepared} {point}: no file at {url}");
+        url
+    }).collect()
+}
+
+fn source_files(directory: &Path, count: usize) -> Vec<std::path::PathBuf> {
+    (0..count).map(|index| {
+        let path = directory.join(format!("{index}.jpg"));
+        std::fs::write(&path, SOURCE).unwrap();
+        path
+    }).collect()
+}
+
+fn remove_all(paths: &[std::path::PathBuf]) { for path in paths { std::fs::remove_file(path).unwrap(); } }
+
+fn file_source(path: &Path, prepared: bool) -> WireSource {
+    WireSource::File { path: path.to_str().unwrap().into(), name: None, mime: None, prepare: prepared.then(shrink) }
+}
+
+/// P-XFER-23 (D-386): `localUrl` of every upload of a call (a single upload, each item of a batch, a staged file), with and without the prepare step, is the URL of a readable file from the return of the call to the end of the transfer, while the file of the caller is already deleted. Input: the file of the caller deleted at once; the points: call returned, prepare running, prepare ended with the PUT held, the final mutation held (`sending`), the end. Assert: at each point every upload shows a URL with a non-empty file; after the end no URL. Catches: a status whose URL depends on the written size or on the copy of the source that the prepare step removes.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_prop_local_url() {
+    for entry in [Entry::Upload, Entry::Batch, Entry::Stage] {
+        for prepared in [false, true] {
+            let preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[]);
+            let stand = if prepared { Stand::new().with_preparer(preparer.clone()) } else { Stand::new() };
+            let operations: Vec<(&str, &str)> = if matches!(entry, Entry::Batch) { OPERATIONS.to_vec() } else { STAGE_OPERATIONS.to_vec() };
+            let directory = tempfile::tempdir().unwrap();
+            let database = stand.open(Some(&directory.path().join("db.sqlite")), &operations).await;
+            let epoch = database.session_epoch();
+            let sources = source_files(directory.path(), if matches!(entry, Entry::Batch) { 3 } else { 1 });
+            let (run_hold, put_hold) = (preparer.hold_next(), stand.puts.hold_next());
+            let mut mutation = None;
+            let (ids, mut receipts, commit): (Vec<String>, Vec<_>, Option<String>) = match entry {
+                Entry::Upload => {
+                    stand.script.data("CreateBlob", BLOB);
+                    mutation = Some(stand.script.hold("CreateMoment", LANDED));
+                    let receipt = bound(database.send(if prepared { send(epoch, &sources[0], shrink()) } else { super::upload_stand::clip("Moment", r#"{"text":"A"}"#, "upload_clip", &sources[0], epoch) })).await.unwrap();
+                    (vec![receipt.optimistic_value.as_ref().unwrap().id.clone()], vec![receipt], None)
+                }
+                Entry::Batch => {
+                    for index in 0..3 { stand.script.data("CreateBlob", &blob(index)); }
+                    mutation = Some(stand.script.hold("CreateAssets", ASSETS));
+                    let items: Vec<WireUploadItem> = sources.iter().enumerate().map(|(index, path)| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":3,"position":{index}}}"#), source: file_source(path, prepared), variables_json: "{}".into() }).collect();
+                    let batch = bound(database.upload_create_batch(epoch, "Asset".into(), items, WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
+                    (batch.items.iter().map(|item| item.optimistic_value.id.clone()).collect(), batch.items.into_iter().map(|item| item.receipt).collect(), None)
+                }
+                Entry::Stage => {
+                    answers(&stand);
+                    stand.script.data("CompleteMultipart", COMPLETE);
+                    let upload = if prepared { WireUploadRequest { source: file_source(&sources[0], true), variables_json: "{}".into() } } else { request(&sources[0]) };
+                    let staged = bound(database.stage(epoch, "Moment".into(), "upload_clip".into(), upload)).await.unwrap();
+                    (vec![staged.row_id.clone()], vec![staged.receipt], Some(staged.row_id))
+                }
+            };
+            remove_all(&sources);
+            let places = Places { entry };
+            assert_url(&database, &places, &ids, "the call returned", prepared).await;
+            if prepared {
+                run_hold.entered().await;
+                assert_url(&database, &places, &ids, "the prepare runs", prepared).await;
+                run_hold.release();
+            }
+            put_hold.entered().await;
+            assert_url(&database, &places, &ids, "the PUT is held", prepared).await;
+            put_hold.release();
+            if let Some(row) = &commit {
+                crate::test_wait::settled(&database, "the parts are on the server", || stand.puts.seen.lock().unwrap().len() == 1).await;
+                mutation = Some(stand.script.hold("CreateMoment", LANDED));
+                let committed = bound(database.commit_staged(epoch, "Moment".into(), row.clone(), "upload_clip".into(), r#"{"text":"hi"}"#.into(), "{}".into())).await.unwrap();
+                receipts.push(committed);
+            }
+            places.wait(&database, &ids, "every upload waits for the final mutation", |shown| shown.len() == ids.len() && shown.iter().all(|(_, sending)| *sending)).await;
+            let kept = assert_url(&database, &places, &ids, "sending", prepared).await;
+            mutation.unwrap().release();
+            for receipt in receipts { bound(database.confirmed(receipt, false)).await.unwrap(); }
+            places.wait(&database, &ids, "the transfers end", |shown| shown.iter().all(|(url, _)| url.is_none())).await;
+            assert!(kept.iter().all(|url| !Path::new(url.strip_prefix("file://").unwrap()).exists()), "{entry:?} prepared={prepared}: the file is removed with the transfer");
+            database.close_now();
+        }
+    }
+}

@@ -12,12 +12,12 @@ use crate::owners::write::upload::MEBIBYTE;
 
 const INIT: &str = r#"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#;
 const PRESIGN: &str = r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}"#;
-const COMPLETE: &str = r#"{"data":{"completeMultipart":{"signedId":"signed","blobId":"blob"}}}"#;
+pub(super) const COMPLETE: &str = r#"{"data":{"completeMultipart":{"signedId":"signed","blobId":"blob"}}}"#;
 const ABORTED: &str = r#"{"data":{"abortMultipart":{"ok":true}}}"#;
-const LANDED: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#;
-const OPERATIONS: [(&str, &str); 1] = [CREATE_MOMENT];
+pub(super) const LANDED: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#;
+pub(super) const OPERATIONS: [(&str, &str); 1] = [CREATE_MOMENT];
 
-fn answers(stand: &Stand) {
+pub(super) fn answers(stand: &Stand) {
     stand.script.data("InitMultipart", INIT);
     for _ in 0..8 { stand.script.data("PresignParts", PRESIGN); }
 }

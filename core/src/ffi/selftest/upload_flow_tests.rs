@@ -244,26 +244,6 @@ async fn flow_chat_photo_upload() {
     rig.database.close_now();
 }
 
-/// P-XFER-23: the row shows the file URL of the copy from the end of the copy until the transfer is removed.
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_prop_local_url() {
-    let rig = rig().await;
-    let chat = entity(&rig, "Chat", "c1");
-    settled(&rig, "the chat shows", || chat.len() == 1).await;
-    let (_directory, path) = source("logo.jpg", b"jpeg");
-    let epoch = rig.database.session_epoch();
-    let hold = rig.world.hold_next("PUT");
-    let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
-    hold.entered().await;
-    settled(&rig, "the copy has a URL", || local_url(&chat, "c1", "update_photo").is_some()).await;
-    let url = local_url(&chat, "c1", "update_photo").unwrap();
-    assert!(url.starts_with("file://") && std::path::Path::new(&url["file://".len()..]).exists(), "{url}");
-    hold.release();
-    bound(rig.database.confirmed(receipt, false)).await.unwrap();
-    settled(&rig, "the URL goes with the transfer", || local_url(&chat, "c1", "update_photo").is_none() && status(&chat, "c1", "update_photo").is_none()).await;
-    rig.database.close_now();
-}
-
 /// P-APP-14, P-APP-08: a refused file fails its upload on the row with the error, `retry` sends it again, a second refusal is removed by `discard`.
 #[tokio::test(flavor = "multi_thread")]
 async fn flow_chat_photo_retry_and_discard() {
