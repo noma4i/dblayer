@@ -322,13 +322,31 @@ fn sending() -> Twin {
 }
 
 #[test]
-fn call_run_stale() { Twin::new().feed(Input::Run { epoch: EPOCH + 1, operation: "Op".into(), reply: 1 }); }
+fn call_run_is_refused_before_it_starts() {
+    let out = Twin::new().feed(Input::Run { epoch: EPOCH + 1, operation: "Op".into(), reply: 1 });
+    assert_eq!(out.replies, vec![(1, Err(CallError::NoSession))], "a run of another epoch");
+    let out = Twin::new().feed(Input::Run { epoch: EPOCH, operation: "Nope".into(), reply: 1 });
+    assert_eq!(out.replies, vec![(1, Err(CallError::Invalid))], "an undeclared operation");
+    let out = Twin::with(Some(false)).feed(run(1));
+    assert_eq!(out.replies, vec![(1, Err(CallError::Offline))], "no network");
+    assert!(out.effects.is_empty(), "no request goes out");
+}
 
 #[test]
-fn call_run_unknown() { Twin::new().feed(Input::Run { epoch: EPOCH, operation: "Nope".into(), reply: 1 }); }
-
-#[test]
-fn call_run_offline() { Twin::with(Some(false)).feed(run(1)); }
+fn call_response_answers_the_run_and_a_stray_input_does_nothing() {
+    let out = sending().feed(Input::Response { call_id: 1, body: Some("{}".into()), errors: vec![] });
+    assert_eq!(out.replies, vec![(10, Ok("{}".to_string()))]);
+    let out = sending().feed(Input::Response { call_id: 1, body: None, errors: vec!["boom".into()] });
+    assert_eq!(out.replies, vec![(10, Err(CallError::Graphql { messages: vec!["boom".into()], extensions: None }))]);
+    let mut twin = sending();
+    for stray in [response(9), Input::TransportError { call_id: 9, error: http() }, Input::Dropped { call_id: 9 }] {
+        let out = twin.feed(stray);
+        assert!(out.effects.is_empty() && out.replies.is_empty(), "an input of an unknown call changes nothing");
+    }
+    twin.feed(Input::Online(false));
+    twin.feed(Input::Online(true));
+    assert_eq!(twin.feed(response(1)).replies, vec![(10, Ok("{}".to_string()))], "a call in flight survives a network change");
+}
 
 #[test]
 fn call_run() {
@@ -368,18 +386,6 @@ fn call_declare_in_flight() {
 }
 
 #[test]
-fn call_response() { sending().feed(response(1)); }
-
-#[test]
-fn call_response_errors() { sending().feed(Input::Response { call_id: 1, body: None, errors: vec!["boom".into()] }); }
-
-#[test]
-fn call_transport_error() {
-    sending().feed(Input::TransportError { call_id: 1, error: http() });
-    sending().feed(Input::TransportError { call_id: 1, error: CallError::Network });
-}
-
-#[test]
 fn call_dropped() {
     let mut query = sending();
     let out = query.feed(Input::Dropped { call_id: 1 });
@@ -400,22 +406,6 @@ fn call_dropped() {
     let exhausted = Calls::step(&mut state, CallsInput::Dropped { call_id: 1 }, crate::runtime::Time(0));
     assert!(exhausted.iter().any(|effect| matches!(effect, Effect::Run(CallsEffect::Release { request_id: 1 }))));
     assert!(exhausted.iter().any(|effect| matches!(effect, Effect::Run(CallsEffect::Reply { id: 1, answer: Err(CallError::Dropped) }))));
-}
-
-#[test]
-fn call_stray() {
-    let mut twin = sending();
-    twin.feed(response(9));
-    twin.feed(Input::TransportError { call_id: 9, error: http() });
-    twin.feed(Input::Dropped { call_id: 9 });
-}
-
-#[test]
-fn call_online() {
-    let mut twin = sending();
-    twin.feed(Input::Online(false));
-    twin.feed(Input::Online(true));
-    twin.feed(response(1));
 }
 
 #[test]
