@@ -109,16 +109,18 @@ private func feed(_ input: AVAssetWriterInput, count: Int, append: @escaping (In
     nonisolated(unsafe) var next = 0
     nonisolated(unsafe) var finished = false
     input.requestMediaDataWhenReady(on: DispatchQueue(label: "fixture.feed")) {
-      while input.isReadyForMoreMediaData, !finished {
-        if next == count {
-          input.markAsFinished()
-          finished = true
-          done.resume()
+      guard !finished else { return }
+      for index in next..<count {
+        guard input.isReadyForMoreMediaData else {
+          next = index
           return
         }
-        append(next)
-        next += 1
+        append(index)
       }
+      next = count
+      input.markAsFinished()
+      finished = true
+      done.resume()
     }
   }
 }
@@ -183,8 +185,7 @@ private func videoFacts(_ url: URL) async throws -> VideoFacts {
   let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
   reader.add(output)
   reader.startReading()
-  var frames = 0
-  while let buffer = output.copyNextSampleBuffer() { frames += CMSampleBufferGetNumSamples(buffer) }
+  let frames = sequence(state: output) { $0.copyNextSampleBuffer() }.reduce(0) { $0 + CMSampleBufferGetNumSamples($1) }
   let extensions = formats.first.flatMap { CMFormatDescriptionGetExtensions($0) as? [String: Any] }
   return VideoFacts(
     width: source.width, height: source.height, codec: CMFormatDescriptionGetMediaSubType(try #require(formats.first)), frames: frames,
@@ -360,10 +361,8 @@ struct SystemPreparerTests {
     let first = AsyncStream<Double>.makeStream()
     let job = PrepareJob(attemptId: 7, source: source.path, destination: destination.path, plan: reencode(640, 360, false, false))
     let work = Task { await preparer.write(job) { first.continuation.yield($0) } }
-    for await _ in first.stream {
-      preparer.cancel(attemptId: 7)
-      break
-    }
+    _ = await Cursor(first.stream).next("the first progress value of the run")
+    preparer.cancel(attemptId: 7)
     let outcome = await work.value
     guard case .failed = outcome else {
       #expect(Bool(false), "the cancelled run reports a failure, got \(outcome)")

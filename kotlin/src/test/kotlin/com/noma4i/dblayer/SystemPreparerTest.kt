@@ -5,7 +5,6 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -37,7 +36,7 @@ class SystemPreparerTest {
 
     /** A source above every decoder is refused with the decoder maximum before the export, a source that is only repackaged needs no decoder. */
     @Test
-    fun theDecoderIsCheckedOnlyWhenTheVideoIsEncoded() = runBlocking<Unit> {
+    fun theDecoderIsCheckedOnlyWhenTheVideoIsEncoded() = bounded<Unit> {
         val exports = CopyOnWriteArrayList<VideoExport>()
         val preparer = SystemPreparer(context, { facts4k() }, { listOf(decoder(2560, 1440)) }, { exports += it; it.output.writeBytes(byteArrayOf(1)) })
         val refused = destination()
@@ -59,7 +58,7 @@ class SystemPreparerTest {
 
     /** `cancel` of the attempt stops the export and no partial file stays. */
     @Test
-    fun cancelStopsTheExportAndRemovesThePartialFile() = runBlocking<Unit> {
+    fun cancelStopsTheExportAndRemovesThePartialFile() = bounded<Unit> {
         val started = CompletableDeferred<Unit>()
         val output = destination()
         val preparer = SystemPreparer(context, { facts4k() }, { listOf(decoder(Int.MAX_VALUE, Int.MAX_VALUE)) }, {
