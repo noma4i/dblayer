@@ -51,36 +51,18 @@ async fn out_submit_invalid_value() {
     rig.database.close_now();
 }
 
-/// A `send` without a file for a model that declares no `operation :create` is refused before anything is written.
+/// A `send` without a file for a model with no `operation :create`, a `send` with a file whose action is not declared `upload: true`, and a `set_local` on a path that is not declared local are refused with `Invalid` before anything is written.
 #[tokio::test(flavor = "multi_thread")]
-async fn out_send_undeclared() {
+async fn calls_the_schema_does_not_declare_are_refused_invalid() {
     let rig = rig().await;
     let epoch = rig.database.session_epoch();
-    let error = bound(rig.database.send(command("Chat", json!({"name": "n"}), epoch, None))).await.unwrap_err();
-    assert!(is_invalid(&error), "{error:?}");
-    rig.database.close_now();
-}
-
-/// A `send` with a file whose action is not declared `upload: true` is refused.
-#[tokio::test(flavor = "multi_thread")]
-async fn out_send_unknown_upload_action() {
-    let rig = rig().await;
-    let epoch = rig.database.session_epoch();
+    let undeclared = bound(rig.database.send(command("Chat", json!({"name": "n"}), epoch, None))).await.unwrap_err();
     let file = UploadFile::new("/nonexistent");
     let upload = CommandUpload { action: "create".into(), request: WireUploadRequest::of(&file) };
-    let error = bound(rig.database.send(command("Message", json!({"chatId": "c1", "text": "x", "at": 1}), epoch, Some(upload)))).await.unwrap_err();
-    assert!(is_invalid(&error), "{error:?}");
-    rig.database.close_now();
-}
-
-/// `set_local` on a path that is not declared local: `Err(Invalid{path})`.
-#[tokio::test(flavor = "multi_thread")]
-async fn out_local_set_local_not_local() {
-    let rig = rig().await;
-    let epoch = rig.database.session_epoch();
+    let unknown_action = bound(rig.database.send(command("Message", json!({"chatId": "c1", "text": "x", "at": 1}), epoch, Some(upload)))).await.unwrap_err();
     rig.land("Message", json!({"id": "m1", "chatId": "c1", "text": "t", "at": 1})).await;
-    let error = bound(rig.database.set_local(epoch, "Message".into(), "m1".into(), "text".into(), json!("x").to_string())).await.unwrap_err();
-    assert!(is_invalid(&error), "{error:?}");
+    let not_local = bound(rig.database.set_local(epoch, "Message".into(), "m1".into(), "text".into(), json!("x").to_string())).await.unwrap_err();
+    assert!(is_invalid(&undeclared) && is_invalid(&unknown_action) && is_invalid(&not_local), "{undeclared:?} {unknown_action:?} {not_local:?}");
     rig.database.close_now();
 }
 
