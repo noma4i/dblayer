@@ -6,10 +6,6 @@ enum Settled<Model: DBModel>: Sendable {
   case rejected(WireFailure, kept: Bool)
   case ended(cause: EndCause)
 
-  var confirmedValue: Model? {
-    if case let .confirmed(value, _) = self { return value }
-    return nil
-  }
 }
 
 extension MutationReceipt {

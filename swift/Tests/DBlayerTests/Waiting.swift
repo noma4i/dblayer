@@ -201,11 +201,6 @@ final class Collected: @unchecked Sendable {
   }
 }
 
-func nextElement<Element: Sendable>(of stream: AsyncStream<Element>) async -> Element? {
-  var iterator = stream.makeAsyncIterator()
-  return await iterator.next()
-}
-
 func parkUntilCancelled() async throws {
   let (parked, release) = AsyncStream<Void>.makeStream()
   await withTaskCancellationHandler {

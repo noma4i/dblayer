@@ -11,12 +11,6 @@ let emptySpecs = #"{"models":[]}"#
 
 func specs(_ models: String) -> String { #"{"models":\#(models)}"# }
 
-/// The two orders of the open inputs: the platform reports online before the operations are declared, or the test sets it after them.
-enum OpenOrder: String, CaseIterable {
-  case onlineAtOpen, onlineAfterRegister
-  var onlineAtOpen: Bool { self == .onlineAtOpen }
-}
-
 /// The schema with one server subscription: a schema holds one subscription, so a test of a model-level subscription runs on a schema that declares only that one.
 func schema(onlySubscription name: String, in source: String = modelsJSON) -> String {
   var models = ((try? JSONSerialization.jsonObject(with: Data(source.utf8))) as? [String: Any])?["models"] as? [[String: Any]] ?? []
