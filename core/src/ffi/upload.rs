@@ -311,14 +311,7 @@ impl Database {
         loop {
             let Some(before) = self.transfers_quiet_at(epoch).await else { return };
             if self.await_life(self.life.operations_quiet(epoch)).await.is_err() { return }
-            if self.transfers_quiet_at(epoch).await == Some(before) { return }
-        }
-    }
-
-    async fn transfers_quiet_at(&self, epoch: u64) -> Option<u64> {
-        match self.await_life(self.life.transfers_quiet(epoch)).await {
-            Ok(LifeReply::Transfer(TransferAnswer::Quiet(handled))) => Some(handled),
-            _ => None,
+            if before.is_none() || self.transfers_quiet_at(epoch).await == Some(before) { return }
         }
     }
 
@@ -340,6 +333,14 @@ impl Database {
 }
 
 impl Database {
+    async fn transfers_quiet_at(&self, epoch: u64) -> Option<Option<u64>> {
+        match self.await_life(self.life.transfers_quiet(epoch)).await {
+            Ok(LifeReply::Transfer(TransferAnswer::Quiet(handled))) => Some(Some(handled)),
+            Ok(LifeReply::Transfer(TransferAnswer::Err(crate::owners::write::outbox::Fault::NoSession))) => Some(None),
+            _ => None,
+        }
+    }
+
     /// `send` with a file: the row is written like a `create`, the final mutation is the declared upload action.
     pub(super) async fn send_upload(&self, request: super::command::CommandRequest) -> Result<WireOperationReceipt, DbError> {
         let epoch = request.epoch;

@@ -62,6 +62,7 @@ mod upload_prepare_tests;
 mod upload_progress_tests;
 mod upload_expiry_tests;
 mod upload_init_release_tests;
+mod writes_quiet_tests;
 mod upload_batch_shift_tests;
 mod upload_pending_tests;
 mod upload_stage_tests;

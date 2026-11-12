@@ -6,6 +6,10 @@
 
 - Add `DB.handleBackgroundEvents(identifier:completion:)` (returns `Bool`) and the PUT of a file in a background `URLSession` on iOS: an upload ends with the app in the background.
 
+### Changed
+
+- Send a new file on iOS as one part as large as the file.
+
 ### Fixed
 
 - Remove an upload or an operation with `discard` or `cancelUpload` in any stage instead of `InFlight`.

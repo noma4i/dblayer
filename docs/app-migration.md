@@ -46,17 +46,17 @@ Every read is a stream of an `AccountScope` shown through `Projected`. See [live
 
 ## 6. Models in `.dbl`
 
-| Need | Declaration | Where |
-| --- | --- | --- |
-| An event carries the row | `payload: "chat"` on the node scope of a model, `server_revision :serverRevision` on the model | [models](models.md#node-reads) |
-| A media library with a marker | `marker "chatMediaState", from: "node.mediaLibrary", fields: [...], sequence: :latestSequence` and `tail "chatMedia", after: :afterSequence` in the scope | [models](models.md#media-library-marker-and-tail) |
-| Preload by another scope | `preload vibeId: { from: "Compass.rows" }, limit: 40` | [models](models.md) |
-| A complete member list | `scope :chat_members, members_complete: true` | [models](models.md#scopes) |
-| A create takes values from other models | repeated `local :field, from: { of: Model, field: :source }` | [models](models.md) |
-| A subscription filter | `matches: { kind: ["ACTIVE"] }` or `matches: { kind: { not: ["SCREENSHOT"] } }` | [server sync](server-sync.md#subscriptions) |
-| Membership from the node response | `membership list: { contains: :lists }` and `insert_on: [:event, :response, :node]` | [models](models.md#scopes) |
-| An action that changes other rows | `removes_receiver`, `copies_receiver_to`, `joins_scope`, `leaves_scope` | [models](models.md#effects-of-an-operation-before-the-answer) |
-| A server `Int64` | `scalar :Int64, as: :long` | [models](models.md#custom-scalars) |
+| Need                                    | Declaration                                                                                                                                               | Where                                                         |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| An event carries the row                | `payload: "chat"` on the node scope of a model, `server_revision :serverRevision` on the model                                                            | [models](models.md#node-reads)                                |
+| A media library with a marker           | `marker "chatMediaState", from: "node.mediaLibrary", fields: [...], sequence: :latestSequence` and `tail "chatMedia", after: :afterSequence` in the scope | [models](models.md#media-library-marker-and-tail)             |
+| Preload by another scope                | `preload vibeId: { from: "Compass.rows" }, limit: 40`                                                                                                     | [models](models.md)                                           |
+| A complete member list                  | `scope :chat_members, members_complete: true`                                                                                                             | [models](models.md#scopes)                                    |
+| A create takes values from other models | repeated `local :field, from: { of: Model, field: :source }`                                                                                              | [models](models.md)                                           |
+| A subscription filter                   | `matches: { kind: ["ACTIVE"] }` or `matches: { kind: { not: ["SCREENSHOT"] } }`                                                                           | [server sync](server-sync.md#subscriptions)                   |
+| Membership from the node response       | `membership list: { contains: :lists }` and `insert_on: [:event, :response, :node]`                                                                       | [models](models.md#scopes)                                    |
+| An action that changes other rows       | `removes_receiver`, `copies_receiver_to`, `joins_scope`, `leaves_scope`                                                                                   | [models](models.md#effects-of-an-operation-before-the-answer) |
+| A server `Int64`                        | `scalar :Int64, as: :long`                                                                                                                                | [models](models.md#custom-scalars)                            |
 
 ## 7. Tests
 
@@ -166,3 +166,13 @@ when (upload.status) {
 ```
 
 - `discard()` of a staged upload, `discard(action)` and `cancelUpload(action)` work in any stage of the transfer. Remove a repeat of the call after `InFlight`: a second call gets the same outcome as the first.
+
+```swift
+let removed = try await staged.discard()
+```
+
+```kotlin
+val removed = staged.discard()
+```
+
+- On iOS a new file goes up as one part as large as the file: `Init`, the presign of part 1, one PUT, `Complete`. The number of PUTs and the order of the steps on the server change. The app changes nothing.
