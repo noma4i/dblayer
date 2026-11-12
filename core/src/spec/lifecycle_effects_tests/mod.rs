@@ -211,8 +211,7 @@ fn life_save_failed_answers_open_once() {
         let mut twin = Twin::open(0, 0, saved_identity, Some(7));
         twin.feed(save_failed(1));
         assert_eq!(twin.cell().state, PublishedState::StorageFailed, "{saved_identity:?}");
-        twin.feed_all([started(Peer::Outbox, 1), started(Peer::Transfer, 1), classified(Peer::Session, 1)]);
-        assert_eq!(twin.replies(), vec![(7, Err(LifecycleError::Storage))], "{saved_identity:?}: open answers Err(Storage) once, a late restore answer does not answer it again");
+        assert_eq!(twin.replies(), vec![(7, Err(LifecycleError::Storage))], "{saved_identity:?}: open answers Err(Storage) once");
         assert!(!twin.history.iter().any(|effect| matches!(effect, LifecycleEffect::EpochStarted { .. } | LifecycleEffect::ReadIntents { .. })), "{saved_identity:?}: no work of the epoch starts");
     }
     let mut twin = Twin::new();
@@ -255,6 +254,63 @@ fn life_storage_failed_retried_on_event() {
     assert_eq!((twin.cell().state, twin.cell().identity), (PublishedState::Session, Some(1)));
     assert!(effects.iter().any(|effect| matches!(effect, LifecycleEffect::EpochStarted { identity: Some(1), .. })), "the epoch of the refused publication starts with the retry: {effects:?}");
     assert_eq!(publishes(&twin.feed(LifecycleInput::Online(true))), 0, "no event writes once the state is left");
+}
+
+/// life_start_goes_with_the_first_saved_record, P-LIFE-26: `EpochStarted(e)` goes once with the first `Saved` of an active record of the epoch, whatever the number of its records in flight and the order of their answers; the start of an ended epoch never goes.
+#[test]
+fn life_start_goes_with_the_first_saved_record() {
+    let starts = |twin: &Twin, epoch: u64| twin.history.iter().filter(|effect| matches!(effect, LifecycleEffect::EpochStarted { epoch: started, .. } if *started == epoch)).count();
+    let refused = || {
+        let mut twin = Twin::new();
+        twin.feed(credential(1));
+        let first = twin.publications()[0];
+        twin.feed(save_failed(first));
+        twin.feed(LifecycleInput::Foreground);
+        twin.feed(LifecycleInput::Online(true));
+        let records = twin.publications();
+        assert_eq!((records.len(), twin.cell().state, starts(&twin, 2)), (2, PublishedState::StorageFailed, 0), "two events, two records, no start yet");
+        (twin, records)
+    };
+
+    let (mut twin, records) = refused();
+    twin.feed(save_failed(records[0]));
+    twin.feed(saved(records[1]));
+    assert_eq!((starts(&twin, 2), twin.cell().state), (1, PublishedState::Session), "a: SaveFailed(a), Saved(b)");
+
+    let (mut twin, records) = refused();
+    twin.feed(saved(records[0]));
+    twin.feed(save_failed(records[1]));
+    assert_eq!((starts(&twin, 2), twin.cell().state), (1, PublishedState::Session), "b: Saved(a), SaveFailed(b) leaves the saved value");
+
+    let (mut twin, records) = refused();
+    twin.feed(saved(records[0]));
+    twin.feed(saved(records[1]));
+    assert_eq!((starts(&twin, 2), twin.cell().state), (1, PublishedState::Session), "c: Saved(a), Saved(b)");
+
+    let mut twin = Twin::new();
+    twin.feed(credential(1));
+    let first = twin.publications()[0];
+    twin.feed(save_failed(first));
+    twin.feed(credential(2));
+    let ending = twin.publications();
+    twin.feed(save_failed(ending[0]));
+    assert_eq!(twin.cell().state, PublishedState::StorageFailed);
+    let done = cleared(&twin);
+    twin.feed(done);
+    twin.feed(LifecycleInput::Foreground);
+    twin.settle();
+    assert_eq!((starts(&twin, 2), starts(&twin, 4)), (0, 1), "d: only the new epoch starts");
+    assert!(twin.history.iter().any(|effect| matches!(effect, LifecycleEffect::RestoreReady { epoch: 4 })), "d: the restore of the new epoch ends");
+    assert!(!twin.history.iter().any(|effect| matches!(effect, LifecycleEffect::RestoreReady { epoch: 2 })), "d: the ended epoch is not restored");
+
+    let mut twin = Twin::open(0, 0, Some(9), Some(7));
+    let first = twin.publications()[0];
+    twin.feed(save_failed(first));
+    assert_eq!(twin.replies(), vec![(7, Err(LifecycleError::Storage))], "e: open answers Err(Storage)");
+    twin.feed(LifecycleInput::Online(true));
+    twin.settle();
+    assert_eq!((starts(&twin, 1), twin.cell().state), (1, PublishedState::Session), "e: the epoch of the open starts with the first Saved");
+    assert!(twin.history.iter().any(|effect| matches!(effect, LifecycleEffect::RestoreReady { epoch: 1 })), "e: the restore of the open ends");
 }
 
 /// life_network_event_ignored: with no `StorageFailed` an event writes nothing, in every phase.

@@ -88,7 +88,7 @@ pub enum LifecycleError {
     Interrupted,
 }
 
-/// The `EpochStarted` that waits for `Saved` of its publication.
+/// The epoch whose `EpochStarted` waits for the first `Saved` of an active publication of the epoch.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Started {
     pub epoch: Epoch,
@@ -100,7 +100,6 @@ pub struct Started {
 pub struct Publication {
     pub id: PublicationId,
     pub published: Published,
-    pub started: Option<Started>,
     pub replies: Vec<ReplyId>,
 }
 
@@ -156,8 +155,7 @@ pub struct LifecycleState {
     ended_up_to: Option<Epoch>,
     restoring: Option<Restoring>,
     open_reply: Option<ReplyId>,
-    /// The `EpochStarted` of the publication the disk refused: the retry carries it.
-    failed_start: Option<Started>,
+    starting: Option<Started>,
     next_publication: PublicationId,
     next_erase: EraseId,
     /// `issued_generation`: the highest generation reserved for an erase.
@@ -191,7 +189,7 @@ impl Default for LifecycleState {
 impl LifecycleState {
     /// Before `Open`: no session, epoch 0.
     pub fn new() -> Self {
-        Self { phase: LifecyclePhase::NoSession { epoch: 0 }, published: Published::initial(), publishing: Vec::new(), cell: Published::initial(), cell_publication: 0, ended_up_to: None, restoring: None, open_reply: None, failed_start: None, next_publication: 1, next_erase: 1, allocated: 0 }
+        Self { phase: LifecyclePhase::NoSession { epoch: 0 }, published: Published::initial(), publishing: Vec::new(), cell: Published::initial(), cell_publication: 0, ended_up_to: None, restoring: None, open_reply: None, starting: None, next_publication: 1, next_erase: 1, allocated: 0 }
     }
 
     pub fn phase(&self) -> &LifecyclePhase { &self.phase }
@@ -204,7 +202,7 @@ impl LifecycleState {
 
     pub fn restoring(&self) -> Option<&Restoring> { self.restoring.as_ref() }
 
-    fn publish(&mut self, started: Option<Started>, replies: Vec<ReplyId>, fx: &mut Vec<LifecycleEffect>) {
+    fn publish(&mut self, replies: Vec<ReplyId>, fx: &mut Vec<LifecycleEffect>) {
         let id = self.next_publication;
         self.next_publication += 1;
         fx.push(LifecycleEffect::Publish { publication_id: id, published: self.published.clone() });
@@ -212,7 +210,7 @@ impl LifecycleState {
             self.cell = self.published.clone();
             self.cell_publication = id;
         }
-        self.publishing.push(Publication { id, published: self.published.clone(), started, replies });
+        self.publishing.push(Publication { id, published: self.published.clone(), replies });
     }
 
     fn set_published(&mut self, epoch: Epoch, identity: Option<Identity>, generation: u64, state: PublishedState) {
@@ -224,7 +222,8 @@ impl LifecycleState {
         if identity.is_some() {
             self.restoring = Some(self.new_restoring(epoch, None));
         }
-        self.publish(Some(Started { epoch, identity, generation }), replies, fx);
+        self.starting = Some(Started { epoch, identity, generation });
+        self.publish(replies, fx);
     }
 
     fn new_restoring(&self, epoch: Epoch, open_reply: Option<ReplyId>) -> Restoring {
@@ -256,11 +255,14 @@ impl LifecycleState {
 
     /// The epoch of a restore ended by a new identity or a reset: `open` already passed `Saved` -> `Ok`, its publication still waits -> `Interrupted`.
     fn end_restoring(&mut self, fx: &mut Vec<LifecycleEffect>) {
-        let saved = self.restoring.as_ref().is_some_and(|restoring| !self.publishing.iter().any(|publication| publication.started.as_ref().is_some_and(|started| started.epoch == restoring.epoch)));
+        let saved = self.restoring.as_ref().is_some_and(|restoring| self.starting.as_ref().is_none_or(|starting| starting.epoch != restoring.epoch));
         self.drop_restoring(if saved { Ok(()) } else { Err(LifecycleError::Interrupted) }, fx);
     }
 
-    fn ended(&mut self, epoch: Epoch) { self.ended_up_to = Some(self.ended_up_to.map_or(epoch, |ended| ended.max(epoch))); }
+    fn ended(&mut self, epoch: Epoch) {
+        self.ended_up_to = Some(self.ended_up_to.map_or(epoch, |ended| ended.max(epoch)));
+        self.starting = self.starting.take().filter(|starting| starting.epoch > epoch);
+    }
 
     fn new_erase(&mut self, kind: EraseKind, replies: Vec<ReplyId>) -> Erase {
         let id = self.next_erase;
@@ -272,7 +274,7 @@ impl LifecycleState {
     fn closing(&mut self, erases: Vec<Erase>, close_replies: Vec<ReplyId>, end: Option<Epoch>, fx: &mut Vec<LifecycleEffect>) -> LifecyclePhase {
         self.published.state = PublishedState::Closing;
         self.published.closed = true;
-        self.publish(None, Vec::new(), fx);
+        self.publish(Vec::new(), fx);
         self.drop_restoring(Err(LifecycleError::Closed), fx);
         if let Some(id) = self.open_reply.take() {
             if let Some(publication) = self.publishing.iter_mut().find(|publication| publication.replies.contains(&id)) {
@@ -291,11 +293,11 @@ impl LifecycleState {
 
     /// `Ending` entered from a state with a live epoch: `EpochEnded` · `Publish` · `ClearAccount`.
     fn ending(&mut self, epoch: Epoch, cause: Cause, next: Option<Identity>, mut erases: Vec<Erase>, replies: Vec<ReplyId>, fx: &mut Vec<LifecycleEffect>) {
-        self.ended(epoch);
         self.end_restoring(fx);
+        self.ended(epoch);
         fx.push(LifecycleEffect::EpochEnded { epoch, cause });
         self.published.state = PublishedState::Ending;
-        self.publish(None, Vec::new(), fx);
+        self.publish(Vec::new(), fx);
         let erase = self.new_erase(EraseKind::Account, replies);
         fx.push(LifecycleEffect::ClearAccount { epoch_old: epoch, cause, generation_new: erase.target, erase_id: erase.id });
         erases.push(erase);

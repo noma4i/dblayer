@@ -9,15 +9,16 @@ impl LifecycleState {
                 let epoch = saved_epoch + 1;
                 self.phase = settled(epoch, saved_identity);
                 self.set_published(epoch, saved_identity, saved_generation, settled_state(saved_identity));
+                self.starting = Some(Started { epoch, identity: saved_identity, generation: saved_generation });
                 if saved_identity.is_some() {
                     self.restoring = Some(self.new_restoring(epoch, reply));
-                    self.publish(Some(Started { epoch, identity: saved_identity, generation: saved_generation }), Vec::new(), fx);
+                    self.publish(Vec::new(), fx);
                 } else if saved_unowned_pending {
                     self.restoring = Some(Restoring { epoch, start_waiting: Default::default(), restore_waiting: [Peer::Session].into(), open_reply: reply });
-                    self.publish(Some(Started { epoch, identity: saved_identity, generation: saved_generation }), Vec::new(), fx);
+                    self.publish(Vec::new(), fx);
                 } else {
                     self.open_reply = reply;
-                    self.publish(Some(Started { epoch, identity: saved_identity, generation: saved_generation }), reply.into_iter().collect(), fx);
+                    self.publish(reply.into_iter().collect(), fx);
                 }
                 return;
             }
@@ -65,7 +66,7 @@ impl LifecycleState {
             (LifecyclePhase::Ending { epoch_old, cause, failed, erase_credential, mut erases, .. }, LifecycleInput::CredentialCommitted(CredentialCommitted { identity })) => {
                 if failed {
                     self.published.state = PublishedState::Ending;
-                    self.publish(None, Vec::new(), fx);
+                    self.publish(Vec::new(), fx);
                     let erase = self.new_erase(EraseKind::Account, Vec::new());
                     fx.push(LifecycleEffect::ClearAccount { epoch_old, cause, generation_new: erase.target, erase_id: erase.id });
                     erases.push(erase);
@@ -75,7 +76,7 @@ impl LifecycleState {
             (LifecyclePhase::Ending { epoch_old, cause, failed, erase_credential, mut erases, .. }, LifecycleInput::SessionReset { reply }) => {
                 if failed {
                     self.published.state = PublishedState::Ending;
-                    self.publish(None, Vec::new(), fx);
+                    self.publish(Vec::new(), fx);
                     let erase = self.new_erase(EraseKind::Account, reply.into_iter().collect());
                     fx.push(LifecycleEffect::ClearAccount { epoch_old, cause: Cause::SessionReset, generation_new: erase.target, erase_id: erase.id });
                     erases.push(erase);
@@ -117,7 +118,7 @@ impl LifecycleState {
                     reply_all(erase.replies, Err(LifecycleError::Storage), fx);
                     if erase.kind == EraseKind::Account {
                         self.published.state = PublishedState::EndingFailed;
-                        self.publish(None, Vec::new(), fx);
+                        self.publish(Vec::new(), fx);
                         LifecyclePhase::Ending { epoch_old, cause, next, failed: true, erase_credential, erases }
                     } else {
                         LifecyclePhase::Ending { epoch_old, cause, next, failed, erase_credential, erases }
@@ -225,25 +226,23 @@ impl LifecycleState {
                 return;
             }
             if !restricting {
-                self.failed_start = None;
                 self.cell = publication.published.clone();
                 self.cell_publication = id;
                 fx.push(LifecycleEffect::PublishCell(publication.published.clone()));
             }
             reply_all(publication.replies, Ok(()), fx);
-            if let Some(Started { epoch, identity, generation }) = publication.started {
+            if let Some(Started { epoch, identity, generation }) = self.starting.clone().filter(|starting| !restricting && starting.epoch == publication.published.epoch) {
+                self.starting = None;
                 fx.push(LifecycleEffect::EpochStarted { epoch, identity, generation });
                 self.restore_progress(epoch, fx);
             }
             return;
         }
         reply_all(publication.replies, Err(LifecycleError::Storage), fx);
-        let opening = publication.started.as_ref().map(|started| started.epoch);
-        if let Some(restoring) = self.restoring.take_if(|restoring| opening == Some(restoring.epoch)) {
-            reply_all(restoring.open_reply.into_iter().collect(), Err(LifecycleError::Storage), fx);
+        if let Some(open_reply) = self.restoring.as_mut().and_then(|restoring| restoring.open_reply.take()) {
+            reply_all(vec![open_reply], Err(LifecycleError::Storage), fx);
         }
-        if !newer {
-            if publication.started.is_some() { self.failed_start = publication.started; }
+        if !newer && (restricting || publication.published != self.cell) {
             self.cell.state = PublishedState::StorageFailed;
             fx.push(LifecycleEffect::PublishCell(self.cell.clone()));
         }
@@ -252,11 +251,7 @@ impl LifecycleState {
     /// `life_storage_failed_retried_on_event`, `life_network_event_ignored`: a refused save of the active publication is written again once per event, `Saved` leaves `StorageFailed`.
     fn storage_failed_retried(&mut self, fx: &mut Vec<LifecycleEffect>) {
         if self.cell.state == PublishedState::StorageFailed && matches!(self.phase, LifecyclePhase::NoSession { .. } | LifecyclePhase::Session { .. }) {
-            let started = self.failed_start.take();
-            if let Some(Started { epoch, identity: Some(_), .. }) = &started {
-                self.restoring = Some(self.new_restoring(*epoch, None));
-            }
-            self.publish(started, Vec::new(), fx);
+            self.publish(Vec::new(), fx);
         }
     }
 
