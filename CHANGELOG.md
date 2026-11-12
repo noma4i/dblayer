@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Abort the multipart that the server creates for an upload removed while its first request is in flight.
 - Write the refused session record again at the next online or foreground event.
 - Repeat the erase of the account data after a refused disk write at the next online or foreground event.
 - Show no `localUrl` for a failed upload row without a copy.
