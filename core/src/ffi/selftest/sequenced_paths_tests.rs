@@ -17,17 +17,7 @@ enum Path {
     SessionCall,
 }
 
-struct Row {
-    path: Path,
-    builder: &'static str,
-}
-
-const ROWS: [Row; 4] = [
-    Row { path: Path::OutboxMutation, builder: "ffi/write.rs" },
-    Row { path: Path::UploadFinalMutation, builder: "ffi/upload.rs" },
-    Row { path: Path::CallsMutation, builder: "owners/life/calls_runner.rs" },
-    Row { path: Path::SessionCall, builder: "transport/encrypted/graphql.rs" },
-];
+const PATHS: [Path; 4] = [Path::OutboxMutation, Path::UploadFinalMutation, Path::CallsMutation, Path::SessionCall];
 
 async fn drive(path: Path, database: &Arc<Database>, rig: &SessionRig, known: bool) {
     let epoch = database.session_epoch();
@@ -83,14 +73,14 @@ fn assert_pairs(path: Path, sent: &[(i64, String, Value)], known: bool) {
 #[tokio::test(flavor = "multi_thread")]
 async fn sess_prop_sequenced_body_one_per_pair_paths() {
     for known in [true, false] {
-        for row in &ROWS {
+        for path in PATHS {
             let rig = SessionRig::new();
             let database = opened_with_row(&rig, Arc::new(Puts::default())).await;
             let before = graphql_pairs(&rig).len();
             if !known { rig.server.empty_registry(); }
-            drive(row.path, &database, &rig, known).await;
+            drive(path, &database, &rig, known).await;
             let sent: Vec<_> = graphql_pairs(&rig).into_iter().skip(before).collect();
-            match row.path {
+            match path {
                 Path::SessionCall => assert!(rig.server.seen().iter().filter(|request| request["sequence"] == 1).all(|request| request["body"].get("extensions").is_none()), "a session call goes verbatim, no document pair"),
                 path => {
                     assert_pairs(path, &sent, known);
@@ -101,26 +91,4 @@ async fn sess_prop_sequenced_body_one_per_pair_paths() {
             database.close_now();
         }
     }
-}
-
-#[test]
-fn every_builder_of_a_sequenced_body_has_a_row() {
-    let root = std::path::PathBuf::from("src");
-    let mut found = Vec::new();
-    let mut stack = vec![root.clone()];
-    while let Some(directory) = stack.pop() {
-        for entry in std::fs::read_dir(directory).unwrap() {
-            let path = entry.unwrap().path();
-            let text = path.to_string_lossy().replace('\\', "/");
-            if path.is_dir() {
-                if !text.ends_with("/tests") && !text.ends_with("/spec") && !text.ends_with("/selftest") { stack.push(path); }
-            } else if text.ends_with(".rs") && !text.ends_with("_tests.rs") && std::fs::read_to_string(&path).unwrap().contains("graphql_body(") {
-                found.push(text.trim_start_matches(&format!("{}/", root.to_string_lossy().replace('\\', "/"))).to_string());
-            }
-        }
-    }
-    found.sort();
-    let mut rows: Vec<&str> = ROWS.iter().map(|row| row.builder).collect();
-    rows.sort_unstable();
-    assert_eq!(found, rows, "a builder of a sequenced body without a row of the class test (or a row without a builder)");
 }

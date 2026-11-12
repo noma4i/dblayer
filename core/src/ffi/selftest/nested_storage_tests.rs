@@ -68,8 +68,7 @@ async fn stored_value(rig: &Rig, epoch: u64, value: Value) -> Cell {
 async fn nested_shared_cases_round_trip() {
     let rig = Rig::signed_as(World::new("server", "A", true), false, wrapper_models).await;
     let epoch = rig.database.session_epoch();
-    let path = crate::test_matrix::crate_dir().join("../fixtures/nested.json");
-    let cases: Vec<Value> = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let cases: Vec<Value> = serde_json::from_str(include_str!("../../../../fixtures/nested.json")).unwrap();
     for case in &cases {
         let fields = case.as_object().unwrap();
         if fields.get("error") == Some(&Value::Bool(true)) { continue; }

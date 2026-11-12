@@ -7,7 +7,7 @@ use std::task::{Context, Wake, Waker};
 use super::rig_tests::{bound, Rig, BOUND};
 use super::upload_stand::{plain, request, Stand, CREATE_MOMENT};
 use crate::ffi::{Database, DbError, EndCause, ReadRequest, ReadStream, ReadValue};
-use crate::test_matrix::Matrix;
+use super::cases::Cases;
 use crate::test_wait::within_named;
 
 fn err_tag(error: &DbError) -> String {
@@ -224,30 +224,29 @@ async fn stream_cancelled() -> String {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn boundary_end_cause_per_wait() {
-    let mut matrix = Matrix::new("D-263-end-cause-per-wait");
-    let kind = "end cause";
+    let mut matrix = Cases::new("end cause per wait");
 
-    matrix.check("load wait", kind, "Closed", &cause_tag(&EndCause::Closed), &load_closed().await);
-    matrix.check("load wait", kind, "SessionEnded", &cause_tag(&EndCause::SessionEnded), &load_session_ended().await);
-    matrix.check("load wait", kind, "Cancelled", &cause_tag(&EndCause::Cancelled), &load_cancelled().await);
+    matrix.check("load wait Closed", &cause_tag(&EndCause::Closed), &load_closed().await);
+    matrix.check("load wait SessionEnded", &cause_tag(&EndCause::SessionEnded), &load_session_ended().await);
+    matrix.check("load wait Cancelled", &cause_tag(&EndCause::Cancelled), &load_cancelled().await);
 
-    matrix.check("write outcome", kind, "Closed", &cause_tag(&EndCause::Closed), &write_outcome(End::Close).await);
-    matrix.check("write outcome", kind, "SessionEnded", &cause_tag(&EndCause::SessionEnded), &write_outcome(End::SessionEnd).await);
-    matrix.check("write outcome", kind, "Discarded", &cause_tag(&EndCause::Discarded), &write_outcome(End::Discard).await);
+    matrix.check("write outcome Closed", &cause_tag(&EndCause::Closed), &write_outcome(End::Close).await);
+    matrix.check("write outcome SessionEnded", &cause_tag(&EndCause::SessionEnded), &write_outcome(End::SessionEnd).await);
+    matrix.check("write outcome Discarded", &cause_tag(&EndCause::Discarded), &write_outcome(End::Discard).await);
 
-    matrix.check("upload outcome", kind, "Closed", &cause_tag(&EndCause::Closed), &upload_outcome(End::Close).await);
-    matrix.check("upload outcome", kind, "SessionEnded", &cause_tag(&EndCause::SessionEnded), &upload_outcome(End::SessionEnd).await);
-    matrix.check("upload outcome", kind, "Cancelled", &cause_tag(&EndCause::Discarded), &upload_outcome(End::Cancel).await);
-    matrix.check("upload outcome", kind, "Discarded", &cause_tag(&EndCause::Discarded), &upload_outcome(End::Discard).await);
+    matrix.check("upload outcome Closed", &cause_tag(&EndCause::Closed), &upload_outcome(End::Close).await);
+    matrix.check("upload outcome SessionEnded", &cause_tag(&EndCause::SessionEnded), &upload_outcome(End::SessionEnd).await);
+    matrix.check("upload outcome Cancelled", &cause_tag(&EndCause::Discarded), &upload_outcome(End::Cancel).await);
+    matrix.check("upload outcome Discarded", &cause_tag(&EndCause::Discarded), &upload_outcome(End::Discard).await);
 
-    matrix.check("stream pull", kind, "Closed", &cause_tag(&EndCause::Closed), &stream_closed().await);
-    matrix.check("stream pull", kind, "SessionEnded", &cause_tag(&EndCause::SessionEnded), &stream_session_ended().await);
-    matrix.check("stream pull", kind, "Cancelled", &cause_tag(&EndCause::Cancelled), &stream_cancelled().await);
+    matrix.check("stream pull Closed", &cause_tag(&EndCause::Closed), &stream_closed().await);
+    matrix.check("stream pull SessionEnded", &cause_tag(&EndCause::SessionEnded), &stream_session_ended().await);
+    matrix.check("stream pull Cancelled", &cause_tag(&EndCause::Cancelled), &stream_cancelled().await);
 
-    matrix.check("call wait", kind, "Closed", &cause_tag(&EndCause::Closed), &call_ended(Wait::Run, End::Close).await);
-    matrix.check("call wait", kind, "SessionEnded", &cause_tag(&EndCause::SessionEnded), &call_ended(Wait::Run, End::SessionEnd).await);
-    matrix.check("session_call wait", kind, "Closed", &cause_tag(&EndCause::Closed), &call_ended(Wait::SessionCall, End::Close).await);
-    matrix.check("session_call wait", kind, "SessionEnded", &cause_tag(&EndCause::SessionEnded), &call_ended(Wait::SessionCall, End::SessionEnd).await);
+    matrix.check("call wait Closed", &cause_tag(&EndCause::Closed), &call_ended(Wait::Run, End::Close).await);
+    matrix.check("call wait SessionEnded", &cause_tag(&EndCause::SessionEnded), &call_ended(Wait::Run, End::SessionEnd).await);
+    matrix.check("session_call wait Closed", &cause_tag(&EndCause::Closed), &call_ended(Wait::SessionCall, End::Close).await);
+    matrix.check("session_call wait SessionEnded", &cause_tag(&EndCause::SessionEnded), &call_ended(Wait::SessionCall, End::SessionEnd).await);
 
     matrix.finish();
 }

@@ -1,4 +1,5 @@
 mod app_tests;
+mod cases;
 mod receipt_snapshot_tests;
 mod secret_read_tests;
 mod typed_outcome_tests;
@@ -14,7 +15,7 @@ mod matrix_admission_tests;
 mod matrix_write_tests;
 mod removed_by_tests;
 mod matrix_answer_tests;
-mod matrix_idle_tests;
+mod idle_work_tests;
 mod calls_tests;
 mod effect_rows_tests;
 mod encrypted_cable_tests;
