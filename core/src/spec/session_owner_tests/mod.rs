@@ -1,6 +1,6 @@
 //! Owner-level tests of the owner `Session` in the `lifecycle` machine: the owner on `DetScheduler` against `ref_session.rs`. Names are the `Test` column.
 
-use super::ref_session::{AfterClear, AfterStore, Block, CallPhase, Class, Credential as RefCredential, Effect as RefEffect, EndCause, Fail, Input, Kind, Operation, Outcome, Pending as RefPending, PubState, Queued as RefQueued, Reason, Secret, Session as Ref, State as RefState};
+use super::ref_session::{OUTBOX_AUTHOR, TRANSFER_AUTHOR, AfterClear, AfterStore, Block, CallPhase, Class, Credential as RefCredential, Effect as RefEffect, EndCause, Fail, Input, Kind, Operation, Outcome, Pending as RefPending, PubState, Queued as RefQueued, Reason, Secret, Session as Ref, State as RefState};
 use crate::owners::contract::{Committed, EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected};
 use crate::owners::session::{self as owner, AuthorOutcome, Credential, OperationClass, PendingCall, Queued, SecretState, SessionCalls, SessionEffect, SessionError, SessionInput, SessionPhase, SessionState};
 use crate::spec::support::{new_log, take, Log, Recorder};
