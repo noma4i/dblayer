@@ -69,11 +69,14 @@ impl TransferState {
         if Self::unwritten(transfer, &shown) {
             if transfer.restored && shown != Shown::Gone { self.published.entry(key.clone()).or_insert((shown.clone(), transfer.revision)); }
             let waiting = self.pending.values().any(|pending| pending.kind == StoreKind::Shown && pending.written.get(&id) == Some(&columns));
+            let live = matches!(shown, Shown::Preparing { .. }) && transfer.stored_shown.is_some_and(|stored| stored.0 == columns.0);
+            let revision = transfer.revision;
             if !waiting {
-                let op = Self::shown_op(transfer, shown);
+                let op = Self::shown_op(transfer, shown.clone());
                 let batch = self.send_batch(vec![op], fx);
                 self.pending.insert(batch, Pending { ids: Vec::new(), kind: StoreKind::Shown, orphan: None, written: BTreeMap::from([(id, columns)]) });
             }
+            if live { self.publish_shown(&key, shown, revision, fx); }
             return;
         }
         let revision = self.transfers.get(&id).map_or(0, |transfer| transfer.revision);
