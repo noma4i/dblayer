@@ -1,10 +1,10 @@
 # Parent fields copied from children
 
-The parent fields named by `sets` are derived from the server value of the parent row and the stored children, once per commit. A child with a null field leaves the field to the other side: a parent field is null only when no side has a value.
+The parent fields named by `sets` are derived fields: declare each one `derived: true` in the parent. The stored children are their only source, and a write of the parent row never changes them.
+A response, an event, a local `create` or an `update` of the parent that names such a field keeps the stored value. A new parent row starts with null until the children set it, in the same commit.
+The fields come from the newest visible child, once per commit, and are null when no child remains. A child with a null field gives null.
 These rules also apply when a partial response creates the child locally for the first time. No extra write from the app is needed.
-Deleting the newest child derives the fields from the children left and the server value.
-If no child and no server value remain, all copied fields become null.
-Field names that start with `server__` are reserved: a model with such a field is rejected.
+A child object inside the answer for the parent is written as a row of the child, and the foreign key the answer names is not read.
 
 Read the parent entity after declaring `sets` in the child model:
 

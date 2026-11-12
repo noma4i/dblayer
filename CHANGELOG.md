@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Declare the fields of `sets:` as `derived: true`, they take their values from the children only.
+- Name the child fields of `newer:` as a list.
+
+### Removed
+
+- Read no server value for the fields of `sets:` in the row of the parent.
+
 ## 6.27.2 - 2026-11-12
 
 ### Changed
