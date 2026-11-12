@@ -35,15 +35,15 @@ async fn store_error_kinds_are_classified_once() {
         ("unknown event operation", feed(r#"{"op":"bogus","id":"a"}"#), Ok(vec![0])),
         ("refused event", feed(r#"{"op":"invalid","reason":"bad"}"#), Ok(vec![0])),
         ("event without a row", feed(r#"{"op":"upsert","id":"a"}"#), Ok(vec![0])),
-        ("row without an object", rows(r#""text""#), Err(RejectReason::Invalid(String::new()))),
-        ("empty id", batch(BatchAuthor::Outbox, vec![("moments", r#"{"id":""}"#)], Vec::new()), Err(RejectReason::Invalid(String::new()))),
-        ("unreadable json", rows("not json"), Err(RejectReason::Invalid(String::new()))),
-        ("unknown model", batch(BatchAuthor::Outbox, vec![("nowhere", r#"{"id":"a"}"#)], Vec::new()), Err(RejectReason::Invalid(String::new()))),
-        ("plan fault", batch(BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "moments".into(), rows: vec![RowValue { row_id: "a".into(), values: r#"{"id":"b"}"#.into() }] }]), Err(RejectReason::Invalid(String::new()))),
+        ("row without an object", rows(r#""text""#), Err(RejectReason::Invalid("text".into()))),
+        ("empty id", batch(BatchAuthor::Outbox, vec![("moments", r#"{"id":""}"#)], Vec::new()), Err(RejectReason::Invalid("text".into()))),
+        ("unreadable json", rows("not json"), Err(RejectReason::Invalid("text".into()))),
+        ("unknown model", batch(BatchAuthor::Outbox, vec![("nowhere", r#"{"id":"a"}"#)], Vec::new()), Err(RejectReason::Invalid("text".into()))),
+        ("plan fault", batch(BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "moments".into(), rows: vec![RowValue { row_id: "a".into(), values: r#"{"id":"b"}"#.into() }] }]), Err(RejectReason::Invalid("text".into()))),
     ];
     let mut wrong = Vec::new();
     for (case, batch, want) in data {
-        let got = answer(&db, batch);
+        let got = answer(&db, batch).map_err(|reason| match reason { RejectReason::Invalid(text) if !text.is_empty() => RejectReason::Invalid("text".into()), other => other });
         if got != want {
             wrong.push(format!("{case}: the executor answered {got:?}, the spec asks {want:?}"));
         }
