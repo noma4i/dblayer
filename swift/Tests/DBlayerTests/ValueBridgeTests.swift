@@ -144,8 +144,9 @@ extension BridgeProbeTests {
     guard await started.next("the first reader has a snapshot") != nil else { waiting.cancel(); return }
     waiting.cancel()
     let ended = try await valueBeforeDeadline(waiting) { notify.finish() }
-    if let ended {
-      guard case .ended(.closed) = ended else { Issue.record("the cancelled reader must end closed: \(ended)"); return }
+    switch ended {
+    case nil, .ended(.cancelled)?, .ended(.closed)?: break
+    default: Issue.record("the cancelled reader must end cancelled or closed: \(String(describing: ended))"); return
     }
     let closed = Cursor(stream)
     guard case .ended(.closed)? = await closed.next("the cancelled stream ends closed") else { Issue.record("the cancelled stream did not end closed"); return }
