@@ -11,27 +11,24 @@
 - Add an event row to the head of a loaded `[:event, :response]` window.
 - Add a created row to the head of loaded membership lists of its parameters.
 - Skip created rows in an `insert_on: [:create]` scope with constant variables and no rule.
-- Give a window without network after a started load the phase of its last outcome, not Loading.
-- Drop the refusal of a window when its last reader leaves.
+- Keep the last load phase of a window that loses the network while loading.
+- Clear the load error of a window when its last reader leaves.
 
 ### Fixed
 
 - Keep a finished multipart upload when a session ends after its upload id write failed.
 - Keep an upload group going when the database refuses the removal of its removed member.
-- End an operation on a server-removed row when the Store refuses its removal.
-- Show the load error of a window again after a failed read of the stream recovers.
-- Keep the `insert_on: [:node]` entry for an event that arrives while a `node` read lands.
-- Stop retrying a write whose data SQLite refuses by type, size or range.
+- End an operation on a server-removed row when the database refuses its removal.
+- Show the window load error again after a failed stream read recovers.
+- Refuse a write with data the database cannot accept as `Invalid`, without a retry.
 - Count one attempt of an operation per send, also when the network drops before it.
 - Insert rows of node rereads started by `changed_by` into `insert_on: [:node]` windows.
-- Keep the other events of a feed batch when one event carries data that does not decode.
-- Refuse a write with data the Store cannot accept as `Invalid` and do not retry it: a feed gap, an upload and a restored upload end instead of looping.
+- Keep the other events of a feed batch when one event does not decode.
 - Skip the request of a preload window whose saved data is still fresh at open.
 - Send the real parent id in a write that names a row created before it.
-- End a write on a row whose create was refused, without a request.
-- Refuse a query, a mutation call and a session call whose body holds a temporary id.
-- End an upload on a row whose create was refused, without a retry.
-- Refuse a generator `create` that maps a variable to the row `id`.
+- End writes and uploads on a row whose create was refused, without a request.
+- Refuse a query, mutation call or session call that carries a temporary id.
+- Fail generation when a `create` action maps a variable to the row `id`.
 
 ## 6.26.3 - 2026-11-11
 

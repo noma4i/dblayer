@@ -357,6 +357,7 @@ Each request has one retry owner. Core `RetryPolicy` defines the common delay ca
 Encrypted HTTP retries network errors, timeouts, HTTP 408, 429 and 5xx.
 The temporary GraphQL codes are `TIMEOUT`, `SERVICE_UNAVAILABLE`, `INTERNAL_SERVER_ERROR` and `DATABASE_ERROR`.
 A queued mutation repeats these codes only when the answer does not confirm the sequence. An answer that confirms the sequence ends the mutation by its `on_failure`.
+An attempt counts each send of the request: a network loss before the send spends no attempt.
 Opening after a schema change preserves the attempt budget and the final Failed result of queued operations.
 An owned encrypted mutation returns each temporary failure to its durable owner without starting another HTTP retry loop.
 An unconfirmed encrypted HTTP failure retains Pending, allowing the owner to repeat the same request safely.
