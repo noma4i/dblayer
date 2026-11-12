@@ -15,7 +15,7 @@ fn held_item(key: &str, parts: u32) -> crate::owners::write::transfer::BatchItem
 
 fn commit_input(twin: &mut Twin, key: &str) -> (u64, Out) {
     let reply = twin.reply();
-    let request = CommitRequest { effects: mutation(key).effects, variables: Default::default(), wrap: None };
+    let request = CommitRequest { effects: mutation(key).effects, variables: Default::default(), wrap: None, refused: false };
     (reply, twin.post(TransferInput::Commit { epoch: EPOCH, key: key.into(), request, reply }))
 }
 
@@ -101,7 +101,7 @@ fn xfer_stage_commit_twice() {
     while twin.has_pending() { twin.commit(); }
     let plain = twin.uploading("Moment:r9:upload", 1);
     let stale = twin.reply();
-    let request = || CommitRequest { effects: Default::default(), variables: Default::default(), wrap: None };
+    let request = || CommitRequest { effects: Default::default(), variables: Default::default(), wrap: None, refused: false };
     let outs = [
         ("second commit", commit_input(&mut twin, KEY), Fault::Invalid),
         ("transfer without held", commit_input(&mut twin, "Moment:r9:upload"), Fault::Invalid),
