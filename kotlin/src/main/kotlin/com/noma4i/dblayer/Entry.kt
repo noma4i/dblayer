@@ -46,8 +46,10 @@ object DBlayer {
     @PublishedApi internal val database: Database
         get() = opener.opened()
 
-    suspend fun serverConfig(context: Context, encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): ServerConfig =
-        fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpTransport(), retries, SystemObservers(context))
+    suspend fun serverConfig(context: Context, encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): ServerConfig {
+        startProcessNetwork(context)
+        return fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpTransport(), retries, null)
+    }
 
     suspend fun open(
         context: Context,
@@ -65,6 +67,7 @@ object DBlayer {
         val dataSync = dataSyncDeclared(android.os.Build.VERSION.SDK_INT) { context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty().toList() }
         UploadNotifications.store(context, uploadNotification)
         val ports = OpenPorts(transport, encrypted, credentials, http, endpoint, OkHttpTransport(headers), dataSync)
+        startProcessNetwork(context)
         val made = opener.open(Config(path, null), modelsJson, OpenOptions(definitions(operations)), ports, SystemObservers(context))
         made.setRoundJobs(UploadRounds(context.applicationContext, made))
         UploadService.opened(made)

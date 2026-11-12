@@ -29,7 +29,6 @@ internal class SystemObservers(private val context: Context) : PlatformObserver 
     override fun start(sink: OnlineSink) {
         val registration = sink.registerForeground()
         stops = listOf(
-            Reachability.observe(context) { sink.setOnline(it) },
             ForegroundEvents.observe { sink.enterForeground(registration) },
             PowerSaving.observe(context) { sink.setPowerSaving(it) },
         )
@@ -41,10 +40,10 @@ internal class SystemObservers(private val context: Context) : PlatformObserver 
     }
 }
 
-/** The observer of `NetworkStatus`: the core starts it once per process and never stops it. */
-internal class StatusObserver(private val context: Context) : PlatformObserver {
+/** The observer of `NetworkStatus`: the core starts it once per process and never stops it. The database and `serverConfig` read its value. `observe` is the one creation point of the network observer of the process. */
+internal class StatusObserver(private val context: Context, private val observe: (Context, (Boolean) -> Unit) -> () -> Unit = Reachability::observe) : PlatformObserver {
     override fun start(sink: OnlineSink) {
-        Reachability.observe(context) { sink.setOnline(it) }
+        observe(context) { sink.setOnline(it) }
     }
 
     override fun stop() {}
