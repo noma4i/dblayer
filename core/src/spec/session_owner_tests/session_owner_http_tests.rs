@@ -25,7 +25,7 @@ fn sess_direct_call_exhausted() {
             let effects = twin.feed(input);
             if attempt < 40 {
                 assert!(twin.replies.is_empty(), "attempt {attempt}: {:?}", twin.replies);
-                assert_eq!(effects, vec![RefEffect::ScheduleTick { attempts: attempt }]);
+                assert_eq!(effects, vec![RefEffect::ScheduleTick]);
                 assert!(matches!(&twin.feed(Input::Tick)[..], [RefEffect::HttpRequest { .. }]));
             } else if operation == "visit" {
                 assert!(matches!(&effects[..], [RefEffect::CommitLanding { .. }]));
@@ -34,7 +34,7 @@ fn sess_direct_call_exhausted() {
             } else {
                 assert!(matches!(&effects[..], [RefEffect::CommitPending { pending, .. }] if pending.owner == Some(crate::transport::RequestOwner::Detached)));
                 assert!(twin.replies.is_empty());
-                assert_eq!(twin.feed(committed()), vec![RefEffect::ScheduleTick { attempts: 0 }]);
+                assert_eq!(twin.feed(committed()), vec![RefEffect::ScheduleTick]);
                 assert!(matches!(&twin.feed(Input::Tick)[..], [RefEffect::HttpRequest { pending, .. }] if pending.owner == Some(crate::transport::RequestOwner::Detached) && pending.reply.is_none()));
             }
         }
@@ -53,12 +53,12 @@ fn sess_direct_call_exhausted() {
             };
             let effects = twin.feed(input);
             if attempt < 40 {
-            assert_eq!(effects, vec![RefEffect::ScheduleTick { attempts: attempt }]);
+            assert_eq!(effects, vec![RefEffect::ScheduleTick]);
             assert!(matches!(&twin.feed(Input::Tick)[..], [RefEffect::HttpRequest { .. }]));
             } else {
             assert!(matches!(&effects[..], [RefEffect::CommitPending { pending, .. }] if pending.owner == Some(crate::transport::RequestOwner::Detached)));
             assert!(twin.replies.is_empty());
-            assert_eq!(twin.feed(committed()), vec![RefEffect::ScheduleTick { attempts: 0 }]);
+            assert_eq!(twin.feed(committed()), vec![RefEffect::ScheduleTick]);
             assert!(matches!(&twin.feed(Input::Tick)[..], [RefEffect::HttpRequest { pending, .. }] if pending.owner == Some(crate::transport::RequestOwner::Detached) && pending.reply.is_none()));
             }
         }
@@ -120,7 +120,7 @@ fn sess_answer_too_large_table() {
     for (rid, aid) in [(request_id + 1, attempt_id), (request_id, attempt_id + 1)] {
         assert!(direct.feed(Input::AnswerTooLarge { request_id: rid, attempt_id: aid, limit: 64 }).is_empty());
     }
-    assert_eq!(direct.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64 }), vec![RefEffect::ScheduleTick { attempts: 1 }]);
+    assert_eq!(direct.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64 }), vec![RefEffect::ScheduleTick]);
     assert!(direct.in_phase(CallPhase::WaitingRetry));
     assert!(direct.feed(Input::AnswerTooLarge { request_id, attempt_id, limit: 64 }).is_empty());
 
@@ -178,7 +178,7 @@ fn sess_calling_offline_idle() {
 fn sess_calling_temporary() {
     let mut twin = calling();
     let input = twin.http_error(true, false);
-    assert_eq!(twin.feed(input), vec![RefEffect::ScheduleTick { attempts: 1 }]);
+    assert_eq!(twin.feed(input), vec![RefEffect::ScheduleTick]);
     assert!(twin.in_phase(CallPhase::WaitingRetry));
 }
 
@@ -235,7 +235,7 @@ fn sess_calling_permanent() {
 fn sess_calling_unknown_answer() {
     let mut online = calling();
     let (rid, aid) = (online.rid(), online.aid());
-    assert_eq!(online.feed(Input::Unknown { request_id: rid, attempt_id: aid }), vec![RefEffect::ScheduleTick { attempts: 1 }], "an unreadable 200 retries the same pair like Dropped");
+    assert_eq!(online.feed(Input::Unknown { request_id: rid, attempt_id: aid }), vec![RefEffect::ScheduleTick], "an unreadable 200 retries the same pair like Dropped");
     assert!(online.in_phase(CallPhase::WaitingRetry), "the pair waits for its retry, pending and sequence untouched");
     assert_eq!(online.reference.credential.map(|credential| credential.sequence), Some(0), "the unknown answer spends no sequence");
     let mut author = calling_mutate();
@@ -672,7 +672,7 @@ fn sess_prop_answer_kinds_table() {
     assert_eq!((revoked.replies.clone(), revoked.reference.credential.map(|credential| credential.sequence)), (vec![(1, Err(Fail::Revoked))], Some(0)), "revoked: no number spent");
     let mut transport = calling();
     let dropped = transport.dropped();
-    assert_eq!(transport.feed(dropped), vec![RefEffect::ScheduleTick { attempts: 1 }], "transport: the lost attempt retries the pair");
+    assert_eq!(transport.feed(dropped), vec![RefEffect::ScheduleTick], "transport: the lost attempt retries the pair");
     assert!(transport.in_phase(CallPhase::WaitingRetry) && transport.reference.credential.map(|credential| credential.sequence) == Some(0), "transport: the queue is not blocked and nothing is spent");
     let mut conflict = calling();
     let input = conflict.response(5);

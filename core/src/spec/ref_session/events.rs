@@ -10,7 +10,7 @@ impl Session {
                 self.persist(Pending { owner: Some(Owner::Detached), ..pending }, None, out);
             }
         } else if self.is_online() {
-            out.effects.push(Effect::ScheduleTick { attempts: attempts + 1 });
+            out.effects.push(Effect::ScheduleTick);
             self.state = State::Calling { pending, attempts: attempts + 1, phase: CallPhase::WaitingRetry };
         } else { self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork }; }
     }
@@ -455,7 +455,7 @@ impl Session {
                 self.write_failures = 0;
                 if let Some(error) = self.detach_error.take() {
                     Self::finish_retained(out, &pending, Err(error), true);
-                    out.effects.push(Effect::ScheduleTick { attempts: 0 });
+                    out.effects.push(Effect::ScheduleTick);
                     self.state = State::Calling { pending: Pending { reply: None, ..pending }, attempts: 0, phase: CallPhase::WaitingRetry };
                 } else { self.start_calling(pending, out); }
             }

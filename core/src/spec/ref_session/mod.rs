@@ -181,7 +181,7 @@ pub enum Effect {
     CommitLanding { batch: BatchId, epoch: u64, digest: Option<Digest>, sequence: Option<u64>, answer: Option<(RequestId, Answer)>, resume_answer: Option<Answer>, erase_session: bool, end_journal: bool },
     HttpRequest { pending: Pending, attempt_id: AttemptId },
     HttpCancel { attempt_id: AttemptId },
-    ScheduleTick { attempts: u64 },
+    ScheduleTick,
     GenerateCredential { op: SecretOpId },
     StoreSecret { credential: Digest, op: SecretOpId },
     ClearSecret { op: SecretOpId },
@@ -488,7 +488,7 @@ impl Session {
     fn write_refused(&mut self, out: &mut Out) {
         self.write_failures += 1;
         self.write_in_flight = false;
-        out.effects.push(Effect::ScheduleTick { attempts: self.write_failures });
+        out.effects.push(Effect::ScheduleTick);
     }
 
     fn clearing(&mut self, call: Option<Queued>, reason: Option<Fail>, after: AfterClear, out: &mut Out) {

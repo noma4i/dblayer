@@ -182,7 +182,7 @@ fn effect_of(effect: &SessionEffect) -> Option<RefEffect> {
         SessionEffect::CommitResumeAnswer { .. } => return None,
         SessionEffect::HttpRequest { pending, attempt_id } => RefEffect::HttpRequest { pending: pending_of(pending), attempt_id: *attempt_id },
         SessionEffect::HttpCancel { attempt_id } => RefEffect::HttpCancel { attempt_id: *attempt_id },
-        SessionEffect::ScheduleTick { attempts } => RefEffect::ScheduleTick { attempts: *attempts },
+        SessionEffect::ScheduleTick { .. } => RefEffect::ScheduleTick,
         SessionEffect::GenerateCredential { secret_op_id } => RefEffect::GenerateCredential { op: *secret_op_id },
         SessionEffect::StoreSecret { credential, secret_op_id } => RefEffect::StoreSecret { credential: *credential, op: *secret_op_id },
         SessionEffect::ClearSecret { secret_op_id } => RefEffect::ClearSecret { op: *secret_op_id },
@@ -296,11 +296,7 @@ impl Twin {
         let want = self.reference.step(reference_input);
         let mut effects: Vec<RefEffect> = raw.iter().filter_map(effect_of).collect();
         if scheduled > 0 {
-            let attempts = match self.det.state(self.addr).map(SessionState::phase) {
-                Some(SessionPhase::Calling { attempts, .. }) => *attempts,
-                _ => want.effects.iter().find_map(|effect| match effect { RefEffect::ScheduleTick { attempts } => Some(*attempts), _ => None }).unwrap_or(0),
-            };
-            effects.extend(std::iter::repeat_n(RefEffect::ScheduleTick { attempts }, scheduled));
+            effects.extend(std::iter::repeat_n(RefEffect::ScheduleTick, scheduled));
         }
         let mut sorted_have = effects.clone();
         let mut sorted_want = want.effects.clone();
@@ -337,6 +333,8 @@ impl Twin {
     fn feed_all(&mut self, inputs: impl IntoIterator<Item = Input>) { inputs.into_iter().for_each(|input| { self.feed(input); }); }
 
     fn pending(&self) -> RefPending { self.pending.clone().expect("the owner has sent or stored a request") }
+
+    fn credential(&self) -> Option<RefCredential> { self.reference.credential }
 
     fn rid(&self) -> u64 { self.pending.as_ref().expect("the owner has sent or stored a request").request_id }
 
