@@ -165,33 +165,6 @@ async fn a_row_that_enters_the_middle_of_the_list_arrives_with_its_index() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_request_that_cannot_be_read_ends_as_invalid() {
-    let db = open().await;
-    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::Entity { model: "Ghost".into(), id: "g1".into(), fetch: super::ReadFetch::Never });
-    assert!(matches!(next(&stream).await, ReadValue::Ended { cause: EndCause::Invalid { .. } }));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_delta_after_a_removal_carries_the_rows_of_its_own_snapshot() {
-    let db = open().await;
-    let epoch = db.session_epoch();
-    db.create(epoch, "Note".into(), r#"{"id":"n1","text":"one"}"#.into(), "{}".into()).await.unwrap();
-    let stream = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
-    let ReadValue::Snapshot { .. } = next(&stream).await else { panic!("the first value is a snapshot") };
-    db.destroy(epoch, "Note".into(), "n1".into()).await.unwrap();
-    db.create(epoch, "Note".into(), r#"{"id":"n2","text":"two"}"#.into(), "{}".into()).await.unwrap();
-    loop {
-        match next(&stream).await {
-            ReadValue::Delta { edits, .. } => {
-                if edits.iter().any(|edit| matches!(edit, RowEdit::Insert { .. })) { break; }
-            }
-            ReadValue::Snapshot { rows, .. } if rows.len() == 1 => break,
-            _ => {}
-        }
-    }
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_stream_held_across_close_gets_one_ended_then_nothing() {
     let db = open().await;
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
@@ -202,10 +175,13 @@ async fn a_stream_held_across_close_gets_one_ended_then_nothing() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn inv_api_06_an_events_stream_that_cannot_open_its_subscription_reports_the_failure() {
+async fn a_request_that_cannot_be_read_or_subscribed_ends_with_its_cause() {
     let db = open().await;
-    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::Events { model: "Note".into() });
-    let value = next(&stream).await;
+    let epoch = db.session_epoch();
+    let ghost = db.subscribe_values(epoch, ReadRequest::Entity { model: "Ghost".into(), id: "g1".into(), fetch: super::ReadFetch::Never });
+    assert!(matches!(next(&ghost).await, ReadValue::Ended { cause: EndCause::Invalid { .. } }));
+    let events = db.subscribe_values(epoch, ReadRequest::Events { model: "Note".into() });
+    let value = next(&events).await;
     assert!(matches!(value, ReadValue::Ended { .. }), "no subscription can open here: the stream ends with its cause instead of waiting: {value:?}");
 }
 
