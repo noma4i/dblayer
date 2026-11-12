@@ -291,6 +291,28 @@ fn sess_mismatch_other() {
     }
 }
 
+/// sess_stored_pair_of_a_transfer_gets_the_state_outcome: a state that keeps the stored pair of a transfer without driving it answers the transfer once with the outcome of its `Mutate` row, the pair stays saved.
+#[test]
+fn sess_stored_pair_of_a_transfer_gets_the_state_outcome() {
+    let restore = |twin: &mut Twin| {
+        let mut effects = twin.feed(Input::Restored { epoch: EPOCH, pending: Some(stored(Some(transfer_owner()), 5, 7)) });
+        effects.extend(twin.feed(Input::RestoreReady { epoch: EPOCH }));
+        effects
+    };
+    let expected = vec![answer(TRANSFER_AUTHOR, 5, retained(Fail::StateLost))];
+    let answers = |effects: &[RefEffect]| effects.iter().filter(|effect| matches!(effect, RefEffect::Answer { .. })).cloned().collect::<Vec<_>>();
+    let mut at_open = opened(open(Some((CRED, 6)), None, false, Secret::Present(9)));
+    assert_eq!(answers(&restore(&mut at_open)), expected, "SecretMismatch at the open");
+    let mut after_read = opened(open(Some((CRED, 6)), None, false, Secret::Error("locked".into())));
+    assert!(answers(&restore(&mut after_read)).is_empty(), "SecretUnavailable waits for the read");
+    after_read.feed(Input::Foreground);
+    let op = after_read.op();
+    assert_eq!(answers(&after_read.feed(Input::SecretRead { op, read: Secret::Present(9) })), expected, "SecretMismatch after the read");
+    assert!(answers(&after_read.feed(Input::Foreground)).is_empty(), "once");
+    let mut blocked = opened(open(Some((CRED, 6)), None, true, Secret::Present(CRED)));
+    assert_eq!(answers(&restore(&mut blocked)), expected, "BlockedPending");
+}
+
 #[test]
 fn sess_unavailable_call() {
     let mut twin = opened(open(Some((CRED, 6)), None, false, Secret::Error("locked".into())));

@@ -149,10 +149,14 @@ impl TransferState {
             };
             return self.abort_done(upload_id, result, fx);
         }
-        let seeded = match outcome { crate::owners::session::AuthorOutcome::Response { body, kind, .. } => Some((request_id, Ok((body, kind)))), _ => None };
-        for transfer in self.transfers.values_mut().filter(|transfer| transfer.pending_step == Some(request_id)) {
+        let seeded = match &outcome { crate::owners::session::AuthorOutcome::Response { body, kind, .. } => Some((request_id, Ok((body.clone(), kind.clone())))), _ => None };
+        let kept = match &outcome { crate::owners::session::AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Permanent, error, pending_retained: true } => Some(super::failure::of_session(error, crate::owners::contract::ErrorClass::Permanent)), _ => None };
+        let held: Vec<TransferId> = self.transfers.values().filter(|transfer| transfer.pending_step == Some(request_id)).map(|transfer| transfer.transfer_id).collect();
+        for id in held {
+            let Some(transfer) = self.transfers.get_mut(&id) else { continue };
             transfer.pending_step = None;
             transfer.seeded.clone_from(&seeded);
+            if let Some(error) = &kept { self.begin_failure(now, id, error.clone(), false, fx); }
         }
         self.start_in_order(now, fx);
     }

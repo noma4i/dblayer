@@ -190,6 +190,18 @@ impl SessionState {
         self.start_calling_again(PendingCall { author: Some(TRANSFER_AUTHOR), ..pending }, fx);
     }
 
+    /// A state that keeps the restored pair of a transfer and does not drive it answers the author with the outcome of its `Mutate` row, once: the pair stays saved.
+    pub(super) fn answer_stored_transfer(&mut self, fx: &mut Vec<SessionEffect>) {
+        if !self.restore_ready { return; }
+        let error = match &self.phase {
+            SessionPhase::SecretMismatch => SessionError::StateLost,
+            SessionPhase::Blocked { reason, .. } => blocked_error(*reason),
+            _ => return,
+        };
+        let Some(pending) = self.restored_transfer.take() else { return };
+        author_error_retained(fx, TRANSFER_AUTHOR, pending.request_id, ErrorClass::Permanent, error, true);
+    }
+
     pub(super) fn resume_finish(&mut self, pending: &PendingCall, result: SessionAnswer, fx: &mut Vec<SessionEffect>) { self.resume_finish_retained(pending, result, false, fx); }
 
     pub(super) fn resume_finish_retained(&mut self, pending: &PendingCall, result: SessionAnswer, pending_retained: bool, fx: &mut Vec<SessionEffect>) {

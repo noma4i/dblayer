@@ -49,6 +49,18 @@ fn xfer_step_answer_failed() {
     }
 }
 
+/// xfer_restored_step_fails_when_session_lost: the answer of a Session that keeps the pair and does not drive it fails the step with the state of Session, the held step does not stay `Ready`.
+#[test]
+fn xfer_restored_step_fails_when_session_lost() {
+    let mut twin = held();
+    let lost = AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Permanent, error: crate::owners::session::SessionError::StateLost, pending_retained: true };
+    let answered = twin.post(TransferInput::StepAnswer { request_id: STEP, outcome: lost });
+    assert_eq!((answered.steps().len(), twin.stage(1), answered.kinds(), twin.t(1).pending_step), (0, TransferStage::PersistingFailure, vec![crate::owners::store::UploadKind::Failed], None));
+    twin.commit();
+    let expected = crate::owners::write::failure::of_session(&crate::owners::session::SessionError::StateLost, crate::owners::contract::ErrorClass::Permanent);
+    assert_eq!((twin.stage(1), twin.t(1).error.clone()), (TransferStage::Failed, Some(expected)));
+}
+
 #[test]
 fn xfer_open_saved_step_answer() {
     let body = "{\"ok\":true}";

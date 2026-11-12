@@ -407,6 +407,7 @@ impl StateOwner for SessionCalls {
     fn step(state: &mut SessionState, input: SessionInput, _now: crate::runtime::Time) -> Effects<Self> {
         let mut fx = Vec::new();
         state.run(input, &mut fx);
+        state.answer_stored_transfer(&mut fx);
         fx.into_iter().map(|effect| match effect {
             SessionEffect::ScheduleTick { attempts } => Effect::Backoff { id: RETRY_TICK, policy: crate::runtime::RetryPolicy::Http, attempt: u32::try_from(attempts.max(1)).unwrap_or(u32::MAX), input: SessionInput::Tick },
             other => Effect::Run(other),
