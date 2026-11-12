@@ -164,8 +164,8 @@ impl SessionState {
                 self.restored = true;
                 if epoch == self.epoch && self.current(epoch) && self.restored_answer.is_none() { self.restored_answer = resume_answer.map(RestoredAnswer::Saved); }
                 let early = std::mem::take(&mut self.released);
-                let released = matches!((&self.phase, &pending), (SessionPhase::PendingHeld { pending: held }, Some(saved)) if held.request_id == saved.request_id && (early.contains(&saved.request_id) || saved.owner == Some(MutateOwner::Detached) && held.owner != saved.owner));
-                if let (SessionPhase::PendingHeld { pending: held }, true) = (self.phase.clone(), released) {
+                let released = matches!((&self.phase, &pending), (SessionPhase::PendingHeld { pending: held, .. }, Some(saved)) if held.request_id == saved.request_id && (early.contains(&saved.request_id) || saved.owner == Some(MutateOwner::Detached) && held.owner != saved.owner));
+                if let (SessionPhase::PendingHeld { pending: held, .. }, true) = (self.phase.clone(), released) {
                     self.start_calling(PendingCall { author: None, owner: Some(MutateOwner::Detached), ..held }, fx);
                 } else if let (Some(pending), true) = (pending, epoch == self.epoch && self.current(epoch)) {
                     match pending.owner {
@@ -225,6 +225,10 @@ impl SessionState {
     /// The author of `pending` hears `Dropped`, the pair goes on with no author (it keeps one only where its outcome lands after `Committed`).
     fn detached(pending: PendingCall, fx: &mut Vec<SessionEffect>) -> PendingCall {
         if let Some(author) = pending.author { fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome: AuthorOutcome::Dropped }); }
+        Self::detach(pending)
+    }
+
+    fn detach(pending: PendingCall) -> PendingCall {
         let keeps = matches!(pending.owner, Some(MutateOwner::Operation { .. } | MutateOwner::Unmatched { .. } | MutateOwner::Transfer { step: crate::owners::write::upload::UploadStage::Init, .. }))
             || (pending.owner == Some(MutateOwner::Detached) && pending.author == Some(OUTBOX_AUTHOR));
         let author = pending.author.filter(|_| keeps);
@@ -242,8 +246,8 @@ impl SessionState {
                 if let Some(author) = pending.author { author_error(fx, author, req_id, ErrorClass::Permanent, SessionError::NotSent); }
                 self.idle(fx);
             }
-            SessionPhase::PendingHeld { pending } if pending.request_id == req_id => {
-                let pending = Self::detached(pending, fx);
+            SessionPhase::PendingHeld { pending, told } if pending.request_id == req_id => {
+                let pending = if told { Self::detach(pending) } else { Self::detached(pending, fx) };
                 self.start_calling(pending, fx);
             }
             SessionPhase::Persisting { pending, batch, writing } if pending.request_id == req_id => self.phase = SessionPhase::Persisting { pending: Self::detached(pending, fx), batch, writing },
@@ -351,7 +355,7 @@ impl SessionState {
                 fx.push(SessionEffect::HttpCancel { attempt_id });
                 if let Some(author) = pending.author {
                     fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome: AuthorOutcome::Dropped });
-                    self.phase = SessionPhase::PendingHeld { pending };
+                    self.phase = SessionPhase::PendingHeld { pending, told: true };
                 } else {
                     self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork };
                 }
@@ -386,7 +390,7 @@ impl SessionState {
                     Some(pending) if pending.owner.as_ref().and_then(author_of).is_some() => {
                         let author = pending.owner.as_ref().and_then(author_of).or(pending.author);
                         self.adopt = true;
-                        self.phase = SessionPhase::PendingHeld { pending: PendingCall { reply: None, author, ..pending } };
+                        self.phase = SessionPhase::PendingHeld { pending: PendingCall { reply: None, author, ..pending }, told: false };
                     }
                     _ => {}
                 }
@@ -538,13 +542,13 @@ impl SessionState {
                 self.phase = phase;
                 self.queue.push_back(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
             }
-            (SessionPhase::PendingHeld { pending }, SessionInput::Mutate { author, req_id, .. }) if req_id == pending.request_id => self.start_calling(PendingCall { author: Some(author), ..pending }, fx),
-            (SessionPhase::PendingHeld { pending }, SessionInput::SessionCall { operation, body, reply: id }) => {
+            (SessionPhase::PendingHeld { pending, .. }, SessionInput::Mutate { author, req_id, .. }) if req_id == pending.request_id => self.start_calling(PendingCall { author: Some(author), ..pending }, fx),
+            (SessionPhase::PendingHeld { pending, told }, SessionInput::SessionCall { operation, body, reply: id }) => {
                 self.queue.push_back(Queued::Call { operation, body, reply: id });
-                self.phase = SessionPhase::PendingHeld { pending };
+                self.phase = SessionPhase::PendingHeld { pending, told };
             }
-            (SessionPhase::PendingHeld { pending }, SessionInput::Mutate { author, owner, req_id, epoch, path, body, purpose }) => {
-                self.phase = SessionPhase::PendingHeld { pending };
+            (SessionPhase::PendingHeld { pending, told }, SessionInput::Mutate { author, owner, req_id, epoch, path, body, purpose }) => {
+                self.phase = SessionPhase::PendingHeld { pending, told };
                 self.queue_mutate(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
             }
             (SessionPhase::Blocked { pending, reason }, SessionInput::SessionCall { reply: id, .. }) => {
@@ -676,7 +680,7 @@ impl SessionState {
                 if let crate::transport::AnswerKind::Transient { reason } = &kind {
                     if let Some(author) = pending.author {
                         fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome: AuthorOutcome::Response { body, kind, pending_retained: false } });
-                        self.phase = SessionPhase::PendingHeld { pending };
+                        self.phase = SessionPhase::PendingHeld { pending, told: true };
                     } else { self.retry_direct(pending, attempts, SessionError::Graphql { code: reason.clone(), body }, fx); }
                     return;
                 }
@@ -729,7 +733,7 @@ impl SessionState {
                         }
                         None => author_error_retained(fx, author, pending.request_id, ErrorClass::Network, SessionError::Http { status }, true),
                     }
-                    self.phase = SessionPhase::PendingHeld { pending };
+                    self.phase = SessionPhase::PendingHeld { pending, told: true };
                 } else {
                     let error = if let Some(body) = body {
                         let code = serde_json::from_str(&body).ok().and_then(|value| crate::transport::refusal_name(&value)).unwrap_or_default();
@@ -741,7 +745,7 @@ impl SessionState {
             SessionInput::AnswerTooLarge { request_id, attempt_id, limit } if mine(request_id, attempt_id) => {
                 if let Some(author) = pending.author {
                     author_error_retained(fx, author, pending.request_id, ErrorClass::Network, SessionError::ResponseTooLarge { limit }, true);
-                    self.phase = SessionPhase::PendingHeld { pending };
+                    self.phase = SessionPhase::PendingHeld { pending, told: true };
                 } else if pending.class == OperationClass::Sessionless { self.land(pending, Err(SessionError::ResponseTooLarge { limit }), None, None, false, fx); }
                 else { self.retry_direct(pending, attempts, SessionError::ResponseTooLarge { limit }, fx); }
             }
@@ -756,7 +760,7 @@ impl SessionState {
             SessionInput::Dropped { request_id, attempt_id } if mine(request_id, attempt_id) => {
                 if let Some(author) = pending.author {
                     fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome: AuthorOutcome::Dropped });
-                    self.phase = SessionPhase::PendingHeld { pending };
+                    self.phase = SessionPhase::PendingHeld { pending, told: true };
                 } else { self.retry_direct(pending, attempts, SessionError::Network, fx); }
             }
             SessionInput::SecretMissing { request_id, attempt_id, lost } if mine(request_id, attempt_id) => {

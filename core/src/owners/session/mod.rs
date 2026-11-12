@@ -185,7 +185,7 @@ pub enum SessionPhase {
     Generating { call: LoginCall, op: SecretOpId },
     Storing { call: LoginCall, credential_new: Digest, op: SecretOpId, after: AfterStore },
     ClearingSecret { call: Option<Queued>, reason: Option<SessionAnswer>, op: SecretOpId, after: AfterClear },
-    PendingHeld { pending: PendingCall },
+    PendingHeld { pending: PendingCall, told: bool },
     SecretMismatch,
     SecretUnavailable { error: String, read: Option<SecretOpId> },
     Persisting { pending: PendingCall, batch: BatchId, writing: bool },
