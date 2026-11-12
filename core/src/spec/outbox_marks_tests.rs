@@ -150,8 +150,8 @@ fn out_marking_retry_stale_generation() {
 fn out_marking_retry_invalid() {
     let mut twin = Twin::new();
     let id = marking_retry(&mut twin);
-    let effects = refuse(&mut twin, id, RejectReason::Invalid(String::new()));
-    assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY)), (Some(St::Failed), vec![OutboxAnswer::Err(Fault::Internal)]));
+    let effects = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
+    assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY)), (Some(St::Failed), vec![OutboxAnswer::Err(Fault::Rejected(RejectReason::Invalid("bad row".into())))]));
 }
 
 #[test]

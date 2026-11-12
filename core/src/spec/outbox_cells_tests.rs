@@ -870,6 +870,16 @@ fn out_submit_invalid_carries_the_store_text() {
     assert_eq!(answers(&waited, WAITER), vec![OutboxAnswer::Outcome(OutboxOutcome::Ended(crate::ffi::EndCause::Invalid { detail: "bad row".into() }))]);
 }
 
+/// P-DATA-101: the Store refuses the rollback batch of a discard as invalid, the waiting discard gets the text of the Store.
+#[test]
+fn out_discard_invalid_carries_the_store_text() {
+    let mut twin = Twin::new();
+    let id = failed(&mut twin);
+    twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY });
+    let effects = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
+    assert_eq!(answers(&effects, DISCARD_REPLY), vec![OutboxAnswer::Err(Fault::Rejected(RejectReason::Invalid("bad row".into())))]);
+}
+
 #[test]
 fn out_persisting_attempt_invalid() {
     let mut twin = Twin::new();
@@ -1041,8 +1051,8 @@ fn out_destroy_discards_chain_with_a_batch_in_flight() {
     let rollback = twin.post(OutboxInput::Submit { epoch: EPOCH, op: NewOp { action: "destroy".into(), ..model_op("r", Policy::Rollback, false) }, reply: 22 });
     assert_eq!(kinds(&rollback), vec![CommitKind::Rollback], "the destroy takes the create back");
     let [(rollback_batch, _)] = twin.stores.clone().try_into().expect("one Store batch");
-    let refused = twin.post(OutboxInput::Rejected(Rejected { batch: rollback_batch, reason: RejectReason::Invalid(String::new()) }));
-    assert_eq!(answers(&refused, 22), vec![OutboxAnswer::Err(Fault::Invalid)], "Rejected(Invalid) of the in-flight chain batch answers the waiting destroy the refusal reason, not Internal: {refused:?}");
+    let refused = twin.post(OutboxInput::Rejected(Rejected { batch: rollback_batch, reason: RejectReason::Invalid("bad row".into()) }));
+    assert_eq!(answers(&refused, 22), vec![OutboxAnswer::Err(Fault::Rejected(RejectReason::Invalid("bad row".into())))], "Rejected(Invalid) of the in-flight chain batch answers the waiting destroy the refusal reason with its text: {refused:?}");
 }
 
 #[test]
