@@ -33,11 +33,13 @@ impl FakeTransport for Pages {
 
 const FEED: &str = r#"{"model":"Moment","relation":"feed","params":{}}"#;
 
-async fn open_pages() -> (Arc<Database>, Arc<Pages>) {
+async fn open_pages() -> (Arc<Database>, Arc<Pages>) { open_pages_limited(None).await }
+
+async fn open_pages_limited(max_pages: Option<u32>) -> (Arc<Database>, Arc<Pages>) {
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
     let mut feed = RelationSpec::global("feed");
     feed.remote = Some(RemoteSpec {
-        operation: "Feed".into(), shape: RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: None },
+        operation: "Feed".into(), shape: RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages, cursor: None },
         stale_time: "5.minutes".into(), empty_stale_time: None, selects_page_info: true, page_size: None, variables: Default::default(), root: None, total_from: None,
     });
     model.relations.push(feed);
@@ -46,6 +48,44 @@ async fn open_pages() -> (Arc<Database>, Arc<Pages>) {
     database.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).await.unwrap();
     database.set_online(true).unwrap();
     (database, pages)
+}
+
+#[derive(Default)]
+struct StateRows {
+    rows: Rows,
+    has_more: Mutex<Option<bool>>,
+}
+
+impl crate::ffi::tape::Reader for StateRows {
+    fn delivered(&self, delivery: crate::ffi::tape::StreamDelivery) {
+        match &delivery.value {
+            crate::ffi::ReadValue::Snapshot { state, .. } | crate::ffi::ReadValue::Delta { state, .. } | crate::ffi::ReadValue::State { state, .. } => *self.has_more.lock().unwrap() = Some(state.has_more),
+            _ => {}
+        }
+        crate::ffi::tape::Reader::delivered(&self.rows, delivery);
+    }
+}
+
+/// D-366: a window at its declared page limit shows `hasMore = false`, `loadMore` ends with `NoMore` and asks nothing, and only `load_all` keeps the page limit error.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_window_at_its_page_limit_shows_no_more_and_load_more_ends() {
+    let (database, pages) = open_pages_limited(Some(2)).await;
+    let rows = Arc::new(StateRows::default());
+    let live = database.watch_query(FEED, rows.clone());
+    bound(live.wait_for_initial_load()).await.unwrap();
+    settled(&database, "first page shows more", || *rows.has_more.lock().unwrap() == Some(true)).await;
+    let more = || database.load_more(database.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into());
+    let second = bound(more()).await.unwrap();
+    assert!(matches!(second, LoadMoreResult::Loaded { .. }), "{second:?}");
+    settled(&database, "the limit shows no more", || *rows.has_more.lock().unwrap() == Some(false)).await;
+    let requests = pages.queries.load(Ordering::SeqCst);
+    let third = bound(more()).await.unwrap();
+    assert!(matches!(third, LoadMoreResult::NoMore), "{third:?}");
+    assert_eq!(pages.queries.load(Ordering::SeqCst), requests, "the call at the limit asked the server");
+    let all = bound(database.load_all(database.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into(), false)).await;
+    assert!(matches!(all, Err(DbError::Invalid { .. })), "{all:?}");
+    live.cancel();
+    database.close_now();
 }
 
 fn ids(rows: &Rows) -> Vec<String> {
