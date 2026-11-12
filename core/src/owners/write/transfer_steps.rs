@@ -255,6 +255,10 @@ impl TransferState {
         if transfer.attempt_id != attempt_id {
             return;
         }
+        if let Some(shown) = transfer.last_shown.clone().filter(|shown| Self::unwritten(transfer, shown)) {
+            self.show(id, shown, fx);
+        }
+        let Some(transfer) = self.transfers.get(&id) else { return };
         match transfer.stage {
             TransferStage::Uploading | TransferStage::Completing if transfer.waiting_retry => {
                 let Some(transfer) = self.transfers.get_mut(&id) else { return };

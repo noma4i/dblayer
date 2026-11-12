@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- Deliver the upload status to readers after a failed database write of it.
 - Keep a finished multipart upload when a session ends after its upload id write failed.
 - Keep an upload group going when the database refuses the removal of its removed member.
 - End an operation on a server-removed row when the database refuses its removal.

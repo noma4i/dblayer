@@ -341,7 +341,7 @@ pub enum StoreKind {
     OrphanRemoved,
     /// The shown value of a row: readers get it after `Committed`.
     Shown,
-    /// The marker of a temporary copy goes: a refusal of the Store fails the transfer.
+    /// The marker of a temporary copy goes: a refusal of the Store leaves the transfer as it is.
     StagedCleared,
     /// The old row is written back after a failed swap: the temporary file goes and the call is answered after `Committed`.
     StagedRestored,

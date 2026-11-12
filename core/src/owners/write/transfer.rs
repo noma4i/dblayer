@@ -58,8 +58,7 @@ impl TransferState {
         let key = transfer.key.clone();
         let columns = shown.columns();
         transfer.last_shown = Some(shown.clone());
-        let write = shown != Shown::Gone && transfer.stored_shown.is_some_and(|stored| stored != columns);
-        if write {
+        if Self::unwritten(transfer, &shown) {
             let waiting = self.pending.values().any(|pending| pending.kind == StoreKind::Shown && pending.written.get(&id) == Some(&columns));
             if !waiting {
                 let op = Self::shown_op(transfer, shown);
@@ -70,6 +69,27 @@ impl TransferState {
         }
         let revision = self.transfers.get(&id).map_or(0, |transfer| transfer.revision);
         self.publish_shown(&key, shown, revision, fx);
+    }
+
+    pub(super) fn unwritten(transfer: &super::transfer_types::Transfer, shown: &Shown) -> bool {
+        *shown != Shown::Gone && transfer.stored_shown.is_some_and(|stored| stored != shown.columns())
+    }
+
+    /// P-XFER-50: a refused write of the shown value goes again after the backoff (`Storage`) or at once with the named generations.
+    fn shown_rejected(&mut self, pending: &Pending, reason: RejectReason, fx: &mut Fx) {
+        let Some(&id) = pending.written.keys().next() else { return };
+        match reason {
+            RejectReason::Storage(_) => {
+                let Some(transfer) = self.transfers.get(&id) else { return };
+                let (attempt_id, attempt) = (transfer.attempt_id, transfer.attempts);
+                fx.push(Effect::Backoff { id: ScheduleId(RETRY_TIMER + attempt_id), policy: RetryPolicy::Upload, attempt: attempt.max(1), input: TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id } } });
+            }
+            RejectReason::StaleGeneration { generations, .. } => {
+                self.generations.extend(generations);
+                if let Some(shown) = self.transfers.get(&id).and_then(|transfer| transfer.last_shown.clone()) { self.show(id, shown, fx); }
+            }
+            RejectReason::Invalid(_) | RejectReason::NoSession | RejectReason::Closed => {}
+        }
     }
 
     fn publish_shown(&mut self, key: &str, shown: Shown, revision: i64, fx: &mut Fx) {
@@ -623,6 +643,7 @@ impl TransferState {
             return;
         }
         if pending.kind == StoreKind::StagedCleared { return; }
+        if pending.kind == StoreKind::Shown { return self.shown_rejected(&pending, rejected.reason, fx); }
         if pending.kind == StoreKind::StagedRestored { return self.staged_restore_rejected(pending.ids[0], rejected.reason, fx); }
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan) {
             let minted = self.debt_of(&pending).map(|(upload_id, key, _)| (upload_id, key));
