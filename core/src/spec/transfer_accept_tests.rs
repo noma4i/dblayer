@@ -334,7 +334,7 @@ fn xfer_persisting_copy_committed() {
     assert_eq!(twin.stage(id), TransferStage::Ready);
     let receipts = out.replies(reply);
     assert!(matches!(receipts.as_slice(), [TransferAnswer::Receipt(receipt)] if receipt.cycle_id == 1 && receipt.op_id == id), "{receipts:?}");
-    assert_eq!(out.shows(), vec![Shown::Queued]);
+    assert_eq!(out.shows(), vec![Shown::Queued { progress: 0 }]);
     let (ids, reply) = copying_batch(&mut twin, &[OTHER, "Moment:r3:upload"]);
     twin.copy_done(ids[0]);
     twin.copy_done(ids[1]);

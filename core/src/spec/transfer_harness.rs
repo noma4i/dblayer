@@ -174,6 +174,7 @@ pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
         fields: Default::default(),
         upload_id: None,
         confirmed_parts: 0,
+        floor: 0,
         etags: Vec::new(),
         completed: false,
         signed_id: None,

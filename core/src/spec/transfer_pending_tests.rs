@@ -216,7 +216,7 @@ fn xfer_supply_committed() {
     twin.copy_done(id);
     let out = twin.commit();
     assert_eq!(out.replies(9), vec![TransferAnswer::Ok]);
-    assert_eq!((twin.stage(id), out.shows()), (TransferStage::Ready, vec![crate::owners::write::transfer::Shown::Queued]));
+    assert_eq!((twin.stage(id), out.shows()), (TransferStage::Ready, vec![crate::owners::write::transfer::Shown::Queued { progress: 0 }]));
 }
 
 #[test]

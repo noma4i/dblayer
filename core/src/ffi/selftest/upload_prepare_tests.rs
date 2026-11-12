@@ -145,7 +145,7 @@ async fn xfer_prepare_runs_then_uploads() {
             other => panic!("the status ended: {other:?}"),
         }
     }
-    assert!(preparing.windows(2).all(|pair| pair[0] <= pair[1]) && preparing.iter().any(|percent| *percent >= 30), "the percent of the step never goes back: {preparing:?}");
+    assert!(preparing.windows(2).all(|pair| pair[0] <= pair[1]) && preparing.iter().any(|percent| *percent >= 0.30), "the percent of the step never goes back: {preparing:?}");
     bound(database.confirmed(receipt, false)).await.unwrap();
     let blobs = stand.script.variables("CreateBlob");
     assert_eq!(blobs.len(), 1);

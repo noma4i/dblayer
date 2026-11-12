@@ -28,7 +28,7 @@ fn watch_progress(database: &Database, id: &str) -> (Arc<Mutex<Vec<f64>>>, tokio
     let sink = frames.clone();
     let task = tokio::spawn(async move {
         while let Some(value) = watch.pull_next().await {
-            if let ReadValue::Status { progress, .. } = value { sink.lock().unwrap().push(progress as f64); }
+            if let ReadValue::Status { progress, .. } = value { sink.lock().unwrap().push(progress); }
         }
     });
     (frames, task)
@@ -100,11 +100,11 @@ async fn xfer_progress_is_true_and_never_goes_back() {
             }, false).await;
             let watch = reopened.subscribe_values(reopened.session_epoch(), ReadRequest::Blob { model: "Moment".into(), id, action: "upload_clip".into() });
             let Some(ReadValue::Status { progress, .. }) = bound(watch.pull_next()).await else { panic!("the status ended") };
-            let frames = Arc::new(Mutex::new(vec![progress as f64]));
+            let frames = Arc::new(Mutex::new(vec![progress]));
             let sink = frames.clone();
             let task = tokio::spawn(async move {
                 while let Some(value) = watch.pull_next().await {
-                    if let ReadValue::Status { progress, .. } = value { sink.lock().unwrap().push(progress as f64); }
+                    if let ReadValue::Status { progress, .. } = value { sink.lock().unwrap().push(progress); }
                 }
             });
             advancing(&clock, async { crate::test_wait::settled(&reopened, "the upload landed", || reopened.peek_row(reopened.session_epoch(), "Moment".into(), "m77".into()).unwrap().is_some()).await; drained(&reopened).await }).await;

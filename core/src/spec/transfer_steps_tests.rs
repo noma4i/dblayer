@@ -393,7 +393,7 @@ fn xfer_the_network_loss_or_saving_returns_a_running_step_to_ready() {
         let mut twin = Twin::new();
         let id = twin.uploading(KEY, 3);
         let out = twin.online(false);
-        assert_eq!((twin.stage(id), twin.next_step(id), out.cancel_steps(), out.shows()), (TransferStage::Ready, NextStep::Part(1), 1, vec![Shown::Queued]));
+        assert_eq!((twin.stage(id), twin.next_step(id), out.cancel_steps(), out.shows()), (TransferStage::Ready, NextStep::Part(1), 1, vec![Shown::Queued { progress: 0 }]));
         let mut waiting = Twin::new();
         let id = waiting.uploading(KEY, 3);
         waiting.step_error(id, true);
@@ -404,7 +404,7 @@ fn xfer_the_network_loss_or_saving_returns_a_running_step_to_ready() {
         let mut twin = Twin::new();
         let id = twin.uploading(KEY, 3);
         let out = twin.post(TransferInput::PowerSaving(true));
-        assert_eq!((twin.stage(id), out.cancel_steps(), out.shows()), (TransferStage::Ready, 1, vec![Shown::Queued]));
+        assert_eq!((twin.stage(id), out.cancel_steps(), out.shows()), (TransferStage::Ready, 1, vec![Shown::Queued { progress: 0 }]));
         let out = twin.post(TransferInput::PowerSaving(false));
         assert_eq!((twin.stage(id), out.steps().len()), (TransferStage::PersistingAttempt, 0));
         twin.commit();
@@ -413,7 +413,7 @@ fn xfer_the_network_loss_or_saving_returns_a_running_step_to_ready() {
         let mut twin = Twin::new();
         let id = twin.completing(KEY);
         let out = twin.online(false);
-        assert_eq!((twin.stage(id), twin.next_step(id), out.cancel_steps(), out.shows()), (TransferStage::Ready, NextStep::Complete, 1, vec![Shown::Queued]));
+        assert_eq!((twin.stage(id), twin.next_step(id), out.cancel_steps(), out.shows()), (TransferStage::Ready, NextStep::Complete, 1, vec![Shown::Queued { progress: 0 }]));
         let mut saving = Twin::new();
         let id = saving.completing(KEY);
         saving.post(TransferInput::PowerSaving(true));

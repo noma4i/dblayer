@@ -143,6 +143,7 @@ fn the_row_carries_its_id_sync_state_and_upload() {
         local_url: Some("file:///copy".to_string()),
         processing: Some(crate::owners::write::upload::UploadProcessing { progress: Some(0.5) }),
         copy_file: None,
+        share: 0,
     });
     let wire = WireModel::of(&spec()).row(&Arc::new(data));
     assert_eq!(wire.id, "w1");
@@ -198,7 +199,7 @@ fn the_layout_hash_follows_the_order_and_the_shape_of_the_fields() {
 fn the_upload_progress_is_the_sent_share_of_the_total() {
     use crate::owners::write::upload::{UploadInfo, UploadStage, UploadStatus};
     for (sent, total, expected) in [(0u64, 0u64, 0.0), (5, 0, 0.0), (0, 5, 0.0), (1, 4, 25.0), (9, 4, 100.0)] {
-        let info = UploadInfo { status: UploadStatus::Uploading, stage: UploadStage::Part, sent_bytes: sent, total_bytes: total, wait_reason: None, attempts: 0, error: None, local_url: None, processing: None, copy_file: None };
+        let info = UploadInfo { status: UploadStatus::Uploading, stage: UploadStage::Part, sent_bytes: sent, total_bytes: total, wait_reason: None, attempts: 0, error: None, local_url: None, processing: None, copy_file: None, share: 0 };
         assert_eq!(upload(&info).progress, expected, "{sent} of {total}");
     }
 }

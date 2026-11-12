@@ -367,7 +367,7 @@ fn xfer_register_rechecks_waiting() {
     let (mut twin, opened) = undeclared(vec![partly(1, KEY)]);
     assert_eq!((twin.stage(1), opened.shows().len(), opened.writes(), opened.copies(), opened.classified()), (TransferStage::WaitingDeclaration, 0, 0, 0, 1));
     let out = twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
-    assert_eq!((twin.stage(1), out.shows(), out.round_needed()), (TransferStage::Ready, vec![Shown::Queued], vec![vec![1]]), "the row is classified again, only this one");
+    assert_eq!((twin.stage(1), out.shows(), out.round_needed()), (TransferStage::Ready, vec![Shown::Queued { progress: 0 }], vec![vec![1]]), "the row is classified again, only this one");
 }
 
 #[test]
@@ -427,8 +427,8 @@ fn xfer_open_restored_row_waits_for_the_round_then_runs_its_next_step() {
     let mut full = row(1, KEY);
     full.confirmed_parts = 2;
     for (found, next, shown, part) in [
-        (partly(1, KEY), NextStep::Part(2), Shown::Queued, Some(2)),
-        (row(1, KEY), NextStep::Part(1), Shown::Queued, Some(1)),
+        (partly(1, KEY), NextStep::Part(2), Shown::Queued { progress: 0 }, Some(2)),
+        (row(1, KEY), NextStep::Part(1), Shown::Queued { progress: 0 }, Some(1)),
         (full, NextStep::Complete, Shown::Uploading { progress: 100 }, None),
     ] {
         let (mut twin, out) = Twin::opened(vec![found], Default::default());

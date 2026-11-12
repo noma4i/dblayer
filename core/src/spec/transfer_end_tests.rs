@@ -99,7 +99,7 @@ fn xfer_retry() {
     assert!(!out.batches.iter().flat_map(|batch| &batch.ops).any(|op| matches!(op, crate::owners::store::StoreOp::UploadShown { shown: Shown::Failed { .. }, .. })), "the retry batch must not restore the previous failed status");
     let out = twin.commit();
     assert!(out.steps().is_empty());
-    assert_eq!((out.shows(), out.round_needed()), (vec![Shown::Queued], vec![vec![id]]));
+    assert_eq!((out.shows(), out.round_needed()), (vec![Shown::Queued { progress: 0 }], vec![vec![id]]));
     assert!(!out.stored_shows().iter().any(|shown| matches!(shown, Shown::Failed { .. })), "the committed retry must not schedule the old failed status");
     assert_eq!(twin.commit().steps()[0].0, Some(2));
 }
@@ -372,7 +372,7 @@ fn xfer_removing_invalid_cancel() {
     let (reply, _) = twin.cancel(KEY);
     let out = twin.reject(RejectReason::Invalid("bad row".into()));
     assert_eq!(Twin::fault(&out, reply), Some(Fault::Rejected(RejectReason::Invalid("bad row".into()))));
-    assert_eq!((twin.stage(id), out.shows(), out.deletes(), out.timers, out.writes()), (TransferStage::Ready, vec![Shown::Queued], 0, 0, 0), "the file stays, the transfer is as before the cancel");
+    assert_eq!((twin.stage(id), out.shows(), out.deletes(), out.timers, out.writes()), (TransferStage::Ready, vec![Shown::Queued { progress: 0 }], 0, 0, 0), "the file stays, the transfer is as before the cancel");
     let (mut failed, id) = failed_with_upload();
     let (reply, _) = failed.discard(KEY);
     assert_eq!(failed.stage(id), TransferStage::Removing);
@@ -628,7 +628,7 @@ fn xfer_interest_plus_stored_value() {
     let mid = twin.post(TransferInput::StatusInterestPlus { key: KEY.into(), stream_id: 6 });
     assert_eq!(mid.statuses(), vec![(6, Shown::Uploading { progress: 0 })], "a reader joining while the value is in flight gets the last committed value, not the pending write");
     let committed = twin.commit_shown(batch);
-    assert_eq!(committed.statuses(), vec![(5, Shown::Queued), (6, Shown::Queued)], "Committed hands the new value to every subscriber once");
+    assert_eq!(committed.statuses(), vec![(5, Shown::Queued { progress: 0 }), (6, Shown::Queued { progress: 0 })], "Committed hands the new value to every subscriber once");
 }
 
 /// xfer_status_by_key: a stream that follows a key before its transfer exists gets `Gone` at once and every later value of the transfer that takes the key.

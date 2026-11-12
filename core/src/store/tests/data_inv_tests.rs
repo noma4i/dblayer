@@ -155,7 +155,7 @@ fn store_retry_preserves_transfer_outcome() {
     put(&db, "moments", json!({"id":"m1", "userId":"u1", "text":"old"}));
     let row = UploadRow {
         key: "moments:m1:upload".into(), seq: 3, source: Some("/source".into()), parts: 1,
-        batch: None, fields: None, upload_id: None, confirmed_parts: 1, attempts: 1,
+        batch: None, fields: None, upload_id: None, confirmed_parts: 1, progress: 0, attempts: 1,
         completed: true, failed: Some("refused".into()), created_at: 1, inline: false,
         size: 3, sha256: "hash".into(), path: "/mutation".into(), body: "{}".into(),
         on_failure: OnFailure::Keep, steps_path: Some("/steps".into()), steps_body: Some("{}".into()),

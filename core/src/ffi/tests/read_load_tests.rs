@@ -221,7 +221,7 @@ async fn a_blob_stream_without_a_transfer_owner_is_gone() {
     let (db, _) = open(false).await;
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::Blob { model: "Moment".into(), id: "m1".into(), action: "upload".into() });
     match crate::test_wait::within(stream.pull_next()).await.expect("a value") {
-        ReadValue::Status { state, progress, .. } => assert_eq!((state.as_str(), progress), ("gone", 0)),
+        ReadValue::Status { state, progress, .. } => assert_eq!((state.as_str(), progress), ("gone", 0.0)),
         other => panic!("{other:?}"),
     }
 }
