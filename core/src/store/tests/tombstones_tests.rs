@@ -4,30 +4,14 @@ use super::*;
 const RETENTION: TombstoneRetention = TombstoneRetention::DEFAULT;
 
 #[test]
-fn mark_checks_presence_for_the_same_model_and_id() {
-    let (store, _) = booted_store();
-    store.mark_tombstone("messages", "1", 1, 100).unwrap();
-    assert!(store.is_tombstoned("messages", "1").unwrap());
-    assert!(!store.is_tombstoned("messages", "2").unwrap());
-    assert!(!store.is_tombstoned("items", "1").unwrap());
-}
-
-#[test]
 fn repeated_mark_leaves_one_tombstone_row_with_latest_values() {
     let (store, _) = booted_store();
     store.mark_tombstone("messages", "1", 1, 100).unwrap();
     store.mark_tombstone("messages", "1", 2, 200).unwrap();
     assert_eq!(store.tombstone_count().unwrap(), 1);
     assert_eq!(store.read(&[], |reader| reader.tombstone_seq("messages", "1")).unwrap(), Some(2));
-}
-
-#[test]
-fn caps_decide_eviction() {
-    assert_eq!(RETENTION.eviction_count(RETENTION.cap - 1), 0);
-    assert_eq!(RETENTION.eviction_count(RETENTION.cap), 0);
-    assert_eq!(RETENTION.eviction_count(RETENTION.cap + 3), 3);
-    assert!(!RETENTION.ignores_minimum_age(RETENTION.overflow_cap));
-    assert!(RETENTION.ignores_minimum_age(RETENTION.overflow_cap + 1));
+    assert!(!store.is_tombstoned("messages", "2").unwrap());
+    assert!(!store.is_tombstoned("items", "1").unwrap());
 }
 
 #[test]

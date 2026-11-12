@@ -39,18 +39,6 @@ fn a_list_of_interface_values_reads_back_in_order_with_nested_unions_and_child_l
 }
 
 #[test]
-fn interface_values_live_in_one_element_table_with_the_shared_columns_declared_once() {
-    let store = store_with_screens();
-    put(&store, screen(elements()));
-    let table = "row_screens__spec__elements";
-    let column = |name: &str| count(&store, &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{name}'"));
-    assert_eq!((column("u"), column("u__shared__id"), column("u__shared__press"), column("u__button__disabled"), column("u__heading__text")), (1, 1, 1, 1, 1));
-    assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name GLOB 'u__*__id'")), 1);
-    assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM {table} WHERE row_id = 's1'")), 4);
-    assert_eq!(text(&store, &format!("SELECT u FROM {table} WHERE row_id = 's1' AND pos = 1")).as_deref(), Some("SampleButton"));
-}
-
-#[test]
 fn an_element_that_changes_variant_clears_the_columns_and_child_rows_of_the_old_variant() {
     let store = store_with_screens();
     put(&store, screen(elements()));

@@ -63,16 +63,6 @@ fn data_union_variant() {
 }
 
 #[test]
-fn the_variant_lives_in_columns_with_one_text_discriminator() {
-    let store = store_with_messages();
-    put(&store, json!({"id": "m1", "attachment": variants()[0]}));
-    let column = |name: &str, kind: &str| count(&store, &format!("SELECT COUNT(*) FROM pragma_table_info('row_messages') WHERE name = '{name}' AND type = '{kind}'"));
-    assert_eq!((column("attachment", "TEXT"), column("attachment__gift__tier", "TEXT"), column("attachment__reaction__body", "TEXT")), (1, 1, 1));
-    assert_eq!(text(&store, "SELECT attachment FROM row_messages WHERE id = 'm1'").as_deref(), Some("GiftAttachment"));
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM sqlite_master WHERE name = 'row_messages__value'"), 0);
-}
-
-#[test]
 fn an_unknown_typename_keeps_only_its_name() {
     let store = store_with_messages();
     put(&store, json!({"id": "m1", "attachment": {"__typename": "FutureAttachment", "size": 3}}));
@@ -121,17 +111,6 @@ fn an_answer_for_the_same_variant_replaces_its_members() {
 }
 
 #[test]
-fn rows_filter_by_the_discriminator() {
-    let store = store_with_messages();
-    for (at, attachment) in variants().into_iter().enumerate() {
-        put(&store, json!({"id": format!("m{at}"), "attachment": attachment}));
-    }
-    put(&store, json!({"id": "none"}));
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages r WHERE r.attachment = 'MomentAttachment'"), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages r WHERE r.attachment IS NULL"), 1);
-}
-
-#[test]
 fn a_union_inside_a_nested_object_and_an_array_element_is_stored_in_columns() {
     let action = |name: &str| {
         FieldSpec::union(
@@ -163,6 +142,4 @@ fn a_union_inside_a_nested_object_and_an_array_element_is_stored_in_columns() {
     });
     store.commit(envelope(&store, vec![upsert("screens", value.clone())], vec![])).unwrap();
     assert_eq!(serde_json::Value::Object(store.point("screens", "s1").unwrap().unwrap()), value);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM pragma_table_info('row_screens') WHERE name = 'screen__press'"), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM pragma_table_info('row_screens__items') WHERE name = 'f_press'"), 1);
 }

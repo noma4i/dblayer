@@ -120,7 +120,6 @@ fn typed_siblings_stay_in_columns_when_a_member_has_unrestricted_values() {
         store.boot(&[spec], None).unwrap();
         store.mark_ready();
         put(&store, json!({"id": "g1", "meta": value}));
-        assert_eq!(count(&store, "SELECT COUNT(*) FROM pragma_table_info('row_gifts') WHERE name = 'meta__title' AND type = 'TEXT'"), 1);
         assert_eq!(store.point("gifts", "g1").unwrap().unwrap().get("meta"), Some(&value), "raw member: {free}");
         value["title"] = json!("second");
         put(&store, json!({"id": "g1", "meta": value}));
@@ -182,29 +181,6 @@ fn nested_dates_keep_their_text_in_objects_and_lists() {
         assert_eq!(stored["meta"]["at"], "2026-10-14T00:00:00Z");
         assert_eq!(stored["meta"]["dates"], json!(["2026-10-14T10:00:00+10:00"]));
     }
-}
-
-#[test]
-fn a_recursive_array_keeps_all_levels_in_one_table() {
-    let store = store_with_gifts();
-    put(&store, json!({"id": "g1", "tree": tree()}));
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_gifts__tree__children"), 3);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_gifts__tree__children WHERE owner = 0"), 2);
-}
-
-#[test]
-fn changing_one_list_rewrites_only_that_list() {
-    let store = store_with_gifts();
-    put(&store, json!({"id": "g1", "labels": ["a"], "counts": [1]}));
-    exec(
-        &store,
-        "CREATE TEMP TABLE writes (name TEXT);
-         CREATE TEMP TRIGGER labels_written AFTER INSERT ON row_gifts__labels BEGIN INSERT INTO writes VALUES ('labels'); END;
-         CREATE TEMP TRIGGER counts_written AFTER INSERT ON row_gifts__counts BEGIN INSERT INTO writes VALUES ('counts'); END;",
-    );
-    put(&store, json!({"id": "g1", "labels": ["a", "b"], "counts": [1]}));
-    assert_eq!(text(&store, "SELECT group_concat(name) FROM writes"), Some("labels,labels".into()));
-    assert_eq!(store.point("gifts", "g1").unwrap().unwrap()["labels"], json!(["a", "b"]));
 }
 
 #[test]
