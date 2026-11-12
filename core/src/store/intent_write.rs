@@ -48,9 +48,6 @@ fn effects(reader: &Reader<'_>, writes: &IntentEffects, writer: &mut RowWrite<'_
         if let Some(row) = PriorRow::destroyed(reader, &tombstone.model, &tombstone.row_id, writer.stored(&tombstone.model, &tombstone.row_id)?.map(|stored| stored.row))? { prior.rows.push(row); }
         envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(&tombstone.model), id: id(&tombstone.row_id)?, reason: DestroyReason::Local });
     }
-    for touch in &writes.touches {
-        envelope.entity_ops.push(EntityOp::Touch { model: ModelKey::new(&touch.model), id: id(&touch.row_id)? });
-    }
     for member in &writes.members {
         let scope = ScopeRef::new(ModelKey::new(&member.model), ListKey::from_raw(&member.list));
         let before = reader.scope_member_key(&member.model, &member.list, &member.row_id)?;

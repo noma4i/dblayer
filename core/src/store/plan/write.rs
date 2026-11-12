@@ -3,9 +3,9 @@
 
 use serde_json::{json, Map, Value};
 
-use crate::store::{EntityOp, ScopeOp};
+use crate::store::ScopeOp;
 use crate::identity::{ModelKey, RowId, RowRef};
-use crate::owners::store::{EffectMember, EffectRow, EffectTombstone, EffectTouch, IntentEffects};
+use crate::owners::store::{EffectMember, EffectRow, EffectTombstone, IntentEffects};
 use crate::schema::ModelSpec;
 use crate::store::Reader;
 use crate::store::sync_state::read_sync;
@@ -52,12 +52,6 @@ fn member_effects(effects: &mut IntentEffects, scope_ops: Vec<ScopeOp>) {
     }
 }
 
-fn touch_effects(effects: &mut IntentEffects, touches: Vec<EntityOp>) {
-    for touch in touches {
-        if let EntityOp::Touch { model, id } = touch { effects.touches.push(EffectTouch { model: model.to_string(), row_id: id.to_string() }); }
-    }
-}
-
 impl Store {
     /// A new row. The id is temporary for a server model, a final one for a local model.
     pub(crate) fn plan_create(&self, model: &str, mut values: Row, args: Row) -> Result<Planned, CoreError> {
@@ -86,7 +80,6 @@ impl Store {
         let now_ms = self.lock().now_ms();
         let mut data = spec.normalize_local(&values, now_ms)?;
         data.extend(local);
-        let own = RowRef::new(ModelKey::new(model), id.clone());
         let input = Value::Object(data.iter().chain(&args).map(|(name, value)| (name.clone(), value.clone())).collect());
         let effects = self.read_models(&[model], |reader| {
             if reader.point(model, id.as_str())?.is_some() || !read_sync(reader.connection(), model, &[id.to_string()])?.is_empty() {
@@ -94,7 +87,6 @@ impl Store {
             }
             let mut effects = IntentEffects { rows: vec![row_effect(model, id.as_str(), None, &data)], ..Default::default() };
             member_effects(&mut effects, local_scope_ops(reader, spec, &id, &data)?);
-            touch_effects(&mut effects, self.touch_ops(reader, spec, &[&data], &own)?);
             Ok(effects)
         })?;
         Ok(Planned { model: model.to_string(), shown: id.clone(), row_id: id, input, effects, noop: false })
@@ -113,7 +105,6 @@ impl Store {
         let mut patch = spec.patch(&patch);
         self.decode_values(model, &mut patch, |source, key| source.get(key))?;
         patch.remove("id");
-        let own = RowRef::new(ModelKey::new(model), id.clone());
         let mut input = patch.clone();
         input.insert("id".to_string(), Value::String(id.to_string()));
         let sends_args = !args.is_empty();
@@ -125,9 +116,7 @@ impl Store {
             if same_fields(&merged, &current) && !sends_args {
                 return Ok(None);
             }
-            let mut effects = IntentEffects { rows: vec![row_effect(model, id.as_str(), Some(&current), &merged)], ..Default::default() };
-            touch_effects(&mut effects, self.touch_ops(reader, spec, &[&merged, &current], &own)?);
-            Ok(Some(effects))
+            Ok(Some(IntentEffects { rows: vec![row_effect(model, id.as_str(), Some(&current), &merged)], ..Default::default() }))
         })?;
         Ok(match effects {
             Some(effects) => Planned { model: model.to_string(), row_id: id.clone(), shown: id.clone(), input: Value::Object(input), effects, noop: false },
@@ -174,7 +163,6 @@ impl Store {
                     continue;
                 }
                 effects.rows.push(row_effect(&edited_model, &edited_id, Some(&before), &after));
-                touch_effects(&mut effects, self.touch_ops(reader, self.spec(&edited_model)?, &[&after, &before], &RowRef::new(ModelKey::new(&edited_model), RowId::new(&edited_id)?))?);
             }
             if let Some(declared) = &declared {
                 if let Some(copy_id) = self.plan_closed_effect(reader, spec, declared, (&own, &args), now_ms, &mut effects)? {

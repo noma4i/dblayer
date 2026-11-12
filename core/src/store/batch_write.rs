@@ -139,6 +139,7 @@ impl Store {
         }
         let (derived, pointer_rows, named_gone) = super::follow_pointer::settle_parents(&Reader::new(&transaction, &inner.models), &inner.models, &results, |plan| writer.apply(&plan), inner.generation)?;
         results.extend(derived);
+        if let Some(touched) = super::touch_ancestors::touch_ancestors(&mut writer)? { results.push(touched); }
         let candidates = writer.candidates;
         let mut live_files = std::collections::HashSet::new();
         for file in files {

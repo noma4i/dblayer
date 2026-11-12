@@ -63,9 +63,9 @@ enum Path { Create, EventChange, EventSameValues, EventDelete, OperationValue, P
 /// P-DATA-115: the parent gets 1 new value per batch of a child change, whatever the path of the change; a write of equal child values gives it none.
 #[tokio::test(flavor = "multi_thread")]
 async fn data_touch_once_any_path() {
-    // path, whether the message m1 exists first, new values of the chat stream
+    // path, whether the message m1 exists first, new values of the chat stream (a create is 2 batches: the optimistic row and the answer)
     let cases = [
-        (Path::Create, false, 1),
+        (Path::Create, false, 2),
         (Path::EventChange, true, 1),
         (Path::EventSameValues, true, 0),
         (Path::EventDelete, true, 1),
@@ -82,6 +82,7 @@ async fn data_touch_once_any_path() {
                 bound(rig.database.create(epoch, "Message".into(), json!({"chatId": "c1", "text": "new", "at": 5}).to_string(), "{}".into())).await.unwrap();
                 hold.entered().await;
                 settled(&rig, "the optimistic create reached the chat", || values(&chat) > before).await;
+                assert_eq!(values(&chat), before + 1, "{path:?}: the optimistic create is 1 batch");
                 hold.release();
             }
             Path::EventChange => rig.land("Message", json!({"id": "m1", "chatId": "c1", "text": "changed", "at": 1})).await,

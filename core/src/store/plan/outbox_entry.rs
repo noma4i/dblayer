@@ -1,16 +1,14 @@
 use std::collections::HashSet;
 
-use rusqlite::OptionalExtension;
 use serde_json::{json, Map, Value};
 
-use crate::store::{EntityOp, OperationRecord, OperationTransition, ScopeOp, ScopeRef};
-use crate::store::ddl::table_name;
+use crate::store::{OperationRecord, OperationTransition, ScopeOp, ScopeRef};
 use crate::identity::{ModelKey, RowId, RowRef};
 use crate::owners::write::operation_status::Operation;
 use crate::store::query::{Query, Where};
-use crate::schema::{AssociationKind, Dependent, ModelSpec, SchemaError, ValueFault};
+use crate::schema::{Dependent, ModelSpec, SchemaError, ValueFault};
 use crate::store::{Reader, Store, StoreError, CoreError};
-use crate::value::{fractional_between, read_id};
+use crate::value::fractional_between;
 use crate::owners::write::plan_cascade::cascade_destroys;
 
 use super::prior::PriorRow;
@@ -79,12 +77,6 @@ pub(super) fn local_scope_ops(reader: &Reader<'_>, spec: &ModelSpec, id: &RowId,
     Ok(operations)
 }
 
-pub(super) fn is_resident(reader: &Reader<'_>, model: &ModelKey, id: &RowId) -> Result<bool, CoreError> {
-    let sql = format!(include_str!("../sql/plan/is_resident.sql"), table_name(model.as_str()));
-    let found: Option<i64> = reader.connection().query_row(&sql, [id.as_str()], |row| row.get(0)).optional()?;
-    Ok(found.is_some())
-}
-
 pub(super) fn plan_scope_effect<'a>(reader: &'a Reader<'_>, specs: &'a dyn Fn(&str) -> Option<&'a ModelSpec>, target: &ModelSpec, effect: &crate::schema::ScopeEffect, call: (&RowRef, &Map<String, Value>), rows: &mut Vec<PriorRow>, scope_ops: &mut Vec<ScopeOp>) -> Result<(), CoreError> {
     use crate::owners::write::outbox_plan::{scope_changes, ListChange};
     let view = super::view::ReaderView { reader, specs, db: None };
@@ -107,23 +99,6 @@ pub(super) fn plan_scope_effect<'a>(reader: &'a Reader<'_>, specs: &'a dyn Fn(&s
 }
 
 impl Store {
-
-    pub(crate) fn touch_ops(&self, reader: &Reader<'_>, spec: &ModelSpec, rows: &[&Map<String, Value>], own: &RowRef) -> Result<Vec<EntityOp>, CoreError> {
-        let mut seen = HashSet::from([own.clone()]);
-        let mut ops = Vec::new();
-        for association in spec.associations.iter().filter(|association| association.kind == AssociationKind::BelongsTo && association.touches_parent) {
-            for row in rows {
-                let Some(parent_id) = row.get(&association.foreign_key).and_then(read_id) else { continue };
-                let parent = RowRef::new(association.target.clone(), parent_id);
-                if seen.contains(&parent) || !is_resident(reader, &parent.model, &parent.id)? {
-                    continue;
-                }
-                seen.insert(parent.clone());
-                ops.push(EntityOp::Touch { model: parent.model, id: parent.id });
-            }
-        }
-        Ok(ops)
-    }
 
     pub(crate) fn destroy_targets(&self, reader: &Reader<'_>, own: &RowRef) -> Result<Vec<RowRef>, CoreError> {
         let mut descendants = Vec::new();

@@ -7,6 +7,10 @@
 - Add `NetworkPath` with the kind and the number of the default network to `NetworkStatus`.
 - Add `operationFailure`, `syncInfo` and `uploadInfo` builders to the test products of both platforms.
 
+### Fixed
+
+- Touch the parents of a row once per batch from one place for every write path, up the `touch: true` links to the root, and not for a write that changes no value.
+
 ### Changed
 
 - Remove an upload at open when its copy was not durable, and read the file of the caller only during the call.

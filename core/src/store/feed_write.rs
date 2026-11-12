@@ -4,7 +4,6 @@ use serde_json::{Map, Value};
 
 use crate::store::{BatchPlan, CommitResult, DestroyReason, EntityOp};
 use crate::identity::{ModelKey, RowId, RowRef};
-use crate::schema::AssociationKind;
 use crate::value::read_id;
 
 use super::merge::{unconfirmed_fields, Admission, RowKind};
@@ -15,30 +14,6 @@ type EventRows = BTreeMap<(String, String), Option<Map<String, Value>>>;
 pub(super) type OverlayWrites = Vec<(String, String, Map<String, Value>)>;
 
 fn fault(error: impl std::fmt::Display) -> StoreError { StoreError::Constraint(error.to_string()) }
-
-fn touch_parents(writer: &mut RowWrite<'_>, owner: &RowRef, rows: &[&Map<String, Value>]) -> Result<Vec<EntityOp>, StoreError> {
-    let spec = &writer.models.get(owner.model.as_str()).ok_or_else(|| StoreError::UnknownModel(owner.model.to_string()))?.spec;
-    let associations: Vec<_> = spec.associations.iter().filter(|association| association.kind == AssociationKind::BelongsTo && association.touches_parent).cloned().collect();
-    let mut seen = HashSet::from([owner.clone()]);
-    let mut parents = Vec::new();
-    let mut wanted = BTreeMap::<String, Vec<String>>::new();
-    for association in associations {
-        for row in rows {
-            let Some(id) = row.get(&association.foreign_key).and_then(read_id) else { continue };
-            let parent = RowRef::new(association.target.clone(), id);
-            if seen.insert(parent.clone()) {
-                wanted.entry(parent.model.to_string()).or_default().push(parent.id.to_string());
-                parents.push(parent);
-            }
-        }
-    }
-    for (model, ids) in wanted { writer.prefetch(&model, &ids, None)?; }
-    let mut touches = Vec::new();
-    for parent in parents {
-        if writer.stored(parent.model.as_str(), parent.id.as_str())?.is_some() { touches.push(EntityOp::Touch { model: parent.model, id: parent.id }); }
-    }
-    Ok(touches)
-}
 
 fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mut OverlayWrites) -> Result<Option<CommitResult>, StoreError> {
     let op = payload.get("op").and_then(Value::as_str).ok_or_else(|| StoreError::Constraint("event has no operation".into()))?;
@@ -69,9 +44,6 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         let key = (model.to_string(), id.to_string());
         let Some(row) = writer.admit(model, patch, RowKind::Server, Admission { base: Some(writer.revision), closing: None })? else { return Ok(None) };
         let old = writer.current.get(&key).and_then(|row| row.as_ref()).map(|row| row.row.clone());
-        let owner = RowRef::new(ModelKey::new(model), id.clone());
-        let rows: Vec<_> = std::iter::once(&row).chain(old.as_ref()).collect();
-        envelope.entity_ops = touch_parents(writer, &owner, &rows)?;
         for related in payload.get("related").and_then(Value::as_array).into_iter().flatten() {
             let Some(related_model) = related.get("model").and_then(Value::as_str) else { continue };
             let Some(patch) = related.get("row").and_then(Value::as_object) else { continue };
