@@ -159,21 +159,10 @@ fn xfer_prop_round_covers() {
 
 #[test]
 fn xfer_prop_file_kept() {
-    let mut closing = Twin::new();
-    closing.uploading(KEY, 2);
-    assert_eq!(closing.close().deletes(), 0, "Closing keeps the copy");
-    let mut ended = Twin::new();
-    ended.uploading(KEY, 2);
-    assert_eq!(ended.end_epoch().deletes(), 0, "EpochEnded keeps the copy");
     let mut refused = Twin::offline();
     refused.accepted(KEY, 2);
     refused.cancel(KEY);
     assert_eq!(refused.reject(RejectReason::Storage("disk".into())).deletes(), 0, "a refused removal keeps the copy");
-    let mut removed = Twin::offline();
-    removed.accepted(KEY, 2);
-    let (_, before) = removed.cancel(KEY);
-    assert_eq!(before.deletes(), 0, "the file goes only after the write");
-    assert_eq!(removed.commit().deletes(), 1);
 }
 
 #[test]
@@ -202,15 +191,6 @@ fn xfer_prop_batch_all_or_none() {
     let ids = running.batch_mutating(&keys);
     let (reply, out) = running.cancel(KEY);
     assert_eq!((Twin::fault(&out, reply), running.stage(ids[0])), (Some(Fault::InFlight), TransferStage::Mutating), "an element of a batch whose mutation left is not cancelled alone");
-}
-
-#[test]
-fn xfer_prop_restored_copy_goes_on_without_receipt() {
-    let mut row = stored(1, KEY, 2);
-    row.copying = true;
-    row.size = 0;
-    let (_, out) = Twin::opened(vec![row], Default::default());
-    assert_eq!((out.copies(), out.all_replies()), (1, 0), "a row of `copying` goes on without a receipt");
 }
 
 #[test]

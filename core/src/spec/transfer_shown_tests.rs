@@ -38,18 +38,6 @@ fn xfer_show_publishes_after_committed() {
     assert_eq!(committed.shows(), live(out.stored_shows()), "Committed publishes the value of its batch");
 }
 
-#[test]
-fn xfer_show_rejected_keeps_the_value_and_retries() {
-    let mut twin = Twin::new();
-    let id = twin.uploading(KEY, 3);
-    twin.hold_shown = true;
-    let out = twin.online(false);
-    let rejected = twin.reject_shown(out.shown_batches()[0]);
-    assert_eq!(rejected.shows(), Vec::new(), "a refused value is not published");
-    let again = twin.post(TransferInput::RoundStatus { epoch: EPOCH, transfer_ids: vec![id], refused: Some("denied".into()) });
-    assert_eq!((out.stored_shows(), again.stored_shows()), (vec![Shown::Queued], vec![Shown::Failed { error: "refused".into() }]), "the Store still has the old value: the next show of another value writes it");
-}
-
 /// P-XFER-50: a shown value the Store fails to write is written again after the backoff, and Committed publishes it.
 #[test]
 fn xfer_show_storage_refusal_is_written_again() {

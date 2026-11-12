@@ -57,26 +57,10 @@ fn xfer_copy_stale_cache_removed() {
 }
 
 #[test]
-fn xfer_blob_cache_by_content() {
-    let mut twin = Twin::new();
-    let id = twin.copying(KEY, 1);
-    assert!(cache_ops(&copied(&mut twin, id, CachedBlob::Miss)).is_empty(), "a miss writes nothing to the cache");
-    twin.commit();
-    twin.commit();
-    twin.step_ok(id, 1, None);
-    twin.commit();
-    twin.commit();
-    let written = twin.completed(id);
-    assert_eq!(cache_ops(&written), vec![StoreOp::BlobCachePut { content_sha256: "h".into(), blob_id: "signed".into(), created_at: 0 }], "the completed upload is remembered by its content");
-    assert_eq!(twin.commit().submits(), 1);
-    assert_eq!(twin.stage(id), TransferStage::Mutating);
-}
-
-#[test]
 fn xfer_blob_cache_created_at_is_the_createblob_answer() {
     let mut twin = Twin::new();
     let id = twin.copying(KEY, 1);
-    copied(&mut twin, id, CachedBlob::Miss);
+    assert!(cache_ops(&copied(&mut twin, id, CachedBlob::Miss)).is_empty(), "a miss writes nothing to the cache");
     twin.commit();
     twin.commit();
     twin.det.tick(crate::runtime::Time(1000));
@@ -86,6 +70,8 @@ fn xfer_blob_cache_created_at_is_the_createblob_answer() {
     twin.det.tick(crate::runtime::Time(5000));
     let written = twin.completed(id);
     assert_eq!(cache_ops(&written), vec![StoreOp::BlobCachePut { content_sha256: "h".into(), blob_id: "signed".into(), created_at: 1000 }], "the term of the cache is the term of the server blob from its creation, not from complete");
+    assert_eq!(twin.commit().submits(), 1);
+    assert_eq!(twin.stage(id), TransferStage::Mutating);
 }
 
 #[test]

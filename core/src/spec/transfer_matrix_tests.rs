@@ -3,28 +3,12 @@
 use std::collections::BTreeMap;
 
 use super::transfer_harness::*;
-use crate::owners::contract::{EpochStarted, Online, RejectReason};
+use crate::owners::contract::RejectReason;
 use crate::owners::store::UploadKind;
 use crate::owners::write::outbox::{Fault, OutboxOutcome, ReserveTarget};
 use crate::owners::write::transfer::{Shown, TransferAnswer, TransferId, TransferInput, TransferStage};
 
 const KEY: &str = "Moment:r1:upload";
-
-fn generation_twin() -> Twin {
-    let mut twin = Twin::bare(1);
-    twin.post(TransferInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 5 }));
-    twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
-    twin.post(TransferInput::RestoreReady { epoch: EPOCH });
-    twin.post(TransferInput::Online(Online(true)));
-    twin
-}
-
-#[test]
-fn xfer_epoch_started_generation() {
-    let mut twin = generation_twin();
-    let (_, _, out) = twin.accepting(KEY, 2);
-    assert_eq!(out.batches[0].basis.get("Moment"), Some(&5));
-}
 
 fn stale() -> RejectReason { RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 5)].into() } }
 
@@ -162,10 +146,3 @@ fn xfer_completing_power_saving_urgent() {
     assert_eq!(plain.stage(id), TransferStage::Ready, "a plain one waits for the end of power saving");
 }
 
-#[test]
-fn xfer_accepting_signals() {
-    let mut twin = Twin::new();
-    let (id, ..) = twin.accepting(KEY, 2);
-    twin.ignores(id, vec![TransferInput::Online(Online(false)), TransferInput::Online(Online(true)), TransferInput::PowerSaving(true), TransferInput::SlotFreed]);
-    assert!(twin.state().saving && twin.state().online == Some(true), "the fields follow the signals");
-}

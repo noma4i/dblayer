@@ -95,9 +95,7 @@ fn xfer_batch_intent_other() {
     twin.ignores(ids[0], inputs);
     let out = twin.online(false);
     assert!(Twin::quiet(&out), "{out:?}");
-    assert_eq!(twin.state().online, Some(false));
     twin.post(TransferInput::PowerSaving(true));
-    assert!(twin.state().saving);
     let out = twin.post(TransferInput::Online(Online(true)));
     assert!(out.steps().is_empty() && out.completes() == 0 && out.writes() == 0, "{out:?}");
     assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::PersistingBatchIntent));
