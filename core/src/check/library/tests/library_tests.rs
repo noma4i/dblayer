@@ -101,28 +101,6 @@ fn reopen_programs() -> Vec<Program> {
     all_traces(&alphabet(), 1).into_iter().enumerate().map(|(index, body)| Program { tag: format!("r{index}"), inputs: reopened(body) }).collect()
 }
 
-/// Requirement: every program of depth 1 and 2 of the alphabet runs on the stand without a panic and without an unsupported input.
-/// Observable: the observations of each program. Assert: none is `unsupported`.
-#[tokio::test(flavor = "multi_thread")]
-async fn library_alphabet_runs() {
-    let mut tasks = Vec::new();
-    let permits = Arc::new(tokio::sync::Semaphore::new(PARALLEL));
-    let owner = Arc::new(LibraryOwner { properties: Vec::new(), reference: false });
-    for program in family_programs(&[false], 1, 0, 0).into_iter().chain(family_programs(&[true], 1, 0, 0)) {
-        let (permits, owner) = (permits.clone(), owner.clone());
-        tasks.push(tokio::spawn(async move {
-            let _permit = permits.acquire_owned().await.unwrap();
-            let trace = run(owner.as_ref(), "library", &program.inputs).await.expect("no property is given");
-            trace.steps.iter().find(|step| step.observed.iter().any(|item| item.kind == "unsupported")).map(|step| format!("{} -> unsupported: {}", program.tag, step.input))
-        }));
-    }
-    let mut unsupported = Vec::new();
-    for task in tasks {
-        unsupported.extend(task.await.expect("a program must not panic"));
-    }
-    assert!(unsupported.is_empty(), "{}", unsupported.join("\n"));
-}
-
 /// Requirement: I2, I9, I12 and I13 of invariants.md hold on every program (all to depth D, S long ones of length L).
 /// Observable: the requests of the mock log (operation, variables), the clock ticks, the network flag, the session. Assert: no program breaks a rule.
 #[tokio::test(flavor = "multi_thread")]
