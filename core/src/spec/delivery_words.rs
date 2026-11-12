@@ -68,7 +68,6 @@ pub(super) enum Input {
     ReadRelevant { revision: i64, position: u64, relevant: Option<(i64, u64)>, rows: Vec<Row> },
     ReadOverflow { revision: i64 },
     CountDone { revision: i64, count: u64 },
-    CountRelevant { revision: i64, position: u64, relevant: Option<(i64, u64)>, count: u64 },
     ReadStale { revision: i64, rows: Vec<Row> },
     ReadFailed { revision: i64 },
     ReadFailedStale,

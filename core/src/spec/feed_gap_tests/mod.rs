@@ -223,7 +223,7 @@ impl Twin {
             Input::Tick => vec![FeedInput::Tick],
             Input::Online(on) => vec![FeedInput::Online { online: Online(*on), online_seq: u64::from(*on) }],
             Input::Drain { own } => vec![FeedInput::Drain { connection_id: self.connection(if *own { To::Draining } else { To::Stray }) }],
-            Input::EpochEnded | Input::Closing | Input::Keepalive | Input::PongDeadline => Vec::new(),
+            Input::EpochEnded | Input::Closing => Vec::new(),
         }
     }
 

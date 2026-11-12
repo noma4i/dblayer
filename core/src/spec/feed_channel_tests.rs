@@ -106,7 +106,7 @@ impl Rig {
 
     fn want(&mut self, model: &str, id: u64) -> Vec<String> { self.post(FeedInput::WantPlus { model: model.into(), id, stream: true, scoped: Vec::new() }) }
 
-    fn want_window(&mut self, id: u64, slug: &str, channel: &str) -> Vec<String> {
+    fn want_window(&mut self, id: u64, slug: &str) -> Vec<String> {
         let variables = serde_json::Map::from_iter([("slug".to_string(), serde_json::json!(slug))]);
         let input = FeedInput::WantPlus { model: "Screen".into(), id, stream: false, scoped: vec![ScopedChannel { subscription: "S".into(), variables }] };
         self.post(input)
@@ -283,7 +283,7 @@ const ABOUT: &str = "S-2";
 #[test]
 fn feed_chan_scope_variables() {
     let mut rig = Rig::new();
-    assert_eq!(rig.want_window(SCREEN, "home", HOME), ["connect"], "the first window opens the connection, the subscribe waits for it");
+    assert_eq!(rig.want_window(SCREEN, "home"), ["connect"], "the first window opens the connection, the subscribe waits for it");
     assert_eq!(rig.state().wanted().into_iter().collect::<Vec<_>>(), [HOME], "the channel of the window is its subscription with a number of the owner for the variables");
     assert_eq!(rig.handshake(), [format!("subscribe:{HOME}")], "the frame subscribes the channel of the window");
     let variables = serde_json::Map::from_iter([("slug".to_string(), serde_json::json!("home"))]);
@@ -296,10 +296,10 @@ fn feed_chan_scope_variables() {
 #[test]
 fn feed_chan_scope_variables_shared() {
     let mut rig = Rig::new();
-    rig.want_window(SCREEN, "home", HOME);
+    rig.want_window(SCREEN, "home");
     rig.handshake();
     rig.confirm(HOME);
-    assert!(rig.want_window(SCREEN + 1, "home", HOME).is_empty(), "equal subscription and variables are one channel: no second subscribe");
+    assert!(rig.want_window(SCREEN + 1, "home").is_empty(), "equal subscription and variables are one channel: no second subscribe");
     assert_eq!(rig.want_window(SCREEN + 2, "about", ABOUT), [format!("subscribe:{ABOUT}")], "other variables are another channel");
     assert_eq!(rig.state().subscribed(), [HOME, ABOUT]);
 }
@@ -307,10 +307,10 @@ fn feed_chan_scope_variables_shared() {
 #[test]
 fn feed_chan_scope_variables_want_minus() {
     let mut rig = Rig::new();
-    rig.want_window(SCREEN, "home", HOME);
+    rig.want_window(SCREEN, "home");
     rig.handshake();
     rig.confirm(HOME);
-    rig.want_window(SCREEN + 1, "home", HOME);
+    rig.want_window(SCREEN + 1, "home");
     rig.want_window(SCREEN + 2, "about", ABOUT);
     rig.confirm(ABOUT);
     assert!(rig.unwant("Screen", SCREEN).is_empty(), "the other window of the channel still wants it");
