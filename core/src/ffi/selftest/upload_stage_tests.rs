@@ -177,6 +177,42 @@ async fn crash_image_held() {
     database.close_now();
 }
 
+/// `cancel_upload` (what `StagedUpload.discard()` calls on both platforms) of a staged multipart upload in the order of the consumer: in any stage of the parts it answers `true`, sends 1 `AbortMultipart`, leaves no `sync_upload` row and no file of a copy, and sends no `complete`.
+/// Observable: the answer, the calls to the server, the base, the files. Catches: `InFlight` that depends on the moment of the call, an abort that never goes.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_stage_cancel_in_any_stage() {
+    for (case, length) in [("put held", 11 * MEBIBYTE), ("presign of part 2 held", 11 * MEBIBYTE), ("after the first put", 3)] {
+        let directory = tempfile::tempdir().unwrap();
+        let live = directory.path().join("live.sqlite");
+        let source = file_of(directory.path(), length);
+        let stand = Stand::new();
+        let database = stand.open(Some(&live), &OPERATIONS).await;
+        stand.script.data("InitMultipart", INIT);
+        stand.script.data("PresignParts", PRESIGN);
+        stand.script.data("AbortMultipart", ABORTED);
+        let (put_hold, presign_hold) = match case {
+            "put held" => (Some(stand.puts.hold_next()), None),
+            "presign of part 2 held" => (None, Some(stand.script.hold("PresignParts", PRESIGN))),
+            _ => (None, None),
+        };
+        let staged = staged(&database, &source).await;
+        match case {
+            "put held" => put_hold.as_ref().unwrap().entered().await,
+            "presign of part 2 held" => presign_hold.as_ref().unwrap().entered().await,
+            _ => crate::test_wait::settled(&database, "the first part is on the server", || stand.puts.seen.lock().unwrap().len() == 1).await,
+        }
+        let cancelled = bound(database.cancel_upload(database.session_epoch(), "Moment".into(), staged.row_id.clone(), "upload_clip".into())).await;
+        assert!(matches!(cancelled, Ok(true)), "{case}: {cancelled:?}");
+        if let Some(hold) = &put_hold { hold.release(); }
+        if let Some(hold) = &presign_hold { hold.release(); }
+        crate::test_wait::settled(&database, &format!("the abort went ({case}, calls {:?})", stand.script.names()), || stand.script.count("AbortMultipart") == 1).await;
+        let rows = rusqlite::Connection::open(&live).unwrap().query_row("SELECT count(*) FROM sync_upload", [], |row| row.get::<_, i64>(0)).unwrap();
+        let files = std::fs::read_dir(files_of(&live).join("transfers")).map_or(0, |found| found.count());
+        assert_eq!((rows, files, stand.script.count("AbortMultipart"), stand.script.count("CompleteMultipart")), (0, 0, 1, 0), "{case}");
+        database.close_now();
+    }
+}
+
 /// A second `commit_staged` of the same key is `Invalid`: the row stays one and the final mutation goes once.
 #[tokio::test(flavor = "multi_thread")]
 async fn xfer_stage_commit_twice() {
