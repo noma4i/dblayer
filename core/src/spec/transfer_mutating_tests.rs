@@ -106,6 +106,9 @@ fn xfer_mutation_discarded() {
     let mut twin = Twin::new();
     let id = twin.mutating(KEY);
     let (reply, _) = twin.discard(KEY);
+    let accepted = twin.post(TransferInput::DiscardOutcome { key: KEY.into(), result: Ok(()) });
+    assert!(Twin::quiet(&accepted), "{accepted:?}");
+    assert_eq!(twin.stage(id), TransferStage::Mutating);
     let out = twin.mutation_outcome(KEY, OutboxOutcome::Discarded);
     assert_eq!((twin.stage(id), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
     let out = twin.commit();
@@ -124,18 +127,6 @@ fn xfer_mutating_discard_refused() {
     assert_eq!(twin.stage(id), TransferStage::Mutating);
     let (_, out) = twin.discard(KEY);
     assert_eq!(out.outbox_discards(), 1, "a new discard goes to Outbox again");
-}
-
-#[test]
-fn xfer_mutating_discard_accepted() {
-    let mut twin = Twin::new();
-    let id = twin.mutating(KEY);
-    let (reply, _) = twin.discard(KEY);
-    let out = twin.post(TransferInput::DiscardOutcome { key: KEY.into(), result: Ok(()) });
-    assert!(Twin::quiet(&out), "{out:?}");
-    assert_eq!(twin.stage(id), TransferStage::Mutating);
-    twin.mutation_outcome(KEY, OutboxOutcome::Discarded);
-    assert_eq!(twin.commit().replies(reply), vec![TransferAnswer::Ok]);
 }
 
 #[test]
