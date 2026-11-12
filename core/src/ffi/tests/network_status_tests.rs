@@ -64,7 +64,7 @@ impl Platform {
 fn net_status_first_value() {
     in_own_process(module_path!(), "net_status_first_value", &TARGETS, |target| run(async {
         let platform = platform(target).await;
-        let status = NetworkStatus::new();
+        let status = observed().0;
         assert_eq!(status.current(), None, "{target}: no value before the first input");
         let (first, second) = (status.subscribe(), status.subscribe());
         let (mut one, mut two) = (reading!(&first), reading!(&second));
@@ -80,7 +80,7 @@ fn net_status_first_value() {
 fn net_status_change() {
     in_own_process(module_path!(), "net_status_change", &TARGETS, |target| run(async {
         let platform = platform(target).await;
-        let status = NetworkStatus::new();
+        let status = observed().0;
         platform.set(false).await;
         let (first, second) = (status.subscribe(), status.subscribe());
         assert_eq!((within(first.next()).await, within(second.next()).await), (Some(false), Some(false)), "{target}: the first read is the current value");
@@ -99,7 +99,7 @@ fn net_status_change() {
 fn net_status_same_value_silent() {
     in_own_process(module_path!(), "net_status_same_value_silent", &TARGETS, |target| run(async {
         let platform = platform(target).await;
-        let status = NetworkStatus::new();
+        let status = observed().0;
         platform.set(true).await;
         let reader = status.subscribe();
         assert_eq!(within(reader.next()).await, Some(true), "{target}");
@@ -120,7 +120,7 @@ fn net_status_reader_gets_current() {
         let platform = platform(target).await;
         platform.set(true).await;
         platform.set(false).await;
-        let late = NetworkStatus::new().subscribe();
+        let late = observed().0.subscribe();
         assert_eq!(within(late.next()).await, Some(false), "{target}: the first frame is the current value");
     }));
 }
@@ -130,7 +130,7 @@ fn net_status_reader_gets_current() {
 fn net_status_reader_waits_first_value() {
     in_own_process(module_path!(), "net_status_reader_waits_first_value", &TARGETS, |target| run(async {
         let platform = platform(target).await;
-        let reader = NetworkStatus::new().subscribe();
+        let reader = observed().0.subscribe();
         let mut held = reading!(&reader);
         assert!(poll_once(&mut held).is_pending(), "{target}");
         platform.set_power_saving_noise().await;
@@ -153,7 +153,7 @@ impl Platform {
 fn net_status_cancel_one_reader() {
     in_own_process(module_path!(), "net_status_cancel_one_reader", &TARGETS, |target| run(async {
         let platform = platform(target).await;
-        let status = NetworkStatus::new();
+        let status = observed().0;
         platform.set(false).await;
         let (gone, kept) = (status.subscribe(), status.subscribe());
         assert_eq!((within(gone.next()).await, within(kept.next()).await), (Some(false), Some(false)), "{target}");
@@ -181,7 +181,7 @@ fn net_status_ignores_server_and_session() {
     in_own_process(module_path!(), "net_status_ignores_server_and_session", &["database"], |_| run(async {
         let platform = platform("database").await;
         let database = platform.database.clone().unwrap();
-        let status = NetworkStatus::new();
+        let status = observed().0;
         platform.set(true).await;
         let reader = status.subscribe();
         assert_eq!(within(reader.next()).await, Some(true));
@@ -230,7 +230,7 @@ fn net_status_ignores_server_and_session() {
 fn net_prop_status_follows_only_the_platform() {
     in_own_process(module_path!(), "net_prop_status_follows_only_the_platform", &TARGETS, |target| run(async {
         let platform = platform(target).await;
-        let status = NetworkStatus::new();
+        let status = observed().0;
         if let Some(database) = &platform.database {
             within(database.close_database()).await.unwrap();
         }
@@ -267,7 +267,7 @@ fn net_prop_status_follows_only_the_platform() {
 fn net_prop_status_newest_wins() {
     in_own_process(module_path!(), "net_prop_status_newest_wins", &TARGETS, |target| run(async {
         let platform = platform(target).await;
-        let status = NetworkStatus::new();
+        let status = observed().0;
         platform.set(true).await;
         let (slow, fast) = (status.subscribe(), status.subscribe());
         assert_eq!((within(slow.next()).await, within(fast.next()).await), (Some(true), Some(true)), "{target}");
@@ -307,8 +307,8 @@ impl super::PlatformObserver for Reporting {
 #[test]
 fn net_status_follows_without_database() {
     in_own_process(module_path!(), "net_status_follows_without_database", &["status"], |_| run(async {
-        let sink = OnlineSink::of_status();
-        let status = NetworkStatus::new();
+        let (status, double) = observed();
+        let sink = double.sink();
         assert_eq!(status.current(), None, "no value before the first input");
         let reader = status.subscribe();
         let mut first = reading!(&reader);
@@ -327,8 +327,8 @@ fn net_status_follows_without_database() {
 #[test]
 fn net_status_follows_between_bootstrap_and_open() {
     in_own_process(module_path!(), "net_status_follows_between_bootstrap_and_open", &["status"], |_| run(async {
-        let sink = OnlineSink::of_status();
-        let status = NetworkStatus::new();
+        let (status, double) = observed();
+        let sink = double.sink();
         let reader = status.subscribe();
         let ports = super::FetchPorts { http: Arc::new(Answering), retries: None, observers: Some(Arc::new(Reporting)) };
         within(super::fetch_server_config_with_clock(crate::transport::encrypted::tests::bootstrap_tests::configuration(), crate::transport::AppPlatform::Ios, "1.2".into(), None, ports, TestClock::new(1_800_000_000_000))).await.unwrap();
@@ -354,7 +354,7 @@ fn net_status_follows_after_close() {
     in_own_process(module_path!(), "net_status_follows_after_close", &["status"], |_| run(async {
         let rig = Rig::new();
         let database = open_database(&rig).await;
-        let status = NetworkStatus::new();
+        let (status, double) = observed();
         database.online_sink().unwrap().set_online(true);
         let reader = status.subscribe();
         assert_eq!(within(reader.next()).await, Some(true));
@@ -362,7 +362,7 @@ fn net_status_follows_after_close() {
         within(database.close_database()).await.unwrap();
         assert!(poll_once(&mut held).is_pending(), "the close woke the reader");
         assert_eq!(status.current(), Some(true), "the close moved the value");
-        let sink = OnlineSink::of_status();
+        let sink = double.sink();
         sink.set_online(false);
         assert_eq!(within(held).await, Some(false), "a status value after the close");
         assert_eq!(status.current(), Some(false));
@@ -373,17 +373,40 @@ fn net_status_follows_after_close() {
 #[test]
 fn net_status_observer_starts_once() {
     in_own_process(module_path!(), "net_status_observer_starts_once", &["status"], |_| run(async {
-        let sink = OnlineSink::of_status();
-        let first = NetworkStatus::new();
+        let (first, double) = observed();
+        let sink = double.sink();
         sink.set_online(true);
         let reader = first.subscribe();
         assert_eq!(within(reader.next()).await, Some(true));
         let mut held = reading!(&reader);
-        let (second, third) = (NetworkStatus::new(), NetworkStatus::new());
+        let ((second, later), (third, latest)) = (observed(), observed());
         assert!(poll_once(&mut held).is_pending(), "a second status woke the reader");
+        assert_eq!((double.starts(), later.starts(), latest.starts()), (1, 0, 0), "only the first status starts an observer");
         assert_eq!((first.current(), second.current(), third.current()), (Some(true), Some(true), Some(true)), "a second status reset the value");
         sink.set_online(false);
         assert_eq!(within(held).await, Some(false));
         assert_eq!((second.current(), third.current()), (Some(false), Some(false)));
     }));
+}
+
+/// The observer double of the platform: it keeps the status input it was started with and counts its starts.
+struct StatusDouble { sink: std::sync::Mutex<Option<Arc<OnlineSink>>>, starts: std::sync::atomic::AtomicUsize }
+
+impl super::PlatformObserver for StatusDouble {
+    fn start(&self, sink: Arc<OnlineSink>) {
+        self.starts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        *self.sink.lock().unwrap() = Some(sink);
+    }
+    fn stop(&self) { panic!("the status observer must never be stopped"); }
+}
+
+impl StatusDouble {
+    fn sink(&self) -> Arc<OnlineSink> { self.sink.lock().unwrap().clone().expect("the first status started the observer") }
+    fn starts(&self) -> usize { self.starts.load(std::sync::atomic::Ordering::SeqCst) }
+}
+
+/// A status over a new observer double. Only the first call of a process starts its double.
+fn observed() -> (Arc<NetworkStatus>, Arc<StatusDouble>) {
+    let double = Arc::new(StatusDouble { sink: Default::default(), starts: Default::default() });
+    (NetworkStatus::new(double.clone()), double)
 }

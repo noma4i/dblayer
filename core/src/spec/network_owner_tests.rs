@@ -276,7 +276,7 @@ fn matrix_owner_state_input_network() {
 fn net_prop_status_equals_the_owner_value() {
     crate::test_wait::in_own_process(module_path!(), "net_prop_status_equals_the_owner_value", &["trace"], |_| {
         let sink = crate::ffi::OnlineSink::of_connectivity(crate::transport::Connectivity::new(false));
-        let status = crate::ffi::NetworkStatus::new();
+        let status = crate::ffi::NetworkStatus::new(std::sync::Arc::new(Idle));
         for seed in 1..=40 {
             let mut twin = Twin::new();
             for input in random_inputs(seed, 30) {
@@ -290,4 +290,12 @@ fn net_prop_status_equals_the_owner_value() {
             }
         }
     });
+}
+
+/// A status observer that reports nothing: the trace gives the values through the connectivity sink.
+struct Idle;
+
+impl crate::ffi::PlatformObserver for Idle {
+    fn start(&self, _: std::sync::Arc<crate::ffi::OnlineSink>) {}
+    fn stop(&self) {}
 }
