@@ -304,12 +304,16 @@ fn replacing_failed() -> (Twin, TransferId, TransferId) {
 #[test]
 fn xfer_replace_interval_refuses() {
     let (mut twin, _, new) = replacing_failed();
-    for (name, (reply, out)) in [("cancel", twin.cancel(KEY)), ("retry", twin.retry(KEY, None)), ("discard", twin.discard(KEY))] {
-        assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "{name} before reservation");
+    let (reply, out) = twin.retry(KEY, None);
+    assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "retry before reservation");
+    for (name, (reply, out)) in [("cancel", twin.cancel(KEY)), ("discard", twin.discard(KEY))] {
+        assert!(out.replies(reply).is_empty(), "{name} waits before reservation");
     }
     twin.post(TransferInput::ReplacementReserved { target: ReserveTarget::Transfer(new), result: Ok((8, None)) });
-    for (name, (reply, out)) in [("cancel", twin.cancel(KEY)), ("retry", twin.retry(KEY, None)), ("discard", twin.discard(KEY))] {
-        assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "{name} before Store answers");
+    let (reply, out) = twin.retry(KEY, None);
+    assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "retry before Store answers");
+    for (name, (reply, out)) in [("cancel", twin.cancel(KEY)), ("discard", twin.discard(KEY))] {
+        assert!(out.replies(reply).is_empty(), "{name} waits before Store answers");
     }
 }
 

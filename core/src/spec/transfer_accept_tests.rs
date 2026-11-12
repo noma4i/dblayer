@@ -298,7 +298,7 @@ fn xfer_copy_cancel_batch() {
     let mut twin = Twin::new();
     let (ids, _) = copying_batch(&mut twin, &[KEY, OTHER]);
     for (reply, out) in [twin.cancel(KEY), twin.discard(KEY)] {
-        assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight));
+        assert!(out.replies(reply).is_empty() && out.writes() == 0);
     }
     assert_eq!(twin.stage(ids[0]), TransferStage::Copying);
 }

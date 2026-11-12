@@ -638,12 +638,11 @@ impl Twin {
     pub fn quiet(out: &Out) -> bool { out.runs.is_empty() && out.batches.is_empty() && out.outbox.is_empty() && out.rounds.is_empty() && out.timers == 0 }
 }
 
-/// The three calls on a transfer whose write is in flight are refused with `InFlight` and write nothing.
+/// `retry` on a transfer whose write is in flight is refused with `InFlight` and writes nothing (`cancel` and `discard` wait for the stage: `xfer_removal_waits_for_the_stage`).
 pub fn refuses_calls(twin: &mut Twin, key: &str) {
-    for (name, (reply, out)) in [("cancel", twin.cancel(key)), ("discard", twin.discard(key)), ("retry", twin.retry(key, None))] {
-        assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "{name}");
-        assert_eq!(out.writes(), 0, "{name}");
-    }
+    let (reply, out) = twin.retry(key, None);
+    assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "retry");
+    assert_eq!(out.writes(), 0, "retry");
 }
 
 pub fn storage() -> RejectReason { RejectReason::Storage("disk".into()) }

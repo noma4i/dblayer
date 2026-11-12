@@ -605,7 +605,8 @@ impl TransferState {
         let removal = transfer.removal.clone();
         let mut replies: Vec<ReplyId> = Vec::new();
         replies.extend(transfer.accept_reply.take());
-        replies.extend(transfer.cancel_reply.take().map(|(reply, _)| reply));
+        replies.extend(std::mem::take(&mut transfer.cancel_replies).into_iter().map(|(reply, _)| reply));
+        replies.extend(std::mem::take(&mut transfer.removal_waiting).into_iter().map(|(reply, _)| reply));
         replies.extend(transfer.retry_reply.take());
         replies.extend(transfer.supply_reply.take());
         replies.extend(transfer.commit_reply.take());
@@ -1069,6 +1070,7 @@ impl StateOwner for Transfers {
             state.handled += 1;
             state.handle(now, input, &mut fx);
         }
+        state.run_waiting_removals(now, &mut fx);
         state.release_quiet(&mut fx);
         fx
     }

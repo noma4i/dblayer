@@ -726,7 +726,7 @@ fn xfer_end_discard_cancel_write_outcome() {
 }
 
 #[test]
-fn a_transfer_with_its_write_in_flight_refuses_cancel_discard_and_retry() {
+fn a_transfer_with_its_write_in_flight_refuses_retry() {
     let (mut retrying, id) = failed_with_upload();
     retrying.retry(KEY, None);
     refuses_calls(&mut retrying, KEY);

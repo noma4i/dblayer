@@ -277,8 +277,11 @@ fn xfer_supply_busy() {
         let (retry, retried) = twin.retry(KEY, None);
         let supplied = supply(&mut twin, EPOCH, 20);
         let failed = twin.post(TransferInput::SourceFailed { epoch: EPOCH, key: KEY.into(), message: "failed".into(), reply: 21 });
-        for (reply, out) in [(cancel, cancelled), (discard, discarded), (retry, retried), (20, supplied), (21, failed)] {
+        for (reply, out) in [(retry, retried), (20, supplied), (21, failed)] {
             assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight));
+        }
+        for (reply, out) in [(cancel, cancelled), (discard, discarded)] {
+            assert!(out.replies(reply).is_empty() && out.writes() == 0, "the removal waits for the stage");
         }
     }
 }

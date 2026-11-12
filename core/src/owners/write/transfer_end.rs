@@ -13,7 +13,7 @@ impl TransferState {
     fn begin_cancel(&mut self, id: TransferId, cancel: Option<(ReplyId, bool)>, prior: Option<TransferStage>, fx: &mut Fx) {
         self.remove_with(id, Removal::Cancel, fx);
         if let Some(transfer) = self.transfers.get_mut(&id) {
-            transfer.cancel_reply = cancel;
+            transfer.cancel_replies.extend(cancel);
             transfer.prior = prior;
         }
         self.store(&[id], StoreKind::Removed, fx);
@@ -24,14 +24,23 @@ impl TransferState {
         let Some(id) = self.open_id(key) else { return Self::refuse(fx, rep, Fault::NotFound) };
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let (stage, batched, committing) = (transfer.stage, transfer.batch_id.is_some(), transfer.commit_reply.is_some());
-        if self.group_entry(id).is_some_and(|group| self.phase_of(group) == Some(BatchPhase::Mutating)) || committing {
+        let supplying = transfer.supply_back.is_some();
+        if !Self::defers_removal(stage, batched, supplying) && (self.group_entry(id).is_some_and(|group| self.phase_of(group) == Some(BatchPhase::Mutating)) || committing) {
             return Self::refuse(fx, rep, Fault::InFlight);
         }
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        if Self::defers_removal(stage, batched, supplying) {
+            transfer.removal_waiting.push((rep, cancel));
+            self.removal_pending.insert(id);
+            return;
+        }
+        if stage == TransferStage::Removing {
+            transfer.cancel_replies.push((rep, cancel));
+            return;
+        }
         match stage {
             TransferStage::AwaitingSource => self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::AwaitingSource), fx),
-            TransferStage::Copying if transfer.supply_back.is_some() => Self::refuse(fx, rep, Fault::InFlight),
-            TransferStage::Copying if !batched => {
+            TransferStage::Copying => {
                 run(fx, TransferEffect::CopyCancel { transfer_id: id });
                 self.begin_cancel(id, Some((rep, cancel)), None, fx);
             }
@@ -64,6 +73,28 @@ impl TransferState {
         }
     }
 
+    /// The stages of the internal steps of the library: a removal command waits in them for the stage it leaves to (D-392).
+    fn defers_removal(stage: TransferStage, batched: bool, supply: bool) -> bool {
+        match stage {
+            TransferStage::Copying => batched || supply,
+            TransferStage::Reserving | TransferStage::Accepting | TransferStage::CopyReady | TransferStage::PersistingPrepared | TransferStage::PersistingCopy | TransferStage::PersistingRetry | TransferStage::PersistingFailure | TransferStage::PersistingAttempt | TransferStage::PersistingPart | TransferStage::PersistingComplete | TransferStage::PersistingBatchIntent => true,
+            _ => false,
+        }
+    }
+
+    /// The end of every step of the owner: a transfer that left the stage of an internal step runs its waiting removal commands, the first by the row of its stage, the rest join the removal.
+    pub(super) fn run_waiting_removals(&mut self, now: crate::runtime::Time, fx: &mut Fx) {
+        for id in std::mem::take(&mut self.removal_pending) {
+            let Some(transfer) = self.transfers.get_mut(&id) else { continue };
+            if Self::defers_removal(transfer.stage, transfer.batch_id.is_some(), transfer.supply_back.is_some()) {
+                self.removal_pending.insert(id);
+                continue;
+            }
+            let (key, waiting) = (transfer.key.clone(), std::mem::take(&mut transfer.removal_waiting));
+            for (rep, cancel) in waiting { self.cancel(now, &key, rep, cancel, fx); }
+        }
+    }
+
     /// `discard` and the expiry of a `Failed` transfer: the Outbox owns the operation of a saved or live intent, otherwise the transfer leaves alone.
     pub(super) fn discard_failed(&mut self, id: TransferId, waiter: Option<(ReplyId, bool)>, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get(&id) else { return };
@@ -80,8 +111,7 @@ impl TransferState {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         match waiter {
             Some((rep, false)) => transfer.discard_waiters.push(rep),
-            Some((rep, true)) if transfer.cancel_reply.is_some() => return Self::refuse(fx, rep, Fault::InFlight),
-            Some((rep, true)) => transfer.cancel_reply = Some((rep, true)),
+            Some((rep, true)) => transfer.cancel_replies.push((rep, true)),
             None => {}
         }
         if !std::mem::replace(&mut transfer.discard_sent, true) {
@@ -243,28 +273,36 @@ impl TransferState {
 
     pub(super) fn failure_rejected(&mut self, kind: StoreKind, ids: &[TransferId], fx: &mut Fx) { self.storage_retry_batch(kind, ids, fx); }
 
+    fn answer_removed(cancels: Vec<(ReplyId, bool)>, fx: &mut Fx) {
+        for (rep, cancel) in cancels { reply(fx, rep, if cancel { TransferAnswer::Cancelled(true) } else { TransferAnswer::Ok }); }
+    }
+
     fn removal_replies(&mut self, id: TransferId, removal: &Removal, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        let cancel = transfer.cancel_reply.take();
+        let cancels = std::mem::take(&mut transfer.cancel_replies);
         let accept = transfer.accept_reply.take();
         let waiters = std::mem::take(&mut transfer.discard_waiters);
         let group = transfer.batch_id.and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));
         match removal {
             Removal::Cancel => {
-                let cause = if cancel.as_ref().is_some_and(|(_, cancelled)| *cancelled) { crate::ffi::EndCause::Cancelled } else { crate::ffi::EndCause::Discarded };
-                if let Some((rep, cancel)) = cancel {
+                let cause = if cancels.iter().any(|(_, cancelled)| *cancelled) { crate::ffi::EndCause::Cancelled } else { crate::ffi::EndCause::Discarded };
+                for (rep, cancel) in cancels {
                     reply(fx, rep, if cancel { TransferAnswer::Cancelled(true) } else { TransferAnswer::Ok });
                 }
                 if let Some(rep) = accept {
                     Self::refuse(fx, rep, Fault::Ended(cause));
                 }
             }
-            Removal::Confirmed { .. } => {}
+            Removal::Confirmed { .. } => {
+                for (rep, cancel) in cancels {
+                    reply(fx, rep, if cancel { TransferAnswer::Cancelled(false) } else { TransferAnswer::Err(Fault::NotFound) });
+                }
+            }
             Removal::Discarded => {
                 for rep in waiters {
                     reply(fx, rep, TransferAnswer::Ok);
                 }
-                if let Some((rep, _)) = cancel {
+                for (rep, _) in cancels {
                     reply(fx, rep, TransferAnswer::Cancelled(true));
                 }
             }
@@ -272,16 +310,19 @@ impl TransferState {
                 if let Some(rep) = accept.or(group) {
                     Self::refuse(fx, rep, Fault::Copy(error.clone()));
                 }
+                Self::answer_removed(cancels, fx);
             }
             Removal::Storage => {
                 if let Some(rep) = accept.or(group) {
                     Self::refuse(fx, rep, Fault::Rejected(RejectReason::Storage("storage".into())));
                 }
+                Self::answer_removed(cancels, fx);
             }
             Removal::Invalid { error } => {
                 if let Some(rep) = accept.or(group) {
                     Self::refuse(fx, rep, Fault::Rejected(RejectReason::Invalid(error.clone())));
                 }
+                Self::answer_removed(cancels, fx);
             }
         }
     }
@@ -349,7 +390,7 @@ impl TransferState {
                     transfer.stage = prior;
                     transfer.prior = None;
                     transfer.removal = None;
-                    if let Some((rep, _)) = transfer.cancel_reply.take() {
+                    for (rep, _) in std::mem::take(&mut transfer.cancel_replies) {
                         Self::refuse(fx, rep, Fault::of_reject(reason.clone()));
                     }
                     if prior == TransferStage::Ready {

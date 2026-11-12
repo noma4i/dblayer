@@ -64,7 +64,7 @@ fn xfer_wait_cancel() {
     let mut busy = Twin::new();
     busy.persisting_copy(KEY, 2);
     let (reply, out) = busy.cancel(KEY);
-    assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "refusal");
+    assert!(out.replies(reply).is_empty(), "the removal waits for the stage");
     let mut ended = Twin::offline();
     ended.accepted(KEY, 2);
     let (reply, _) = ended.cancel(KEY);

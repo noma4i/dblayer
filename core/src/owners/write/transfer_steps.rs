@@ -438,13 +438,13 @@ impl TransferState {
 
     pub(super) fn mutation_outcome(&mut self, now: crate::runtime::Time, id: TransferId, (outcome, row_never_created): (OutboxOutcome, bool), fx: &mut Fx) {
         if !self.waits_for_discard(id) { return; }
-        let waiting = self.transfers.get(&id).is_some_and(|transfer| !transfer.discard_waiters.is_empty() || transfer.cancel_reply.is_some());
+        let waiting = self.transfers.get(&id).is_some_and(|transfer| !transfer.discard_waiters.is_empty() || !transfer.cancel_replies.is_empty());
         let failed_waiting = waiting && self.stage_of(id) == Some(TransferStage::Failed);
         let next_single = (!matches!(outcome, OutboxOutcome::Ended(_)) && !(failed_waiting && !matches!(outcome, OutboxOutcome::Confirmed { .. } | OutboxOutcome::Discarded))).then(|| self.group_entry(id)).flatten().filter(|group| self.phase_of(*group) == Some(BatchPhase::Singles));
         match outcome {
             OutboxOutcome::Confirmed { revision, result, row_id } => {
                 if let Some(transfer) = self.transfers.get_mut(&id) {
-                    if let Some((waiter, _)) = transfer.cancel_reply.take() { reply(fx, waiter, TransferAnswer::Cancelled(false)); }
+                    for (waiter, _) in std::mem::take(&mut transfer.cancel_replies) { reply(fx, waiter, TransferAnswer::Cancelled(false)); }
                     for waiter in std::mem::take(&mut transfer.discard_waiters) {
                         reply(fx, waiter, TransferAnswer::Err(Fault::NotFound));
                     }
@@ -492,7 +492,7 @@ impl TransferState {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let Err(fault) = result else { return };
         transfer.discard_sent = false;
-        let cancelled = transfer.cancel_reply.take().map(|(waiter, _)| waiter);
+        let cancelled = std::mem::take(&mut transfer.cancel_replies).into_iter().map(|(waiter, _)| waiter);
         for waiter in std::mem::take(&mut transfer.discard_waiters).into_iter().chain(cancelled) {
             reply(fx, waiter, TransferAnswer::Err(fault.clone()));
         }

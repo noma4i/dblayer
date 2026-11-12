@@ -60,6 +60,7 @@ mod transfer_batch_tests;
 mod transfer_batch_intent_tests;
 mod transfer_retry_tests;
 mod transfer_reserve_tests;
+mod transfer_removal_tests;
 mod transfer_matrix_tests;
 mod transfer_cache_tests;
 mod transfer_steps_tests;
