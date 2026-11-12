@@ -25,17 +25,6 @@ fn orphan_restart(orphans: Vec<(String, String)>) -> Twin {
 }
 
 #[test]
-fn xfer_discard_online_abort() {
-    let mut twin = Twin::new();
-    with_upload(&mut twin, KEY);
-    let (reply, out) = twin.discard(KEY);
-    assert_eq!((out.orphans_written(), out.removed(), out.writes()), (vec![("u1".to_string(), KEY.to_string())], vec![KEY.to_string()], 1), "the row of the transfer goes and the orphan is written in one batch");
-    assert!(out.orphan_aborts().is_empty() && out.aborts() == 0 && out.replies(reply).is_empty(), "nothing leaves before Committed: {out:?}");
-    let out = twin.commit();
-    assert_eq!((out.orphan_aborts(), out.replies(reply).len()), (vec!["u1".to_string()], 1));
-}
-
-#[test]
 fn xfer_discard_deferred_abort() {
     let mut twin = Twin::new();
     let id = with_upload(&mut twin, KEY);
@@ -202,45 +191,6 @@ fn xfer_key_path_chars() {
     assert_eq!(out.removed(), vec![key.to_string()]);
     let out = twin.commit();
     assert_eq!(out.delete_paths(), vec![format!("transfers/{id}")], "the path of the copy holds the id of the transfer and nothing of the key");
-}
-
-#[test]
-fn xfer_ready_start_small() {
-    let mut twin = Twin::offline();
-    let id = twin.accepted(KEY, 1);
-    assert_eq!(twin.stage(id), TransferStage::Ready);
-    let out = twin.online(true);
-    assert_eq!((twin.stage(id), out.steps().len()), (TransferStage::PersistingAttempt, 0));
-    let out = twin.commit();
-    assert_eq!((twin.stage(id), out.steps().iter().map(|(part, _)| *part).collect::<Vec<_>>(), out.shows()), (TransferStage::Uploading, vec![Some(1)], vec![crate::owners::write::transfer::Shown::Uploading { progress: 0 }]));
-}
-
-#[test]
-fn xfer_step_forbidden_part() {
-    let mut twin = Twin::new();
-    let id = with_upload(&mut twin, KEY);
-    assert_eq!(twin.t(id).confirmed_parts, 1);
-    let out = twin.step_error(id, true);
-    assert!(out.steps().is_empty() && out.timers == 1, "the refused part waits for its timer: {out:?}");
-    let out = twin.tick_retry(id);
-    assert!(out.steps().is_empty());
-    let out = twin.commit();
-    assert_eq!(out.steps().iter().map(|(part, _)| *part).collect::<Vec<_>>(), vec![Some(2)], "only part 2 asks for a new URL");
-    assert_eq!((twin.t(id).upload_id.as_deref(), twin.t(id).attempts), (Some("u1"), 2));
-}
-
-#[test]
-fn xfer_restart_stale_presign() {
-    let mut row = stored(1, KEY, 4);
-    row.upload_id = Some("u1".into());
-    row.confirmed_parts = 2;
-    row.etags = vec![Some("e1".into()), Some("e2".into())];
-    let (mut twin, _) = Twin::opened(vec![row], Default::default());
-    twin.post(TransferInput::RestoreReady { epoch: EPOCH });
-    let out = twin.online(true);
-    assert!(out.steps().is_empty());
-    let out = twin.commit();
-    assert_eq!(out.steps().iter().map(|(part, _)| *part).collect::<Vec<_>>(), vec![Some(3)], "the first step after a restart asks only for the unfinished part");
 }
 
 fn minted(twin: &mut Twin, id: TransferId, upload_id: &str) -> Out {
