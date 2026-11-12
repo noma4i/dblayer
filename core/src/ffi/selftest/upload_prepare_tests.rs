@@ -400,3 +400,63 @@ fn upload_of_asset(database: &crate::ffi::Database, id: &str) -> Option<WireUplo
     let row = database.peek_row(database.session_epoch(), "Asset".into(), id.into()).unwrap()?;
     row.uploads.into_iter().find(|entry| entry.action == "create_files").map(|entry| entry.upload)
 }
+
+fn limited(prepare: WirePrepare, max_bytes: u64) -> WirePrepare {
+    match prepare {
+        WirePrepare::Video { limits, mirror, on_cannot_decode, .. } => WirePrepare::Video { limits, mirror, on_cannot_decode, max_bytes: Some(max_bytes) },
+        WirePrepare::Image { edit, quality, format, .. } => WirePrepare::Image { edit, quality, format, max_bytes: Some(max_bytes) },
+    }
+}
+
+/// D-369: the file that would go to the network after the prepare step is larger than `max_bytes`: the upload fails with `prepare_failed` and the reason `too_large`, and nothing is sent. A file of exactly the limit goes.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_prepare_too_large() {
+    let cases: Vec<(&str, ProbeOutcome, WirePrepare, usize, bool)> = vec![
+        ("the prepared result above the limit", probed_image(), limited(shrink(), PREPARED.len() as u64 - 1), 1, true),
+        ("the source as it is above the limit", video_probe(&[], false), limited(video(|_| {}), SOURCE.len() as u64 - 1), 0, true),
+        ("the prepared result of exactly the limit", probed_image(), limited(shrink(), PREPARED.len() as u64), 1, false),
+    ];
+    for (what, probe, prepare, runs, refused) in cases {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("db.sqlite");
+        let source = source_file(directory.path(), "clip", SOURCE);
+        let preparer = ScriptedPreparer::new(probe, PREPARED, &[]);
+        let stand = Stand::new().keep_moment().with_preparer(preparer.clone());
+        let database = stand.open(Some(&path), &[CREATE_MOMENT]).await;
+        stand.script.data("CreateBlob", BLOB);
+        stand.script.data("CreateMoment", LANDED);
+        let receipt = bound(database.send(send(database.session_epoch(), &source, prepare))).await.unwrap();
+        let id = receipt.optimistic_value.as_ref().unwrap().id.clone();
+        let outcome = bound(database.confirmed(receipt, false)).await;
+        assert_eq!(preparer.runs().len(), runs, "{what}");
+        if refused {
+            crate::test_wait::settled(&database, "the refused size is shown", || upload_of(&database, &id).is_some_and(|upload| upload.status == WireUploadStatus::Failed)).await;
+            let failed = upload_of(&database, &id).unwrap();
+            assert_eq!((failed.error.as_ref().map(|error| error.kind.clone()), failure_reason(&failed)), (Some("prepare_failed".to_string()), Some("too_large".to_string())), "{what}");
+            assert_eq!((stand.script.count("CreateBlob"), stand.puts.bodies.lock().unwrap().len(), stand.script.count("CreateMoment")), (0, 0, 0), "{what}: nothing goes to the network");
+        } else {
+            outcome.unwrap();
+            assert_eq!(*stand.puts.bodies.lock().unwrap(), vec![PREPARED.to_vec()], "{what}");
+            assert_eq!(stand.script.count("CreateMoment"), 1, "{what}");
+        }
+        database.close_now();
+    }
+}
+
+/// D-368: the probe of the platform gets the kind the settings ask for.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_prepare_probe_gets_the_kind_of_the_settings() {
+    for (probe, prepare, kind) in [(probed_image(), shrink(), crate::ffi::PrepareKind::Image), (video_probe(&[], false), video(|_| {}), crate::ffi::PrepareKind::Video)] {
+        let directory = tempfile::tempdir().unwrap();
+        let source = source_file(directory.path(), "clip", SOURCE);
+        let preparer = ScriptedPreparer::new(probe, PREPARED, &[]);
+        let stand = Stand::new().with_preparer(preparer.clone());
+        let database = stand.open(Some(&directory.path().join("db.sqlite")), &[CREATE_MOMENT]).await;
+        stand.script.data("CreateBlob", BLOB);
+        stand.script.data("CreateMoment", LANDED);
+        let receipt = bound(database.send(send(database.session_epoch(), &source, prepare))).await.unwrap();
+        bound(database.confirmed(receipt, false)).await.unwrap();
+        assert_eq!(preparer.kinds(), vec![kind]);
+        database.close_now();
+    }
+}
