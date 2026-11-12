@@ -1,12 +1,8 @@
 import Foundation
 import Network
 
-protocol PathSource: Sendable {
+struct SystemPath {
   /// Reports the path state at once and on every change until the returned stop runs.
-  func observe(_ changed: @escaping @Sendable (Bool) -> Void) -> @Sendable () -> Void
-}
-
-struct SystemPath: PathSource {
   func observe(_ changed: @escaping @Sendable (Bool) -> Void) -> @Sendable () -> Void {
     let monitor = NWPathMonitor()
     monitor.pathUpdateHandler = { changed($0.status == .satisfied) }
@@ -33,13 +29,9 @@ final class SystemObservers: PlatformObserver, @unchecked Sendable {
   }
 }
 
-/// The observer of `NetworkStatus`: the core starts it once per process and never stops it. The database and `serverConfig` read its value. `makePath` is the one creation point of the network observer of the process.
+/// The observer of `NetworkStatus`: the core starts it once per process and never stops it.
 final class StatusObserver: PlatformObserver, @unchecked Sendable {
-  private let makePath: @Sendable () -> any PathSource
-
-  init(makePath: @escaping @Sendable () -> any PathSource = { SystemPath() }) { self.makePath = makePath }
-
-  func start(sink: OnlineSink) { _ = makePath().observe { sink.setOnline(online: $0) } }
+  func start(sink: OnlineSink) { _ = SystemPath().observe { sink.setOnline(online: $0) } }
 
   func stop() {}
 }

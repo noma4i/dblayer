@@ -61,12 +61,12 @@ public enum DB {
   }
 
   public static func serverConfig(encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = nil, http: EncryptedHttp? = nil, retries: RetryProgress? = nil) async throws -> ServerConfig {
-    NetworkStatus.startProcess()
+    _ = NetworkStatus()
     return try await fetchServerConfig(encrypted: encrypted, platform: platform, version: version, build: build, http: http ?? UrlSessionTransport(), retries: retries, observers: nil)
   }
 
   public static func open(endpoint: URL? = nil, headers: @escaping @Sendable () -> [String: String] = { [:] }, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], http: EncryptedHttp? = nil) async throws {
-    NetworkStatus.startProcess()
+    _ = NetworkStatus()
     let ports = OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: endpoint?.absoluteString, executor: UrlSessionTransport(headers: headers), dataSyncDeclared: nil)
     _ = try await opener.open(config: Config(path: path, dataVersion: nil), modelsJson: modelsJSON, options: OpenOptions(operations: definitions(operations)), ports: ports, observers: SystemObservers())
   }

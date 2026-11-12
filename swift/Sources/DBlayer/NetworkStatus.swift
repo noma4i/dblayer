@@ -20,9 +20,6 @@ public struct NetworkChanges: AsyncSequence, Sendable {
 extension NetworkStatus {
   public convenience init() { self.init(observer: StatusObserver()) }
 
-  @discardableResult
-  static func startProcess(makePath: @escaping @Sendable () -> any PathSource = { SystemPath() }) -> NetworkStatus { NetworkStatus(observer: StatusObserver(makePath: makePath)) }
-
   /// The last network value of the platform, `nil` before the first.
   public var isOnline: Bool? { current() }
   public var changes: NetworkChanges { NetworkChanges(status: self) }

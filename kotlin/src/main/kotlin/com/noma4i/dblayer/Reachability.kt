@@ -40,10 +40,10 @@ internal class SystemObservers(private val context: Context) : PlatformObserver 
     }
 }
 
-/** The observer of `NetworkStatus`: the core starts it once per process and never stops it. The database and `serverConfig` read its value. `observe` is the one creation point of the network observer of the process. */
-internal class StatusObserver(private val context: Context, private val observe: (Context, (Boolean) -> Unit) -> () -> Unit = Reachability::observe) : PlatformObserver {
+/** The observer of `NetworkStatus`: the core starts it once per process and never stops it. */
+internal class StatusObserver(private val context: Context) : PlatformObserver {
     override fun start(sink: OnlineSink) {
-        observe(context) { sink.setOnline(it) }
+        Reachability.observe(context) { sink.setOnline(it) }
     }
 
     override fun stop() {}
