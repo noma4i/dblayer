@@ -52,7 +52,8 @@ fn sess_blocked_release_stray() {
 fn sess_landing_release() {
     let mut twin = rejected_landing(1);
     let RefState::Landing { pending, batch, answer, identity, sequence, server_ended } = twin.reference.state.clone() else { panic!("landing") };
-    assert!(twin.feed(Input::Release { req_id: pending.request_id }).is_empty());
+    twin.feed(Input::Release { req_id: pending.request_id });
+    assert!(twin.raw_text.contains("Dropped") && twin.raw_text.matches("Answer { author: 7").count() == 1, "the author hears: unknown outcome: {}", twin.raw_text);
     assert_eq!(twin.reference.state, RefState::Landing { pending: RefPending { author: None, owner: Some(crate::transport::RequestOwner::Detached), ..pending }, batch, answer, identity, sequence, server_ended }, "the stored result and the batch stay");
     assert!(twin.feed(committed()).is_empty(), "the removed author hears nothing");
     assert_eq!(twin.reference.credential.map(|credential| credential.sequence), Some(1));

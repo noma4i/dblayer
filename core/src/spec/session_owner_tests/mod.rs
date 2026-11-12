@@ -207,6 +207,8 @@ struct Twin {
     reference: Ref,
     history: Vec<RefEffect>,
     replies: Vec<(u64, Result<String, Fail>)>,
+    /// The typed text of the effects the owner gave out in the last step.
+    raw_text: String,
 }
 
 impl Twin {
@@ -222,7 +224,7 @@ impl Twin {
         let mut det = DetScheduler::new(2);
         let log = new_log();
         let addr = det.add::<SessionCalls>("session", SessionState::with_operations(owner_operations(), online), Recorder::<SessionCalls>::new(&log));
-        let mut twin = Self { det, addr, log, reference: Ref::new(operations(), online), history: Vec::new(), replies: Vec::new() };
+        let mut twin = Self { det, addr, log, reference: Ref::new(operations(), online), history: Vec::new(), replies: Vec::new(), raw_text: String::new() };
         twin.feed(Input::Published { epoch: EPOCH, identity: None, state: PubState::Session });
         if let Some(online) = online { twin.feed(Input::Snapshot { epoch: EPOCH, online }); }
         let secret = credential.as_ref().map_or(Secret::Missing, |credential| Secret::Present(credential.digest));
@@ -287,6 +289,7 @@ impl Twin {
         self.det.run_until_quiet(100).expect("the owner is quiet");
         let scheduled = self.det.trace()[traced..].iter().filter(|entry| entry.effects.contains("Schedule {") || entry.effects.contains("Backoff {")).count();
         let raw = take(&self.log);
+        self.raw_text = format!("{raw:?}");
         let want = self.reference.step(reference_input);
         let mut effects: Vec<RefEffect> = raw.iter().filter_map(effect_of).collect();
         if scheduled > 0 {
@@ -449,6 +452,7 @@ use session_owner_restore_tests::*;
 mod session_owner_props_tests;
 mod session_owner_early_release_tests;
 mod session_owner_release_tests;
+mod session_owner_write_failure_tests;
 mod session_owner_detached_tests;
 
 #[derive(Clone, Copy)]

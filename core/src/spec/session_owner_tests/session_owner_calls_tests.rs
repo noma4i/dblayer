@@ -317,8 +317,8 @@ fn sess_dequeue_stale_mutate() {
 fn sess_cancel_queued() {
     let mut twin = persisting();
     twin.feed(mutate(7, 12));
-    let effects = twin.feed(Input::Cancel { req_id: 12 });
-    assert_eq!(effects, vec![answer(7, 12, permanent(Fail::Interrupted))]);
+    twin.feed(Input::Cancel { req_id: 12 });
+    assert!(twin.raw_text.contains("NotSent") && twin.raw_text.matches("Answer { author: 7, req_id: 12").count() == 1, "no request was made and none will be: {}", twin.raw_text);
     assert!(matches!(twin.reference.state, RefState::Persisting { .. }), "the started request goes on");
 }
 
