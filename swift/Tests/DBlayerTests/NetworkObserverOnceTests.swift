@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-private struct SilentHttp: ScriptedHttp, Sendable {
+private final class SilentHttp: ScriptedHttp, Sendable {
   func post(path: String, body: String, purpose: NetworkPurpose) async throws -> EncryptedReply { throw CancellationError() }
 }
 
