@@ -322,7 +322,6 @@ pub struct SessionState {
     write_session: Option<Digest>,
     detach_error: Option<SessionError>,
     operations: Vec<SessionOperation>,
-    next_request: RequestId,
     next_batch: BatchId,
     next_attempt: AttemptId,
     next_secret: SecretOpId,

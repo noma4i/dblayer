@@ -373,6 +373,7 @@ impl Life {
         #[cfg(test)] let rounds_needed = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let session = ports.exchange.clone().zip(ports.secret.clone()).zip(ports.seal.clone()).map(|((exchange, secret), seal)| (exchange, secret, seal));
         let restored = session.as_ref().map(|(exchange, secret, _)| session_runner::SessionRunner::stored(exchange, secret, &ports.db)).transpose().map_err(|error| LifeError::Storage(error.to_string()))?;
+        if let Some(state) = &restored { state.spend_request_ids(); }
         let saved_unowned_pending = restored.as_ref().is_some_and(|state| state.unowned_pending || state.resume_answer.is_some());
         let restore_error = restored.as_ref().and_then(|state| state.restore_error.clone());
         let found = boot_found(&ports.db, saved_unowned_pending)?;

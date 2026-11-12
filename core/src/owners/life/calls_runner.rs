@@ -116,13 +116,13 @@ impl CallsRunner {
 
     fn mutate(&mut self, call: CallRequest, back: &Back<Calls>) {
         let Some(client) = self.session.clone() else { return self.query(call, back) };
-        let CallRequest { request_id, epoch, operation, variables, document, root, .. } = call;
+        let CallRequest { call_id, request_id, epoch, operation, variables, document, root, .. } = call;
         let variables: Value = serde_json::from_str(&variables).unwrap_or(Value::Null);
         let body = crate::transport::encrypted::graphql_body(&GraphQLRequest::new(document, operation, variables), true);
         let waiter = self.wiring.calls_answers.register_as(request_id, epoch);
         let back = back.clone();
         let task = crate::task::spawn_on(&self.executor, crate::runtime::counted(None, async move {
-            if let crate::runtime::Outcome::Value(outcome) = waiter.wait().await { back.reply(EpochStamp::Control, answer_input(request_id, &root, outcome)); }
+            if let crate::runtime::Outcome::Value(outcome) = waiter.wait().await { back.reply(EpochStamp::Control, answer_input(call_id, &root, outcome)); }
         }));
         self.running.insert(request_id, task.abort_handle());
         self.wiring.to_session(mutate_input(request_id, epoch, client.graphql_path().to_string(), body.to_string()));

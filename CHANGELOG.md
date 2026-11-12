@@ -13,6 +13,7 @@
 - A call with a sent pair answers `dropped`, not `network`, on a network failure.
 - A child hidden by an open destroy no longer shows in the fields its parent derives.
 - Return the server outcome of a call when the database closes before its answer is saved.
+- A call and a mutation started together both end.
 - A saved server answer lands after a restart instead of rolling the operation back.
 - A failed upload replaced by a new upload stays one row after a stale write.
 - A refused removal write of a batch retries the same elements once.

@@ -76,6 +76,13 @@ pub(crate) struct Restored {
     digest: Option<(u64, String)>,
 }
 
+impl Restored {
+    /// Every request id of a stored pair or answer is spent: the counter of the process passes it before the first issue.
+    pub(crate) fn spend_request_ids(&self) {
+        for request_id in self.pending.iter().map(|pending| pending.request_id).chain(self.answers.keys().copied()) { crate::owners::contract::seen_request_id(request_id); }
+    }
+}
+
 impl SessionRunner {
     pub fn new(wiring: Arc<Wiring>, (exchange, secret, store): (Arc<Exchange>, Arc<Secret>, Arc<Store>), seal: Arc<crate::owners::session_seal::SealConfig>, executor: tokio::runtime::Handle, restored: &Restored) -> Self {
         let wires = restored.wire.iter().map(|(request_id, wire)| (*request_id, Wire { id: wire.id.clone(), key: wire.key.clone(), cut: wiring.gate.cut() })).collect();

@@ -7,7 +7,7 @@ impl SessionState {
     }
 
     pub fn with_operations(operations: Vec<SessionOperation>, online: Option<bool>) -> Self {
-        Self { phase: SessionPhase::Idle, credential: None, answer_kind: None, queue: VecDeque::new(), online, epoch: 0, published: PublishedState::Session, after_publish: None, external_revoked: Default::default(), restored_direct: None, restored_detached: None, restored_transfer: None, released: BTreeSet::new(), restored: false, restored_active: None, restored_answer: None, resume_taking: None, resume_saving: None, resume_landing_saved: false, restore_error: None, resume_waiters: Vec::new(), resume_published: None, resume_clearing: None, failed_batch: None, write_failures: 0, write_session: None, detach_error: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None }
+        Self { phase: SessionPhase::Idle, credential: None, answer_kind: None, queue: VecDeque::new(), online, epoch: 0, published: PublishedState::Session, after_publish: None, external_revoked: Default::default(), restored_direct: None, restored_detached: None, restored_transfer: None, released: BTreeSet::new(), restored: false, restored_active: None, restored_answer: None, resume_taking: None, resume_saving: None, resume_landing_saved: false, restore_error: None, resume_waiters: Vec::new(), resume_published: None, resume_clearing: None, failed_batch: None, write_failures: 0, write_session: None, detach_error: None, operations, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None }
     }
 
     pub fn phase(&self) -> &SessionPhase { &self.phase }
@@ -29,11 +29,6 @@ impl SessionState {
     pub(super) fn batch(&mut self) -> BatchId {
         self.next_batch += 1;
         self.next_batch - 1
-    }
-
-    pub(super) fn request(&mut self) -> RequestId {
-        self.next_request += 1;
-        self.next_request - 1
     }
 
     pub(super) fn attempt(&mut self) -> AttemptId {
@@ -108,11 +103,11 @@ impl SessionState {
                     OperationClass::Authenticated if self.credential.is_none() => self.generate(LoginCall { operation: def, body, reply: id }, fx),
                     OperationClass::Logout if self.credential.is_none() => reply(fx, id, Err(SessionError::NoCredential)),
                     OperationClass::Sessionless => {
-                        let request_id = self.request();
+                        let request_id = crate::owners::contract::next_request_id();
                         self.seal(PendingCall { request_id, sequence: 0, class: def.class, operation, path: def.path, body, document: None, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, fx);
                     }
                     OperationClass::Authenticated | OperationClass::Logout => {
-                        let request_id = self.request();
+                        let request_id = crate::owners::contract::next_request_id();
                         let (body, document) = pair_bodies(body);
                         self.seal(PendingCall { request_id, sequence, class: def.class, operation, path: def.path, body, document, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, fx);
                     }

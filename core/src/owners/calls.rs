@@ -174,11 +174,12 @@ impl CallsState {
             return;
         };
         let id = held.map(|(id, _, _)| id).unwrap_or_else(|| { let id = self.next; self.next += 1; deadlines.push(id); id });
+        let request_id = crate::owners::contract::next_request_id();
         let kind = definition.kind;
-        self.calls.insert(id, (CallPhase::Sending { request_id: id, kind, generation, releasing: false }, reply));
+        self.calls.insert(id, (CallPhase::Sending { request_id, kind, generation, releasing: false }, reply));
         self.by_reply.insert(reply, id);
         self.attempts.insert(id, CallAttempt { operation: operation.clone(), definition: definition.clone(), variables: variables.clone(), epoch: self.epoch, attempt: 1, last: None, waiting_network: false, waiting_retry: false });
-        fx.push(CallsEffect::Request { call_id: id, request_id: id, operation, variables, definition, epoch: self.epoch });
+        fx.push(CallsEffect::Request { call_id: id, request_id, operation, variables, definition, epoch: self.epoch });
     }
 
     fn interrupt(&mut self, end: CallError, fx: &mut Vec<CallsEffect>, finished: &mut Vec<CallId>) {
@@ -216,8 +217,7 @@ impl CallsState {
     fn send_again(&mut self, call_id: CallId, fx: &mut Vec<CallsEffect>) {
         let Some(CallPhase::Sending { mut request_id, kind, generation, releasing }) = self.phase(call_id) else { return };
         if kind == CallKind::Query {
-            request_id = self.next;
-            self.next += 1;
+            request_id = crate::owners::contract::next_request_id();
             if let Some((phase, _)) = self.calls.get_mut(&call_id) { *phase = CallPhase::Sending { request_id, kind, generation, releasing }; }
         }
         let Some(attempt) = self.attempts.get_mut(&call_id) else { return };

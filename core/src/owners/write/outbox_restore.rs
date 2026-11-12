@@ -42,7 +42,6 @@ impl OutboxState {
             return self.restored_failed(op_id, "StateLost".into());
         }
         if let Some((request_id, answer)) = answered {
-            crate::owners::contract::seen_request_id(request_id);
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.request_id = request_id;
                 operation.stage = Stage::Sending;
@@ -65,7 +64,6 @@ impl OutboxState {
             return self.fail_exhausted(op_id, fx);
         }
         if let Some((request_id, sequence)) = pending {
-            crate::owners::contract::seen_request_id(request_id);
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.request_id = request_id;
                 operation.sequence = sequence;

@@ -502,7 +502,7 @@ impl SessionState {
             (SessionPhase::Storing { call, credential_new, op, after }, SessionInput::SecretStored { secret_op_id, ok }) if secret_op_id == op => match (after, ok) {
                 (AfterStore::Persist, true) => {
                     let LoginCall { operation, body, reply: id } = call;
-                    let request_id = self.request();
+                    let request_id = crate::owners::contract::next_request_id();
                     let epoch = self.epoch;
                     self.persist(PendingCall { request_id, sequence: 1, class: OperationClass::Login, operation: operation.name, path: operation.path, body, document: None, credential: Some(credential_new), purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, Some(credential_new), fx);
                 }
