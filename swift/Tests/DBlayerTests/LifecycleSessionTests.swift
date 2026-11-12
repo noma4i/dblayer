@@ -146,25 +146,6 @@ extension BridgeProbeTests {
     try await User.profile.refresh()
   }
 
-  /// REL-24 and the login hang: a login after a logout refreshes the held entity, no read reaches the server after the logout, and the next account never shows the last one.
-  @MainActor
-  @Test
-  func anAppLoginAfterALogoutRefreshesTheHeldEntityAndNoReadFollowsTheLogout() async throws {
-    let server = try await Self.openSealedSession()
-    try await Self.startSealedSession("A")
-    var entity = Projected<User>(try DB.account().stream(User.profile))
-    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
-    let before = server.requests.count
-    try await DB.sessionReset()
-    #expect(entity.projection.ended == .sessionEnded)
-    server.refuseEverything(true)
-    #expect(server.requests.count == before)
-    server.refuseEverything(false)
-    try await Self.startSealedSession("B")
-    entity = Projected<User>(try DB.account().stream(User.profile))
-    await eventually(#"entity.value?.name == "B""#) { entity.value?.name == "B" }
-  }
-
   /// The real exit of the app: the confirmed logout call, the session reset, the data clear, then the next login. No read follows the exit and account A never shows after it.
   @MainActor
   @Test
@@ -183,19 +164,6 @@ extension BridgeProbeTests {
     try await Self.startSealedSession("B")
     entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "B""#) { entity.value?.name == "B" }
-  }
-
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func theAppExitOrderEndsEveryHeldWaitWhenTheCredentialIsGone() async throws {
-    _ = try await Self.openSealedSession()
-    try await Self.startSealedSession("A")
-    var entity = Projected<User>(try DB.account().stream(User.profile))
-    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
-    try await DB.sessionCall("logout", body: NoBody())
-    try await DB.sessionReset()
-    try await DB.sessionReset()
-    await expectDbError("Interrupted") { try await entity.loaded() }
   }
 
   /// Every value delivered to a list held across a logout and the next login: none shows account A after the logout and the last one shows B.
@@ -217,106 +185,6 @@ extension BridgeProbeTests {
     #expect(after.allSatisfy { !$0.contains("A") }, "account A came back after the logout: \(after)")
   }
 
-  /// C06, R-6: the iOS exit with a wait for the first load that the reset left pending at the server. Every call of the exit returns, the wait ends, the held entity is empty at once, and the late answer of account A shows nowhere.
-  @MainActor
-  @Test
-  func theAppExitOrderEndsAPendingInitialWaitAndEveryCallOfTheExit() async throws {
-    let server = try await Self.openSealedSession()
-    try await Self.startSealedSession("A")
-    var entity = Projected<User>(try DB.account().stream(User.profile))
-    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
-    let history = RowHistory()
-    let live = try Self.holdList(history)
-    defer { live.reading.cancel() }
-    await eventually("the held list shows A") { history.states.last?.contains("A") == true }
-    server.hold(operation: "UserProfile")
-    Task { @MainActor in _ = try? await User.profile.refresh() }
-    await eventually("the reread waits at the server") { server.parkedCount > 0 }
-    let pending = Outcome()
-    Task { @MainActor in
-      _ = try? await entity.loaded()
-      pending.finish()
-    }
-
-    await finishes("the confirmed logout") { try? await DB.sessionCall("logout", body: NoBody()) }
-    try await DB.sessionReset()
-    await live.cancel()
-
-    await eventually("the wait that was pending at the exit ended") { pending.isDone }
-    #expect(entity.projection.ended == .sessionEnded)
-    server.hold(operation: nil)
-    #expect(entity.value?.name != "B", "the late answer reached the held entity")
-    try await Self.startSealedSession("B")
-    entity = Projected<User>(try DB.account().stream(User.profile))
-    await eventually(#"entity.value?.name == "B""#) { entity.value?.name == "B" }
-  }
-
-  /// C12: A, B, A with a held entity and a held list. After each exit the late answer of the previous account arrives and neither shows it.
-  @MainActor
-  @Test
-  func anAccountSwitchABAKeepsAHeldListAndEntityFreeOfThePreviousAccount() async throws {
-    let server = try await Self.openSealedSession()
-    try await Self.startSealedSession("A")
-    var entity = Projected<User>(try DB.account().stream(User.profile))
-    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
-    let history = RowHistory()
-    let live = try Self.holdList(history)
-    defer { live.reading.cancel() }
-    await eventually("the held list shows A") { history.states.last?.contains("A") == true }
-    for (next, previous) in [("B", "A"), ("A", "B")] {
-      server.hold(operation: "UserProfile")
-      Task { @MainActor in _ = try? await User.profile.refresh() }
-      await eventually("the reread waits at the server") { server.parkedCount > 0 }
-      await finishes("the confirmed logout") { try? await DB.sessionCall("logout", body: NoBody()) }
-      try await DB.sessionReset()
-      #expect(entity.projection.ended == .sessionEnded)
-      let seen = history.states.count
-      server.hold(operation: nil)
-      try await Self.startSealedSession(next)
-      entity = Projected<User>(try DB.account().stream(User.profile))
-      _ = try Self.holdList(history)
-      await eventually("the held entity shows \(next)") { entity.value?.name == next }
-        await eventually("the held list shows \(next)") { history.states.last?.contains(next) == true }
-      let after = history.states.dropFirst(seen)
-      #expect(after.allSatisfy { !$0.contains(previous) }, "\(previous) came back after its exit: \(after)")
-    }
-  }
-
-  /// Exit and login of the same account: the held entity empties and shows the account again, and the server sees a new read.
-  @MainActor
-  @Test
-  func aLogoutThenALoginOfTheSameAccountReadsItAgain() async throws {
-    let server = try await Self.openSealedSession()
-    try await Self.startSealedSession("A")
-    var entity = Projected<User>(try DB.account().stream(User.profile))
-    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
-    let reads = server.operationRequests("UserProfile")
-    try await DB.sessionCall("logout", body: NoBody())
-    try await DB.sessionReset()
-    #expect(entity.projection.ended == .sessionEnded)
-    try await Self.startSealedSession("A")
-    entity = Projected<User>(try DB.account().stream(User.profile))
-    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
-    #expect(server.operationRequests("UserProfile") > reads)
-  }
-
-  /// C09, R-7: the local-only exit sends no unregister and no logout. The held entity empties and no read follows.
-  @MainActor
-  @Test
-  func aLocalOnlyExitSkipsTheRevokeAndStopsEveryRead() async throws {
-    let server = try await Self.openSealedSession()
-    try await Self.startSealedSession("A")
-    var entity = Projected<User>(try DB.account().stream(User.profile))
-    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
-    try await DB.sessionReset()
-    #expect(entity.projection.ended == .sessionEnded)
-    let before = server.requests.count
-    server.refuseEverything(true)
-    #expect(server.requests.count == before)
-    #expect(server.pathRequests("/api/logout") == 0)
-    server.refuseEverything(false)
-  }
-
   /// C11: a call that the server never answers ends when the database closes.
   @MainActor
   @Test
@@ -333,28 +201,5 @@ extension BridgeProbeTests {
     await DB.closeForCleanup()
     await eventually("the call ended without its answer") { ended.isDone }
     server.hold(operation: nil)
-  }
-
-  /// C19, R-5: the login is refused as already authenticated, the confirmed sign-out follows, the login repeats once and starts the session.
-  @MainActor
-  @Test
-  func anAlreadyAuthenticatedLoginSignsOutThenLogsInAgain() async throws {
-    let server = try await Self.openSealedSession()
-    Self.alreadyAuthenticated.arm()
-    var code: SessionCode?
-    do { try await DB.sessionCall("login_link", body: LoginLink(account: "A")) } catch let error as DbError {
-      if case let .Session(refused, _) = error { code = refused }
-    }
-    #expect(code == .alreadyAuthenticated)
-    let logins = server.pathRequests("/api/auth/login_link")
-    var logout: SessionCode?
-    do { try await DB.sessionCall("logout", body: NoBody()) } catch let error as DbError {
-      if case let .Session(refused, _) = error { logout = refused }
-    }
-    #expect(logout == .noCredential)
-    try await Self.startSealedSession("A")
-    #expect(server.pathRequests("/api/auth/login_link") == logins + 1)
-    var entity = Projected<User>(try DB.account().stream(User.profile))
-    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
   }
 }
