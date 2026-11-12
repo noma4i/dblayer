@@ -101,7 +101,7 @@ fn xfer_restored_orphan_answer() {
     let mut twin = orphan_restart(vec![("u9".into(), KEY.into())]);
     twin.online(true);
     let request_id = crate::owners::write::wire::abort_request_id("u9");
-    let out = twin.post(TransferInput::StepAnswer { request_id, outcome: crate::owners::session::AuthorOutcome::Response { body: "{\"data\":{\"abortMultipart\":{\"ok\":true}}}".into(), kind: crate::transport::AnswerKind::Answered { sequence: None } } });
+    let out = twin.post(TransferInput::StepAnswer { request_id, outcome: crate::owners::session::AuthorOutcome::Response { body: "{\"data\":{\"abortMultipart\":{\"ok\":true}}}".into(), kind: crate::transport::AnswerKind::Answered { sequence: None }, pending_retained: false } });
     assert_eq!(out.orphans_removed(), vec!["u9".to_string()], "the confirmed step answer of the abort pair removes the debt: {out:?}");
     twin.commit();
     twin.online(false);
@@ -115,7 +115,7 @@ fn xfer_restored_orphan_answer_refused() {
         let mut twin = orphan_restart(vec![("u9".into(), KEY.into())]);
         twin.online(true);
         let request_id = crate::owners::write::wire::abort_request_id("u9");
-        let out = twin.post(TransferInput::StepAnswer { request_id, outcome: crate::owners::session::AuthorOutcome::Response { body: body.into(), kind: crate::transport::AnswerKind::Answered { sequence: None } } });
+        let out = twin.post(TransferInput::StepAnswer { request_id, outcome: crate::owners::session::AuthorOutcome::Response { body: body.into(), kind: crate::transport::AnswerKind::Answered { sequence: None }, pending_retained: false } });
         assert!(out.orphans_removed().is_empty(), "{body}: an unconfirmed abort keeps the debt: {out:?}");
     }
 }

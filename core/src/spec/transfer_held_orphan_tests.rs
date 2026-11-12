@@ -21,7 +21,7 @@ fn ready(twin: &mut Twin) -> Out { twin.post(TransferInput::RestoreReady { epoch
 
 fn answered(twin: &mut Twin, outcome: AuthorOutcome) -> Out { twin.post(TransferInput::StepAnswer { request_id: abort_request_id(UPLOAD), outcome }) }
 
-fn confirmed() -> AuthorOutcome { AuthorOutcome::Response { body: "{\"data\":{\"abortMultipart\":{\"ok\":true}}}".into(), kind: AnswerKind::Answered { sequence: None } } }
+fn confirmed() -> AuthorOutcome { AuthorOutcome::Response { body: "{\"data\":{\"abortMultipart\":{\"ok\":true}}}".into(), kind: AnswerKind::Answered { sequence: None }, pending_retained: false } }
 
 fn debt() -> Vec<(String, String)> { vec![(UPLOAD.into(), KEY.into())] }
 

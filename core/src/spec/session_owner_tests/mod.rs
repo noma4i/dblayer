@@ -132,7 +132,7 @@ fn queued_of(queued: &Queued) -> RefQueued {
 
 fn outcome_of(outcome: &AuthorOutcome) -> Outcome {
     match outcome {
-        AuthorOutcome::Response { body, .. } => Outcome::Response(body.clone(), false),
+        AuthorOutcome::Response { body, pending_retained, .. } => Outcome::Response(body.clone(), *pending_retained),
         AuthorOutcome::Error { class, error, pending_retained } => Outcome::Error(if *class == ErrorClass::Permanent { Kind::Permanent } else { Kind::Temporary }, fail_of(error), *pending_retained),
         AuthorOutcome::Dropped => Outcome::Dropped,
     }

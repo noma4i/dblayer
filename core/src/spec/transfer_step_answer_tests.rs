@@ -27,7 +27,7 @@ fn step_effect(out: &Out) -> &TransferEffect {
 #[test]
 fn xfer_step_answer_response() {
     let mut twin = held();
-    let answered = twin.post(TransferInput::StepAnswer { request_id: STEP, outcome: AuthorOutcome::Response { body: "{\"ok\":true}".into(), kind: crate::transport::AnswerKind::Answered { sequence: None } } });
+    let answered = twin.post(TransferInput::StepAnswer { request_id: STEP, outcome: AuthorOutcome::Response { body: "{\"ok\":true}".into(), kind: crate::transport::AnswerKind::Answered { sequence: None }, pending_retained: false } });
     assert_eq!((answered.steps().len(), twin.stage(1)), (0, TransferStage::PersistingAttempt), "Response holds no step until the attempt is written");
     let started = twin.commit();
     assert_eq!((started.steps().len(), twin.stage(1)), (1, TransferStage::Uploading), "the committed attempt sends one step");
