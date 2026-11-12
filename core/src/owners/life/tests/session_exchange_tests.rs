@@ -121,24 +121,10 @@ async fn a_mutate_goes_out_once_with_the_next_sequence_and_its_answer_reaches_th
     assert!(matches!(reply, LifeReply::Mutated(crate::owners::session::AuthorOutcome::Response { .. })), "{reply:?}");
     let (session, pending) = rows(&db);
     assert_eq!((session.unwrap().sequence, pending.is_none()), (2, true));
-    assert_eq!(world.server.seen().iter().map(|request| request["sequence"].clone()).collect::<Vec<Value>>(), [json!(1), json!(2)]);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn the_answer_of_a_mutate_is_stored_with_the_removal_of_its_pending() {
-    let world = World::new();
-    let db = Store::open_models(None, Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
-    let (client, life) = world.open(&db).await;
-    sign_in(&client).await;
-    let reply = mutate_once(&life, json!({}).to_string()).await;
-    let crate::owners::life::LifeReply::Mutated(crate::owners::session::AuthorOutcome::Response { body, .. }) = reply else { panic!("{reply:?}") };
-    let (_, pending) = rows(&db);
-    let answers = {
-        let inner = db.lock();
-        session_state::answers(&inner.connection).unwrap()
-    };
-    assert!(pending.is_none());
+    let LifeReply::Mutated(AuthorOutcome::Response { body, .. }) = reply else { unreachable!() };
+    let answers = session_state::answers(&db.lock().connection).unwrap();
     assert_eq!(answers.values().collect::<Vec<_>>(), [&session_state::StoredAnswer::Ok(body)], "the sign-in is a call without an author and leaves no answer");
+    assert_eq!(world.server.seen().iter().map(|request| request["sequence"].clone()).collect::<Vec<Value>>(), [json!(1), json!(2)]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -559,20 +545,14 @@ async fn a_locked_secret_waits_for_the_foreground_and_a_foreign_secret_ends_the_
 }
 
 #[test]
-fn every_revoked_session_answer_is_revoked() {
+fn the_session_answer_is_classified_by_its_body_and_its_http_status() {
     use crate::owners::session::SessionInput;
     use crate::transport::encrypted::Answer;
-    let answer = |body: Value| Ok(Answer { sequence: Some(2), body });
+    let answered = |body: Value| Ok(Answer { sequence: Some(2), body });
     let revoked = json!({ "revoked": true });
-    assert!(matches!(super::session_runner::session_input(1, 1, true, true, true, answer(revoked.clone())), SessionInput::Revoked { request_id: 1, attempt_id: 1, .. }));
-    assert!(matches!(super::session_runner::session_input(1, 1, false, true, true, answer(revoked)), SessionInput::Revoked { .. }));
-    assert!(matches!(super::session_runner::session_input(1, 1, true, true, true, answer(json!({}))), SessionInput::Response { .. }));
-}
-
-#[test]
-fn session_http_auth_status() {
-    use crate::owners::session::SessionInput;
-    use crate::transport::TransportError;
+    assert!(matches!(super::session_runner::session_input(1, 1, true, true, true, answered(revoked.clone())), SessionInput::Revoked { request_id: 1, attempt_id: 1, .. }));
+    assert!(matches!(super::session_runner::session_input(1, 1, false, true, true, answered(revoked)), SessionInput::Revoked { .. }));
+    assert!(matches!(super::session_runner::session_input(1, 1, true, true, true, answered(json!({}))), SessionInput::Response { .. }));
     for status in [401, 403] {
         let input = super::session_runner::session_input(1, 1, false, true, true, Err(TransportError::Http { status, body: "refused".into() }));
         match (status, input) {
@@ -581,17 +561,8 @@ fn session_http_auth_status() {
             (_, other) => panic!("unexpected result: {other:?}"),
         }
     }
-}
-
-#[test]
-fn sess_runner_unreadable_dropped() {
-    use crate::owners::session::SessionInput;
-    use crate::transport::encrypted::Answer;
-    use crate::transport::TransportError;
     let dropped = super::session_runner::session_input(1, 1, false, true, true, Err(TransportError::Decode("unreadable body".into())));
     assert!(matches!(dropped, SessionInput::Dropped { request_id: 1, attempt_id: 1 }), "{dropped:?}");
-    let answered = super::session_runner::session_input(1, 1, false, true, true, Ok(Answer { sequence: Some(2), body: serde_json::json!({}) }));
-    assert!(matches!(answered, SessionInput::Response { .. }), "{answered:?}");
 }
 
 #[test]
