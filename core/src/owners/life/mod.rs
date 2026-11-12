@@ -468,9 +468,11 @@ impl Life {
                         }),
                     },
                     { let db = ports.db.clone(); Arc::new(move |sha256: &str| db.blob_cache_lookup(sha256)) },
+                    port.preparer.clone(),
                 );
                 let mut transfers = TransferState::new(0, port.slots, TransferPeers { store, outbox, rounds: rounds_at });
                 transfers.put_timeout = port.put_timeout;
+                transfers.sizing = port.sizing;
                 if let Some(root) = port.abort_root.clone() { transfers.abort_root = root; }
                 builder.install(address, "transfer", transfers, executor);
                 let rounds_drained = wiring.clone();

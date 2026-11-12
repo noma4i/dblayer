@@ -61,16 +61,21 @@ impl Database {
         Ok((Source { path: path.to_string(), parts }, multipart))
     }
 
+    fn checked_prepare(&self, prepare: Option<&super::upload_wire::WirePrepare>) -> Result<(), DbError> {
+        let Some(prepare) = prepare else { return Ok(()) };
+        crate::prepare::check_settings(prepare)?;
+        if self.preparer.get().is_none() { return Err(invalid("a source with prepare settings needs a preparer: pass one to open")); }
+        Ok(())
+    }
+
     /// The source of a call: the prepare settings are checked before the file is read.
     fn checked_source(&self, source: &WireSource) -> Result<Option<(Source, bool)>, DbError> {
-        if let Some(prepare) = source.prepare() {
-            crate::prepare::check_settings(prepare)?;
-            if self.preparer.get().is_none() { return Err(invalid("a source with prepare settings needs a preparer: pass one to open")); }
-        }
+        self.checked_prepare(source.prepare())?;
         source.path().map(|path| self.source_of(path)).transpose()
     }
 
     fn supplied_source(&self, model: &str, row: &crate::identity::RowId, action: &str, source: WireUploadSource) -> Result<SuppliedSource, DbError> {
+        self.checked_prepare(source.prepare.as_ref())?;
         let values = super::upload_wire::object(&source.values_json)?;
         let variables = super::upload_wire::object(&source.variables_json)?;
         let (planned, local) = self.db.plan_supplied(model, row, values)?;
@@ -86,7 +91,7 @@ impl Database {
             Some(batch) => spec.actions.iter().find(|action| action.name == batch.single).and_then(|action| action.wrap.clone()),
             None => declaration.wrap.clone(),
         };
-        Ok(SuppliedSource { source: file, steps, values: effects, local: Value::Object(local).to_string(), variables, wrap })
+        Ok(SuppliedSource { source: file, prepare: source.prepare, steps, values: effects, local: Value::Object(local).to_string(), variables, wrap })
     }
 
     /// The request of the final mutation: the variables carry a sentinel where the signed id of the file goes.

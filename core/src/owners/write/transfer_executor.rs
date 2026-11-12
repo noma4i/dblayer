@@ -11,7 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::failure;
-use super::transfer::{file_id, staged_file_id, AbortFault, CachedBlob, StatusSink, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
+use super::transfer::{file_id, prepared_file_id, staged_file_id, AbortFault, CachedBlob, StatusSink, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
 use super::wire::{Flights, Running, Wire};
 use crate::store::files::{CopiedSource, FileDirectories};
 use crate::owners::contract::{Drained, ReplyId};
@@ -99,6 +99,9 @@ pub(crate) struct TransferPort {
     pub put_timeout: std::time::Duration,
     /// The root of the abort operation in its answer: only an answer that carries it confirms an abort.
     pub abort_root: Option<String>,
+    pub sizing: super::upload::Sizing,
+    /// The platform that probes and writes the sources with prepare settings: it is set once, when the platform gives it to `open`.
+    pub preparer: Arc<std::sync::OnceLock<Arc<dyn crate::ffi::Preparer>>>,
 }
 
 type Call<T> = Pin<Box<dyn Future<Output = Result<T, TransportError>> + Send>>;
@@ -155,6 +158,8 @@ pub(crate) struct TransferExecutor {
     signal: Arc<dyn Fn(LifeSignal) + Send + Sync>,
     copies: Flights<TransferId>,
     steps: Flights<TransferId>,
+    prepares: Flights<TransferId>,
+    preparer: Arc<std::sync::OnceLock<Arc<dyn crate::ffi::Preparer>>>,
     /// The cache of blobs: what is known of a server blob for the content of a copy.
     cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>,
     doomed: Vec<String>,
@@ -170,16 +175,26 @@ pub struct TransferSinks {
 }
 
 impl TransferExecutor {
-    pub fn new(wire: Wire, codec: Arc<dyn StepCodec>, files: Arc<FileDirectories>, sinks: TransferSinks, cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>) -> Self {
+    pub fn new(wire: Wire, codec: Arc<dyn StepCodec>, files: Arc<FileDirectories>, sinks: TransferSinks, cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>, preparer: Arc<std::sync::OnceLock<Arc<dyn crate::ffi::Preparer>>>) -> Self {
         let TransferSinks { settle, status, drained, signal } = sinks;
-        Self { wire, codec, files, settle, status, drained, signal, copies: Flights::default(), steps: Flights::default(), cache, doomed: Vec::new(), answers: Vec::new() }
+        Self { wire, codec, files, settle, status, drained, signal, copies: Flights::default(), steps: Flights::default(), prepares: Flights::default(), preparer, cache, doomed: Vec::new(), answers: Vec::new() }
     }
 
-    fn copy(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), source: Source, staged: bool) {
+    fn copy(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), source: Source, staged: bool) { self.copy_into(stamp, back, (transfer_id, attempt_id), source, (staged, None)); }
+
+    /// The result of the platform is read in chunks into the temporary file of the transfer and goes.
+    fn measure(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64)) {
+        let prepared = prepared_file_id(transfer_id);
+        let path = self.files.path(&prepared).unwrap_or_else(|| self.files.cache_target(&prepared, "prepared"));
+        self.copy_into(stamp, back, (transfer_id, attempt_id), Source { path: path.to_string_lossy().into_owned(), parts: 0 }, (true, Some(prepared)));
+    }
+
+    fn copy_into(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), source: Source, (staged, consume): (bool, Option<String>)) {
         let cancelled = Arc::new(AtomicBool::new(false));
         let (files, copies, back, flag, id, cache) = (self.files.clone(), self.copies.clone(), back.clone(), cancelled.clone(), if staged { staged_file_id(transfer_id) } else { file_id(transfer_id) }, self.cache.clone());
         let running = self.wire.tasks.start_blocking(Box::new(move || {
             let result = files.copy_source(&id, std::path::Path::new(&source.path));
+            if let Some(consumed) = &consume { let _ = files.discard(std::slice::from_ref(consumed)); }
             let input = if flag.load(Ordering::SeqCst) {
                 let _ = files.discard(&[id]);
                 None
@@ -202,6 +217,49 @@ impl TransferExecutor {
             cancelled.store(true, Ordering::SeqCst);
             running.cancel();
         }));
+    }
+
+    /// The path of the copy of the library: the platform reads the source from it.
+    fn copy_path(&self, transfer_id: TransferId) -> String { self.local(transfer_id, Source { path: String::new(), parts: 0 }).path }
+
+    fn probe(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64)) {
+        let Some(preparer) = self.preparer.get().cloned() else {
+            back.reply(stamp, TransferInput::Probed { transfer_id, attempt_id, outcome: crate::ffi::ProbeOutcome::Failed { message: "no preparer".into() } });
+            return;
+        };
+        let (path, prepares, back, cancelled) = (self.copy_path(transfer_id), self.prepares.clone(), back.clone(), Arc::new(AtomicBool::new(false)));
+        let flag = cancelled.clone();
+        let _ = self.wire.tasks.start(Box::pin(async move {
+            let outcome = preparer.probe(path).await;
+            prepares.done(&transfer_id);
+            if !flag.load(Ordering::SeqCst) { back.reply(stamp, TransferInput::Probed { transfer_id, attempt_id, outcome }); }
+        }));
+        self.prepares.put(transfer_id, Running::new(move || cancelled.store(true, Ordering::SeqCst)));
+    }
+
+    fn prepare(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), plan: crate::ffi::PreparePlan) {
+        let Some(preparer) = self.preparer.get().cloned() else {
+            back.reply(stamp, TransferInput::Prepared { transfer_id, attempt_id, outcome: crate::ffi::PrepareOutcome::Failed { message: "no preparer".into() } });
+            return;
+        };
+        let prepared = prepared_file_id(transfer_id);
+        let destination = self.files.path(&prepared).unwrap_or_else(|| self.files.cache_target(&prepared, "prepared"));
+        if let Some(parent) = destination.parent() { let _ = std::fs::create_dir_all(parent); }
+        let job = crate::ffi::PrepareJob { attempt_id, source: self.copy_path(transfer_id), destination: destination.to_string_lossy().into_owned(), plan };
+        let progress = { let back = back.clone(); Arc::new(crate::ffi::PrepareProgress::new(move |fraction| back.reply(stamp, TransferInput::PrepareProgress { transfer_id, attempt_id, percent: (fraction.clamp(0.0, 1.0) * 100.0).floor() as u32 }))) };
+        let (files, prepares, back, cancelled) = (self.files.clone(), self.prepares.clone(), back.clone(), Arc::new(AtomicBool::new(false)));
+        let flag = cancelled.clone();
+        let _ = self.wire.tasks.start(Box::pin(async move {
+            let outcome = preparer.run(job, progress).await;
+            prepares.done(&transfer_id);
+            if flag.load(Ordering::SeqCst) { let _ = files.discard(&[prepared]); } else { back.reply(stamp, TransferInput::Prepared { transfer_id, attempt_id, outcome }); }
+        }));
+        self.prepares.put(transfer_id, Running::new(move || cancelled.store(true, Ordering::SeqCst)));
+    }
+
+    fn prepare_cancel(&self, transfer_id: TransferId, attempt_id: u64) {
+        self.prepares.cancel(&transfer_id);
+        if let Some(preparer) = self.preparer.get() { preparer.cancel(attempt_id); }
     }
 
     /// The copy of the library when it exists: the original file may be gone after the call of `upload`.
@@ -365,6 +423,10 @@ impl EffectRunner<Transfers> for TransferExecutor {
                 }
             }
             TransferEffect::CopyCancel { transfer_id } => self.copies.cancel(&transfer_id),
+            TransferEffect::Probe { transfer_id, attempt_id } => self.probe(stamp, back, (transfer_id, attempt_id)),
+            TransferEffect::Prepare { transfer_id, attempt_id, plan } => self.prepare(stamp, back, (transfer_id, attempt_id), plan),
+            TransferEffect::PrepareCancel { transfer_id, attempt_id } => self.prepare_cancel(transfer_id, attempt_id),
+            TransferEffect::Measure { transfer_id, attempt_id } => self.measure(stamp, back, (transfer_id, attempt_id)),
             TransferEffect::Step { transfer_id, attempt_id, cycle_id, key, operation, part, purpose, upload_id, source, steps, seeded, .. } => {
                 debug_assert_eq!(purpose, NetworkPurpose::Transfer);
                 self.step(stamp, back, (transfer_id, attempt_id), StepAsk { cycle_id, operation, part, upload_id, source, steps, key, seeded });
