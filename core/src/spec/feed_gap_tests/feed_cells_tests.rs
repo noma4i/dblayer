@@ -562,17 +562,21 @@ fn feed_wait_subscription_census() {
 
 #[test]
 fn feed_changed_by_forms() {
-    let forms: [(&str, Reread, Effect); 5] = [
-        ("feed_changed_by_node", Reread::Set(names(&["node"])), Effect::StaleSet { model: "Chat".into(), keys: names(&["node"]) }),
-        ("feed_changed_by_named", Reread::Set(names(&["byChat"])), Effect::StaleSet { model: "Chat".into(), keys: names(&["byChat"]) }),
-        ("feed_changed_by_named_default_param", Reread::Set(names(&["byChat", "byAuthor"])), Effect::StaleSet { model: "Chat".into(), keys: names(&["byAuthor", "byChat"]) }),
-        ("feed_changed_by_observed", Reread::All, Effect::Stale { model: "Chat".into(), all: true }),
-        ("feed_changed_by_current", Reread::Set(names(&["current"])), Effect::StaleSet { model: "Chat".into(), keys: names(&["current"]) }),
+    let node = WindowKey::relation("Chat", "node", &[(crate::schema::NODE_PARAM.to_string(), serde_json::json!("c1"))].into_iter().collect()).name;
+    let forms: [(&str, Reread, Effect, &str); 5] = [
+        ("feed_changed_by_node", Reread::Set(vec![node.clone()]), Effect::StaleSet { model: "Chat".into(), keys: vec![format!("{}\\", node.split('"').next().unwrap())] }, "ops: [OweReread { model: \"Chat\", id: \"c1\" }]"),
+        ("feed_changed_by_named", Reread::Set(names(&["byChat"])), Effect::StaleSet { model: "Chat".into(), keys: names(&["byChat"]) }, "ops: [StaleWindows { keys: [(\"Chat\", \"byChat\")] }]"),
+        ("feed_changed_by_named_default_param", Reread::Set(names(&["byChat", "byAuthor"])), Effect::StaleSet { model: "Chat".into(), keys: names(&["byAuthor", "byChat"]) }, "ops: [StaleWindows { keys: [(\"Chat\", \"byAuthor\"), (\"Chat\", \"byChat\")] }]"),
+        ("feed_changed_by_observed", Reread::All, Effect::Stale { model: "Chat".into(), all: true }, "ops: [MarkStale { models: [\"Chat\"], keys: [] }]"),
+        ("feed_changed_by_current", Reread::Set(names(&["current"])), Effect::StaleSet { model: "Chat".into(), keys: names(&["current"]) }, "ops: [StaleWindows { keys: [(\"Chat\", \"current\")] }]"),
     ];
-    for (name, reread, stale) in forms {
+    for (name, reread, stale, ops) in forms {
         let mut twin = live_immediate();
         twin.reread = reread;
+        let before = twin.history.len();
         assert_eq!(twin.step(chat("c1")), [Effect::Commit], "{name}");
+        let batches: Vec<_> = twin.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } => Some(input), _ => None }).collect();
+        assert!(batches.len() == 1 && batches[0].contains(ops), "{name}: the batch of the event carries its debt: {batches:?}");
         assert_eq!(twin.step(Input::Committed), [stale], "{name}");
     }
 }

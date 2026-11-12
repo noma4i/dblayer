@@ -20,7 +20,12 @@ fn chat_spec() -> ModelSpec {
     let mut remote = crate::schema_fixtures::remote("ChatNode", RemoteShape::Single, "5.minutes");
     remote.variables.insert("id".into(), VariableSource::Param { name: NODE_PARAM.into() });
     node.remote = Some(remote);
-    chat.relations.push(node);
+    let mut list = RelationSpec::new("list", &[]);
+    list.text_params.push("list".into());
+    let mut remote = crate::schema_fixtures::remote("ChatList", RemoteShape::List { coverage: crate::schema::Coverage::Complete }, "5.minutes");
+    remote.variables.insert("list".into(), VariableSource::Param { name: "list".into() });
+    list.remote = Some(remote);
+    chat.relations.extend([node, list]);
     chat
 }
 
@@ -113,4 +118,24 @@ fn store_read_window_node_owed_is_stale() {
     assert_eq!(owing.into_iter().collect::<Vec<_>>(), ["c1".to_string()]);
     land_node(&db, 3, "c1", vec![RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "again"}).to_string() }]);
     assert!(!saved_stale(&db, "c1"));
+}
+
+/// feed_event_debt_survives_restart: the debt of the event of every form is in the file, a store opened again reads it.
+#[test]
+fn feed_event_debt_survives_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    let list = WindowKey::relation("Chat", "list", &[("list".to_string(), json!("PRIMARY"))].into_iter().collect());
+    let params: serde_json::Map<String, serde_json::Value> = [("list".to_string(), json!("PRIMARY"))].into_iter().collect();
+    {
+        let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], None, Arc::new(crate::runtime::SystemClock)).unwrap());
+        put(&db, "Chat", json!({"id": "c1", "title": "t"}));
+        let op = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: list.name.clone(), model: list.model.clone(), page: 1, replace_all: false, cursor: None, roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
+        write_as(&db, 1, BatchAuthor::Window, Vec::new(), vec![op]);
+        assert!(!db.window_saved("Chat", "list", &params).unwrap().expect("the list is saved").stale);
+        write_as(&db, 2, BatchAuthor::Feed, Vec::new(), vec![StoreOp::OweReread { model: "Chat".into(), id: "c1".into() }, StoreOp::StaleWindows { keys: vec![("Chat".into(), list.name.clone())] }]);
+    }
+    let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], None, Arc::new(crate::runtime::SystemClock)).unwrap());
+    assert!(owed(&db, "c1"), "the row still owes the reread");
+    assert!(db.window_saved("Chat", "list", &params).unwrap().expect("the list is saved").stale, "the saved list still owes the reread");
 }

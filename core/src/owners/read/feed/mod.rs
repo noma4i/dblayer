@@ -373,13 +373,40 @@ impl Feed {
         }
     }
 
+    /// The debt the events write in the transaction of their batch (D-393, D-316): the row of a `node` read, the saved windows the event names.
+    fn event_debt(events: &[FeedEvent]) -> Vec<crate::owners::store::StoreOp> {
+        use crate::owners::read::windows::WindowKind;
+        use crate::owners::store::StoreOp;
+        let (mut owed, mut models, mut windows, mut families) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+        for event in events.iter().filter(|event| !event.refused) {
+            match &event.reread {
+                StaleKeys::All => { models.insert(event.model.clone()); }
+                StaleKeys::Set(keys) => for key in keys {
+                    match key.kind() {
+                        WindowKind::Relation { params, .. } if params.contains_key(crate::schema::NODE_PARAM) => {
+                            if let Some(id) = params.get(crate::schema::NODE_PARAM).and_then(serde_json::Value::as_str) { owed.insert((key.model.clone(), id.to_string())); }
+                        }
+                        _ => { windows.insert((key.model.clone(), key.name.clone())); }
+                    }
+                },
+                StaleKeys::Relations(relations) => families.extend(relations.iter().map(|relation| (event.model.clone(), relation.clone()))),
+            }
+        }
+        let mut ops: Vec<StoreOp> = owed.into_iter().map(|(model, id)| StoreOp::OweReread { model, id }).collect();
+        if !models.is_empty() { ops.push(StoreOp::MarkStale { models: models.into_iter().collect(), keys: Vec::new() }); }
+        if !windows.is_empty() { ops.push(StoreOp::StaleWindows { keys: windows.into_iter().collect() }); }
+        if !families.is_empty() { ops.push(StoreOp::StaleFamilies { families: families.into_iter().collect() }); }
+        ops
+    }
+
     fn commit_batch(state: &FeedState, batch: BatchId, events: Vec<FeedEvent>) -> StoreBatch {
+        let ops = Self::event_debt(&events);
         let basis = crate::owners::store::basis_for(events.iter().map(|event| (event.model.clone(), event.basis)));
         let rows = events.into_iter().map(|event| {
             let observed = state.want.get(&event.model).is_some_and(|ids| ids.iter().any(|id| state.streams.contains(id)));
             (event.model, if observed { with_observe(&event.payload) } else { event.payload })
         }).collect();
-        StoreBatch { author: BatchAuthor::Feed, id: batch, stamp: crate::runtime::EpochStamp::Epoch(state.epoch), basis, rows, intents: 0, credential: None, ops: Vec::new() }
+        StoreBatch { author: BatchAuthor::Feed, id: batch, stamp: crate::runtime::EpochStamp::Epoch(state.epoch), basis, rows, intents: 0, credential: None, ops }
     }
 
     fn lower(state: &mut FeedState, mut fx: Vec<Fx>) -> Effects<Self> {

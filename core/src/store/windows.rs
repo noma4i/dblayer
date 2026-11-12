@@ -3,6 +3,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::identity::ListKey;
 use crate::schema::PageDirection;
 
+use std::collections::BTreeMap;
+
 use super::{Store, StoreError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +74,18 @@ pub(crate) fn window_identity(spec: &crate::schema::ModelSpec, model: &str, rela
     };
     let key = window_key(scope_key.as_str(), direction);
     Ok((crate::store::ScopeRef::new(crate::identity::ModelKey::new(model), scope_key), key))
+}
+
+/// The `query_window.key` of each saved window the names stand for: the identity of the page landing, windows that are not saved (`nodes`, no remote) have none.
+pub(super) fn query_window_keys(models: &BTreeMap<String, super::ModelInfo>, names: &[(String, String)]) -> Result<Vec<String>, StoreError> {
+    let mut keys = Vec::new();
+    for (model, name) in names {
+        let crate::owners::read::windows::WindowKind::Relation { relation, params } = (crate::owners::read::windows::WindowKey { model: model.clone(), name: name.clone() }).kind() else { continue };
+        let Some(info) = models.get(model) else { continue };
+        let Some(remote) = info.spec.relations.iter().find(|declared| declared.name == relation).and_then(|declared| declared.remote.as_ref()) else { continue };
+        keys.push(window_identity(&info.spec, model, &relation, remote, &params).map_err(|error| StoreError::Constraint(error.to_string()))?.1);
+    }
+    Ok(keys)
 }
 
 pub fn family_prefix(model: &str, relation: &str) -> String {

@@ -154,6 +154,9 @@ impl Store {
         transaction.execute_batch(include_str!("sql/batch_write/write_batch_prepared_drop_trigger_batch_file_delete.sql"))?;
         let (expiring, removed_memory) = super::batch_result::expiry(&transaction, &inner.models, &results, inner.now_ms())?;
         let mut stale_parents = super::batch_result::stale_parents(&transaction, &inner.models, &results)?;
+        if batch.author == BatchAuthor::Feed && !stale_parents.is_empty() {
+            super::windows::mark_stale(&transaction, &stale_parents, &[])?;
+        }
         stale_parents.extend(named_gone.into_iter().filter(|model| !stale_parents.contains(model)).collect::<Vec<_>>());
         let removed_operations: Vec<u64> = if batch.author == BatchAuthor::Feed { results.iter().flat_map(|result| result.operations.iter()).filter_map(|seq| u64::try_from(*seq).ok()).collect() } else { Vec::new() };
         let removed_rows: Vec<(String, String)> = results.iter().flat_map(|result| result.server_removed.iter()).map(|row| (row.model.to_string(), row.id.to_string())).collect();
