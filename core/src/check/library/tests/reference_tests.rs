@@ -24,6 +24,10 @@ fn seeds() -> u64 {
     std::env::var("DBL_REFERENCE_SEEDS").ok().and_then(|text| text.parse().ok()).unwrap_or(SEEDS)
 }
 
+fn first_seed() -> u64 {
+    std::env::var("DBL_REFERENCE_FIRST_SEED").ok().and_then(|text| text.parse().ok()).unwrap_or(1)
+}
+
 /// A load refused again and again, each refusal followed by a tick past the retry pause: the number of retries of docs/server-sync.md "Retries" is reached by no short random program.
 fn retry_programs() -> Vec<Vec<Input>> {
     let named = |kind: &str, name: &str| Input::new(kind).with("as", name).with("named", true).with("relation", "feed");
@@ -57,7 +61,7 @@ fn stream_family(anonymous: bool, left_out: &[&str], deep: usize) -> Vec<Vec<Inp
     let letters = stream_letters(left_out);
     let head = prelude(anonymous);
     let mut out: Vec<Vec<Input>> = all_traces(&letters, deep).into_iter().map(|trace| [head.clone(), trace].concat()).collect();
-    out.extend((1..=seeds()).map(|seed| [head.clone(), seeded(&letters, seed, LENGTH)].concat()));
+    out.extend((first_seed()..first_seed() + seeds()).map(|seed| [head.clone(), seeded(&letters, seed, LENGTH)].concat()));
     out.retain(|program| first_hole(program) != Some(REOPENED));
     out
 }
@@ -67,7 +71,7 @@ fn family(anonymous: bool, keep: fn(&Input) -> bool, deep: usize, extra: Vec<Vec
     let letters: Vec<Input> = alphabet().into_iter().filter(modeled).filter(keep).collect();
     let head = prelude(anonymous);
     let mut out: Vec<Vec<Input>> = all_traces(&letters, deep).into_iter().map(|trace| [head.clone(), trace].concat()).collect();
-    out.extend((1..=seeds()).map(|seed| [head.clone(), seeded(&letters, seed, LENGTH)].concat()));
+    out.extend((first_seed()..first_seed() + seeds()).map(|seed| [head.clone(), seeded(&letters, seed, LENGTH)].concat()));
     out.extend(extra);
     out
 }
@@ -134,7 +138,7 @@ async fn compare(owner: &Arc<LibraryOwner>, programs: Vec<Vec<Input>>) -> (usize
 async fn assert_matches(programs: Vec<Vec<Input>>) {
     let owner = Arc::new(LibraryOwner { properties: Vec::new(), reference: true });
     let (compared, holes, found) = compare(&owner, programs).await;
-    assert!(found.is_empty() && holes.is_empty(), "compared {compared} programs to depth {}, {} seeds of length {LENGTH}, not compared because of spec holes (must be empty) {holes:?}\n\n{}", depth(), seeds(), found.join("\n\n"));
+    assert!(found.is_empty() && holes.is_empty(), "compared {compared} programs to depth {}, {} seeds from {} of length {LENGTH}, not compared because of spec holes (must be empty) {holes:?}\n\n{}", depth(), seeds(), first_seed(), found.join("\n\n"));
 }
 
 /// Requirement: library.md sections 3 to 7 for the slice O1 (environment and loads): after every input the stand shows what the reference shows.

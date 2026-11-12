@@ -23,6 +23,10 @@ fn seeds() -> u64 {
     std::env::var("DBL_LIBRARY_SEEDS").ok().and_then(|text| text.parse().ok()).unwrap_or(SEEDS)
 }
 
+fn first_seed() -> u64 {
+    std::env::var("DBL_LIBRARY_FIRST_SEED").ok().and_then(|text| text.parse().ok()).unwrap_or(1)
+}
+
 fn corpus_dir() -> std::path::PathBuf {
     corpus::shared_dir().join("library")
 }
@@ -41,7 +45,7 @@ fn family_programs(families: &[bool], depth: usize, seeds: u64, length: usize) -
         for (index, body) in all_traces(&letters, depth).into_iter().enumerate() {
             out.push(Program { tag: format!("{family}d{index}"), inputs: [head.clone(), body].concat() });
         }
-        for seed in 1..=seeds {
+        for seed in first_seed()..first_seed() + seeds {
             out.push(Program { tag: format!("{family}{seed}"), inputs: [head.clone(), seeded(&letters, seed, length)].concat() });
         }
     }
