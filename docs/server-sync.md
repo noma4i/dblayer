@@ -26,6 +26,18 @@ try await DB.open(endpoint: endpoint, headers: { ["Authorization": "Bearer \(ses
 DBlayer.open(context, endpoint = endpoint, headers = { mapOf("Authorization" to "Bearer ${session.token}") }, modelsJson = modelsJson, operations = GraphQLOperations.all, uploadNotification = notification)
 ```
 
+`open` fails with `Invalid` when `operations` leaves out an operation the library sends by itself: the subscription of the change feed, each `listens` and `updates` subscription, and the read of each relation a `changed_by` event starts. The error names every missing operation in alphabetical order, and no definition of that call is accepted. The generated `GraphQLOperations.all` holds them all.
+
+```swift
+// Invalid: the operations the library sends by itself are not registered: Changes, UserNode
+try await DB.open(endpoint: endpoint, modelsJSON: modelsJSON, operations: [])
+```
+
+```kotlin
+// Invalid: the operations the library sends by itself are not registered: Changes, UserNode
+DBlayer.open(context, endpoint = endpoint, modelsJson = modelsJson, operations = emptyList(), uploadNotification = notification)
+```
+
 `endpoint`, `encrypted`, `credentials`, `transport`, `path` and `http` default to nil or null.
 `headers` is a closure that returns the request headers, `@Sendable () -> [String: String]` in Swift and `() -> Map<String, String>` in Kotlin. It defaults to an empty map and is called for each request and cable connection to the database origin. Presigned file uploads use their supplied headers and User-Agent. `operations` defaults to an empty list. `modelsJSON` or `modelsJson` is required.
 
