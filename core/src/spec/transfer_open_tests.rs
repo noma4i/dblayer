@@ -509,20 +509,13 @@ fn xfer_open_completing() {
 
 #[test]
 fn xfer_open_saved_outcome() {
-    let (mut twin, out) = Twin::opened(vec![completed(1, KEY)], outcomes(1, OutboxOutcome::Confirmed { revision: 5, result: None, row_id: None }));
-    assert_eq!((twin.stage(1), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
-    twin.commit();
-    let (reply, out) = twin.outcome(1, 1);
-    assert_eq!((twin.stage(1), out.replies(reply)), (TransferStage::Done, vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 5, result: None, row_id: None }, None)]));
-}
-
-#[test]
-fn xfer_open_saved_outcome_discarded() {
-    let (mut twin, out) = Twin::opened(vec![completed(1, KEY)], outcomes(1, OutboxOutcome::Discarded));
-    assert_eq!((twin.stage(1), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
-    twin.commit();
-    let (reply, out) = twin.outcome(1, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded, None)]);
+    for saved in [OutboxOutcome::Confirmed { revision: 5, result: None, row_id: None }, OutboxOutcome::Discarded] {
+        let (mut twin, out) = Twin::opened(vec![completed(1, KEY)], outcomes(1, saved.clone()));
+        assert_eq!((twin.stage(1), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]), "{saved:?}");
+        twin.commit();
+        let (reply, out) = twin.outcome(1, 1);
+        assert_eq!((twin.stage(1), out.replies(reply)), (TransferStage::Done, vec![TransferAnswer::Outcome(saved.clone(), None)]), "{saved:?}");
+    }
 }
 
 /// xfer_open_retry_after_crash: a completed row of a later cycle with no intent and a saved outcome of a prior cycle (a crash after the Committed of a retry) reopens as PersistingBatchIntent and writes the intent of the final mutation on RestoreReady.
@@ -550,10 +543,14 @@ fn xfer_open_saved_interrupted() {
 
 #[test]
 fn xfer_open_saved_outcome_rejected() {
-    let (mut twin, out) = Twin::opened(vec![completed(1, KEY)], outcomes(1, OutboxOutcome::Rejected { error: "refused".into() }));
-    assert_eq!((twin.stage(1), out.kinds()), (TransferStage::PersistingFailure, vec![UploadKind::Failed]));
-    let out = twin.commit();
-    assert_eq!((twin.stage(1), out.shows()), (TransferStage::Failed, vec![Shown::Failed { error: "refused".into() }]));
+    for saved in [OutboxOutcome::Rejected { error: "refused".into() }, OutboxOutcome::Failed { error: "server".into() }] {
+        let error = match &saved { OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error } => error.clone(), _ => unreachable!() };
+        let (mut twin, out) = Twin::opened(vec![completed(1, KEY)], outcomes(1, saved.clone()));
+        assert_eq!((twin.stage(1), out.kinds(), out.submits(), out.shows()), (TransferStage::PersistingFailure, vec![UploadKind::Failed], 0, Vec::new()), "{saved:?}");
+        assert_eq!(out.rows()[0].0.failed.as_deref(), Some(error.as_str()), "{saved:?}");
+        let out = twin.commit();
+        assert_eq!((twin.stage(1), out.shows()), (TransferStage::Failed, vec![Shown::Failed { error }]), "{saved:?}");
+    }
 }
 
 #[test]
@@ -617,14 +614,6 @@ fn xfer_open_missing_file() {
 fn xfer_open_completed_no_intent() {
     let (twin, out) = Twin::opened(vec![completed(1, KEY)], Default::default());
     assert_eq!((twin.stage(1), out.submits(), out.shows()), (TransferStage::Failed, 0, vec![Shown::Failed { error: "RestoreFailed".into() }]));
-}
-
-#[test]
-fn xfer_open_saved_outcome_failed() {
-    let (mut twin, out) = Twin::opened(vec![completed(1, KEY)], outcomes(1, OutboxOutcome::Failed { error: "server".into() }));
-    assert_eq!((twin.stage(1), out.submits(), out.shows()), (TransferStage::PersistingFailure, 0, Vec::new()));
-    assert_eq!(out.rows()[0].0.failed.as_deref(), Some("server"));
-    assert_eq!(twin.commit().shows(), vec![Shown::Failed { error: "server".into() }]);
 }
 
 #[test]
