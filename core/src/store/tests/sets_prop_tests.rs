@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -12,7 +12,7 @@ use crate::owners::store::{RowValue, StoreOp};
 use crate::store::fixtures::{all_specs, put};
 use crate::store::Store;
 
-use super::data_sets_tests::{deliver, intent_creating, write};
+use super::data_sets_tests::{deliver, intent_creating, intent_hiding, write};
 use super::sets_reference_tests::{derive, parent_revision, red_of, stored_sets, Child, Server, Sets};
 
 const EQUALS_F: &str = "P-DATA-103 equals F";
@@ -27,7 +27,7 @@ fn alphabet() -> Vec<Input> {
     let mut inputs = Vec::new();
     for path in PATHS {
         for id in IDS {
-            for (at, seq, body) in [1, 3].into_iter().flat_map(|at| [0, 1, 2].into_iter().flat_map(move |seq| ["x", "y"].map(move |body| (at, seq, body)))) {
+            for (at, seq, body) in [0, 1, 3].into_iter().flat_map(|at| [0, 1, 2].into_iter().flat_map(move |seq| ["x", "y"].map(move |body| (at, seq, body)))) {
                 inputs.push(Input::new("child").with("path", path).with("id", id).with("at", at as u64).with("seq", seq as u64).with("body", body));
             }
         }
@@ -37,6 +37,20 @@ fn alphabet() -> Vec<Input> {
             }
         }
         inputs.push(Input::new("bare").with("path", path));
+        for pointer in POINTERS {
+            inputs.extend((0..3u64).map(|shape| Input::new("partial").with("path", path).with("pointer", pointer).with("shape", shape)));
+        }
+        for id in IDS.into_iter().chain(["r1", "r2"]) {
+            inputs.push(Input::new("move").with("path", path).with("id", id));
+        }
+    }
+    for op in 3..=4u64 {
+        for (id, at, seq) in IDS.into_iter().flat_map(|id| [(2, 1), (9, 3)].map(move |(at, seq)| (id, at, seq))) {
+            inputs.push(Input::new("edit").with("op", op).with("id", id).with("at", at as u64).with("seq", seq as u64));
+        }
+    }
+    for op in 5..=6u64 {
+        inputs.extend(IDS.into_iter().map(|id| Input::new("hide").with("op", op).with("id", id)));
     }
     for op in 1..=2u64 {
         for device in [0, 9u64] {
@@ -45,8 +59,8 @@ fn alphabet() -> Vec<Input> {
         for (at, seq) in [(1, 0), (3, 2), (3, 0)] {
             inputs.push(Input::new("confirm").with("op", op).with("at", at as u64).with("seq", seq as u64));
         }
-        inputs.push(Input::new("rollback").with("op", op));
     }
+    inputs.extend((1..=6u64).map(|op| Input::new("rollback").with("op", op)));
     for id in IDS.into_iter().chain(["r1", "r2"]) {
         inputs.push(Input::new("remove").with("id", id));
     }
@@ -65,6 +79,10 @@ struct Landing {
     server: Option<Server>,
     children: BTreeMap<String, Child>,
     ops: BTreeMap<u64, Op>,
+    held: BTreeMap<u64, (String, Child)>,
+    tombstones: BTreeSet<String>,
+    parent_rows: u32,
+    reached: BTreeSet<&'static str>,
     history: Vec<Input>,
 }
 
@@ -76,8 +94,8 @@ fn optional(seq: i64) -> Option<i64> {
     (seq != 0).then_some(seq)
 }
 
-fn child_row(id: &str, at: i64, seq: Option<i64>, body: &str) -> RowValue {
-    RowValue { row_id: id.into(), values: json!({"id": id, "chatId": "c1", "body": body, "createdAt": at, "sequenceNumber": seq}).to_string() }
+fn child_row(id: &str, chat: &str, at: Option<i64>, seq: Option<i64>, body: &str) -> RowValue {
+    RowValue { row_id: id.into(), values: json!({"id": id, "chatId": chat, "body": body, "createdAt": at, "sequenceNumber": seq}).to_string() }
 }
 
 impl Landing {
@@ -85,26 +103,63 @@ impl Landing {
         deliver(&self.store, 1, path, model, row, Vec::new());
     }
 
+    fn locked(&self, id: &str) -> bool {
+        self.held.values().any(|(held, _)| held == id)
+    }
+
     fn perform(&mut self, input: &Input) {
         let text = |key: &str| input.text(key).unwrap().to_string();
         match input.name.as_str() {
             "child" => {
-                let (id, at, seq) = (text("id"), number(input, "at"), optional(number(input, "seq")));
+                let (path, id, at, seq) = (text("path"), text("id"), optional(number(input, "at")), optional(number(input, "seq")));
+                if self.locked(&id) {
+                    return;
+                }
                 let body = format!("{}{}", text("body"), id);
-                self.deliver(&text("path"), "messages", child_row(&id, at, seq, &body));
-                self.children.insert(id.clone(), Child { id, at: Some(at), seq, body });
+                self.deliver(&path, "messages", child_row(&id, "c1", at, seq, &body));
+                if self.tombstones.contains(&id) {
+                    if path == "response" {
+                        self.reached.insert("tombstone refuses the answer");
+                        return;
+                    }
+                    self.reached.insert("event or page lifts the tombstone");
+                    self.tombstones.remove(&id);
+                }
+                self.children.insert(id.clone(), Child { id, at, seq, body });
             }
-            "parent" => {
-                let (pointer, at, seq) = (text("pointer"), number(input, "at"), number(input, "seq"));
-                let values = json!({"id": "c1", "title": "t", "lastMessageId": pointer, "lastMessageAt": at, "lastSequenceNumber": seq});
+            "parent" | "partial" => {
+                let pointer = text("pointer");
+                let partial = input.name == "partial";
+                if self.tombstones.contains(&pointer) || (partial && self.parent_rows > 0) {
+                    return;
+                }
+                let shape = if partial { number(input, "shape") } else { 3 };
+                let (at, seq) = if partial { ((shape == 1).then_some(2), (shape == 2).then_some(1)) } else { (Some(number(input, "at")), Some(number(input, "seq"))) };
+                let mut values = json!({"id": "c1", "title": "t", "lastMessageId": pointer});
+                for (field, value) in [("lastMessageAt", at), ("lastSequenceNumber", seq)] {
+                    if let Some(value) = value {
+                        values[field] = json!(value);
+                    }
+                }
                 self.deliver(&text("path"), "chats", RowValue { row_id: "c1".into(), values: values.to_string() });
-                self.server = Some(Server { id: Some(pointer), at: Some(at), seq: Some(seq) });
+                self.server = Some(Server { id: Some(pointer), at, seq });
+                self.parent_rows += 1;
+                if partial {
+                    self.reached.insert("server row with part of the fields");
+                }
             }
             "bare" => self.deliver(&text("path"), "chats", RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "t"}).to_string() }),
+            "move" => {
+                let id = text("id");
+                let Some(child) = self.children.get(&id).filter(|child| !child.temp() && !self.locked(&id)).cloned() else { return };
+                self.deliver(&text("path"), "messages", child_row(&id, "c2", child.at, child.seq, &child.body));
+                self.children.remove(&id);
+                self.reached.insert("child moved to another parent");
+            }
             "temp" => {
                 let (op, device) = (input.number("op").unwrap(), number(input, "device"));
                 let id = format!("temp-{op}");
-                let row = child_row(&id, device, None, &format!("t{op}"));
+                let row = child_row(&id, "c1", Some(device), None, &format!("t{op}"));
                 match self.ops.get(&op) {
                     None => intent_creating(&self.store, op, &row),
                     Some(Op::Open) => write(&self.store, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::LocalRows { model: "messages".into(), rows: vec![row] }]),
@@ -119,16 +174,35 @@ impl Landing {
                     return;
                 }
                 let (temp, real) = (format!("temp-{op}"), format!("r{op}"));
-                let (at, seq) = (number(input, "at"), optional(number(input, "seq")));
+                let (at, seq) = (Some(number(input, "at")), optional(number(input, "seq")));
                 let ops = vec![
                     StoreOp::Swap { model: "messages".into(), temp: temp.clone(), real: real.clone() },
-                    StoreOp::Rows { model: "messages".into(), rows: vec![child_row(&real, at, seq, &format!("s{op}"))] },
+                    StoreOp::Rows { model: "messages".into(), rows: vec![child_row(&real, "c1", at, seq, &format!("s{op}"))] },
                     StoreOp::RemoveIntent { op_id: op },
                 ];
                 write(&self.store, BatchAuthor::Outbox, Vec::new(), ops);
                 self.children.remove(&temp);
-                self.children.insert(real.clone(), Child { id: real, at: Some(at), seq, body: format!("s{op}") });
+                self.children.insert(real.clone(), Child { id: real, at, seq, body: format!("s{op}") });
                 self.ops.insert(op, Op::Done);
+            }
+            "edit" | "hide" => {
+                let (op, id) = (input.number("op").unwrap(), text("id"));
+                let Some(base) = self.children.get(&id).filter(|child| !child.temp() && !self.locked(&id)).cloned() else { return };
+                if self.ops.contains_key(&op) {
+                    return;
+                }
+                if input.name == "edit" {
+                    let (at, seq) = (number(input, "at"), number(input, "seq"));
+                    let body = format!("e{op}");
+                    intent_creating(&self.store, op, &child_row(&id, "c1", Some(at), Some(seq), &body));
+                    self.children.insert(id.clone(), Child { id: id.clone(), at: Some(at), seq: Some(seq), body });
+                } else {
+                    intent_hiding(&self.store, op, "messages", &id);
+                    self.children.remove(&id);
+                }
+                self.reached.insert(if input.name == "edit" { "open edit of a confirmed child" } else { "open hide of a confirmed child" });
+                self.held.insert(op, (id, base));
+                self.ops.insert(op, Op::Open);
             }
             "rollback" => {
                 let op = input.number("op").unwrap();
@@ -136,16 +210,29 @@ impl Landing {
                     return;
                 }
                 write(&self.store, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RollBack { op_id: op }, StoreOp::RemoveIntent { op_id: op }]);
-                self.children.remove(&format!("temp-{op}"));
+                match self.held.remove(&op) {
+                    Some((id, base)) => {
+                        self.children.insert(id, base);
+                        self.reached.insert("rollback of an edit or a hide");
+                    }
+                    None => {
+                        self.children.remove(&format!("temp-{op}"));
+                    }
+                }
                 self.ops.insert(op, Op::Done);
             }
             "remove" => {
                 let id = text("id");
-                if !self.children.get(&id).is_some_and(|child| !child.temp()) {
+                if !self.children.get(&id).is_some_and(|child| !child.temp()) || self.locked(&id) {
                     return;
                 }
                 write(&self.store, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RemoveRows { model: "messages".into(), ids: vec![id.clone()] }]);
                 self.children.remove(&id);
+                self.tombstones.insert(id.clone());
+                if self.server.as_ref().is_some_and(|server| server.id.as_deref() == Some(id.as_str())) {
+                    self.server = None;
+                    self.reached.insert("destroy of the child the server value names");
+                }
             }
             other => panic!("no input {other}"),
         }
@@ -193,13 +280,20 @@ impl Owner for SetsOwner {
     }
 
     async fn real(&self) -> Box<dyn Sut> {
-        let store = Arc::new(Store::open_models(None, all_specs(), None, Arc::new(crate::runtime::ManualClock::new(std::time::Duration::from_millis(1_000_000)))).unwrap());
-        put(&store, "chats", json!({"id": "c1", "title": "t"}));
-        Box::new(Landing { store, server: None, children: BTreeMap::new(), ops: BTreeMap::new(), history: Vec::new() })
+        Box::new(self.landing().await)
     }
 
     fn properties(&self) -> Vec<Property> {
         vec![Property { name: EQUALS_F, check: equals_f }, Property { name: SAME_REVISION, check: same_revision }]
+    }
+}
+
+impl SetsOwner {
+    async fn landing(&self) -> Landing {
+        let store = Arc::new(Store::open_models(None, all_specs(), None, Arc::new(crate::runtime::ManualClock::new(std::time::Duration::from_millis(1_000_000)))).unwrap());
+        put(&store, "chats", json!({"id": "c1", "title": "t"}));
+        put(&store, "chats", json!({"id": "c2", "title": "t"}));
+        Landing { store, server: None, children: BTreeMap::new(), ops: BTreeMap::new(), held: BTreeMap::new(), tombstones: BTreeSet::new(), parent_rows: 0, reached: BTreeSet::new(), history: Vec::new() }
     }
 }
 
@@ -238,19 +332,33 @@ fn data_sets_property_equals_the_function() {
 
 #[test]
 fn data_sets_property_generator_reaches_the_cells() {
-    let inputs = seeded(&alphabet(), 7919, 400);
-    let kinds: std::collections::BTreeSet<&str> = inputs.iter().map(|input| input.name.as_str()).collect();
-    assert_eq!(kinds.len(), 8, "{kinds:?}");
-    let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
-    let reached = runtime.block_on(async {
-        let mut real = SetsOwner.real().await;
-        let mut seen = std::collections::BTreeSet::new();
-        for input in &inputs {
-            let observed = real.apply(input).await;
-            let want = &observed[0].value["want"];
-            seen.insert(want["lastMessageId"].as_str().map(|id| if id.starts_with("temp-") { "temp" } else if id.starts_with('r') { "confirmed" } else { "plain" }));
-        }
-        seen
+    let cells = [
+        "server row with part of the fields",
+        "child moved to another parent",
+        "open edit of a confirmed child",
+        "open hide of a confirmed child",
+        "rollback of an edit or a hide",
+        "destroy of the child the server value names",
+        "tombstone refuses the answer",
+        "event or page lifts the tombstone",
+    ];
+    let reached: BTreeSet<&'static str> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (1..=SEEDS)
+            .map(|seed| {
+                scope.spawn(move || {
+                    let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+                    runtime.block_on(async {
+                        let mut landing = SetsOwner.landing().await;
+                        for input in &seeded(&alphabet(), seed * 7919, STEPS) {
+                            landing.apply(input).await;
+                        }
+                        landing.reached
+                    })
+                })
+            })
+            .collect();
+        handles.into_iter().flat_map(|handle| handle.join().unwrap()).collect()
     });
-    assert!(reached.contains(&Some("temp")) && reached.contains(&Some("confirmed")) && reached.contains(&Some("plain")), "{reached:?}");
+    let missing: Vec<&str> = cells.into_iter().filter(|cell| !reached.contains(cell)).collect();
+    assert!(missing.is_empty(), "the traces of the property never reach: {missing:?}");
 }
