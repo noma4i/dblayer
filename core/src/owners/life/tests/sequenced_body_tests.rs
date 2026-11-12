@@ -31,7 +31,7 @@ impl World {
         let config = crate::transport::EncryptedConfig { origin: crate::transport::encrypted::tests::vectors_tests::origin().to_string(), server_key: crate::transport::encrypted::tests::vectors_tests::public_key_der_b64().to_string(), pin: crate::transport::encrypted::tests::vectors_tests::pin().to_string(), ..crate::transport::encrypted::tests::protocol_tests::config() };
         let client = Client::new(&config, self.server.clone(), self.credentials.clone(), db.clone(), self.clock.clone(), Arc::new(crate::transport::MockTransport::new())).unwrap();
         let life = client.start_owners();
-        crate::test_wait::within(life.set_online(true).wait()).await;
+        crate::test_wait::within(life.set_online(true, crate::ffi::next_stamp()).wait()).await;
         (client, life)
     }
 }

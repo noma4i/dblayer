@@ -121,7 +121,7 @@ async fn call_run_answers_by_epoch_and_network() {
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new());
-    assert_eq!(answer(life.set_online(false)).await, Reply::Online { closed: false });
+    assert_eq!(answer(life.set_online(false, crate::ffi::next_stamp())).await, Reply::Online { closed: false });
     assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)), "a database without a session client hands the call to Calls in every state");
     life.credential_committed(IDENTITY);
     crate::test_wait::settled(&life, "the identity was published", || life.published().identity.is_some()).await;
@@ -129,7 +129,7 @@ async fn call_run_answers_by_epoch_and_network() {
     assert_eq!(published.epoch, 2);
     assert_eq!(answer(life.run(2, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)));
     assert!(matches!(crate::test_wait::within(life.run(1, "Op".into(), "{}".into()).wait()).await, crate::runtime::Outcome::EpochEnded(_)), "call_run_stale: the wait of an ended epoch ends with the end of the epoch");
-    assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
+    assert_eq!(answer(life.set_online(true, crate::ffi::next_stamp())).await, Reply::Online { closed: false });
     transport.enqueue("Op", MockReply::data(json!({ "feed": [1, 2] })));
     assert_eq!(answer(life.run(2, "Op".into(), "{}".into())).await, Reply::Call(Ok("[1,2]".into())));
     assert_eq!(answer(life.run(2, "Missing".into(), "{}".into())).await, Reply::Call(Err(CallError::Invalid)), "call_run_unknown");
@@ -205,7 +205,7 @@ async fn call_mutate_plain_goes_through_epoch_gate() {
     life.register_operations(vec![("Change".into(), crate::owners::calls::CallKind::Mutate)], Vec::new());
     life.credential_committed(IDENTITY);
     crate::test_wait::settled(&life, "the identity was published", || life.published().identity == Some(IDENTITY)).await;
-    assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
+    assert_eq!(answer(life.set_online(true, crate::ffi::next_stamp())).await, Reply::Online { closed: false });
     let epoch = life.published().epoch;
     let first = life.run(epoch, "Change".into(), "{}".into());
     crate::test_wait::signalled(&held.entered, "mutation entered the transport", || held.calls.load(Ordering::SeqCst) == 1).await;
@@ -281,7 +281,7 @@ async fn a_loaded_page_lands_through_the_store_and_the_caller_hears_loaded() {
     operations.declare([crate::owners::read::ReadOperation { name: "Mine".into(), document: "query Mine { mine { edges { node { id userId text } } pageInfo { hasNextPage endCursor } } }".into(), root_path: "mine".into(), page_size: 20 }]);
     setup.read_operations = Some(operations);
     let life = tokio::task::spawn_blocking(move || Life::start(setup).expect("the first publish comes")).await.unwrap();
-    assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
+    assert_eq!(answer(life.set_online(true, crate::ffi::next_stamp())).await, Reply::Online { closed: false });
     let key = crate::owners::read::windows::WindowKey::relation("moments", "mine", json!({"userId": "u1"}).as_object().unwrap());
     let epoch = life.published().epoch;
     life.credential_committed(2);
@@ -331,9 +331,9 @@ async fn net_prop_connectivity_not_database() {
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new());
-    assert_eq!(answer(life.set_online(false)).await, Reply::Online { closed: false });
+    assert_eq!(answer(life.set_online(false, crate::ffi::next_stamp())).await, Reply::Online { closed: false });
     assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)));
-    assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
+    assert_eq!(answer(life.set_online(true, crate::ffi::next_stamp())).await, Reply::Online { closed: false });
     transport.enqueue("Op", MockReply::data(json!({ "feed": [1] })));
     assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Ok("[1]".into())));
     assert_eq!(transport.calls().len(), 1);
@@ -348,7 +348,7 @@ async fn net_prop_no_request_before_snapshot() {
     life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new());
     assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)));
     assert!(transport.calls().is_empty(), "no request left before the network said it is online");
-    assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
+    assert_eq!(answer(life.set_online(true, crate::ffi::next_stamp())).await, Reply::Online { closed: false });
     transport.enqueue("Op", MockReply::data(json!({ "feed": [1] })));
     assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Ok("[1]".into())));
     assert_eq!(transport.calls().len(), 1);

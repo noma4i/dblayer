@@ -43,7 +43,7 @@ impl World {
     async fn open(&self, db: &Arc<Store>) -> (Arc<Client>, Arc<crate::owners::life::Life>) {
         let client = Client::new(&config(), self.server.clone(), self.credentials.clone(), db.clone(), self.clock.clone(), Arc::new(crate::transport::MockTransport::new())).unwrap();
         let life = client.start_owners();
-        crate::test_wait::within(life.set_online(true).wait()).await;
+        crate::test_wait::within(life.set_online(true, crate::ffi::next_stamp()).wait()).await;
         (client, life)
     }
 }
@@ -373,7 +373,7 @@ fn open_with(world: &World, slot: Arc<ProbeSlot>, db: &Arc<Store>) -> (Arc<Clien
     *slot.db.lock().unwrap() = Some(db.clone());
     let client = Client::new(&config(), world.server.clone(), slot, db.clone(), world.clock.clone(), Arc::new(crate::transport::MockTransport::new())).unwrap();
     let life = client.start_owners();
-    drop(life.set_online(true));
+    drop(life.set_online(true, crate::ffi::next_stamp()));
     (client, life)
 }
 

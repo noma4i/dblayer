@@ -52,7 +52,7 @@ async fn sess_prop_cut_before_transport() {
         let db = Store::open_models(None, Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
         let client = Client::new(&crate::transport::encrypted::tests::protocol_tests::config(), server.clone(), slot.clone(), db, clock, Arc::new(crate::transport::MockTransport::new())).unwrap();
         let life = client.start_owners();
-        within(life.set_online(true).wait()).await;
+        within(life.set_online(true, crate::ffi::next_stamp()).wait()).await;
         client.session_call("social", json!({})).await.unwrap();
         let before = slot.reads.load(Ordering::SeqCst);
         mutate(&life, 1 << 41).await;

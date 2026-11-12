@@ -37,7 +37,7 @@ impl Client {
         let seal = Arc::new(crate::owners::session_seal::SealConfig::new(&config(), self.clock.clone()).unwrap());
         let ports = crate::owners::life::Ports { db: self.db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), secret: Some(self.secret.clone()), exchange: Some(self.exchange.clone()), seal: Some(seal), transfer: None, cable: None, read_operations: None };
         let life = Arc::new(crate::owners::life::Life::start(ports).expect("the owners started"));
-        drop(life.set_online(true));
+        drop(life.set_online(true, crate::ffi::next_stamp()));
         let _ = self.life.set(life.clone());
         life
     }

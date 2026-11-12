@@ -146,10 +146,10 @@ fn net_prop_snapshot_after_create() {
     let inputs = [online(true), snapshot(Peer::Calls, 1), snapshot(Peer::Outbox, 1), online(false), snapshot(Peer::Feed, 2)];
     for order in orders(&inputs) {
         let mut twin = Twin::new();
-        let (mut value, mut answered) = (false, Vec::new());
+        let (mut value, mut applied, mut answered) = (false, 0, Vec::new());
         for input in order {
             match input {
-                NetworkInput::SetOnline { online, .. } => value = online,
+                NetworkInput::SetOnline { online, stamp, .. } => { if stamp > applied { value = online; applied = stamp; } }
                 NetworkInput::SnapshotRequest { owner, epoch } => answered.push((owner, epoch, value)),
                 _ => {}
             }
