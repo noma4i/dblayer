@@ -76,6 +76,7 @@ pub struct Source {
 #[derive(Clone, Debug)]
 pub struct SuppliedSource {
     pub source: Source,
+    pub prepare: Option<crate::ffi::upload_wire::WirePrepare>,
     pub steps: Steps,
     pub values: crate::owners::store::IntentEffects,
     /// The local fields of the values as a JSON object, written by the transaction of the copy.
@@ -631,6 +632,7 @@ pub struct TransferState {
     pub(super) next_attempt: AttemptId,
     pub(super) next_timer: u64,
     pub put_timeout: std::time::Duration,
+    pub sizing: super::upload::Sizing,
     pub drained: bool,
     /// The root of the answer of the abort operation.
     pub abort_root: String,
@@ -680,6 +682,7 @@ impl TransferState {
             next_attempt: 1,
             next_timer: 1,
             put_timeout: super::upload::UploadConfig::default().put_timeout,
+            sizing: super::upload::Sizing { multipart_declared: false, single_declared: true, threshold: super::upload::UploadConfig::default().multipart_threshold, part_size: super::upload::UploadConfig::default().part_size },
             drained: false,
             abort_root: "abortMultipart".into(),
             starts_held: false,

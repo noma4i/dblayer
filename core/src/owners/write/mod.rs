@@ -22,6 +22,7 @@ mod transfer_accept;
 mod transfer_batch;
 mod transfer_end;
 mod transfer_open;
+mod transfer_prepare;
 mod transfer_steps;
 pub mod transfer_types;
 pub mod rounds;

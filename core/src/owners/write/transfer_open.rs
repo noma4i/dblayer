@@ -137,6 +137,7 @@ impl TransferState {
             }
             return self.begin_failure(now, id, "missing_file".into(), false, fx);
         }
+        if row.prepare.is_some() { return self.restore_prepare(id, fx); }
         let shown = if row.source.as_ref().is_some_and(|source| row.confirmed_parts >= source.parts) { Shown::Uploading { progress: 100 } } else { Shown::Queued };
         self.show(id, shown, fx);
         self.rounds_needed(vec![id], fx);
@@ -259,6 +260,7 @@ impl TransferState {
         }
         let singles: Vec<_> = self.scan().filter(|transfer| transfer.batch_id.is_none() && transfer.stage == TransferStage::PersistingBatchIntent && !self.pending.values().any(|pending| pending.ids.contains(&transfer.transfer_id))).map(|transfer| transfer.transfer_id).collect();
         for id in singles { self.store(&[id], StoreKind::BatchIntent, fx); }
+        if self.scan().any(|transfer| transfer.stage == TransferStage::Preparing) { self.free_prepare_slot(fx); }
         self.start_in_order(now, fx);
     }
 }

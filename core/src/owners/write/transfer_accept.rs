@@ -28,6 +28,7 @@ impl TransferState {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let (file, staged) = (source.source.clone(), transfer.previous.is_some());
         transfer.source = Some(file.clone());
+        transfer.prepare.clone_from(&source.prepare);
         transfer.steps = Some(source.steps.clone());
         transfer.supply_values = source.values.clone();
         transfer.supply_local = source.local.clone();
@@ -281,11 +282,13 @@ impl TransferState {
     fn group_of(&self, id: TransferId) -> Option<u64> { self.transfers.get(&id).and_then(|transfer| transfer.batch_id) }
 
     pub(super) fn copy_done(&mut self, id: TransferId, attempt_id: AttemptId, copy: CopiedBlob, fx: &mut Fx) {
+        if self.stage_of(id) == Some(TransferStage::Measuring) { return self.measured(id, attempt_id, copy, fx); }
         let CopiedBlob { size, sha256, place, cached } = copy;
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if transfer.stage != TransferStage::Copying || transfer.attempt_id != attempt_id {
             return;
         }
+        let cached = if transfer.prepare.is_some() { CachedBlob::Miss } else { cached };
         transfer.size = size;
         transfer.sha256 = sha256;
         transfer.place = Some(place);
@@ -316,7 +319,8 @@ impl TransferState {
     }
 
     /// `CopyFailed` of the current attempt: a call that waits gets the error and the metadata goes, a restored transfer is `Failed`.
-    pub(super) fn copy_failed(&mut self, id: TransferId, attempt_id: AttemptId, error: String, fx: &mut Fx) {
+    pub(super) fn copy_failed(&mut self, now: Time, id: TransferId, attempt_id: AttemptId, error: String, fx: &mut Fx) {
+        if self.stage_of(id) == Some(TransferStage::Measuring) { return self.measure_failed(now, id, attempt_id, error, fx); }
         let Some(transfer) = self.transfers.get(&id) else { return };
         if transfer.stage != TransferStage::Copying || transfer.attempt_id != attempt_id {
             return;
@@ -357,7 +361,7 @@ impl TransferState {
 
     /// The temporary file took the place of the copy: the marker of the row goes, a call that waits for the swap gets its answer.
     pub(super) fn staged_promoted(&mut self, now: Time, id: TransferId, fx: &mut Fx) {
-        let Some((key, waiting)) = self.transfers.get(&id).map(|transfer| (transfer.key.clone(), transfer.stage == TransferStage::PersistingCopy)) else { return };
+        let Some((key, stage)) = self.transfers.get(&id).map(|transfer| (transfer.key.clone(), transfer.stage)) else { return };
         if let Some(previous) = self.transfers.get_mut(&id).and_then(|transfer| transfer.previous.take()) {
             if let Some(upload_id) = previous.upload_id {
                 self.orphans.insert(upload_id, previous.key);
@@ -366,11 +370,16 @@ impl TransferState {
         }
         let batch = self.send_batch(vec![StoreOp::UploadStaged { key }], fx);
         self.pending.insert(batch, Pending { ids: vec![id], kind: StoreKind::StagedCleared, orphan: None, written: BTreeMap::new() });
-        if waiting { self.copy_committed(now, &[id], fx); }
+        match stage {
+            TransferStage::PersistingCopy => self.copy_committed(now, &[id], fx),
+            TransferStage::PersistingPrepared => self.prepared_ready(now, id, fx),
+            _ => {}
+        }
     }
 
     /// The rename of the temporary file failed: the old copy and its metadata stay, only the temporary file goes, the call that waits for the swap learns it.
-    pub(super) fn staged_promote_failed(&mut self, id: TransferId, detail: String, fx: &mut Fx) {
+    pub(super) fn staged_promote_failed(&mut self, now: Time, id: TransferId, detail: String, fx: &mut Fx) {
+        if self.stage_of(id) == Some(TransferStage::PersistingPrepared) { return self.fail_prepare(now, id, crate::value::sync::PrepareReason::Failed, detail, fx); }
         let fault = Fault::Rejected(RejectReason::Storage(detail));
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let (Some(_), Some(previous)) = (transfer.supply_back.take(), transfer.previous.take()) else { return };
@@ -414,6 +423,24 @@ impl TransferState {
         if let Some(rep) = rep { reply(fx, rep, TransferAnswer::Err(fault)); }
     }
 
+    /// The file of the transfer is ready: a file the server holds already goes to the mutation, any other waits for its first part.
+    pub(super) fn enter_upload(&mut self, id: TransferId, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        let (cached, batch) = (transfer.from_cache, transfer.batch_id);
+        if cached && batch.is_none() { transfer.has_operation = true; }
+        transfer.stage = if cached && batch.is_some() { TransferStage::BatchReady } else if cached { TransferStage::Mutating } else { TransferStage::Ready };
+        transfer.intent_live = cached && batch.is_none();
+        if cached && batch.is_some() {
+            self.show(id, Shown::Uploading { progress: 100 }, fx);
+            if let Some(group) = batch { self.batch_release(group, fx); }
+        } else if cached {
+            self.show(id, Shown::Uploading { progress: 100 }, fx);
+            self.submit_mutation(id, fx);
+        } else {
+            self.show(id, Shown::Queued, fx);
+        }
+    }
+
     /// `PersistingCopy x Committed`: the receipt, the transfer is `Ready`.
     pub(super) fn copy_committed(&mut self, now: Time, ids: &[TransferId], fx: &mut Fx) {
         let swapping: Vec<TransferId> = ids.iter().copied().filter(|id| self.transfers.get(id).is_some_and(|transfer| transfer.previous.is_some())).collect();
@@ -445,24 +472,12 @@ impl TransferState {
             transfer.error = None;
             transfer.failed_at = None;
             transfer.etags.clear();
-            let cached = transfer.from_cache;
-            let batch = transfer.batch_id;
-            if cached && batch.is_none() { transfer.has_operation = true; }
-            transfer.stage = if cached && batch.is_some() { TransferStage::BatchReady } else if cached { TransferStage::Mutating } else { TransferStage::Ready };
-            transfer.intent_live = cached && batch.is_none();
+            let preparing = transfer.prepare.is_some();
             receipts.push(self.receipt(id));
             if let (Some(back), Some(rep)) = (supplied, supply_reply) {
                 reply(fx, rep, if back == TransferStage::Failed { TransferAnswer::Receipt(self.receipt(id)) } else { TransferAnswer::Ok });
             }
-            if cached && batch.is_some() {
-                self.show(id, Shown::Uploading { progress: 100 }, fx);
-                if let Some(group) = batch { self.batch_release(group, fx); }
-            } else if cached {
-                self.show(id, Shown::Uploading { progress: 100 }, fx);
-                self.submit_mutation(id, fx);
-            } else {
-                self.show(id, Shown::Queued, fx);
-            }
+            if preparing { self.queue_prepare(id, fx); } else { self.enter_upload(id, fx); }
         }
         for (position, &id) in ids.iter().enumerate() {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };

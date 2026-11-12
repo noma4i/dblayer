@@ -96,7 +96,7 @@ fn shown_columns(shown: &crate::owners::write::transfer::Shown) -> (Option<Strin
     use crate::owners::write::transfer::Shown;
     use crate::owners::write::upload::{UploadStage, UploadStatus};
     let (status, stage) = match shown {
-        Shown::Copying => (UploadStatus::Preparing, Some(UploadStage::Prepare)),
+        Shown::Copying | Shown::Preparing { .. } => (UploadStatus::Preparing, Some(UploadStage::Prepare)),
         Shown::WaitingSource => (UploadStatus::Waiting, Some(UploadStage::Prepare)),
         Shown::Queued => (UploadStatus::Queued, Some(UploadStage::Prepare)),
         Shown::Uploading { progress: 100.. } => (UploadStatus::Sending, Some(UploadStage::Mutation)),

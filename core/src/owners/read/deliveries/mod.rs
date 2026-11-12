@@ -173,6 +173,7 @@ impl BlobStatus {
             Shown::Copying => ("copying", 0, None),
             Shown::WaitingSource => ("waiting", 0, None),
             Shown::Queued => ("queued", 0, None),
+            Shown::Preparing { progress } => ("preparing", u64::from(*progress), None),
             Shown::Uploading { progress } => ("uploading", u64::from(*progress), None),
             Shown::Failed { error } => ("failed", 0, Some(error.clone())),
         };

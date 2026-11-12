@@ -35,6 +35,11 @@ impl TransferState {
                 run(fx, TransferEffect::CopyCancel { transfer_id: id });
                 self.begin_cancel(id, Some((rep, cancel)), None, fx);
             }
+            TransferStage::Preparing | TransferStage::Measuring => {
+                self.stop_prepare(id, fx);
+                self.begin_cancel(id, Some((rep, cancel)), None, fx);
+                self.free_prepare_slot(fx);
+            }
             TransferStage::Ready => {
                 self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::Ready), fx);
                 self.start_in_order(now, fx);
@@ -136,6 +141,7 @@ impl TransferState {
                 self.start_source(id, source, TransferStage::Failed, rep, fx);
             }
             TransferStage::Failed if transfer.error.as_deref() == Some("RestoreFailed") => Self::refuse(fx, rep, Fault::RestoreFailed),
+            TransferStage::Failed if transfer.prepare.is_some() && source.is_some() => Self::refuse(fx, rep, Fault::Invalid),
             TransferStage::Failed if source.is_some() && transfer.source.is_some() && transfer.place.is_some() => {
                 let Some(source) = source else { return };
                 transfer.previous = Some(Box::new(transfer.clone()));
@@ -168,12 +174,12 @@ impl TransferState {
         transfer.stage = TransferStage::Ready;
         transfer.error = None;
         transfer.failed_at = None;
-        let rep = transfer.retry_reply.take();
+        let (rep, preparing) = (transfer.retry_reply.take(), transfer.prepare.is_some());
         let receipt = self.receipt(id);
         if let Some(rep) = rep {
             reply(fx, rep, TransferAnswer::Receipt(receipt));
         }
-        self.show(id, Shown::Queued, fx);
+        if preparing { self.queue_prepare(id, fx); } else { self.show(id, Shown::Queued, fx); }
         self.rounds_needed(vec![id], fx);
         self.start_in_order(now, fx);
     }
@@ -301,6 +307,7 @@ impl TransferState {
             self.finish(id, fx);
             self.batch_after_removal(id, fx);
             if let Some(transfer) = self.transfers.remove(&id) {
+                if transfer.prepare.is_some() { self.free_prepare_slot(fx); }
                 if !transfer.outcomes.is_empty() { self.completed.insert(id, transfer.outcomes); }
                 if let Some(group_id) = transfer.batch_id {
                     if let Some(group) = self.groups.get_mut(&group_id) { group.ids.retain(|member| *member != id); }

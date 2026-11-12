@@ -30,6 +30,7 @@ impl TransferState {
         }
         match transfer.stage {
             TransferStage::Accepting | TransferStage::Copying | TransferStage::CopyReady => Shown::Copying,
+            TransferStage::Preparing | TransferStage::Measuring | TransferStage::PersistingPrepared => Shown::Preparing { progress: transfer.prep.as_ref().map_or(100, |prep| prep.percent) },
             TransferStage::AwaitingSource => Shown::WaitingSource,
             TransferStage::Failed => Shown::Failed { error: transfer.error.clone().unwrap_or_default() },
             TransferStage::Done => Shown::Gone,
@@ -222,7 +223,8 @@ impl TransferState {
                         }
                     }
                 } else {
-                    let cached_copy = kind == StoreKind::SyncUpload && transfer.stage == TransferStage::PersistingCopy && transfer.from_cache;
+                    let persisting_file = matches!(transfer.stage, TransferStage::PersistingCopy | TransferStage::PersistingPrepared);
+                    let cached_copy = kind == StoreKind::SyncUpload && persisting_file && transfer.from_cache;
                     let kind = if cached_copy { StoreKind::Completed } else { kind };
                     if kind == StoreKind::Retrying || (transfer.stage == TransferStage::PersistingCopy && transfer.supply_back == Some(TransferStage::Failed)) {
                         if let Some(outcome) = transfer.outcomes.get(&transfer.cycle_id).filter(|outcome| !matches!(outcome, OutboxOutcome::Ended(_))) {
@@ -243,7 +245,8 @@ impl TransferState {
                         ops.push(StoreOp::RemoveAnswer { request_id });
                     }
                     let shown = transfer.last_shown.clone().unwrap_or_else(|| upload_kind.shown());
-                    if !matches!(kind, StoreKind::Retrying | StoreKind::Failed) && transfer.stage != TransferStage::PersistingCopy && shown != Shown::Gone && shown.columns() != upload_kind.shown().columns() {
+                    if transfer.stage == TransferStage::PersistingPrepared { ops.push(StoreOp::RemovePrepare { key: transfer.key.clone() }); }
+                    if !matches!(kind, StoreKind::Retrying | StoreKind::Failed) && !persisting_file && shown != Shown::Gone && shown.columns() != upload_kind.shown().columns() {
                         ops.push(Self::shown_op(transfer, shown));
                     }
                     if kind == StoreKind::Failed && transfer.failure_abort {
@@ -251,7 +254,7 @@ impl TransferState {
                             ops.push(StoreOp::UploadOrphan { upload_id, key: transfer.key.clone() });
                         }
                     }
-                    if transfer.stage == TransferStage::PersistingCopy && transfer.cache_stale {
+                    if persisting_file && transfer.cache_stale {
                         ops.push(StoreOp::BlobCacheRemove { content_sha256: transfer.sha256.clone() });
                     }
                     if let (StoreKind::Completed, TransferStage::PersistingComplete, false, Some(blob_id), Some(created_at)) = (kind, transfer.stage, transfer.from_cache, transfer.signed_id.clone(), transfer.blob_created_at) {
@@ -554,6 +557,10 @@ impl TransferState {
     pub(super) fn interrupt(&mut self, id: TransferId, cause: crate::ffi::EndCause, fx: &mut Fx) {
         self.release_step(id, fx);
         self.leave_retry(id, fx);
+        if self.transfers.get(&id).is_some_and(|transfer| transfer.prepare.is_some()) {
+            self.stop_prepare(id, fx);
+            self.free_prepare_slot(fx);
+        }
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let fault = Fault::Ended(cause.clone());
         let removal = transfer.removal.clone();
@@ -614,7 +621,7 @@ impl TransferState {
         for (id, columns) in &pending.written {
             let transition = pending.kind == StoreKind::Retrying
                 || (matches!(pending.kind, StoreKind::Failed | StoreKind::MixedOutcomes) && self.stage_of(*id) == Some(TransferStage::PersistingFailure))
-                || (matches!(pending.kind, StoreKind::SyncUpload | StoreKind::Completed) && self.stage_of(*id) == Some(TransferStage::PersistingCopy));
+                || (matches!(pending.kind, StoreKind::SyncUpload | StoreKind::Completed) && matches!(self.stage_of(*id), Some(TransferStage::PersistingCopy | TransferStage::PersistingPrepared)));
             self.shown_committed(*id, *columns, (pending.kind == StoreKind::Shown, revision), !transition, fx);
         }
         if pending.kind == StoreKind::StagedRestored { return self.staged_restored(pending.ids[0], fx); }
@@ -666,6 +673,7 @@ impl TransferState {
         match stage {
             Some(TransferStage::Accepting) => self.accepting_committed(&pending.ids, fx),
             Some(TransferStage::PersistingCopy) => self.copy_committed(now, &pending.ids, fx),
+            Some(TransferStage::PersistingPrepared) => self.prepared_committed(now, pending.ids[0], fx),
             Some(TransferStage::PersistingAttempt) => self.attempt_committed(now, pending.ids[0], fx),
             Some(TransferStage::PersistingBatchIntent) => self.batch_intent_committed(now, &pending.ids, fx),
             Some(TransferStage::PersistingPart) => self.part_committed(now, pending.ids[0], fx),
@@ -736,7 +744,7 @@ impl TransferState {
             return;
         }
         let stage = pending.ids.first().and_then(|id| self.stage_of(*id));
-        let persisting = matches!(stage, Some(TransferStage::PersistingCopy | TransferStage::PersistingAttempt | TransferStage::PersistingBatchIntent | TransferStage::PersistingRetry | TransferStage::PersistingPart | TransferStage::PersistingComplete | TransferStage::PersistingFailure | TransferStage::Removing));
+        let persisting = matches!(stage, Some(TransferStage::PersistingCopy | TransferStage::PersistingAttempt | TransferStage::PersistingBatchIntent | TransferStage::PersistingRetry | TransferStage::PersistingPart | TransferStage::PersistingComplete | TransferStage::PersistingFailure | TransferStage::PersistingPrepared | TransferStage::Removing));
         match (&rejected.reason, persisting) {
             (RejectReason::StaleGeneration { generations, .. }, _) if persisting || stage == Some(TransferStage::Accepting) => {
                 self.generations.extend(generations.clone());
@@ -751,6 +759,10 @@ impl TransferState {
                 if stage == Some(TransferStage::PersistingCopy) {
                     for &id in &pending.ids { self.remove_with(id, Removal::Invalid { error: detail.clone() }, fx); }
                     self.store(&pending.ids, StoreKind::Removed, fx);
+                    return;
+                }
+                if stage == Some(TransferStage::PersistingPrepared) {
+                    self.fail_prepare(now, pending.ids[0], crate::value::sync::PrepareReason::Failed, format!("Internal(Invalid): {detail}"), fx);
                     return;
                 }
                 if stage == Some(TransferStage::PersistingFailure) {
@@ -777,6 +789,7 @@ impl TransferState {
             (Some(TransferStage::PersistingBatchIntent), Some(_)) => self.storage_retry_batch(pending.kind, &pending.ids, fx),
             (Some(TransferStage::PersistingFailure), Some(_)) => self.failure_rejected(pending.kind, &pending.ids, fx),
             (Some(TransferStage::PersistingCopy), Some(_)) => self.copy_rejected(&pending.ids, rejected.reason, fx),
+            (Some(TransferStage::PersistingPrepared), Some(detail)) => self.fail_prepare(now, pending.ids[0], crate::value::sync::PrepareReason::Failed, detail, fx),
             (Some(TransferStage::PersistingAttempt | TransferStage::PersistingPart | TransferStage::PersistingComplete), Some(_)) => self.storage_retry(pending.ids[0], fx),
             (Some(_), None) => {
                 for id in pending.ids {
@@ -818,10 +831,10 @@ impl TransferState {
             TransferInput::RestoreReady { epoch } => self.restore_ready(now, epoch, fx),
             TransferInput::RoundStatus { epoch, transfer_ids, refused } => self.round_status(epoch, &transfer_ids, refused, fx),
             TransferInput::CopyDone { transfer_id, attempt_id, size, sha256, place, cached } => self.copy_done(transfer_id, attempt_id, CopiedBlob { size, sha256, place, cached }, fx),
-            TransferInput::CopyFailed { transfer_id, attempt_id, error } => self.copy_failed(transfer_id, attempt_id, error, fx),
+            TransferInput::CopyFailed { transfer_id, attempt_id, error } => self.copy_failed(now, transfer_id, attempt_id, error, fx),
             TransferInput::StagedPromoted { transfer_id } => self.staged_promoted(now, transfer_id, fx),
             TransferInput::StepAnswer { request_id, outcome } => self.held_step_answered(now, request_id, outcome, fx),
-            TransferInput::StagedPromoteFailed { transfer_id, detail } => self.staged_promote_failed(transfer_id, detail, fx),
+            TransferInput::StagedPromoteFailed { transfer_id, detail } => self.staged_promote_failed(now, transfer_id, detail, fx),
             TransferInput::OpReserved { target, result } => self.op_reserved(target, result, fx),
             TransferInput::ReplacementReserved { target, result } => {
                 let (result, operation) = match result { Ok((id, operation)) => (Ok(id), operation), Err(fault) => (Err(fault), None) };
@@ -874,6 +887,10 @@ impl TransferState {
             }
             TransferInput::Retry { key, source, reply } => self.retry(&key, source, reply, fx),
             TransferInput::SlotFreed => self.start_in_order(now, fx),
+            TransferInput::PrepareSlotFreed => self.start_prepares(fx),
+            TransferInput::Probed { transfer_id, attempt_id, outcome } => self.probed(now, transfer_id, attempt_id, outcome, fx),
+            TransferInput::PrepareProgress { transfer_id, attempt_id, percent } => self.prepare_progress(transfer_id, attempt_id, percent, fx),
+            TransferInput::Prepared { transfer_id, attempt_id, outcome } => self.prepared(now, transfer_id, attempt_id, outcome, fx),
             TransferInput::Online(Online(on)) => self.network_changed(now, Some(on), None, fx),
             TransferInput::PowerSaving(saving) => self.network_changed(now, None, Some(saving), fx),
             TransferInput::EpochStarted(started) => { self.epoch = started.epoch; self.base_generation = started.generation; },
