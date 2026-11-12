@@ -241,6 +241,9 @@ impl TransferState {
                     }
                     let upload_kind = if kind == StoreKind::SyncUpload && matches!(transfer.stage, TransferStage::Accepting | TransferStage::AwaitingSource) && transfer.source.is_none() { UploadKind::AwaitingSource } else { upload_kind(kind) };
                     ops.push(StoreOp::Upload { row: upload_row(transfer, kind), kind: upload_kind });
+                    if transfer.prepare.is_some() && matches!(transfer.stage, TransferStage::PersistingCopy | TransferStage::PersistingRetry) && matches!(kind, StoreKind::SyncUpload | StoreKind::Retrying) {
+                        ops.push(Self::shown_op(transfer, Shown::Preparing { progress: 0 }));
+                    }
                     if let (StoreKind::ConfirmedParts | StoreKind::Completed | StoreKind::Failed, Some(request_id)) = (kind, transfer.answer_saved) {
                         ops.push(StoreOp::RemoveAnswer { request_id });
                     }
