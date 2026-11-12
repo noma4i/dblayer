@@ -231,6 +231,10 @@ pub(super) struct Stand {
     preparer: Option<Arc<dyn Preparer>>,
 }
 
+impl Drop for Stand {
+    fn drop(&mut self) { crate::lock::assert_no_library_lock("Stand::drop"); }
+}
+
 impl Stand {
     pub(super) fn new() -> Self { Self { rig: SessionRig::new(), script: Arc::default(), puts: Arc::default(), root: None, keep_moment: false, preparer: None } }
 
