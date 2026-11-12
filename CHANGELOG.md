@@ -8,6 +8,9 @@
 
 ### Changed
 
+- Keep the server outcome of an operation when the disk refuses its answer rows as invalid: the outcome lands by a write without rows.
+- Retry the rollback of a refused operation after a disk refusal, also for a discard of an upload.
+- Return an operation that waits to retry to the queue when the network is lost, and retry at once when it returns.
 - Carry the reason text of a refused invalid write in `Invalid` errors.
 - Fail generation when `insert_on` lists `:node` and the model has no `node` scope.
 - Fail generation when a scope without `node:` declares the parameter `nodeId`.
