@@ -575,6 +575,8 @@ pub struct TransferState {
     pub(super) minted: BTreeMap<String, MintedDebt>,
     /// The orphans whose `Online(true)` or `RestoreReady` came while their abort was in flight.
     pub(super) orphan_owed: BTreeSet<String>,
+    /// `attempt_id` of the retry timer -> the refused write batch: its kind and its elements.
+    pub(super) retrying: BTreeMap<AttemptId, (StoreKind, Vec<TransferId>)>,
     /// The restored groups that still have an element without its file on the server.
     pub(super) open_groups: BTreeSet<u64>,
     pub(super) held: Vec<TransferInput>,
@@ -623,6 +625,7 @@ impl TransferState {
             orphan_flight: BTreeSet::new(),
             minted: BTreeMap::new(),
             orphan_owed: BTreeSet::new(),
+            retrying: BTreeMap::new(),
             open_groups: BTreeSet::new(),
             held: Vec::new(),
             waiting: BTreeMap::new(),

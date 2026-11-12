@@ -214,10 +214,7 @@ impl TransferState {
                 let group_reply = group.and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));
                 let own = ids.first().and_then(|id| self.transfers.get_mut(id)).and_then(|transfer| transfer.accept_reply.take());
                 for member in ids {
-                    if let Some((old, _)) = self.replacements.remove(&member) {
-                        if let Some(transfer) = self.transfers.get_mut(&old) { transfer.stage = TransferStage::Failed; transfer.removal = None; transfer.prior = None; }
-                        fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::FinishReplacement { target: ReserveTarget::Transfer(member), committed: false })));
-                    }
+                    self.restore_replaced(member, fx);
                     self.set(member, TransferStage::Done);
                 }
                 if let Some(rep) = own.or(group_reply) {
@@ -270,9 +267,8 @@ impl TransferState {
     pub(super) fn accepting_rejected(&mut self, ids: &[TransferId], reason: RejectReason, fx: &mut Fx) {
         let fault = if self.closing { Fault::Ended(crate::ffi::EndCause::Closed) } else { match reason {
             RejectReason::NoSession => Fault::SessionEnded,
-            RejectReason::StaleGeneration { .. } => Fault::Ended(crate::ffi::EndCause::SessionEnded),
             RejectReason::Closed => Fault::Closed,
-            reason @ (RejectReason::Storage(_) | RejectReason::Invalid(_)) => Fault::Rejected(reason),
+            reason @ (RejectReason::Storage(_) | RejectReason::Invalid(_) | RejectReason::StaleGeneration { .. }) => Fault::Rejected(reason),
         } };
         for &id in ids {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };

@@ -257,6 +257,14 @@ impl TransferState {
     }
 
     fn tick_retry(&mut self, now: crate::runtime::Time, id: TransferId, attempt_id: AttemptId, fx: &mut Fx) {
+        if let Some((kind, ids)) = self.retrying.remove(&attempt_id) {
+            let ids: Vec<TransferId> = ids.into_iter().filter(|member| self.transfers.get(member).is_some_and(|transfer| transfer.waiting_retry && transfer.attempt_id == attempt_id)).collect();
+            for member in &ids {
+                if let Some(transfer) = self.transfers.get_mut(member) { transfer.waiting_retry = false; }
+            }
+            if !ids.is_empty() { self.store(&ids, kind, fx); }
+            return;
+        }
         let Some(transfer) = self.transfers.get(&id) else { return };
         if transfer.attempt_id != attempt_id {
             return;
@@ -268,22 +276,9 @@ impl TransferState {
                 transfer.waiting_retry = false;
                 self.start_in_order(now, fx);
             }
-            TransferStage::PersistingFailure | TransferStage::Removing if self.group_entry(id).is_some_and(|group| self.phase_of(group) == Some(BatchPhase::Mutating)) => {
-                let ids = self.group_entry(id).map(|group| self.groups[&group].ids.iter().copied().filter(|member| matches!(self.stage_of(*member), Some(TransferStage::Removing | TransferStage::PersistingFailure))).collect::<Vec<_>>()).unwrap_or_default();
-                self.store(&ids, StoreKind::MixedOutcomes, fx);
-            }
-            TransferStage::PersistingFailure => self.store(&[id], StoreKind::Failed, fx),
             TransferStage::PersistingAttempt => self.store(&[id], StoreKind::SyncUpload, fx),
             TransferStage::PersistingPart => self.store(&[id], StoreKind::ConfirmedParts, fx),
             TransferStage::PersistingComplete => self.store(&[id], StoreKind::Completed, fx),
-            TransferStage::Removing => {
-                let ids = self.group_entry(id).map(|group| self.groups[&group].ids.iter().copied().filter(|member| self.stage_of(*member) == Some(TransferStage::Removing)).collect::<Vec<_>>()).unwrap_or_else(|| vec![id]);
-                self.store(&ids, StoreKind::Removed, fx);
-            }
-            TransferStage::PersistingBatchIntent => {
-                let ids = self.group_entry(id).map(|group| self.remaining(group).into_iter().filter(|member| self.stage_of(*member) == Some(TransferStage::PersistingBatchIntent)).collect::<Vec<_>>()).unwrap_or_else(|| vec![id]);
-                self.store(&ids, StoreKind::BatchIntent, fx);
-            }
             _ => {}
         }
     }

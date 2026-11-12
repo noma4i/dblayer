@@ -14,7 +14,7 @@ impl TransferState {
         self.remove_with(id, Removal::Cancel, fx);
         if let Some(transfer) = self.transfers.get_mut(&id) {
             transfer.cancel_reply = cancel;
-            transfer.prior = prior;
+            transfer.prior = prior.filter(|_| transfer.batch_id.is_none());
         }
         self.store(&[id], StoreKind::Removed, fx);
     }
@@ -201,6 +201,7 @@ impl TransferState {
     }
 
     pub(super) fn failure_committed(&mut self, id: TransferId, fx: &mut Fx) {
+        self.leave_retry(id, fx);
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if transfer.failure_abort {
             if let Some(upload_id) = transfer.upload_id.take() {
@@ -222,7 +223,7 @@ impl TransferState {
         self.send_orphans(false, fx);
     }
 
-    pub(super) fn failure_rejected(&mut self, id: TransferId, fx: &mut Fx) { self.storage_retry(id, fx); }
+    pub(super) fn failure_rejected(&mut self, kind: StoreKind, ids: &[TransferId], fx: &mut Fx) { self.storage_retry_batch(kind, ids, fx); }
 
     fn removal_replies(&mut self, id: TransferId, removal: &Removal, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
@@ -311,10 +312,9 @@ impl TransferState {
         self.start_in_order(now, fx);
     }
 
-    pub(super) fn removing_rejected(&mut self, now: crate::runtime::Time, ids: &[TransferId], reason: RejectReason, fx: &mut Fx) {
+    pub(super) fn removing_rejected(&mut self, now: crate::runtime::Time, kind: StoreKind, ids: &[TransferId], reason: RejectReason, fx: &mut Fx) {
         if let RejectReason::Storage(_) = reason {
-            if let Some(&first) = ids.first() { self.storage_retry(first, fx); }
-            return;
+            return self.storage_retry_batch(kind, ids, fx);
         }
         if !matches!(reason, RejectReason::Invalid(_)) {
             for &id in ids {
@@ -355,6 +355,7 @@ impl TransferState {
         }
         for id in answered {
             self.finish(id, fx);
+            self.batch_after_removal(id, fx);
         }
         self.start_in_order(now, fx);
     }
@@ -451,6 +452,7 @@ impl TransferState {
             self.scan().filter(|transfer| transfer.stage != TransferStage::Done).filter_map(|transfer| Self::orphan_of(transfer).map(|upload_id| (upload_id, transfer.key.clone()))).filter(|(upload_id, _)| !self.orphans.contains_key(upload_id)).collect()
         };
         self.pending.retain(|_, pending| pending.kind == StoreKind::ControlOrphan);
+        self.retrying.clear();
         for (upload_id, key) in unanswered.into_iter().chain(active) { self.minted.entry(upload_id).or_insert(MintedDebt { transfer: None, key, attempts: 1, attempt_id: 0 }); }
         let done: Vec<String> = self.minted.iter().filter(|(upload_id, debt)| !self.debt_live(upload_id, debt.transfer)).map(|(upload_id, _)| upload_id.clone()).collect();
         for upload_id in done { self.minted.remove(&upload_id); }
