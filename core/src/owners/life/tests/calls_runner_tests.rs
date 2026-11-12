@@ -61,11 +61,12 @@ fn call_pair_created_network_error_is_dropped() {
     let session_error = |class: ErrorClass, pending_retained: bool| AuthorOutcome::Error { class, error: SessionError::Network, pending_retained };
     let exhausted = |operation: &str, input: &dyn Fn() -> CallsInput| {
         let mut state = CallsState::new(1, Some(true), &[("Change", CallKind::Mutate), ("Read", CallKind::Query)]);
-        Calls::step(&mut state, CallsInput::Run { epoch: 1, operation: operation.into(), variables: "{}".into(), reply: 1 }, Time(0));
+        let started = Calls::step(&mut state, CallsInput::Run { epoch: 1, operation: operation.into(), variables: "{}".into(), reply: 1 }, Time(0));
+        let sent = started.iter().find_map(|effect| if let Effect::Run(CallsEffect::Request { request_id, .. }) = effect { Some(*request_id) } else { None }).unwrap();
         let mut released = false;
         for attempt in 1..=40 {
             let effects = Calls::step(&mut state, input(), Time(0));
-            released |= effects.iter().any(|effect| matches!(effect, Effect::Run(CallsEffect::Release { request_id: 1 })));
+            released |= effects.iter().any(|effect| matches!(effect, Effect::Run(CallsEffect::Release { request_id }) if *request_id == sent));
             if let Some(answer) = effects.iter().find_map(|effect| if let Effect::Run(CallsEffect::Reply { id: 1, answer }) = effect { Some(answer.clone().map(|_| ())) } else { None }) { return (Some(answer), released); }
             Calls::step(&mut state, CallsInput::RetryDue { call_id: 1, attempt }, Time(0));
         }

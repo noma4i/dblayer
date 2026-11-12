@@ -393,18 +393,20 @@ fn call_dropped() {
     assert!(matches!(query.feed(Input::RetryDue { call_id: 1, attempt: 1 }).effects.as_slice(), [CallsEffect::Request { call_id: 1, definition: crate::owners::calls::CallDefinition { kind: CallKind::Query, .. }, .. }]));
     let mut mutation = Twin::new();
     mutation.feed(run_mutate(11));
+    let sent = mutation.history.iter().find_map(|effect| if let CallsEffect::Request { request_id, .. } = effect { Some(*request_id) } else { None }).unwrap();
     let out = mutation.feed(Input::Dropped { call_id: 1 });
     assert!(out.effects.is_empty() && out.replies.is_empty());
-    assert!(matches!(mutation.feed(Input::RetryDue { call_id: 1, attempt: 1 }).effects.as_slice(), [CallsEffect::Request { request_id: 1, definition: crate::owners::calls::CallDefinition { kind: CallKind::Mutate, .. }, .. }]));
+    assert!(matches!(mutation.feed(Input::RetryDue { call_id: 1, attempt: 1 }).effects.as_slice(), [CallsEffect::Request { request_id, definition: crate::owners::calls::CallDefinition { kind: CallKind::Mutate, .. }, .. }] if *request_id == sent));
     use crate::runtime::{Effect, StateOwner};
     let mut state = CallsState::new(EPOCH, Some(true), &[("Change", CallKind::Mutate)]);
-    Calls::step(&mut state, CallsInput::Run { epoch: EPOCH, operation: "Change".into(), variables: "{}".into(), reply: 1 }, crate::runtime::Time(0));
+    let started = Calls::step(&mut state, CallsInput::Run { epoch: EPOCH, operation: "Change".into(), variables: "{}".into(), reply: 1 }, crate::runtime::Time(0));
+    let sent = started.iter().find_map(|effect| if let Effect::Run(CallsEffect::Request { request_id, .. }) = effect { Some(*request_id) } else { None }).unwrap();
     for attempt in 1..40 {
         Calls::step(&mut state, CallsInput::Dropped { call_id: 1 }, crate::runtime::Time(0));
         Calls::step(&mut state, CallsInput::RetryDue { call_id: 1, attempt }, crate::runtime::Time(0));
     }
     let exhausted = Calls::step(&mut state, CallsInput::Dropped { call_id: 1 }, crate::runtime::Time(0));
-    assert!(exhausted.iter().any(|effect| matches!(effect, Effect::Run(CallsEffect::Release { request_id: 1 }))));
+    assert!(exhausted.iter().any(|effect| matches!(effect, Effect::Run(CallsEffect::Release { request_id }) if *request_id == sent)));
     assert!(exhausted.iter().any(|effect| matches!(effect, Effect::Run(CallsEffect::Reply { id: 1, answer: Err(CallError::Dropped) }))));
 }
 
@@ -640,9 +642,10 @@ fn call_epoch_ended() {
     for operation in ["Op", "Change"] {
         let mut twin = Twin::new();
         twin.feed(Input::Run { epoch: EPOCH, operation: operation.into(), reply: 1 });
+        let sent = twin.history.iter().find_map(|effect| if let CallsEffect::Request { request_id, .. } = effect { Some(*request_id) } else { None }).unwrap();
         let out = twin.feed(Input::EpochEnded(End::Session));
         let kind = if operation == "Op" { CallKind::Query } else { CallKind::Mutate };
-        assert!(out.effects.contains(&CallsEffect::Cancel { request_id: 1, kind }));
+        assert!(out.effects.contains(&CallsEffect::Cancel { request_id: sent, kind }));
         assert_eq!(out.replies, vec![(1, Err(CallError::SessionEnded))]);
     }
 }
@@ -652,9 +655,10 @@ fn call_closing() {
     for operation in ["Op", "Change"] {
         let mut twin = Twin::new();
         twin.feed(Input::Run { epoch: EPOCH, operation: operation.into(), reply: 1 });
+        let sent = twin.history.iter().find_map(|effect| if let CallsEffect::Request { request_id, .. } = effect { Some(*request_id) } else { None }).unwrap();
         let out = twin.feed(Input::Closing);
         let kind = if operation == "Op" { CallKind::Query } else { CallKind::Mutate };
-        assert!(out.effects.contains(&CallsEffect::Cancel { request_id: 1, kind }));
+        assert!(out.effects.contains(&CallsEffect::Cancel { request_id: sent, kind }));
         assert!(out.effects.iter().any(|effect| matches!(effect, CallsEffect::Drained(_))));
         assert_eq!(out.replies, vec![(1, Err(CallError::Closed))]);
     }
@@ -812,11 +816,12 @@ fn call_prop_single_request() {
     let _: CallAnswer = Ok(String::new());
 }
 
-fn change_run() -> CallsState {
-    use crate::runtime::StateOwner;
+fn change_run() -> (CallsState, u64) {
+    use crate::runtime::{Effect, StateOwner};
     let mut state = CallsState::new(EPOCH, Some(true), &[("Change", CallKind::Mutate)]);
-    Calls::step(&mut state, CallsInput::Run { epoch: EPOCH, operation: "Change".into(), variables: "{}".into(), reply: 1 }, crate::runtime::Time(0));
-    state
+    let started = Calls::step(&mut state, CallsInput::Run { epoch: EPOCH, operation: "Change".into(), variables: "{}".into(), reply: 1 }, crate::runtime::Time(0));
+    let sent = started.iter().find_map(|effect| if let Effect::Run(CallsEffect::Request { request_id, .. }) = effect { Some(*request_id) } else { None }).unwrap();
+    (state, sent)
 }
 
 fn step(state: &mut CallsState, input: CallsInput) -> Vec<CallsEffect> {
@@ -828,20 +833,20 @@ fn replies(effects: &[CallsEffect]) -> Vec<CallAnswer> { effects.iter().filter_m
 
 #[test]
 fn call_deadline_expired_mutate_first() {
-    let mut state = change_run();
+    let (mut state, sent) = change_run();
     let effects = step(&mut state, CallsInput::Deadline { call_id: 1 });
     assert!(replies(&effects).is_empty(), "the answer waits for the verdict of Session: {effects:?}");
-    assert_eq!(effects, vec![CallsEffect::Release { request_id: 1 }]);
+    assert_eq!(effects, vec![CallsEffect::Release { request_id: sent }]);
 }
 
 #[test]
 fn call_deadline_expired_mutate_sent() {
     for last in [CallsInput::Dropped { call_id: 1 }, CallsInput::TransportError { call_id: 1, error: CallError::Network }] {
-        let mut state = change_run();
+        let (mut state, sent) = change_run();
         step(&mut state, last.clone());
         let effects = step(&mut state, CallsInput::Deadline { call_id: 1 });
         assert_eq!(replies(&effects), vec![Err(CallError::Dropped)], "the pair exists, the outcome is unknown, whatever the last attempt gave ({last:?}): {effects:?}");
-        assert!(effects.contains(&CallsEffect::Release { request_id: 1 }) && !effects.iter().any(|effect| matches!(effect, CallsEffect::Cancel { .. })), "{effects:?}");
+        assert!(effects.contains(&CallsEffect::Release { request_id: sent }) && !effects.iter().any(|effect| matches!(effect, CallsEffect::Cancel { .. })), "{effects:?}");
     }
 }
 
@@ -849,7 +854,7 @@ fn call_deadline_expired_mutate_sent() {
 fn call_releasing_verdict() {
     let ok = || CallsInput::Response { call_id: 1, body: Some("{}".into()), data: None, errors: Vec::new(), kind: crate::transport::AnswerKind::Answered { sequence: None } };
     for (verdict, want) in [(CallsInput::Dropped { call_id: 1 }, Err(CallError::Dropped)), (CallsInput::TransportError { call_id: 1, error: CallError::Http { status: 500, detail: String::new() } }, Err(CallError::Dropped)), (ok(), Ok("{}".to_string()))] {
-        let mut state = change_run();
+        let (mut state, _) = change_run();
         step(&mut state, CallsInput::Deadline { call_id: 1 });
         let effects = step(&mut state, verdict.clone());
         assert_eq!(replies(&effects), vec![want], "{verdict:?}: {effects:?}");
