@@ -44,7 +44,6 @@ public struct UploadInfo: Codable, Sendable, Equatable {
   public let stage: String
   public let sentBytes: UInt64
   public let totalBytes: UInt64
-  /// The sent share of the bytes in percent, 0 to 100.
   public let progress: Double
   public let waitReason: String?
   /// Sum of retries for unfinished steps, preserved across restarts.

@@ -125,10 +125,10 @@ Uploads require server models. Local and memory models reject admission without 
 A database reset rejects upload admission queued before that reset.
 Transfer metadata reads, MD5 calculation and byte-range reads run in the blocking pool. Cancellation returns without waiting for queued file work.
 
-Waiting files are ordered by operation sequence and item position. A transfer reserves its file slot before its task starts. The slot covers preparation and transfer retries, and is released before the final content mutation. Abort and content mutation tasks do not consume file slots.
+Waiting files are ordered by operation sequence and item position. A transfer reserves its file slot before its task starts. The slot covers one step of the transfer in the network and is released when that step ends, also on an error before the wait for a retry. Preparation and the wait for a retry hold no slot. Abort and content mutation tasks do not consume file slots.
 
 Upload progress does not reload the outgoing queue. Cleanup of inline bytes after a finished or cancelled run, and file removal after a confirmed destroy or a server destroy event, run off the caller thread.
-Discarding an upload (or any removal of its operation) that holds a multipart `uploadId` records the abort in the same commit, with or without confirmed parts, and never sends `complete`. The abort is sent right after the removal commit when the app is online, after a restart when the database opens, and when the network returns after a failure, and the row is removed only after the server answers. A multipart that the server creates after the removal, because the `initiate` request was still in flight, is aborted the same way. A failed upload older than 7 days, counted from its failure, is removed by the same rollback at those two events, and one of exactly 7 days stays. No timer runs for this.
+Discarding an upload (or any removal of its operation) that holds a multipart `uploadId` records the abort in the same commit, with or without confirmed parts, and never sends `complete`. The abort is sent right after the removal commit when the app is online, after a restart when the database opens, and when the network returns after a failure, and the debt of the abort is removed only after the server answers. A multipart that the server creates after the removal, because the `initiate` request was still in flight, is aborted the same way. A failed upload older than 7 days, counted from its failure, is removed by the same rollback at those two events, and one of exactly 7 days stays. No timer runs for this.
 An unconfirmed multipart abort remains pending across session end, database close and restart. The library retries it when network access is available. A multipart abort is identified by its `uploadId`; retries keep the same request identity regardless of the former transfer key.
 Running checksum and range reads check cancellation between 1 MiB chunks.
 Each file has a `sync_upload` row with a stable transfer id, not a position in the batch.
@@ -195,7 +195,7 @@ The background job keeps the epoch of the accepted upload. A late refusal of the
 
 ### Upload with the app in the background
 
-On iOS `DB.open` runs the PUT of every file as a task of a background `URLSession` with the identifier `<bundle id>.dblayer.uploads`. The system keeps the task when the app goes to the background and when the system ends the app. A new file goes up as one part, as large as the file: `Init`, the presign of part 1, the PUT, `Complete`. A transfer made by an earlier build with more than one part goes on in the app, part by part. The server limit of the file (500 MiB) is checked by `Init`. The steps before and after the PUT (`Init`, presign, `Complete`, the final mutation) run while the app runs, and in the time the system gives it when a finished PUT wakes it.
+On iOS `DB.open` runs the PUT of every file as a task of a background `URLSession` with the identifier `<bundle id>.dblayer.uploads`. The system keeps the task when the app goes to the background and when the system ends the app. A new file goes up as one part, as large as the file: `Init`, the presign of part 1, the PUT, `Complete`. A transfer made by an earlier build with more than one part goes on in the app, part by part. The server checks the size limit of the file in `Init`. The steps before and after the PUT (`Init`, presign, `Complete`, the final mutation) run while the app runs, and in the time the system gives it when a finished PUT wakes it.
 
 The app has one call to make. Pass the identifier and the completion of `application(_:handleEventsForBackgroundURLSession:completionHandler:)` to `DB.handleBackgroundEvents`. It returns `true` for the session of the library and `false` for any other identifier, and then it does not take the completion: the session is the app's own. The library gives the outcomes of the finished PUTs to the core. It runs each completion it took once on the main thread, after the system reports the end of the events and the core has no step to run without a new event (a PUT in the system, a wait for the network or for a retry are such events). A call before `open` waits for `open`.
 
@@ -352,10 +352,9 @@ The file is read in ranges: a single upload in one range up to the 10 MiB thresh
 | part size                          | 5 MiB                                                                                     |
 | files at a time                    | 1, the others wait as `queued`                                                            |
 | retry backoff                      | [Upload retry policy](server-sync.md#retries), with a saved budget for each step and part |
-| PUT timeout / GraphQL step timeout | 120 s / 45 s                                                                              |
-| presigned url lifetime             | 50 minutes                                                                                |
+| PUT timeout                        | 120 s                                                                                     |
 
-The file limit counts transfers across operations and their items. A limit of 2 allows 2 files to transfer together.
+The file limit counts transfers across operations and their items. The limit is 1 and has no setting.
 The final content mutation does not hold a file permit.
 
 ### State
@@ -366,7 +365,7 @@ The final content mutation does not hold a file permit.
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `status`                  | `waiting`, `preparing`, `queued`, `uploading`, `sending`, `done`, `failed`                                                                                                                    |
 | `waitReason`              | why a `waiting` upload does not run yet: `create_unconfirmed` (the record is still local, its `create` has no answer) or `source_pending` (the upload was created without a file and waits for it). A step that waits for the network or for power saving to end is `queued` |
-| `stage`                   | `prepare`, `create`, `put`, `init`, `presign`, `part`, `complete`, `abort`, `mutation`                                                                                                                       |
+| `stage`                   | `prepare`, `part`, `mutation`. The step of a request to the network is named by `TransferIdentity` in `Transport.put`                                                                                       |
 | `sentBytes`, `totalBytes` | for multipart the sum over all parts                                                                                                                                                                         |
 | `progress`                | the share of the file from 0 to 1 in steps of 0.01, never lower during a transfer, 1 only when the server has the whole file                                                                                                                           |
 | `attempts`                | saved attempts for the current unfinished step, preserved across restarts                                                                                                                                    |

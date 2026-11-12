@@ -62,7 +62,6 @@ data class UploadInfo(
     val stage: String,
     @SerialName("sent_bytes") val sentBytes: ULong,
     @SerialName("total_bytes") val totalBytes: ULong,
-    /** The sent share of the bytes in percent, 0 to 100. */
     val progress: Double,
     @SerialName("wait_reason") val waitReason: String?,
     val attempts: Int,

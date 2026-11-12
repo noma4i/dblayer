@@ -141,7 +141,7 @@ try {
 }
 ```
 
-`EndCause` names why the command ended: `sessionEnded`, `closed`, `cancelled`, `discarded`, `invalid`, `storage` or `internal`. A command that ended is not retried in the next account.
+`EndCause` names why the command ended: `sessionEnded`, `closed`, `cancelled`, `discarded`, `invalid` or `storage`. A command that ended is not retried in the next account.
 
 ```swift
 let receipt = try await Note.create(groupId: group.id, body: "hi", in: scope)
