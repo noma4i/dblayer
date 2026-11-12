@@ -6,7 +6,7 @@ import Testing
 import UniformTypeIdentifiers
 @testable import DBlayer
 
-private struct Clip {
+private struct FixtureClip {
   var width: Int
   var height: Int
   var codec = AVVideoCodecType.h264
@@ -17,7 +17,7 @@ private struct Clip {
   var frames = 30
 }
 
-private func writeClip(_ clip: Clip, to url: URL) async throws {
+private func writeClip(_ clip: FixtureClip, to url: URL) async throws {
   let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
   if clip.metadata {
     writer.metadata = [(AVMetadataIdentifier.quickTimeMetadataLocationISO6709, "+37.3300-122.0300/"), (.iTunesMetadataSongName, "Private title")].map {
@@ -88,7 +88,7 @@ private func writeClip(_ clip: Clip, to url: URL) async throws {
       offsetToData: 0, dataLength: samples * 2, flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block
     )
     if let block {
-      CMBlockBufferFillDataBytes(with: 0, blockBuffer: block, offsetToData: 0, dataLength: samples * 2)
+      CMBlockBufferFillDataBytes(with: 0, blockBuffer: block, offsetIntoDestination: 0, dataLength: samples * 2)
       var sample: CMSampleBuffer?
       CMAudioSampleBufferCreateReadyWithPacketDescriptions(
         allocator: nil, dataBuffer: block, formatDescription: audioFormat, sampleCount: samples,
@@ -145,7 +145,7 @@ private func writePicture(_ url: URL, type: UTType, width: Int, height: Int, ori
   try #require(CGImageDestinationFinalize(destination), "\(type.identifier) cannot be encoded on this runtime")
 }
 
-private let reencode = { (width: UInt32, height: UInt32, mirror: Bool, audio: Bool) -> PreparePlan in
+private func reencode(_ width: UInt32, _ height: UInt32, _ mirror: Bool, _ audio: Bool) -> PreparePlan {
   .video(
     plan: VideoPlan(reencode: true, width: width, height: height, bitrate: 400_000, frameRate: 30, rotationDegrees: 0),
     stripMetadata: [], audioBitrate: 64_000, audioChannels: 1, audioSampleRate: 44100, mirror: mirror
@@ -176,7 +176,7 @@ private struct VideoFacts {
 
 private func videoFacts(_ url: URL) async throws -> VideoFacts {
   guard case let .video(source, keys) = await SystemPreparer().probe(path: url.path) else { throw PrepareFailure(message: "the result is no video") }
-  let asset = AVURLAsset(url: url)
+  let asset = Container.asset(url)
   let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
   let formats = try await track.load(.formatDescriptions)
   let reader = try AVAssetReader(asset: asset)
@@ -194,7 +194,7 @@ private func videoFacts(_ url: URL) async throws -> VideoFacts {
 }
 
 private func luminance(_ url: URL, left: Bool) async throws -> Double {
-  let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+  let generator = AVAssetImageGenerator(asset: Container.asset(url))
   let image = try generator.copyCGImage(at: .zero, actualTime: nil)
   return try level(image, x: left ? 2 : image.width - 3, y: image.height / 2)
 }
@@ -219,7 +219,7 @@ private struct Row {
 }
 
 private func videoRow(
-  _ name: String, _ clip: Clip, mayFail: Bool = false, plan: @escaping ([String]) -> PreparePlan,
+  _ name: String, _ clip: FixtureClip, mayFail: Bool = false, plan: @escaping ([String]) -> PreparePlan,
   check: @escaping (URL, VideoFacts) async throws -> String
 ) -> Row {
   Row(name: name, mayFail: mayFail, make: { try await writeClip(clip, to: $0) }, plan: plan, check: { try await check($0, videoFacts($0)) })
@@ -263,47 +263,49 @@ private func pictureRow(
   )
 }
 
-private let matrix: [Row] = [
-  videoRow(
-    "h264+aac within limits", Clip(width: 64, height: 32, audio: true, metadata: true),
+private func matrixRows() -> [Row] {
+  var rows: [Row] = []
+  rows.append(videoRow(
+    "h264+aac within limits", FixtureClip(width: 64, height: 32, audio: true, metadata: true),
     plan: { keys in .video(plan: VideoPlan(reencode: false, width: 64, height: 32, bitrate: 0, frameRate: 30, rotationDegrees: 0), stripMetadata: keys, audioBitrate: 64_000, audioChannels: 1, audioSampleRate: 44100, mirror: false) },
     check: { _, facts in
       #expect(facts.width == 64 && facts.height == 32 && facts.codec == kCMVideoCodecType_H264 && facts.frames == 30 && facts.audio)
       #expect(facts.keys.isEmpty, "private metadata is gone: \(facts.keys)")
       return "remux \(facts.width)x\(facts.height) h264 frames=\(facts.frames) audio=\(facts.audio) keys=\(facts.keys)"
     }
-  ),
-  videoRow("h264 above limits", Clip(width: 640, height: 360, audio: true), plan: { _ in reencode(320, 180, false, true) }) { _, facts in
+  ))
+  rows.append(videoRow("h264 above limits", FixtureClip(width: 640, height: 360, audio: true), plan: { _ in reencode(320, 180, false, true) }) { _, facts in
     #expect(facts.width == 320 && facts.height == 180 && facts.codec == kCMVideoCodecType_H264 && facts.frames == 30 && facts.audio)
     return "\(facts.width)x\(facts.height) h264 frames=\(facts.frames) audio=\(facts.audio)"
-  },
-  videoRow("hevc", Clip(width: 128, height: 64, codec: .hevc, audio: true), plan: { _ in reencode(64, 32, false, true) }) { _, facts in
+  })
+  rows.append(videoRow("hevc", FixtureClip(width: 128, height: 64, codec: .hevc, audio: true), plan: { _ in reencode(64, 32, false, true) }) { _, facts in
     #expect(facts.width == 64 && facts.height == 32 && facts.codec == kCMVideoCodecType_H264 && facts.frames == 30 && facts.audio)
     return "\(facts.width)x\(facts.height) h264 frames=\(facts.frames) audio=\(facts.audio)"
-  },
-  videoRow("vertical turned 90", Clip(width: 64, height: 32, audio: true, turned: true), plan: { _ in reencode(32, 64, false, true) }) { _, facts in
+  })
+  rows.append(videoRow("vertical turned 90", FixtureClip(width: 64, height: 32, audio: true, turned: true), plan: { _ in reencode(32, 64, false, true) }) { _, facts in
     #expect(facts.width == 32 && facts.height == 64 && facts.codec == kCMVideoCodecType_H264 && facts.frames == 30)
     return "\(facts.width)x\(facts.height) h264 frames=\(facts.frames)"
-  },
-  videoRow("no audio track", Clip(width: 64, height: 32), plan: { _ in reencode(64, 32, false, false) }) { _, facts in
+  })
+  rows.append(videoRow("no audio track", FixtureClip(width: 64, height: 32), plan: { _ in reencode(64, 32, false, false) }) { _, facts in
     #expect(facts.width == 64 && facts.height == 32 && facts.frames == 30 && !facts.audio)
     return "\(facts.width)x\(facts.height) frames=\(facts.frames) audio=\(facts.audio)"
-  },
-  videoRow("mirror", Clip(width: 64, height: 32), plan: { _ in reencode(64, 32, true, false) }) { url, facts in
+  })
+  rows.append(videoRow("mirror", FixtureClip(width: 64, height: 32), plan: { _ in reencode(64, 32, true, false) }) { url, facts in
     let left = try await luminance(url, left: true)
     let right = try await luminance(url, left: false)
     #expect(left < 0.3 && right > 0.7, "the left side is dark and the right side is bright after the mirror")
     return "\(facts.width)x\(facts.height) left=\(left) right=\(right)"
-  },
-  videoRow("hdr hlg hevc", Clip(width: 64, height: 32, codec: .hevc, hdr: true), mayFail: true, plan: { _ in reencode(64, 32, false, false) }) { _, facts in
+  })
+  rows.append(videoRow("hdr hlg hevc", FixtureClip(width: 64, height: 32, codec: .hevc, hdr: true), mayFail: true, plan: { _ in reencode(64, 32, false, false) }) { _, facts in
     #expect(facts.primaries == "ITU_R_709_2", "the result is SDR BT.709, got \(facts.primaries ?? "nil")")
     return "\(facts.width)x\(facts.height) primaries=\(facts.primaries ?? "nil")"
-  },
-  pictureRow("jpeg", type: .jpeg, width: 40, height: 20, orientation: 1, turn: PhotoTurn(rotationDegrees: 0, flipHorizontal: false), format: .jpeg),
-  pictureRow("heic", type: UTType("public.heic")!, width: 40, height: 20, orientation: 1, turn: PhotoTurn(rotationDegrees: 0, flipHorizontal: false), format: .jpeg, mayFail: true),
-  pictureRow("png with alpha", type: .png, width: 40, height: 20, orientation: 1, alpha: true, turn: PhotoTurn(rotationDegrees: 0, flipHorizontal: false), format: .png),
-  pictureRow("jpeg exif orientation 6", type: .jpeg, width: 40, height: 20, orientation: 6, turn: PhotoTurn(rotationDegrees: 90, flipHorizontal: false), format: .jpeg)
-]
+  })
+  rows.append(pictureRow("jpeg", type: .jpeg, width: 40, height: 20, orientation: 1, turn: PhotoTurn(rotationDegrees: 0, flipHorizontal: false), format: .jpeg))
+  rows.append(pictureRow("heic", type: UTType("public.heic")!, width: 40, height: 20, orientation: 1, turn: PhotoTurn(rotationDegrees: 0, flipHorizontal: false), format: .jpeg, mayFail: true))
+  rows.append(pictureRow("png with alpha", type: .png, width: 40, height: 20, orientation: 1, alpha: true, turn: PhotoTurn(rotationDegrees: 0, flipHorizontal: false), format: .png))
+  rows.append(pictureRow("jpeg exif orientation 6", type: .jpeg, width: 40, height: 20, orientation: 6, turn: PhotoTurn(rotationDegrees: 90, flipHorizontal: false), format: .jpeg))
+  return rows
+}
 
 @Suite(.serialized)
 struct SystemPreparerTests {
@@ -313,7 +315,7 @@ struct SystemPreparerTests {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let preparer = SystemPreparer()
-    for (index, row) in matrix.enumerated() {
+    for (index, row) in matrixRows().enumerated() {
       let source = directory.appending(path: "source-\(index)")
       let destination = directory.appending(path: "result-\(index)")
       do {
@@ -349,7 +351,7 @@ struct SystemPreparerTests {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let source = directory.appending(path: "long.mp4")
-    try await writeClip(Clip(width: 640, height: 360, frames: 240), to: source)
+    try await writeClip(FixtureClip(width: 640, height: 360, frames: 240), to: source)
     let destination = directory.appending(path: "result.mp4")
     let preparer = SystemPreparer()
     let first = AsyncStream<Double>.makeStream()

@@ -60,7 +60,7 @@ public final class SystemPreparer: Preparer, @unchecked Sendable {
   }
 
   private static func probeVideo(_ file: URL) async throws -> ProbeOutcome {
-    let asset = AVURLAsset(url: file)
+    let asset = Container.asset(file)
     guard let track = try await asset.loadTracks(withMediaType: .video).first else {
       return .failed(message: "\(file.path) has no video track")
     }
@@ -69,7 +69,7 @@ public final class SystemPreparer: Preparer, @unchecked Sendable {
     )
     let audioTrack = try await asset.loadTracks(withMediaType: .audio).first
     let audioFormats = try await audioTrack?.load(.formatDescriptions) ?? []
-    let fits = ["mp4", "m4v"].contains(file.pathExtension.lowercased())
+    let fits = Container.isMp4(file)
       && formats.allSatisfy { CMFormatDescriptionGetMediaSubType($0) == kCMVideoCodecType_H264 }
       && audioFormats.allSatisfy { CMFormatDescriptionGetMediaSubType($0) == kAudioFormatMPEG4AAC }
     let source = VideoSource(

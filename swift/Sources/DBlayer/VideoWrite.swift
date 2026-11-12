@@ -61,7 +61,7 @@ enum VideoWrite {
   static func run(
     _ job: PrepareJob, plan: VideoPlan, audio: AudioTarget, mirror: Bool, entry: Running, report: @escaping @Sendable (Double) -> Void
   ) async throws -> PrepareOutcome {
-    let asset = AVURLAsset(url: URL(fileURLWithPath: job.source))
+    let asset = Container.asset(URL(fileURLWithPath: job.source))
     guard let track = try await asset.loadTracks(withMediaType: .video).first else {
       throw PrepareFailure(message: "\(job.source) has no video track")
     }
@@ -287,5 +287,24 @@ private final class PumpGate: @unchecked Sendable {
       return state.continuation
     }
     waiting?.resume()
+  }
+}
+
+enum Container {
+  static func asset(_ url: URL) -> AVURLAsset {
+    guard let brand = brand(url) else { return AVURLAsset(url: url) }
+    return AVURLAsset(url: url, options: [AVURLAssetOverrideMIMETypeKey: brand == "qt  " ? "video/quicktime" : "video/mp4"])
+  }
+
+  static func isMp4(_ url: URL) -> Bool {
+    guard let brand = brand(url) else { return false }
+    return brand != "qt  "
+  }
+
+  private static func brand(_ url: URL) -> String? {
+    guard let handle = try? FileHandle(forReadingFrom: url), let head = try? handle.read(upToCount: 12) else { return nil }
+    try? handle.close()
+    guard head.count == 12, head[4..<8].elementsEqual("ftyp".utf8) else { return nil }
+    return String(decoding: head[8..<12], as: UTF8.self)
   }
 }
