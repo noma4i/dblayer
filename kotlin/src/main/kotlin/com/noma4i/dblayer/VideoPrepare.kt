@@ -43,9 +43,6 @@ import java.io.IOException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 
@@ -179,21 +176,6 @@ internal fun readVideoFacts(file: File): VideoFacts {
     }
 }
 
-/** Reads the export progress every `intervalMs` while `block` runs and never after it ends, by completion or by cancellation. */
-internal suspend fun <T> whileExporting(intervalMs: Long = 100, read: () -> Double?, report: (Double) -> Unit, block: suspend () -> T): T = coroutineScope {
-    val ticker = launch {
-        while (true) {
-            delay(intervalMs)
-            read()?.let(report)
-        }
-    }
-    try {
-        block()
-    } finally {
-        ticker.cancel()
-    }
-}
-
 @androidx.annotation.OptIn(UnstableApi::class)
 internal suspend fun exportWithTransformer(request: VideoExport) = withContext(Dispatchers.Main.immediate) {
     val setup = request.setup
@@ -207,28 +189,29 @@ internal suspend fun exportWithTransformer(request: VideoExport) = withContext(D
         .build()
     val handler = Handler(Looper.getMainLooper())
     val holder = ProgressHolder()
-    var running: Transformer? = null
-    whileExporting(
-        read = { running?.takeIf { it.getProgress(holder) == Transformer.PROGRESS_STATE_AVAILABLE }?.let { holder.progress / 100.0 } },
-        report = request.onProgress,
-    ) {
-        suspendCancellableCoroutine { continuation ->
-            val transformer = Transformer.Builder(request.context)
-                .apply { setup.videoMime?.let(::setVideoMimeType) }.apply { setup.audioMime?.let(::setAudioMimeType) }
-                .setEncoderFactory(encoders).setPortraitEncodingEnabled(true)
-                .setMuxerFactory(InAppMp4Muxer.Factory(dropSourceMetadata).setAttemptStreamableOutputEnabled(true))
-                .addListener(object : Transformer.Listener {
-                    override fun onCompleted(composition: Composition, exportResult: ExportResult) {
-                        if (continuation.isActive) continuation.resume(Unit)
-                    }
+    suspendCancellableCoroutine { continuation ->
+        lateinit var reader: Runnable
+        val transformer = Transformer.Builder(request.context)
+            .apply { setup.videoMime?.let(::setVideoMimeType) }.apply { setup.audioMime?.let(::setAudioMimeType) }
+            .setEncoderFactory(encoders).setPortraitEncodingEnabled(true)
+            .setMuxerFactory(InAppMp4Muxer.Factory(dropSourceMetadata).setAttemptStreamableOutputEnabled(true))
+            .addListener(object : Transformer.Listener {
+                override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                    handler.removeCallbacks(reader)
+                    if (continuation.isActive) continuation.resume(Unit)
+                }
 
-                    override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
-                        if (continuation.isActive) continuation.resumeWithException(IOException("the video cannot be encoded", exportException))
-                    }
-                }).build()
-            running = transformer
-            continuation.invokeOnCancellation { handler.post { transformer.cancel() } }
-            transformer.start(item, request.output.absolutePath)
+                override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
+                    handler.removeCallbacks(reader)
+                    if (continuation.isActive) continuation.resumeWithException(IOException("the video cannot be encoded", exportException))
+                }
+            }).build()
+        reader = Runnable {
+            if (transformer.getProgress(holder) == Transformer.PROGRESS_STATE_AVAILABLE) request.onProgress(holder.progress / 100.0)
+            handler.postDelayed(reader, 100)
         }
+        continuation.invokeOnCancellation { handler.post { handler.removeCallbacks(reader); transformer.cancel() } }
+        transformer.start(item, request.output.absolutePath)
+        handler.postDelayed(reader, 100)
     }
 }

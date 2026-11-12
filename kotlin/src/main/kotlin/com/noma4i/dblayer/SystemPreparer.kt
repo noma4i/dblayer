@@ -2,7 +2,7 @@ package com.noma4i.dblayer
 
 import android.content.Context
 import java.io.File
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -21,7 +21,7 @@ internal class SystemPreparer(
     private val decoderList: (String) -> List<DecoderAbility> = ::readDecoders,
     private val exporter: suspend (VideoExport) -> Unit = ::exportWithTransformer,
 ) : Preparer {
-    private val running = ConcurrentHashMap<ULong, Job>()
+    private val running = AtomicReference<Pair<ULong, Job>?>(null)
 
     override suspend fun probe(path: String): ProbeOutcome = withContext(Dispatchers.IO) {
         try {
@@ -37,19 +37,20 @@ internal class SystemPreparer(
 
     override suspend fun run(job: PrepareJob, progress: PrepareProgress): PrepareOutcome = coroutineScope {
         val work = async(Dispatchers.IO, start = CoroutineStart.LAZY) { write(job, progress) }
-        running[job.attemptId] = work
+        val current = job.attemptId to work
+        running.set(current)
         try {
             work.await()
         } catch (cancelled: CancellationException) {
             currentCoroutineContext().ensureActive()
             PrepareOutcome.Failed("the preparation was cancelled")
         } finally {
-            running.remove(job.attemptId)
+            running.compareAndSet(current, null)
         }
     }
 
     override fun cancel(attemptId: ULong) {
-        running[attemptId]?.cancel()
+        running.get()?.takeIf { it.first == attemptId }?.second?.cancel()
     }
 
     private fun probeVideo(file: File): ProbeOutcome {
