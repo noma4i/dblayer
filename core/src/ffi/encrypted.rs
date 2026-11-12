@@ -84,34 +84,19 @@ impl RetryProgress {
     pub fn current(&self) -> core::RetrySnapshot { self.inner.current() }
 
     /// A reader of the snapshots: its first `next` returns the current snapshot, each later one the newest snapshot that is newer than the last it returned. A slow reader skips the snapshots between, never the last one.
-    pub fn subscribe(&self) -> Arc<RetrySubscription> {
-        let (stopped, _) = tokio::sync::watch::channel(false);
-        Arc::new(RetrySubscription { changes: tokio::sync::Mutex::new(Reading { changes: self.inner.watch(), first: true }), stopped })
-    }
+    pub fn subscribe(&self) -> Arc<RetrySubscription> { Arc::new(RetrySubscription(super::reading::Reader::of(self.inner.watch()))) }
 }
 
-struct Reading { changes: tokio::sync::watch::Receiver<core::RetrySnapshot>, first: bool }
-
 #[derive(uniffi::Object)]
-pub struct RetrySubscription { changes: tokio::sync::Mutex<Reading>, stopped: tokio::sync::watch::Sender<bool> }
+pub struct RetrySubscription(super::reading::Reader<core::RetrySnapshot>);
 
 #[uniffi::export]
 impl RetrySubscription {
     /// The next snapshot, `None` once the reader was cancelled or the progress is gone.
-    pub async fn next(&self) -> Option<core::RetrySnapshot> {
-        let mut stopped = self.stopped.subscribe();
-        let mut reading = self.changes.lock().await;
-        if *stopped.borrow() { return None; }
-        if std::mem::take(&mut reading.first) { return Some(reading.changes.borrow_and_update().clone()); }
-        tokio::select! {
-            biased;
-            _ = async { let _ = stopped.wait_for(|stopped| *stopped).await; } => None,
-            changed = reading.changes.changed() => changed.ok().filter(|_| !*self.stopped.borrow()).map(|()| reading.changes.borrow_and_update().clone()),
-        }
-    }
+    pub async fn next(&self) -> Option<core::RetrySnapshot> { self.0.next().await }
 
     /// Ends this reader: a waiting `next` and every later one return `None`.
-    pub fn cancel(&self) { crate::lock::effect(|| self.stopped.send_replace(true)); }
+    pub fn cancel(&self) { self.0.cancel(); }
 }
 
 #[uniffi::export]

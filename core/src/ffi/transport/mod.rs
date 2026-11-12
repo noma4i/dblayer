@@ -96,6 +96,7 @@ impl OnlineSink {
 
     /// Waits for the outcome of the owner: the answer of `Network`, `Closed` once the database ended.
     pub(crate) fn apply_online(&self, online: bool) -> Result<(), DbError> {
+        super::network_status::record_network(online);
         if let SignalTarget::Connectivity(connectivity) = &self.target {
             connectivity.change(online);
             return Ok(());
