@@ -124,14 +124,14 @@ async fn life_register_missing_own_operation() {
     ];
     let greeting = r#"{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}"#;
     let mut model = ModelSpec::new("Item", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
-    let mut node = RelationSpec::new("node", &[crate::schema::NODE_PARAM]);
+    let mut node = RelationSpec::global("node");
     node.remote = Some(crate::schema_fixtures::remote("ItemNode", RemoteShape::Single, "1m"));
-    let mut owned = RelationSpec::new("byOwner", &[]);
+    let mut owned = RelationSpec::global("byOwner");
     owned.remote = Some(crate::schema_fixtures::remote("OwnerItems", RemoteShape::Single, "1m"));
     model.relations.extend([node, owned]);
     model.change_feed = Some(ChangeFeed { subscription: "Changes".into(), root: "changes".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
     model.changes = vec![
-        serde_json::from_value(serde_json::json!({"area":"ITEM", "relation":"node", "parameter":"id"})).unwrap(),
+        serde_json::from_value(serde_json::json!({"area":"ITEM", "relation":"node"})).unwrap(),
         serde_json::from_value(serde_json::json!({"area":"OWNER", "relation":"byOwner"})).unwrap(),
     ];
     model.listens.push(UpdatesSpec { subscription: "ItemListen".into(), deleted_by: None, deleted_unless: None, set: Default::default(), removes: false, debounce: None, root: None, id: Vec::new(), apply: None });
