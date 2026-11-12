@@ -172,5 +172,3 @@ let removed = try await staged.discard()
 ```kotlin
 val removed = staged.discard()
 ```
-
-- On iOS a new file goes up as one part as large as the file: `Init`, the presign of part 1, one PUT, `Complete`. The number of PUTs and the order of the steps on the server change. The app changes nothing.
