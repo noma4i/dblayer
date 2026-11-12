@@ -4,7 +4,7 @@ use super::outbox_cells_tests::*;
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, RWhy, St};
 use crate::owners::contract::{Online, RejectReason};
-use crate::owners::write::outbox::{CommitKind, Fault, NewOp, OutboxAnswer, OutboxInput, OutboxOutcome};
+use crate::owners::write::outbox::{CommitKind, NewOp, OutboxAnswer, OutboxInput, OutboxOutcome};
 
 #[test]
 fn out_submitting_rejected() {
@@ -12,7 +12,7 @@ fn out_submitting_rejected() {
         let mut twin = Twin::new();
         let id = twin.submit("r", Policy::Rollback, false);
         let effects = refuse(&mut twin, id, reason.clone());
-        assert_eq!((answers(&effects, SUBMIT_REPLY), kinds(&effects)), (vec![OutboxAnswer::Err(Fault::Rejected(reason))], Vec::new()), "the submit is refused with the reason, no optimism, no batch follows");
+        assert_eq!((answers(&effects, SUBMIT_REPLY), kinds(&effects)), (vec![OutboxAnswer::Err(crate::spec::support::refusal_of(reason))], Vec::new()), "the submit is refused with the reason, no optimism, no batch follows");
     }
 }
 

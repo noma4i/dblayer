@@ -60,7 +60,7 @@ fn xfer_accepting_rejected_interrupted() {
         let (id, reply, _) = twin.accepting(KEY, 2);
         let out = twin.reject(reason.clone());
         let cause = if reason == RejectReason::Closed { "Closed" } else { "SessionEnded" };
-        assert_eq!((twin.stage(id), format!("{:?}", out.replies(reply)), out.copies()), (TransferStage::Done, format!("[Err({cause})]"), 0));
+        assert_eq!((twin.stage(id), format!("{:?}", out.replies(reply)), out.copies()), (TransferStage::Done, format!("[Err(Ended({cause}))]"), 0));
 
         let mut twin = Twin::new();
         let keys = [KEY, "Moment:r2:upload"];
@@ -68,7 +68,7 @@ fn xfer_accepting_rejected_interrupted() {
         let ids: Vec<_> = keys.iter().map(|key| twin.state().open_id(key).unwrap()).collect();
         twin.reserve_batch(&ids);
         let out = twin.reject(reason);
-        assert_eq!((format!("{:?}", out.replies(50)), out.all_replies(), out.copies()), (format!("[Err({cause})]"), 1, 0));
+        assert_eq!((format!("{:?}", out.replies(50)), out.all_replies(), out.copies()), (format!("[Err(Ended({cause}))]"), 1, 0));
         assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Done));
     }
 }

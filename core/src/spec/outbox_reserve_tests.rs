@@ -67,7 +67,7 @@ fn out_reserve_op_while_restoring() {
     ended.run();
     let (sends, _) = settle(&mut ended);
     let found = reserved(&sends);
-    assert!(found.len() == 1 && found[0].contains("Err(SessionEnded)"), "{sends:?}");
+    assert!(found.len() == 1 && found[0].contains("Err(Ended(SessionEnded))"), "{sends:?}");
 }
 
 #[test]
@@ -490,7 +490,7 @@ fn out_retry_outcome_target() {
     failed(&mut twin);
     let (sends, _) = raw(&mut twin, OutboxInput::Rejected(Rejected { batch: 2, reason: RejectReason::NoSession }));
     let found = retry_outcome(&sends);
-    assert!(found.iter().any(|text| text.contains("(1, 2)") && text.contains("Err(Rejected(NoSession")), "Rejected(NoSession) is addressed to the target (1, 2): {sends:?}");
+    assert!(found.iter().any(|text| text.contains("(1, 2)") && text.contains("Err(Ended(SessionEnded")), "Rejected(NoSession) is addressed to the target (1, 2): {sends:?}");
 }
 
 #[test]

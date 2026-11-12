@@ -278,3 +278,13 @@ pub(crate) fn text_after(text: &str, field: &str) -> Option<String> {
     let rest = text[start..].strip_prefix('"')?;
     Some(rest[..rest.find('"')?].to_string())
 }
+
+pub(crate) fn refusal_of(reason: RejectReason) -> crate::owners::write::outbox_types::Fault {
+    use crate::ffi::EndCause;
+    use crate::owners::write::outbox_types::Fault;
+    match reason {
+        RejectReason::NoSession => Fault::Ended(EndCause::SessionEnded),
+        RejectReason::Closed => Fault::Ended(EndCause::Closed),
+        reason => Fault::Rejected(reason),
+    }
+}

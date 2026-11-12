@@ -53,7 +53,7 @@ fn out_marking_retry_refused_batch_answers_the_retry_by_reason() {
         let mut twin = Twin::new();
         let id = marking_retry(&mut twin);
         let effects = refuse(&mut twin, id, reason.clone());
-        assert_eq!(answers(&effects, RETRY_REPLY), vec![OutboxAnswer::Err(Fault::Rejected(reason.clone()))], "{reason:?}");
+        assert_eq!(answers(&effects, RETRY_REPLY), vec![OutboxAnswer::Err(crate::spec::support::refusal_of(reason.clone()))], "{reason:?}");
     }
 }
 
