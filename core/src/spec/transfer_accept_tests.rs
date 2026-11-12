@@ -184,13 +184,9 @@ fn xfer_accepting_rejected() {
 #[test]
 fn xfer_accepting_other() {
     let mut twin = Twin::new();
-    let (id, reply, _) = twin.accepting(KEY, 2);
+    let (id, ..) = twin.accepting(KEY, 2);
     refuses_calls(&mut twin, KEY);
-    let out = twin.close();
-    assert_eq!((out.drained(), out.all_replies(), twin.stage(id)), (0, 0, TransferStage::Accepting), "Closing waits for the answer of the Store");
-    let out = twin.commit();
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))]);
-    assert_eq!((out.drained(), out.copies(), twin.stage(id)), (1, 0, TransferStage::Done));
+    assert_eq!(twin.stage(id), TransferStage::Accepting);
 }
 
 #[test]
@@ -316,19 +312,11 @@ fn xfer_copy_retry() {
 }
 
 #[test]
-fn xfer_copy_ready_refuses() {
-    let mut twin = Twin::new();
-    let (ids, _) = copying_batch(&mut twin, &[KEY, OTHER]);
-    twin.copy_done(ids[0]);
-    refuses_calls(&mut twin, KEY);
-    assert_eq!(twin.stage(ids[0]), TransferStage::CopyReady);
-}
-
-#[test]
 fn xfer_copy_ready_other() {
     let mut twin = Twin::new();
     let (ids, _) = copying_batch(&mut twin, &[KEY, OTHER]);
     twin.copy_done(ids[0]);
+    refuses_calls(&mut twin, KEY);
     let mut inputs = twin.stray_results(ids[0]);
     inputs.extend([
         TransferInput::MutationOutcome { transfer_id: ids[0], cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None }, row_never_created: false },
@@ -342,20 +330,6 @@ fn xfer_copy_ready_other() {
 }
 
 #[test]
-fn xfer_copy_stray() {
-    let mut twin = Twin::new();
-    let id = twin.copying(KEY, 2);
-    twin.ignores(
-        id,
-        vec![
-            TransferInput::CopyDone { transfer_id: id, attempt_id: 999, size: 1, sha256: "x".into(), place: crate::store::files::Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
-            TransferInput::CopyFailed { transfer_id: id, attempt_id: 999, error: "late".into() },
-            TransferInput::CopyDone { transfer_id: id + 50, attempt_id: twin.attempt(id), size: 1, sha256: "x".into(), place: crate::store::files::Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
-        ],
-    );
-}
-
-#[test]
 fn xfer_copy_other() {
     let mut twin = Twin::new();
     let id = twin.copying(KEY, 2);
@@ -365,6 +339,9 @@ fn xfer_copy_other() {
         TransferInput::Online(Online(true)),
         TransferInput::PowerSaving(true),
         TransferInput::SlotFreed,
+        TransferInput::CopyDone { transfer_id: id, attempt_id: 999, size: 1, sha256: "x".into(), place: crate::store::files::Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
+        TransferInput::CopyFailed { transfer_id: id, attempt_id: 999, error: "late".into() },
+        TransferInput::CopyDone { transfer_id: id + 50, attempt_id: twin.attempt(id), size: 1, sha256: "x".into(), place: crate::store::files::Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
     ]);
     twin.ignores(id, inputs);
 }

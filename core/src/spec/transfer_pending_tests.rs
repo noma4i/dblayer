@@ -274,13 +274,6 @@ fn xfer_pending_signals() {
         let out = twin.post(input);
         assert_eq!((twin.stage(id), out.steps().len(), out.round_needed().len(), out.timers), (TransferStage::AwaitingSource, 0, 0, 0));
     }
-}
-
-#[test]
-fn xfer_pending_stray() {
-    let mut twin = Twin::offline();
-    let (id, _) = pending(&mut twin);
-    twin.commit();
     let inputs = twin.stray_results(id);
     twin.ignores(id, inputs);
 }

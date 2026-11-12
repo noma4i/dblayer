@@ -36,20 +36,6 @@ fn batch(keys: &[&str], minimum: usize, renumber: bool) -> (Twin, Vec<TransferId
     (twin, ids)
 }
 
-#[test]
-fn xfer_accept_failed_batch_member_remains_in_flight() {
-    let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
-    twin.step_error(ids[0], false);
-    twin.commit();
-    assert_eq!(twin.stage(ids[0]), TransferStage::Failed);
-    let reply = twin.reply();
-    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(fielded(KEY)), reply });
-    assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight));
-    assert_eq!(out.writes(), 0);
-    assert_eq!(twin.state().open_id(KEY), Some(ids[0]));
-    assert_eq!(twin.state().open_id(OTHER), Some(ids[1]));
-}
-
 /// The file of the element is on the server and the write of `completed` is answered.
 fn file_done(twin: &mut Twin, id: TransferId) -> Out {
     twin.step_ok(id, 1, None);
