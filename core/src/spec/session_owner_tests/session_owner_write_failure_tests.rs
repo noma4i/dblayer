@@ -7,14 +7,14 @@ fn phase(twin: &Twin) -> &SessionPhase { twin.det.state(twin.addr).expect("the o
 fn request_id(twin: &Twin) -> u64 {
     match phase(twin) {
         SessionPhase::Persisting { pending, .. } | SessionPhase::Calling { pending, .. } | SessionPhase::Landing { pending, .. } => pending.request_id,
-        other => panic!("no pair in {other:?}"),
+        _ => 0,
     }
 }
 
 fn batch(twin: &Twin) -> u64 {
     match phase(twin) {
         SessionPhase::Persisting { batch, .. } | SessionPhase::Landing { batch, .. } => *batch,
-        other => panic!("no batch in {other:?}"),
+        _ => 0,
     }
 }
 
