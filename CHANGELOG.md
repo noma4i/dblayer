@@ -11,7 +11,7 @@
 - Queue calls and writes while the secret is unavailable instead of refusing them.
 - Read an EXIF orientation outside 1 to 8 as 1 in the Android file probe.
 - Report the video turn of the file probe as 0, 90, 180 or 270 on both platforms.
-- Name the location of a video in the metadata keys of the Android file probe.
+- Name the location of a video `location` in the metadata keys of the file probe on both platforms.
 
 ## 6.31.0 - 2026-11-13
 
