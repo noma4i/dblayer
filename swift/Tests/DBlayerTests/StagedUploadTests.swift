@@ -61,7 +61,7 @@ extension BridgeProbeTests {
     let status = Cursor(scope.uploadStatus(staged))
     #expect(await untilHeld(status))
     #expect(try await staged.discard())
-    #expect(await status.first("the end of the status") { if case .ended = $0 { return true } else { return false } } != nil)
+    #expect(await status.first("the status of a removed transfer") { if case let .progress(progress) = $0 { return progress.state == "gone" } else { return false } } != nil)
     #expect(try await Moment.find(staged.id).current() == nil)
     await DB.closeForCleanup()
   }

@@ -4,7 +4,6 @@ import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.modelsJSON
 import java.nio.file.Files
 import kotlinx.coroutines.flow.firstOrNull
-import kotlinx.coroutines.flow.lastOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
@@ -65,7 +64,7 @@ class StagedUploadTest {
             val staged = scope.stage(Moment, "upload_clip", UploadRequest(file.path))
             assertTrue(untilHeld(scope, staged))
             assertTrue(staged.discard())
-            assertTrue(scope.uploadStatus(staged).uploadStatus.lastOrNull() is TransferItem.Ended)
+            assertTrue(scope.uploadStatus(staged).uploadStatus.firstOrNull { it is TransferItem.Progress && it.progress.state == "gone" } != null)
             assertNull(Moment.find(staged.id).current())
         } finally {
             closeForCleanup()
