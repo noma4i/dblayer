@@ -20,7 +20,6 @@ fn win_orders_dictionary_fields() {
     for order in all {
         let mut twin = Twin::new();
         twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 5 }));
-        twin.reference.online = None;
         twin.generation = 5;
         let mut seen = Seen::default();
         for event in order.iter().copied() {

@@ -1,6 +1,6 @@
 use super::*;
 
-// Rows of `window.md` for `Opening` and freshness by the time of the step: the owner against the reference, the read pool answers when the test says so.
+// Rows of `window.md` for `Opening` and freshness by the time of the step: the read pool answers when the test says so.
 
 pub(super) const LIFE: i64 = 300_000;
 pub(super) const EMPTY_LIFE: i64 = 60_000;

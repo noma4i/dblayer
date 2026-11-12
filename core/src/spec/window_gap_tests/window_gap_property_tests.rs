@@ -217,9 +217,6 @@ fn win_prop_waiters_leave() {
     let mut preload = Twin::with_preload();
     preload.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 0 }));
     preload.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
-    preload.reference.step(Input::InterestPlus { id: PRELOAD });
-    preload.reference.step(Input::Read(Read::None));
-    preload.reference.take_outcomes();
     preload.step(Input::Stale { in_keys: true });
     assert_eq!(preload.state().interest(&key()), [w::PRELOAD], "the preload interest stays");
 }

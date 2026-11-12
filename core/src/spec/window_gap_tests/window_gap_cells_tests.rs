@@ -8,9 +8,8 @@ fn win_preload_created() {
         twin.hold.store(true, Ordering::SeqCst);
         twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 0 }));
         twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
-        let effects = twin.reference.step(Input::InterestPlus { id: PRELOAD });
         let (got, _) = twin.split(take(&twin.log));
-        assert_eq!(got, effects.iter().filter(|effect| **effect != Effect::WindowState).cloned().collect::<Vec<_>>(), "the preload key reads the saved window first");
+        assert_eq!(got, [Effect::ReadWindow], "the preload key reads the saved window first");
         assert_eq!(twin.state().interest(&key()), [w::PRELOAD]);
         assert_eq!(requests(&twin.step(Input::Read(read))), asked, "the preload key with the saved window {read:?}");
         assert_eq!(twin.stage(), Some(if asked == 1 { WindowStage::Loading } else { WindowStage::Idle }));
@@ -176,7 +175,6 @@ fn win_idle_interest_all_offline() {
     twin.step(Input::Online(false));
     assert!(twin.call(2, Goal::All).is_empty());
     assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-    assert!(matches!(twin.reference.state, State::Waiting { force: false, page: 2 }));
 }
 
 #[test]
@@ -222,7 +220,6 @@ fn win_idle_load_more_offline() {
     twin.step(Input::Online(false));
     assert!(twin.call(2, Goal::Next).is_empty());
     assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-    assert!(matches!(twin.reference.state, State::Waiting { page: 2, .. }));
 }
 
 #[test]
@@ -274,7 +271,6 @@ fn win_idle_stale_unwatched() {
     let mut twin = fresh();
     assert!(twin.step(Input::Stale { in_keys: true }).is_empty());
     assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    assert!(!twin.reference.fresh);
     assert!(twin.call(2, Goal::First).len() == 1, "the window is not fresh any more");
 }
 
@@ -283,7 +279,7 @@ fn win_idle_stale_other_key() {
     let mut twin = fresh_watched();
     assert!(twin.step(Input::Stale { in_keys: false }).is_empty());
     assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    assert!(twin.reference.fresh);
+    assert_eq!(requests(&twin.call(9, Goal::First)), 0, "a stale of another key leaves the window fresh");
 }
 
 /// win_foreground_reload: a window with a reader that is idle and online loads its first page again at every return to the front.

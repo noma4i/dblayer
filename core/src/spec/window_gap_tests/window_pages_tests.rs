@@ -60,7 +60,7 @@ fn win_loading_refresh_over_more() {
     assert_eq!(requests(&refreshed), 1, "a refresh over a page after the first cancels it and asks page 1: {refreshed:?}");
     assert!(refreshed.iter().any(|effect| matches!(effect, Effect::Cancel { .. })));
     twin.finish(Some(2));
-    assert!(twin.reference.waiters.contains_key(&2), "the waiter of page 2 waits for its page after page 1 landed");
+    assert!(twin.state().waiters(&key()).contains(&2), "the waiter of page 2 waits for its page after page 1 landed");
 }
 
 #[test]

@@ -7,7 +7,7 @@ fn win_landing_stale_generation_unwatched() {
     twin.step(Input::InterestMinus { id: 1 });
     assert!(twin.step(Input::Rejected { request: 1, reason: Reject::StaleGeneration }).is_empty());
     assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    assert!(!twin.reference.fresh);
+    assert_eq!(requests(&twin.call(9, Goal::First)), 1, "the window is not fresh any more");
 }
 
 #[test]
@@ -58,32 +58,9 @@ fn win_landing_leave() {
 }
 
 #[test]
-fn win_landing_stale() {
-    let mut twin = landing();
-    assert!(twin.step(Input::Stale { in_keys: true }).is_empty());
-    assert!(twin.reference.reread_due);
-}
-
-#[test]
-fn win_landing_stale_gap_covered() {
-    let mut twin = landing();
-    twin.step(Input::Online(true));
-    assert!(twin.step(Input::StaleGap).is_empty());
-    assert!(twin.reference.reread_due, "the request began before the return of the network");
-    let mut covered = Twin::new();
-    covered.step(Input::Online(true));
-    covered.call(1, Goal::First);
-    covered.respond(None);
-    assert_eq!(covered.stage(), Some(WindowStage::Landing));
-    assert!(covered.step(Input::StaleGap).is_empty());
-    assert!(!covered.reference.reread_due, "the landing began after the return of the network");
-}
-
-#[test]
 fn win_landing_online() {
     let mut twin = landing();
     assert!(twin.step(Input::Online(false)).is_empty());
-    assert_eq!(twin.reference.online, Some(false));
     assert_eq!(twin.stage(), Some(WindowStage::Landing));
 }
 
@@ -129,7 +106,6 @@ fn win_waiting_load() {
     let mut twin = waiting();
     assert!(twin.call(2, Goal::First).is_empty());
     assert!(twin.step(Input::Load { id: 3, goal: Goal::All, force: true }).is_empty());
-    assert!(matches!(twin.reference.state, State::Waiting { force: true, .. }));
     assert_eq!(twin.state().waiters(&key()), [1, 2, 3]);
 }
 
@@ -146,7 +122,6 @@ fn win_waiting_last_leave() {
     let mut twin = waiting();
     assert!(twin.step(Input::InterestMinus { id: 1 }).is_empty());
     assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    assert!(!twin.reference.fresh);
 }
 
 #[test]

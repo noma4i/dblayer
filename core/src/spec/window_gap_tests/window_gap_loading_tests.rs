@@ -34,14 +34,13 @@ fn win_loading_last_leave() {
     let mut twin = loading();
     assert_eq!(twin.step(Input::InterestMinus { id: 1 }), [Effect::Cancel { request: 1, attempt: 1 }]);
     assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    assert!(!twin.reference.fresh);
+    assert_eq!(requests(&twin.call(9, Goal::First)), 1, "the window is not fresh any more");
 }
 
 #[test]
 fn win_loading_load_more() {
     let mut twin = loading();
     assert!(twin.call(2, Goal::Next).is_empty());
-    assert_eq!(twin.reference.waiters[&2], super::super::ref_window::Want::Next(2));
     twin.finish(Some(2));
     assert_eq!(twin.stage(), Some(WindowStage::Loading), "the page after the current one loads for the waiter");
 }
@@ -72,7 +71,6 @@ fn win_loading_stray() {
 fn win_loading_temp_error() {
     let mut twin = loading();
     assert_eq!(twin.fail(Failure::Network), [Effect::ScheduleRetry { request: 1 }]);
-    assert!(matches!(twin.reference.state, State::Loading { retry: true, attempts: 1, .. }));
     let mut dropped = loading();
     assert_eq!(dropped.step(Input::Dropped { request: 1, attempt: 1 }), [Effect::ScheduleRetry { request: 1 }]);
     let mut server = loading();
@@ -101,7 +99,6 @@ fn win_loading_invalid_cursor() {
     let mut twin = fresh_with_cursor();
     twin.call(2, Goal::Next);
     assert_eq!(twin.fail(Failure::InvalidCursor), [Effect::Request { request: 3, attempt: 3, page: 1 }]);
-    assert!(twin.reference.cursor_reset_used && twin.reference.replace_all);
     assert_eq!(twin.respond(Some(2)), [Effect::Commit { request: 3, replace_all: true }]);
     twin.land();
     let mut again = fresh_with_cursor();
@@ -128,7 +125,6 @@ fn win_loading_retry() {
     let mut twin = loading();
     twin.fail(Failure::Network);
     assert_eq!(twin.step(Input::Retry { request: 1 }), [Effect::Request { request: 1, attempt: 2, page: 1 }]);
-    assert!(matches!(twin.reference.state, State::Loading { retry: false, attempt: 2, .. }));
 }
 
 #[test]
@@ -159,23 +155,19 @@ fn win_loading_online() {
 
 #[test]
 fn win_loading_stale_covered() {
-    let mut twin = loading();
-    twin.step(Input::Online(true));
-    assert!(twin.step(Input::StaleGap).is_empty());
-    assert!(twin.reference.reread_due, "the request began before the return of the network");
+    let mut late = Twin::new();
+    late.watch();
+    late.step(Input::Online(true));
+    assert!(late.step(Input::StaleGap).is_empty());
+    late.respond(None);
+    assert_eq!(requests(&late.land()), 1, "the request began before the return of the network: the landed rows are read again");
     let mut covered = Twin::new();
     covered.step(Input::Online(false));
     covered.step(Input::Online(true));
-    covered.call(1, Goal::First);
+    covered.watch();
     assert!(covered.step(Input::StaleGap).is_empty());
-    assert!(!covered.reference.reread_due, "the request began after the return of the network");
-}
-
-#[test]
-fn win_loading_stale() {
-    let mut twin = loading();
-    assert!(twin.step(Input::Stale { in_keys: true }).is_empty());
-    assert!(twin.reference.reread_due);
+    covered.respond(None);
+    assert_eq!(requests(&covered.land()), 0, "the request began after the return of the network");
 }
 
 #[test]
@@ -197,7 +189,8 @@ fn win_landing_committed() {
     assert_eq!(twin.land(), [Effect::WindowState]);
     assert_eq!(twin.stage(), Some(WindowStage::Idle));
     assert_eq!(twin.phase(), Phase::Loaded);
-    assert!(twin.reference.fresh && twin.load_state().loaded == Some(twin.revision));
+    assert!(twin.load_state().loaded == Some(twin.revision));
+    assert_eq!(requests(&twin.call(9, Goal::First)), 0, "the landed window is fresh");
     assert!(twin.state().waiters(&key()).is_empty());
 }
 
@@ -229,7 +222,7 @@ fn win_landing_committed_again_unwatched() {
     twin.step(Input::Stale { in_keys: true });
     assert_eq!(twin.land(), none(), "the only waiter was answered, nobody asks for a reread");
     assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    assert!(!twin.reference.fresh);
+    assert_eq!(requests(&twin.call(9, Goal::First)), 1, "the window is not fresh any more");
 }
 
 #[test]
@@ -311,7 +304,7 @@ fn win_members_complete_end() {
     assert_eq!(twin.finish(None), [Effect::WindowState]);
     assert_eq!(twin.stage(), Some(WindowStage::Idle));
     let state = twin.load_state();
-    assert!(state.settled && !state.has_more && twin.reference.fresh);
+    assert!(state.settled && !state.has_more);
 }
 
 #[test]

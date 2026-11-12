@@ -1,7 +1,7 @@
 use super::window_fresh_tests::{opening_twin, saved, LIFE};
 use super::*;
 
-// Rows of `window.md` for the preload interest, power saving and a call refused offline: the owner against the reference.
+// Rows of `window.md` for the preload interest, power saving and a call refused offline.
 
 pub(super) fn preload_twin(saving: bool) -> Twin {
     let mut twin = Twin::new();
