@@ -8,9 +8,31 @@ use crate::owners::store::{RowValue, StoreBatch, StoreOp};
 use crate::store::fixtures::{all_specs, put};
 use crate::store::Store;
 
+pub(super) fn write_as(db: &Arc<Store>, id: u64, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) -> crate::store::batch_write::BatchWritten {
+    let batch = StoreBatch { author, id, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops };
+    db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap()
+}
+
 pub(super) fn write(db: &Arc<Store>, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) {
-    let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops };
-    db.write_batch(&batch, db.files(), None).unwrap();
+    write_as(db, 1, author, rows, ops);
+}
+
+/// The row of a model delivered the way the path hands it to Store: a Feed event, the answer of a mutation, a page or a reread of a node.
+pub(super) fn deliver(db: &Arc<Store>, batch: u64, path: &str, model: &str, row: RowValue, related: Vec<(String, RowValue)>) -> crate::store::batch_write::BatchWritten {
+    match path {
+        "event" => {
+            let event = json!({"op": "upsert", "id": row.row_id, "row": serde_json::from_str::<Value>(&row.values).unwrap()}).to_string();
+            write_as(db, batch, BatchAuthor::Feed, vec![(model.into(), event)], Vec::new())
+        }
+        "response" => write_as(db, batch, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: model.into(), rows: vec![row] }]),
+        "page" | "node" => {
+            let source = if path == "node" { crate::schema::RowSource::NodeReread } else { crate::schema::RowSource::Page };
+            let key = WindowKey::nodes(model, &[row.row_id.as_str()]);
+            let op = StoreOp::Window { source, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row], related, total: None, base_revision: db.revision_seq().unwrap() };
+            write_as(db, batch, BatchAuthor::Window, Vec::new(), vec![op])
+        }
+        other => panic!("no path {other}"),
+    }
 }
 
 pub(super) fn message(id: &str, at: i64) -> RowValue {
@@ -34,11 +56,9 @@ fn data_sets_every_write() {
     let db = open();
     write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::LocalRows { model: "messages".into(), rows: vec![message("m1", 1)] }]);
     assert_eq!(chat(&db), json!(["m1", 1]), "a local create");
-    let event = json!({"op": "upsert", "id": "m2", "row": {"id": "m2", "chatId": "c1", "body": "m2", "createdAt": 2}}).to_string();
-    write(&db, BatchAuthor::Feed, vec![("messages".into(), event)], Vec::new());
+    deliver(&db, 1, "event", "messages", message("m2", 2), Vec::new());
     assert_eq!(chat(&db), json!(["m2", 2]), "an event");
-    let key = WindowKey::nodes("messages", &["m3"]);
-    write(&db, BatchAuthor::Window, Vec::new(), vec![StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![message("m3", 3)], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }]);
+    deliver(&db, 1, "page", "messages", message("m3", 3), Vec::new());
     assert_eq!(chat(&db), json!(["m3", 3]), "a page");
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows: vec![message("m4", 4)] }]);
     assert_eq!(chat(&db), json!(["m4", 4]), "the answer of a mutation");
@@ -100,11 +120,11 @@ fn data_sets_missing_parent_store() {
     let db = Arc::new(Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     let event = json!({"op": "upsert", "id": "m1", "row": {"id": "m1", "chatId": "c9", "body": "m1", "createdAt": 1}}).to_string();
     let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("messages".into(), event)], intents: 0, credential: None, ops: Vec::new() };
-    let written = db.write_batch(&batch, db.files(), None).unwrap();
+    let written = db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
     assert_eq!(written.stale_parents, ["chats".to_string()], "the parent row is not in the base");
     assert!(db.read(&["chats"], |reader| reader.point("chats", "c9")).unwrap().is_none(), "no parent row is made");
     put(&db, "chats", json!({"id": "c9", "title": "t"}));
-    let written = db.write_batch(&batch, db.files(), None).unwrap();
+    let written = db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
     assert!(written.stale_parents.is_empty(), "the parent row is there");
 }
 
@@ -114,14 +134,8 @@ fn land(db: &Arc<Store>, source: &str) {
             let row = RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "t", "lastMessageId": "m5", "lastMessageAt": 7}).to_string() };
             write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "chats".into(), rows: vec![row] }]);
         }
-        "answer" => write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "messages".into(), rows: vec![message("m5", 5)] }]),
-        "event" => {
-            let event = json!({"op": "upsert", "id": "m5", "row": {"id": "m5", "chatId": "c1", "body": "m5", "createdAt": 5}}).to_string();
-            write(db, BatchAuthor::Feed, vec![("messages".into(), event)], Vec::new());
-        }
-        "page" => {
-            let key = WindowKey::nodes("messages", &["m5"]);
-            write(db, BatchAuthor::Window, Vec::new(), vec![StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![message("m5", 5)], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }]);
+        "answer" | "event" | "page" => {
+            deliver(db, 1, if source == "answer" { "response" } else { source }, "messages", message("m5", 5), Vec::new());
         }
         other => panic!("unknown source {other}"),
     }

@@ -8,13 +8,11 @@ use crate::check::explore::seeded;
 use crate::check::model::{Owner, Property, RefModel, Sut};
 use crate::check::value::{Input, Observation, Step};
 use crate::owners::contract::BatchAuthor;
-use crate::owners::read::windows::WindowKey;
 use crate::owners::store::{RowValue, StoreOp};
-use crate::schema::RowSource;
 use crate::store::fixtures::{all_specs, put};
 use crate::store::Store;
 
-use super::data_sets_tests::{intent_creating, write};
+use super::data_sets_tests::{deliver, intent_creating, write};
 use super::sets_reference_tests::{derive, parent_revision, red_of, stored_sets, Child, Server, Sets};
 
 const EQUALS_F: &str = "P-DATA-103 equals F";
@@ -84,18 +82,7 @@ fn child_row(id: &str, at: i64, seq: Option<i64>, body: &str) -> RowValue {
 
 impl Landing {
     fn deliver(&self, path: &str, model: &str, row: RowValue) {
-        match path {
-            "event" => {
-                let event = json!({"op": "upsert", "id": row.row_id, "row": serde_json::from_str::<Value>(&row.values).unwrap()}).to_string();
-                write(&self.store, BatchAuthor::Feed, vec![(model.into(), event)], Vec::new());
-            }
-            "response" => write(&self.store, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: model.into(), rows: vec![row] }]),
-            _ => {
-                let key = WindowKey::nodes(model, &[row.row_id.as_str()]);
-                let op = StoreOp::Window { source: RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row], related: Vec::new(), total: None, base_revision: self.store.revision_seq().unwrap() };
-                write(&self.store, BatchAuthor::Window, Vec::new(), vec![op]);
-            }
-        }
+        deliver(&self.store, 1, path, model, row, Vec::new());
     }
 
     fn perform(&mut self, input: &Input) {

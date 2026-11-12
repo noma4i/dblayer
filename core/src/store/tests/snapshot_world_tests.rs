@@ -17,6 +17,7 @@ use crate::schema::RowSource;
 use crate::store::fixtures::snapshot_specs;
 use crate::store::Store;
 
+use super::data_sets_tests::deliver;
 use super::sets_reference_tests::{derive, milliseconds_of, stored_sets, Child, Server};
 
 pub(super) const LANDS: &str = "P-DATA-104 lands";
@@ -227,20 +228,10 @@ impl Lander {
         }
         let row = all.iter().find(|row| row.id == id).unwrap();
         let fields = input.args["fields"].as_array().unwrap();
-        match path {
-            "event" => {
-                let event = json!({"op": "upsert", "id": id, "row": projected(row, fields)}).to_string();
-                self.commit(BatchAuthor::Feed, vec![(model.into(), event)], Vec::new());
-            }
-            "response" => self.commit(BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: model.into(), rows: vec![row_value(row, fields)] }]),
-            "node" => self.window(RowSource::NodeReread, WindowKey::nodes(model, &[id]), vec![row_value(row, fields)], Vec::new()),
-            "page" => {
-                let chat = all.iter().find(|row| row.id == "c1").unwrap();
-                let related = input.args["related"].as_array().map(|chat_fields| vec![("chats".to_string(), row_value(chat, chat_fields))]).unwrap_or_default();
-                self.window(RowSource::Page, WindowKey::nodes(model, &[id]), vec![row_value(row, fields)], related)
-            }
-            other => panic!("no path {other}"),
-        }
+        let chat = all.iter().find(|row| row.id == "c1").unwrap();
+        let related = input.args.get("related").and_then(Value::as_array).map(|chat_fields| vec![("chats".to_string(), row_value(chat, chat_fields))]).unwrap_or_default();
+        self.batch += 1;
+        deliver(&self.store, self.batch, path, model, row_value(row, fields), related);
     }
 }
 
