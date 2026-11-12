@@ -207,7 +207,7 @@ pub(super) fn apply_upsert(
     Ok(())
 }
 
-pub(super) fn canonicalize(info: &ModelInfo, row: &mut Map<String, Value>) {
+pub(crate) fn canonicalize(info: &ModelInfo, row: &mut Map<String, Value>) {
     for plan in &info.layout.fields {
         let Some(value) = row.get(plan.field()) else { continue };
         let canonical = match plan {

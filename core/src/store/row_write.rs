@@ -35,6 +35,7 @@ pub(super) struct RowWrite<'a> {
     pub feed_hidden: Option<super::apply::HiddenRows>,
     /// The memory the feed event in its savepoint changed, while the event lands.
     pub event: Option<EventUndo>,
+    pub replaced: BTreeMap<RowRef, Map<String, Value>>,
 }
 
 type FieldKey = (String, Option<i64>);
@@ -134,6 +135,11 @@ impl RowWrite<'_> {
         if self.event.is_some() { return Err(StoreError::Poisoned("a batch plan applies while a feed event lands".into())); }
         let lands_rows = envelope.entity_ops.iter().any(|op| matches!(op, EntityOp::Upsert { .. })) || !envelope.scope_ops.is_empty();
         let hidden = if lands_rows { super::apply::hidden_rows(self.connection, &envelope.operation_transitions)? } else { Default::default() };
+        let merged;
+        let envelope = if self.replaced.is_empty() { envelope } else {
+            merged = BatchPlan { replaced: self.replaced.iter().map(|(real, temp)| (real.clone(), temp.clone())).chain(envelope.replaced.clone()).collect(), ..envelope.clone() };
+            &merged
+        };
         let result = super::apply::apply_envelope_at(self.connection, self.models, envelope, (self.now, self.revision, self.generation), Some(self.originals), Some((&mut self.current, &hidden, &mut EventUndo::default())))?;
         for operation in &envelope.entity_ops {
             if let EntityOp::Destroy { model, id, reason } = operation {

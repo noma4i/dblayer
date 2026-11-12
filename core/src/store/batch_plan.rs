@@ -202,6 +202,8 @@ pub struct BatchPlan {
     pub source: crate::schema::RowSource,
     pub pending_locals: Vec<PendingLocal>,
     pub network: Option<NetworkAdmission>,
+    /// The temporary row each real id replaced in this batch: the prior values of the confirmed child (P-DATA-57).
+    pub replaced: BTreeMap<RowRef, Map<String, Value>>,
 }
 
 /// A local value for a row that is not stored yet. It waits in `local_pending` and joins the row when it arrives.
@@ -244,6 +246,7 @@ impl BatchPlan {
             source: crate::schema::RowSource::Page,
             pending_locals: Vec::new(),
             network: None,
+            replaced: BTreeMap::new(),
         }
     }
 

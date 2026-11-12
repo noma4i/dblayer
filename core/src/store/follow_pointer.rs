@@ -5,9 +5,9 @@ use serde_json::{json, Map, Value};
 
 use crate::store::{BatchPlan, DestroyReason, EntityOp};
 use crate::identity::{ModelKey, RowId, RowRef};
-use crate::store::query::{compile_keys, fetch_keys, Order, Query, Where};
+use crate::store::query::{compile_keys, fetch_keys, Query, Where};
 use crate::schema::{AssociationKind, AssociationSpec};
-use crate::value::{read_id, same_fields, SortDirection};
+use crate::value::{read_id, same_fields};
 
 use super::{ModelInfo, Reader, StoreError};
 
@@ -69,15 +69,17 @@ pub(super) fn follow_parent_pointers(connection: &Connection, models: &BTreeMap<
     let doomed = envelope.entity_ops.iter().filter(|op| matches!(op, EntityOp::Destroy { .. })).map(EntityOp::row_ref).collect();
     let (mut changes, rest): (Vec<EntityOp>, Vec<EntityOp>) = envelope.entity_ops.iter().cloned().partition(|op| matches!(op, EntityOp::Destroy { reason: DestroyReason::Replaced { .. }, .. }));
     changes.extend(rest);
+    let replaced = std::mem::take(&mut envelope.replaced);
     let mut ops = Ops { entities: &mut envelope.entity_ops, written, doomed, current };
     for op in changes {
         match op {
-            EntityOp::Upsert { model, row, .. } => advance(models, &reader, &model, &row, &mut ops, &mut parents)?,
+            EntityOp::Upsert { model, row, .. } => advance(models, &reader, (&model, &row), &replaced, &mut ops, &mut parents)?,
             EntityOp::Destroy { model, id, reason: DestroyReason::Replaced { by }, .. } => rename(models, &reader, &model, &id, &by, &mut ops, &mut parents)?,
             EntityOp::Destroy { model, id, .. } => retreat(models, &reader, &model, &id, &mut ops, &mut parents)?,
             EntityOp::Touch { .. } => {}
         }
     }
+    envelope.replaced = replaced;
     envelope.entity_ops.retain(|op| !matches!(op, EntityOp::Touch { .. }) || !parents.rows.contains_key(&op.row_ref()));
     for (parent, after) in parents.rows {
         envelope.entity_ops.push(EntityOp::Upsert { model: parent.model, id: parent.id, row: after });
@@ -85,18 +87,24 @@ pub(super) fn follow_parent_pointers(connection: &Connection, models: &BTreeMap<
     Ok(())
 }
 
-fn advance(models: &BTreeMap<String, ModelInfo>, reader: &Reader<'_>, model: &ModelKey, row: &Row, ops: &mut Ops<'_>, parents: &mut Parents) -> Result<(), StoreError> {
-    for association in pointer_associations(models, model)? {
+fn advance(models: &BTreeMap<String, ModelInfo>, reader: &Reader<'_>, (model, row): (&ModelKey, &Row), replaced: &BTreeMap<RowRef, Row>, ops: &mut Ops<'_>, parents: &mut Parents) -> Result<(), StoreError> {
+    let associations = pointer_associations(models, model)?;
+    if associations.is_empty() {
+        return Ok(());
+    }
+    let mut canonical = row.clone();
+    super::apply::canonicalize(models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?, &mut canonical);
+    let row = &canonical;
+    let child = row.get("id").and_then(read_id).map(|id| RowRef::new(model.clone(), id));
+    let stored = match &child { Some(child) => ops.load(reader, child)?.or_else(|| replaced.get(child).cloned()), None => None };
+    for association in associations {
         let Some(parent_id) = row.get(&association.foreign_key).and_then(read_id) else { continue };
         let parent = RowRef::new(association.target.clone(), parent_id);
         if ops.doomed.contains(&parent) {
             continue;
         }
         let Some(current) = ops.current(reader, parents, &parent)? else { continue };
-        let child = row.get("id").and_then(read_id).map(|id| RowRef::new(model.clone(), id));
-        let stored = match &child { Some(child) => ops.load(reader, child)?, None => None };
-        let confirmed = stored.is_none() && child.as_ref().map(|child| replaced_a_temporary_id(reader, child)).transpose()?.unwrap_or(false);
-        let written = association.written_by(&current, row, stored.as_ref(), confirmed);
+        let written = association.written_by(&current, row, stored.as_ref());
         if written.is_empty() {
             continue;
         }
@@ -111,11 +119,6 @@ fn advance(models: &BTreeMap<String, ModelInfo>, reader: &Reader<'_>, model: &Mo
         }
     }
     Ok(())
-}
-
-fn replaced_a_temporary_id(reader: &Reader<'_>, child: &RowRef) -> Result<bool, StoreError> {
-    let ids = serde_json::to_string(&[child.id.as_str()])?;
-    Ok(reader.connection().prepare_cached(include_str!("sql/lookup/read_aliases_of.sql"))?.exists(rusqlite::params![child.model.as_str(), ids])?)
 }
 
 fn rename(models: &BTreeMap<String, ModelInfo>, reader: &Reader<'_>, model: &ModelKey, id: &RowId, by: &RowId, ops: &mut Ops<'_>, parents: &mut Parents) -> Result<(), StoreError> {
@@ -160,21 +163,17 @@ fn retreat(models: &BTreeMap<String, ModelInfo>, reader: &Reader<'_>, model: &Mo
         if current.get(pointer).and_then(read_id).as_ref() != Some(id) {
             continue;
         }
-        let siblings = u32::try_from(ops.doomed.iter().filter(|row| row.model == *model).count()).unwrap_or(u32::MAX);
-        let query = Query::new(model.as_str())
-            .filtered(Where::equal(&association.foreign_key, json!(parent_id.as_str())))
-            .ordered(association.newer.iter().map(|newer| Order::new(&newer.child, SortDirection::Desc)).collect())
-            .limited(siblings + 1);
+        let query = Query::new(model.as_str()).filtered(Where::equal(&association.foreign_key, json!(parent_id.as_str())));
         let statement = compile_keys(&query, child_spec).map_err(fault)?;
-        let mut previous = None;
+        let mut siblings = Vec::new();
         for (sibling_id, _) in fetch_keys(reader.connection(), &statement).map_err(fault)? {
             let sibling = RowRef::new(model.clone(), RowId::new(&sibling_id).map_err(fault)?);
             if ops.doomed.contains(&sibling) {
                 continue;
             }
-            previous = ops.load(reader, &sibling)?;
-            break;
+            siblings.extend(ops.load(reader, &sibling)?);
         }
+        let previous = association.newest(&siblings);
         let mut merged = current.clone();
         for (parent_field, child_field) in &association.sets {
             merged.insert(parent_field.clone(), previous.as_ref().and_then(|row| row.get(child_field).cloned()).unwrap_or(Value::Null));

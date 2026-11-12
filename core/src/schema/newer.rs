@@ -18,18 +18,7 @@ fn compare_values(left: &Value, right: &Value) -> Ordering {
     match (left, right) {
         (Value::Number(left), Value::Number(right)) => crate::value::compare_numbers(left, right).unwrap_or(Ordering::Equal),
         (Value::String(left), Value::String(right)) => left.cmp(right),
-        (Value::Number(_), Value::String(_)) | (Value::String(_), Value::Number(_)) => match (crate::value::read_date(left), crate::value::read_date(right)) {
-            (Some(left), Some(right)) => left.cmp(&right),
-            _ => Ordering::Equal,
-        },
         _ => Ordering::Equal,
-    }
-}
-
-fn differs(left: Option<&Value>, right: Option<&Value>) -> bool {
-    match (present(left), present(right)) {
-        (Some(left @ Value::Number(_)), Some(right @ Value::String(_))) | (Some(left @ Value::String(_)), Some(right @ Value::Number(_))) => compare_values(left, right) != Ordering::Equal,
-        (left, right) => left != right,
     }
 }
 
@@ -88,21 +77,25 @@ impl AssociationSpec {
         self.newer.is_empty() || is_newer(&self.child_order(child), &self.parent_order(parent))
     }
 
-    /// P-DATA-57: the `sets` pairs a write of `child` puts into `parent`; `stored` is the child row before the write, `confirmed` a child that replaced its temporary id and has no stored row yet.
-    pub fn written_by<'a>(&'a self, parent: &Map<String, Value>, child: &Map<String, Value>, stored: Option<&Map<String, Value>>, confirmed: bool) -> Vec<(&'a String, &'a String)> {
+    pub fn newest<'a>(&self, children: impl IntoIterator<Item = &'a Map<String, Value>>) -> Option<&'a Map<String, Value>> {
+        children.into_iter().reduce(|best, child| if is_newer(&self.child_order(child), &self.child_order(best)) { child } else { best })
+    }
+
+    /// P-DATA-57: the `sets` pairs a write of `child` puts into `parent`; `stored` is the child row before the write (for a child that replaced its temporary id in this batch, the temporary row).
+    pub fn written_by<'a>(&'a self, parent: &Map<String, Value>, child: &Map<String, Value>, stored: Option<&Map<String, Value>>) -> Vec<(&'a String, &'a String)> {
         if !self.child_is_newer(parent, child) {
             return Vec::new();
         }
         let id = child.get("id").and_then(Value::as_str);
-        let pointed = !confirmed && id.is_some() && self.pointer_field().and_then(|field| present(parent.get(field))).and_then(Value::as_str) == id;
+        let pointed = id.is_some() && self.pointer_field().and_then(|field| present(parent.get(field))).and_then(Value::as_str) == id;
         let predicted = id.is_some_and(is_temp_id);
         self.sets
             .iter()
             .filter(|(parent_field, child_field)| {
                 let Some(value) = child.get(*child_field) else { return false };
                 let Some(held) = present(parent.get(*parent_field)) else { return true };
-                if pointed {
-                    return stored.is_some_and(|stored| differs(stored.get(*child_field), Some(value)));
+                if pointed && !stored.is_some_and(|stored| present(stored.get(*child_field)) != present(Some(value))) {
+                    return false;
                 }
                 if predicted && self.newer.iter().any(|newer| newer.child == **child_field) {
                     return present(Some(value)).is_some_and(|value| compare_values(value, held) == Ordering::Greater);
