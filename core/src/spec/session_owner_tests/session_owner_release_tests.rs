@@ -7,12 +7,13 @@ pub(super) fn rejected_landing(sequence: u64) -> Twin {
     twin
 }
 
-pub(super) fn blocked_with_author() -> Twin {
-    let mut twin = rejected_landing(1);
-    twin.feed(rejected(Reason::Storage));
-    assert!(matches!(&twin.reference.state, RefState::Blocked { pending: Some(pending), reason: Block::Storage, landing: Some(_) } if pending.author == Some(7)));
-    twin
-}
+pub(super) fn owned_mutate(author: u64, owner: crate::transport::RequestOwner, req_id: u64) -> Input { Input::Mutate { author, owner: Some(owner), req_id, epoch: EPOCH, path: OTP.into(), body: "{}".into(), purpose: 0 } }
+
+pub(super) fn outbox_owner() -> crate::transport::RequestOwner { crate::transport::RequestOwner::Operation { seq: 1 } }
+
+pub(super) fn transfer_init_owner() -> crate::transport::RequestOwner { crate::transport::RequestOwner::Transfer { operation_id: 1, item_id: "item".into(), step: crate::owners::write::upload::UploadStage::Init } }
+
+fn detached_owner() -> Option<crate::transport::RequestOwner> { Some(crate::transport::RequestOwner::Detached) }
 
 pub(super) fn gate_closed(twin: &Twin, delta: u64) -> Input { Input::GateClosed { request_id: twin.rid() + delta, attempt_id: twin.aid() } }
 
@@ -28,17 +29,24 @@ fn sess_held_release_stray() {
 
 #[test]
 fn sess_blocked_release() {
-    let mut twin = blocked_with_author();
-    let RefState::Blocked { pending: Some(before), reason, landing } = twin.reference.state.clone() else { panic!("blocked") };
-    assert!(twin.feed(Input::Release { req_id: before.request_id }).is_empty(), "the removed author hears nothing");
-    assert_eq!(twin.reference.state, RefState::Blocked { pending: Some(RefPending { author: None, owner: Some(crate::transport::RequestOwner::Detached), ..before }), reason, landing: landing.clone() }, "the reason, the pair and the landing stay");
-    let effects = twin.feed(Input::Tick);
-    assert!(matches!(&effects[..], [RefEffect::CommitLanding { answer: None, sequence: Some(1), .. }]), "the landing commits with no Answer of the removed author: {effects:?}");
+    let mut twin = blocked_invalid();
+    let RefState::Blocked { pending: Some(before), reason } = twin.reference.state.clone() else { panic!("blocked") };
+    assert_eq!(twin.feed(Input::Release { req_id: before.request_id }), vec![answer(7, 11, Outcome::Dropped)], "the removed author hears only Dropped");
+    assert_eq!(twin.reference.state, RefState::Blocked { pending: Some(RefPending { author: None, owner: detached_owner(), ..before }), reason }, "the reason and the pair stay");
+    assert!(twin.feed(Input::Tick).is_empty(), "no repeat of the write");
+    for (author, owner) in [(crate::spec::ref_session::OUTBOX_AUTHOR, outbox_owner()), (crate::spec::ref_session::TRANSFER_AUTHOR, transfer_init_owner())] {
+        let mut kept = Twin::new();
+        kept.feed_all([owned_mutate(author, owner, 11), committed()]);
+        let input = kept.response(1);
+        kept.feed_all([input, rejected(Reason::Invalid)]);
+        assert_eq!(kept.feed(Input::Release { req_id: 11 }), vec![answer(author, 11, Outcome::Dropped)], "author {author}: Dropped is the answer to Release");
+        assert!(matches!(&kept.reference.state, RefState::Blocked { pending: Some(pending), reason: Block::Invalid } if pending.author == Some(author) && pending.owner == detached_owner() && pending.reply.is_none()), "author {author} stays for sess_landing_detached_committed: {:?}", kept.reference.state);
+    }
 }
 
 #[test]
 fn sess_blocked_release_stray() {
-    let mut twin = blocked_with_author();
+    let mut twin = blocked_invalid();
     let before = twin.reference.state.clone();
     assert!(twin.feed(Input::Release { req_id: 99 }).is_empty());
     assert_eq!(twin.reference.state, before);
@@ -51,11 +59,10 @@ fn sess_blocked_release_stray() {
 #[test]
 fn sess_landing_release() {
     let mut twin = rejected_landing(1);
-    let RefState::Landing { pending, batch, answer, identity, sequence, server_ended } = twin.reference.state.clone() else { panic!("landing") };
-    twin.feed(Input::Release { req_id: pending.request_id });
-    assert!(twin.raw_text.contains("Dropped") && twin.raw_text.matches("Answer { author: 7").count() == 1, "the author hears: unknown outcome: {}", twin.raw_text);
-    assert_eq!(twin.reference.state, RefState::Landing { pending: RefPending { author: None, owner: Some(crate::transport::RequestOwner::Detached), ..pending }, batch, answer, identity, sequence, server_ended }, "the stored result and the batch stay");
-    assert!(twin.feed(committed()).is_empty(), "the removed author hears nothing");
+    let RefState::Landing { pending, batch, answer: stored, identity, sequence, server_ended } = twin.reference.state.clone() else { panic!("landing") };
+    assert_eq!(twin.feed(Input::Release { req_id: pending.request_id }), vec![answer(7, 11, Outcome::Dropped)], "the removed author hears only Dropped");
+    assert_eq!(twin.reference.state, RefState::Landing { pending: RefPending { author: None, owner: detached_owner(), ..pending }, batch, answer: stored, identity, sequence, server_ended }, "the stored result and the batch stay");
+    assert!(twin.feed(committed()).is_empty(), "the outcome of the server does not reach the removed author");
     assert_eq!(twin.reference.credential.map(|credential| credential.sequence), Some(1));
 }
 
@@ -65,16 +72,16 @@ fn sess_landing_release_stray() {
     let before = twin.reference.state.clone();
     assert!(twin.feed(Input::Release { req_id: 99 }).is_empty());
     assert_eq!(twin.reference.state, before);
-    assert_eq!(twin.feed(committed()), vec![answer(7, 11, Outcome::Response("{}".into()))], "the author of the pair still hears the outcome");
+    assert_eq!(twin.feed(committed()), vec![answer(7, 11, Outcome::Response("{}".into(), false))], "the author of the pair still hears the outcome");
 }
 
 #[test]
 fn sess_blocked_released_mutate() {
-    let mut storage = blocked_with_author();
-    storage.feed(Input::Release { req_id: 11 });
-    let before = storage.reference.state.clone();
-    assert_eq!(storage.feed(mutate(9, 11)), vec![answer(9, 11, retained(Fail::Storage))], "the removed author is not bound again");
-    assert_eq!(storage.reference.state, before);
+    let mut invalid = blocked_invalid();
+    invalid.feed(Input::Release { req_id: 11 });
+    let before = invalid.reference.state.clone();
+    assert_eq!(invalid.feed(mutate(9, 11)), vec![answer(9, 11, retained(Fail::Invalid))], "the removed author is not bound again");
+    assert_eq!(invalid.reference.state, before);
     let mut conflict = rejected_landing(5);
     assert!(matches!(conflict.reference.state, RefState::Blocked { reason: Block::SequenceConflict, .. }));
     conflict.feed(Input::Release { req_id: 11 });

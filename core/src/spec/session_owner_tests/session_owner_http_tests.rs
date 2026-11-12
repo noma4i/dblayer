@@ -195,7 +195,7 @@ fn sess_calling_temporary_mutate_body() {
     let mut twin = calling_mutate();
     let body = r#"{"errors":[{"message":"Busy","extensions":{"code":"SERVICE_UNAVAILABLE"}}]}"#.to_string();
     let input = Input::HttpError { request_id: twin.rid(), attempt_id: twin.aid(), temporary: true, auth: false, security: None, body: Some(body.clone()) };
-    assert_eq!(twin.feed(input), vec![answer(7, 11, Outcome::Response(body))]);
+    assert_eq!(twin.feed(input), vec![answer(7, 11, Outcome::Response(body, false))]);
     assert!(matches!(twin.reference.state, RefState::PendingHeld { .. }));
 }
 
@@ -344,7 +344,7 @@ fn sess_landing_mutate() {
     let input = twin.response(1);
     let effects = twin.feed(input);
     assert!(matches!(&effects[..], [RefEffect::CommitLanding { answer: Some((11, Ok(_))), .. }]), "the answer is stored with the landing: {effects:?}");
-    assert_eq!(twin.feed(committed()), vec![answer(7, 11, Outcome::Response("{}".into()))]);
+    assert_eq!(twin.feed(committed()), vec![answer(7, 11, Outcome::Response("{}".into(), false))]);
     assert_eq!(twin.reference.credential, Some(RefCredential { digest: CRED, sequence: 1 }));
 }
 
@@ -366,20 +366,10 @@ fn sess_landing_committed_error() {
 }
 
 #[test]
-fn sess_landing_rejected() {
-    let mut twin = calling_mutate();
-    let input = twin.response(1);
-    twin.feed(input);
-    let effects = twin.feed(rejected(Reason::Storage));
-    assert_eq!(effects, vec![answer(7, 11, retained(Fail::Reason(Reason::Storage)))]);
-    assert!(matches!(twin.reference.state, RefState::Blocked { reason: Block::Storage, pending: Some(_), landing: Some(_) }), "the stored pending and the unapplied landing stay");
-}
-
-#[test]
 fn sess_blocked_call() {
-    let mut twin = blocked_storage();
+    let mut twin = blocked_invalid();
     twin.feed(call(2));
-    assert_eq!(twin.replies.last(), Some(&(2, Err(Fail::StateLost))), "no new pending replaces the stored one");
+    assert_eq!(twin.replies.last(), Some(&(2, Err(Fail::Invalid))), "the reason of the block, no new pending replaces the stored one");
 }
 
 #[test]
@@ -398,49 +388,30 @@ fn sess_blocked_mutate() {
 }
 
 #[test]
-fn sess_blocked_attempt_pending() {
-    let mut twin = Twin::new();
-    twin.feed_all([mutate(7, 11), committed()]);
-    let input = twin.response(1);
-    twin.feed_all([input, rejected(Reason::Storage)]);
-    let effects = twin.feed(mutate(7, 11));
-    assert!(matches!(&effects[..], [RefEffect::CommitLanding { answer: Some((11, Ok(_))), sequence: Some(1), .. }]), "the saved landing commits again, no request goes out: {effects:?}");
-    assert!(matches!(twin.reference.state, RefState::Landing { .. }));
-    assert_eq!(twin.feed(committed()), vec![answer(7, 11, Outcome::Response("{}".into()))]);
-}
-
-#[test]
 fn sess_blocked_mutate_refused() {
-    let mut twin = Twin::new();
-    twin.feed_all([mutate(7, 11), committed()]);
-    let input = twin.response(5);
-    twin.feed(input);
-    assert_eq!(twin.feed(mutate(7, 11)), vec![answer(7, 11, retained(Fail::SequenceConflict))], "the request does not leave, the pair stays saved");
-}
-
-#[test]
-fn sess_blocked_retry() {
-    let mut twin = blocked_storage();
-    let effects = twin.feed(Input::Tick);
-    assert!(matches!(&effects[..], [RefEffect::CommitLanding { answer: None, sequence: Some(1), .. }]), "the saved landing commits again with no Answer of the released author: {effects:?}");
-    let mut again = blocked_storage();
-    let effects = again.feed(Input::Online(true));
-    assert!(matches!(&effects[..], [RefEffect::CommitLanding { .. }]));
+    let mut conflict = Twin::new();
+    conflict.feed_all([mutate(7, 11), committed()]);
+    let input = conflict.response(5);
+    conflict.feed(input);
+    assert_eq!(conflict.feed(mutate(7, 11)), vec![answer(7, 11, retained(Fail::SequenceConflict))], "the request does not leave, the pair stays saved");
+    let mut invalid = Twin::new();
+    invalid.feed_all([mutate(7, 11), committed()]);
+    let input = invalid.response(1);
+    invalid.feed_all([input, rejected(Reason::Invalid)]);
+    assert_eq!(invalid.feed(mutate(7, 11)), vec![answer(7, 11, retained(Fail::Invalid))], "the request does not leave, the pair stays saved");
 }
 
 #[test]
 fn sess_blocked_stays() {
-    let mut twin = Twin::new();
-    twin.feed_all([mutate(7, 11), committed()]);
-    let input = twin.response(5);
-    twin.feed(input);
-    assert!(twin.feed(Input::Tick).is_empty() && twin.feed(Input::Online(false)).is_empty() && twin.feed(Input::Online(true)).is_empty());
-    assert!(matches!(twin.reference.state, RefState::Blocked { .. }));
+    for mut twin in [{ let mut conflict = Twin::new(); conflict.feed_all([mutate(7, 11), committed()]); let input = conflict.response(5); conflict.feed(input); conflict }, blocked_invalid()] {
+        assert!(twin.feed(Input::Tick).is_empty() && twin.feed(Input::Online(false)).is_empty() && twin.feed(Input::Online(true)).is_empty());
+        assert!(matches!(twin.reference.state, RefState::Blocked { .. }));
+    }
 }
 
 #[test]
 fn sess_blocked_epoch_ended() {
-    let mut twin = blocked_storage();
+    let mut twin = blocked_invalid();
     twin.feed(call(2));
     twin.feed(ended(EndCause::SessionReset));
     assert!(matches!(twin.reference.state, RefState::Idle) && twin.reference.credential.is_none());
@@ -448,7 +419,7 @@ fn sess_blocked_epoch_ended() {
 
 #[test]
 fn sess_blocked_closing() {
-    let mut twin = blocked_storage();
+    let mut twin = blocked_invalid();
     assert_eq!(twin.feed(Input::Closing), vec![RefEffect::Drained]);
 }
 
@@ -485,7 +456,7 @@ fn sess_online() {
 
 #[test]
 fn sess_published() {
-    for mut twin in [Twin::new(), persisting(), calling(), landing(1), held(), blocked_storage()] {
+    for mut twin in [Twin::new(), persisting(), calling(), landing(1), held(), blocked_invalid()] {
         twin.feed(Input::Published { epoch: 8, identity: None, state: PubState::Session });
         assert_eq!(twin.reference.epoch, 8);
     }
@@ -669,7 +640,7 @@ fn sess_idle_epoch_ended_other() {
 
 #[test]
 fn sess_closing() {
-    for mut twin in [Twin::new(), persisting(), calling(), landing(1), held(), blocked_storage()] {
+    for mut twin in [Twin::new(), persisting(), calling(), landing(1), held(), blocked_invalid()] {
         twin.feed(call(7));
         twin.feed(Input::Closing);
         assert!(matches!(twin.reference.state, RefState::Closed) && twin.history.contains(&RefEffect::Drained));
@@ -727,7 +698,7 @@ fn sess_prop_answer_kinds_table() {
     let mut applied = calling_mutate();
     let input = applied.response(1);
     applied.feed(input);
-    assert_eq!(applied.feed(committed()), vec![answer(7, 11, Outcome::Response("{}".into()))], "an applied mutation is answered, not rolled back");
+    assert_eq!(applied.feed(committed()), vec![answer(7, 11, Outcome::Response("{}".into(), false))], "an applied mutation is answered, not rolled back");
     assert_eq!(applied.reference.credential.map(|credential| credential.sequence), Some(1), "the applied mutation spent the number");
 }
 

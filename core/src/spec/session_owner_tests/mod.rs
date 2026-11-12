@@ -1,9 +1,8 @@
 //! Owner-level tests of the owner `Session` in the `lifecycle` machine: the owner on `DetScheduler` against `ref_session.rs`. Names are the `Test` column.
 
-use super::ref_session::{AfterClear, AfterStore, Block, CallPhase, Class, Credential as RefCredential, Effect as RefEffect, EndCause, Fail, Input, Kind, Landed as RefLanded, Operation, Outcome, Pending as RefPending, PubState, Queued as RefQueued, Reason, Secret, Session as Ref, State as RefState};
+use super::ref_session::{AfterClear, AfterStore, Block, CallPhase, Class, Credential as RefCredential, Effect as RefEffect, EndCause, Fail, Input, Kind, Operation, Outcome, Pending as RefPending, PubState, Queued as RefQueued, Reason, Secret, Session as Ref, State as RefState};
 use crate::owners::contract::{Committed, EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected};
 use crate::owners::session::{self as owner, AuthorOutcome, Credential, OperationClass, PendingCall, Queued, SecretState, SessionCalls, SessionEffect, SessionError, SessionInput, SessionPhase, SessionState};
-use crate::owners::session::Landed;
 use crate::spec::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
 use crate::transport::SessionCode;
@@ -43,6 +42,7 @@ fn reject(reason: Reason) -> RejectReason {
     match reason {
         Reason::NoSession => RejectReason::NoSession,
         Reason::Storage => RejectReason::Storage("disk".into()),
+        Reason::Invalid => RejectReason::Invalid("bad".into()),
         Reason::Closed => RejectReason::Closed,
     }
 }
@@ -50,10 +50,7 @@ fn reject(reason: Reason) -> RejectReason {
 fn fail_of(error: &SessionError) -> Fail {
     match error {
         SessionError::Invalid => Fail::Invalid,
-        SessionError::Rejected(RejectReason::NoSession) => Fail::Reason(Reason::NoSession),
-        SessionError::Rejected(RejectReason::Storage(_)) => Fail::Reason(Reason::Storage),
-        SessionError::Rejected(RejectReason::Closed) => Fail::Reason(Reason::Closed),
-        SessionError::Rejected(other) => panic!("the Session table has no {other:?}"),
+        SessionError::Rejected(other) => panic!("no row of the Session table gives an author Rejected({other:?}): a refused write repeats, ends with the epoch or answers Invalid"),
         SessionError::Session { code: crate::transport::SessionCode::Unauthenticated, .. } => Fail::Unauthorized,
         SessionError::Session { code, .. } => Fail::Session(*code),
         SessionError::Graphql { code, .. } => Fail::Graphql(code.clone()),
@@ -134,7 +131,7 @@ fn queued_of(queued: &Queued) -> RefQueued {
 
 fn outcome_of(outcome: &AuthorOutcome) -> Outcome {
     match outcome {
-        AuthorOutcome::Response { body, .. } => Outcome::Response(body.clone()),
+        AuthorOutcome::Response { body, .. } => Outcome::Response(body.clone(), false),
         AuthorOutcome::Error { class, error, pending_retained } => Outcome::Error(if *class == ErrorClass::Permanent { Kind::Permanent } else { Kind::Temporary }, fail_of(error), *pending_retained),
         AuthorOutcome::Dropped => Outcome::Dropped,
     }
@@ -166,11 +163,14 @@ fn phase_of(phase: &SessionPhase) -> RefState {
         SessionPhase::Persisting { pending, batch } => RefState::Persisting { pending: pending_of(pending), batch: *batch },
         SessionPhase::Calling { pending, attempts, phase } => RefState::Calling { pending: pending_of(pending), attempts: *attempts, phase: call_phase(phase) },
         SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended } => RefState::Landing { pending: pending_of(pending), batch: *batch, answer: if pending.class == owner::OperationClass::Login && sequence.is_none() { answer_of(answer) } else { answer.clone().map_err(|error| fail_of(&error)) }, identity: *identity, sequence: *sequence, server_ended: *server_ended },
-        SessionPhase::Blocked { pending, reason, landing } => RefState::Blocked { pending: pending.as_ref().map(pending_of), landing: landing.as_ref().map(|Landed { answer, identity, sequence, server_ended }| RefLanded { answer: if sequence.is_none() && pending.as_ref().is_some_and(|pending| pending.class == owner::OperationClass::Login) { answer_of(answer) } else { answer.clone().map_err(|error| fail_of(&error)) }, identity: *identity, sequence: *sequence, server_ended: *server_ended }), reason: match reason {
-            owner::Block::Storage => Block::Storage,
-            owner::Block::SequenceConflict => Block::SequenceConflict,
-            owner::Block::StateLost => Block::StateLost,
-        } },
+        SessionPhase::Blocked { pending, reason, landing } => {
+            assert!(landing.is_none(), "BlockedPending keeps no landing (D-336 (5))");
+            RefState::Blocked { pending: pending.as_ref().map(pending_of), reason: match reason {
+                owner::Block::Storage => panic!("a refused Storage write blocks no pair: it repeats in its own state (lifecycle.md Persisting/Landing x Rejected Storage)"),
+                owner::Block::SequenceConflict => Block::SequenceConflict,
+                owner::Block::StateLost => Block::StateLost,
+            } }
+        }
         SessionPhase::Closed => RefState::Closed,
     }
 }
@@ -207,17 +207,13 @@ struct Twin {
     reference: Ref,
     history: Vec<RefEffect>,
     replies: Vec<(u64, Result<String, Fail>)>,
-    /// The typed text of the effects the owner gave out in the last step.
-    raw_text: String,
+        raw_text: String,
 }
 
 impl Twin {
-    /// Online, signed in (`credential` 4 at sequence 0), `Published.epoch` = `EPOCH`.
     fn new() -> Self { Self::start(Some(true), Some(RefCredential { digest: CRED, sequence: 0 })) }
 
     fn offline() -> Self { Self::start(Some(false), Some(RefCredential { digest: CRED, sequence: 0 })) }
-
-    /// No credential: a call that carries the session signs in.
     fn bare() -> Self { Self::start(Some(true), None) }
 
     fn start(online: Option<bool>, credential: Option<RefCredential>) -> Self {
@@ -293,8 +289,11 @@ impl Twin {
         let want = self.reference.step(reference_input);
         let mut effects: Vec<RefEffect> = raw.iter().filter_map(effect_of).collect();
         if scheduled > 0 {
-            let Some(SessionPhase::Calling { attempts, .. }) = self.det.state(self.addr).map(SessionState::phase) else { panic!("a retry timer is scheduled in Calling only") };
-            effects.extend(std::iter::repeat_n(RefEffect::ScheduleTick { attempts: *attempts }, scheduled));
+            let attempts = match self.det.state(self.addr).map(SessionState::phase) {
+                Some(SessionPhase::Calling { attempts, .. }) => *attempts,
+                _ => want.effects.iter().find_map(|effect| match effect { RefEffect::ScheduleTick { attempts } => Some(*attempts), _ => None }).unwrap_or(0),
+            };
+            effects.extend(std::iter::repeat_n(RefEffect::ScheduleTick { attempts }, scheduled));
         }
         let mut sorted_have = effects.clone();
         let mut sorted_want = want.effects.clone();
@@ -423,10 +422,12 @@ fn clearing() -> Twin {
     twin.feed(Input::SecretStored { op, ok: true });
     twin
 }
-
-fn blocked_storage() -> Twin {
-    let mut twin = landing(1);
-    twin.feed(rejected(Reason::Storage));
+fn blocked_invalid() -> Twin {
+    let mut twin = calling_mutate();
+    let input = twin.response(1);
+    twin.feed(input);
+    twin.feed(rejected(Reason::Invalid));
+    assert!(matches!(&twin.reference.state, RefState::Blocked { pending: Some(pending), reason: Block::Invalid } if pending.author == Some(7) && pending.reply.is_none()));
     twin
 }
 
@@ -516,11 +517,9 @@ fn matrix_owner_state_input_session() {
         ("AnswerTooLarge", Abstract::AnswerTooLarge(false)), ("AnswerTooLarge foreign", Abstract::AnswerTooLarge(true)),
         ("Foreground", Abstract::Foreground), ("Tick", Abstract::Tick), ("Online false", Abstract::Online(false)), ("Online true", Abstract::Online(true)), ("EpochEnded", Abstract::EpochEnded), ("Closing", Abstract::Closing),
     ];
-    state_input_pairs(&mut matrix, "reference ref_session", vec![("idle", Twin::new), ("persisting", persisting), ("calling", calling), ("calling a mutation", calling_mutate), ("pending held", held), ("generating a credential", generating), ("storing a credential", storing), ("clearing", clearing), ("landing", landing_one), ("blocked storage", blocked_storage)], alphabet, |twin: &mut Twin, input| { let input = concrete(twin, input); twin.feed(input); });
+    state_input_pairs(&mut matrix, "reference ref_session", vec![("idle", Twin::new), ("persisting", persisting), ("calling", calling), ("calling a mutation", calling_mutate), ("pending held", held), ("generating a credential", generating), ("storing a credential", storing), ("clearing", clearing), ("landing", landing_one), ("blocked invalid", blocked_invalid)], alphabet, |twin: &mut Twin, input| { let input = concrete(twin, input); twin.feed(input); });
     matrix.finish();
 }
-
-/// The kind of an answer as the one classifier types it for the pair that was sent: sequenced when the pair carries a number, with the document when the pair went by hash.
 fn kind_of(history: &[RefEffect], request_id: u64, body: &str, sequence: Option<u64>) -> crate::transport::AnswerKind {
     let pending = history.iter().rev().find_map(|effect| match effect { RefEffect::HttpRequest { pending, .. } if pending.request_id == request_id => Some(pending), _ => None });
     let (sequenced, has_document) = pending.map_or((sequence.is_some(), false), |pending| (pending.class != Class::Sessionless, pending.document.is_none()));

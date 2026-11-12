@@ -26,6 +26,22 @@ fn sess_landing_detached_committed() {
     let mut ended = landing_detached(true);
     assert_eq!(ended.feed(committed()), vec![RefEffect::ServerEnded { epoch: EPOCH }], "a revoked answer ends the session and nothing else");
     assert!(ended.replies.is_empty());
+    for (author, owner) in [(crate::spec::ref_session::OUTBOX_AUTHOR, super::session_owner_release_tests::outbox_owner()), (crate::spec::ref_session::TRANSFER_AUTHOR, super::session_owner_release_tests::transfer_init_owner())] {
+        let mut kept = Twin::new();
+        kept.feed_all([super::session_owner_release_tests::owned_mutate(author, owner, 11), committed()]);
+        assert_eq!(kept.feed(Input::Release { req_id: 11 }), vec![answer(author, 11, Outcome::Dropped)], "author {author}: Dropped answers the Release");
+        let input = kept.response(1);
+        let landing = kept.feed(input);
+        assert!(matches!(&landing[..], [RefEffect::CommitLanding { answer: Some((11, Ok(_))), sequence: Some(1), .. }]), "author {author}: the Answer is stored with the landing: {landing:?}");
+        assert_eq!(kept.feed(committed()), vec![answer(author, 11, Outcome::Response("{}".into(), false))], "author {author} kept by Release hears the outcome after Committed, the pair is resolved");
+        assert!(kept.replies.is_empty());
+    }
+    let mut generic = Twin::new();
+    generic.feed_all([mutate(7, 11), committed()]);
+    assert_eq!(generic.feed(Input::Release { req_id: 11 }), vec![answer(7, 11, Outcome::Dropped)]);
+    let input = generic.response(1);
+    generic.feed(input);
+    assert!(generic.feed(committed()).is_empty(), "an author other than Outbox and Transfer InitMultipart hears nothing after Dropped");
 }
 
 #[test]

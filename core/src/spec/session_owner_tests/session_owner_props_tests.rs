@@ -27,13 +27,13 @@ fn sess_prop_sequence() {
 fn sess_blocked_crash_same_pair() {
     let owner = crate::transport::RequestOwner::Operation { seq: 11 };
     let own = |req_id| Input::Mutate { author: 7, owner: Some(owner.clone()), req_id, epoch: EPOCH, path: OTP.into(), body: "{}".into(), purpose: 0 };
-    for (reason, server_sequence, rejected_landing) in [("Storage", 1, true), ("SequenceConflict", 5, false)] {
+    for (reason, server_sequence, rejected_landing) in [("Invalid", 1, true), ("SequenceConflict", 5, false)] {
         let mut twin = Twin::new();
         twin.feed_all([own(11), committed()]);
         let saved = twin.pending();
         let response = twin.response(server_sequence);
         twin.feed(response);
-        if rejected_landing { twin.feed(rejected(Reason::Storage)); }
+        if rejected_landing { twin.feed(rejected(Reason::Invalid)); }
         assert!(matches!(twin.reference.state, RefState::Blocked { pending: Some(_), .. }), "{reason}: the pair stays saved");
 
         let mut again = opened(open(Some((CRED, saved.sequence - 1)), Some(saved.clone()), false, Secret::Present(CRED)));

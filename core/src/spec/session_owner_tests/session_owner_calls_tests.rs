@@ -317,8 +317,8 @@ fn sess_dequeue_stale_mutate() {
 fn sess_cancel_queued() {
     let mut twin = persisting();
     twin.feed(mutate(7, 12));
-    twin.feed(Input::Cancel { req_id: 12 });
-    assert!(twin.raw_text.contains("NotSent") && twin.raw_text.matches("Answer { author: 7, req_id: 12").count() == 1, "no request was made and none will be: {}", twin.raw_text);
+    assert_eq!(twin.feed(Input::Cancel { req_id: 12 }), vec![answer(7, 12, permanent(Fail::NotSent))], "no request was made and none will be");
+    assert!(twin.reference.queue.is_empty());
     assert!(matches!(twin.reference.state, RefState::Persisting { .. }), "the started request goes on");
 }
 
@@ -358,8 +358,9 @@ fn sess_persisting_committed_offline() {
 fn sess_persisting_rejected() {
     let mut twin = Twin::new();
     twin.feed_all([mutate(7, 11), call(2)]);
-    let effects = twin.feed(rejected(Reason::Storage));
-    assert!(effects.contains(&answer(7, 11, permanent(Fail::Reason(Reason::Storage)))));
+    let effects = twin.feed(rejected(Reason::Invalid));
+    assert_eq!(effects.iter().filter(|effect| matches!(effect, RefEffect::Answer { .. })).collect::<Vec<_>>(), vec![&answer(7, 11, permanent(Fail::Invalid))], "the author hears Invalid, the pair was never sent: {effects:?}");
+    assert!(!effects.iter().any(|effect| matches!(effect, RefEffect::HttpRequest { .. })), "no request was made: {effects:?}");
     assert!(matches!(twin.reference.state, RefState::Sealing { .. }), "the next entry of the queue starts");
 }
 
@@ -468,7 +469,7 @@ fn sess_calling_no_sequence() {
     let input = Input::Response { request_id: author.rid(), attempt_id: author.aid(), body: "{}".into(), sequence: None, refusal: None };
     author.feed(input);
     let done = author.feed(committed());
-    assert!(done.contains(&answer(7, 11, Outcome::Response("{}".into()))), "the author gets the answer: {done:?}");
+    assert!(done.contains(&answer(7, 11, Outcome::Response("{}".into(), false))), "the author gets the answer: {done:?}");
     assert!(matches!(author.reference.state, RefState::Idle), "no pending is held: {:?}", author.reference.state);
 }
 

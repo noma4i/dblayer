@@ -25,7 +25,7 @@ fn sess_release_before_restored() {
     foreign.feed(Input::Restored { epoch: EPOCH, pending: Some(transfer_pair()) });
     assert!(matches!(foreign.reference.state, RefState::PendingHeld { .. }), "a foreign Release leaves the pair held");
     assert!(foreign.reference.released.is_empty());
-    assert!(matches!(&foreign.feed(Input::Release { req_id: 3 })[..], [RefEffect::HttpRequest { .. }]), "a Release after Restored frees the pair at once");
+    assert!(matches!(&foreign.feed(Input::Release { req_id: 3 })[..], [RefEffect::Answer { author: 2, req_id: 3, outcome: Outcome::Dropped }, RefEffect::HttpRequest { .. }]), "a Release after Restored tells the author Dropped and frees the pair at once");
 
     let mut cleared = Twin::new();
     cleared.feed(Input::Release { req_id: 3 });
