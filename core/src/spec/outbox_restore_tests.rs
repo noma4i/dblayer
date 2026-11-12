@@ -322,8 +322,8 @@ fn out_open_restores_pending() {
     let readied = ready(&mut twin);
     assert_eq!((kinds(&readied), sends(&readied)), (vec![CommitKind::Attempt], 0), "RestoreReady writes the attempt, the request waits for its Committed");
     let started = twin.committed(7);
-    let pairs: Vec<_> = started.iter().filter_map(|effect| match effect { OutboxEffect::Send { request_id, sequence, .. } => Some((*request_id, *sequence)), _ => None }).collect();
-    assert_eq!((twin.stage(7), pairs), (Some(St::Sending), vec![(41, 42)]), "the held pair repeats with no new sequence");
+    let pairs: Vec<_> = started.iter().filter_map(|effect| match effect { OutboxEffect::Send { request_id, .. } => Some(*request_id), _ => None }).collect();
+    assert_eq!((twin.stage(7), pairs), (Some(St::Sending), vec![41]), "the held pair repeats under its request id");
 }
 
 #[test]

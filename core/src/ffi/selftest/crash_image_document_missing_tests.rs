@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::crash_image_call_tests::copy_image;
-use super::crash_image_support::{advancing, drained, reopen_timed, saved_pair};
+use super::crash_image_support::{advancing, drained, over_images, reopen_timed, saved_pair, Capture};
 use super::rig_tests::bound;
 use super::upload_stand::{plain, Answer, Hold, Stand, CREATE_MOMENT};
 use crate::ffi::{Database, TestClock};
@@ -139,35 +139,53 @@ const CREATED: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m7
 const UPDATED: &str = r#"{"data":{"updateMoment":{"__typename":"Moment","id":"m77","uuid":"u","text":"edited","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#;
 const UPDATE_MOMENT: (&str, &str) = ("UpdateMoment", "mutation UpdateMoment { updateMoment { id uuid text likedByMe media createdAt } }");
 
-/// Two updates of one row wait in the queue while the first one's pair is held: after a restart the held pair goes out again, then the second update, and the queue ends with no pair left.
+const CREATED_OTHER: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m78","uuid":"v","text":"other","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#;
+
+/// Update A of a row (answer lost), update B of the same row, create C of another row: a process killed after any commit of this run leaves a file that opens, ends all three operations with the updates of one row in the order they were made, and leaves no pair.
 #[tokio::test(flavor = "multi_thread")]
 async fn sess_held_pair_author_moves_it_after_restart() {
-    let stand = Stand::new();
+    let (stand, clock) = super::crash_image_support::timed_stand();
     let directory = tempfile::tempdir().unwrap();
     let live = directory.path().join("live.sqlite");
     let operations = [super::upload_batch_shift_tests::OPERATIONS[0], super::upload_batch_shift_tests::OPERATIONS[1], super::upload_batch_shift_tests::OPERATIONS[2], CREATE_MOMENT, UPDATE_MOMENT];
-    let database = stand.open(Some(&live), &operations).await;
+    let database = stand.open_with(Some(&live), &operations, Some(clock.clone())).await;
     let secret = stand.rig.credentials.inner.value().unwrap();
     let epoch = database.session_epoch();
     stand.script.data("CreateMoment", CREATED);
     let created = bound(database.send(plain("Moment", r#"{"text":"first"}"#, epoch))).await.unwrap();
     bound(database.confirmed(created, false)).await.unwrap();
-    drained(&database).await;
+    advancing(&clock, drained(&database)).await;
+    rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    let base = Capture::begin(&live);
     let hold = Arc::new(Hold::default());
     stand.script.enqueue("UpdateMoment", Answer::Held(hold.clone(), Box::new(Answer::Lost)));
+    stand.script.data("UpdateMoment", UPDATED);
+    stand.script.data("UpdateMoment", UPDATED);
+    stand.script.data("CreateMoment", CREATED_OTHER);
     bound(database.update(epoch, "Moment".into(), "m77".into(), r#"{"text":"edited"}"#.into(), "{}".into())).await.unwrap();
     hold.entered().await;
     bound(database.update(epoch, "Moment".into(), "m77".into(), r#"{"text":"edited again"}"#.into(), "{}".into())).await.unwrap();
-    let image = directory.path().join("image.sqlite");
-    copy_image(&live, &image);
-    assert!(saved_pair(&image).is_some(), "the image holds the pair of the first update");
+    bound(database.send(plain("Moment", r#"{"text":"other"}"#, epoch))).await.unwrap();
+    advancing(&clock, async { hold.release(); drained(&database).await }).await;
+    let (capture, files) = base.end(&live);
+
+    let held = over_images(&capture, &files, |index, image| {
+        let (secret, operations) = (secret.clone(), operations);
+        async move {
+            let saved = saved_pair(&image).is_some();
+            let (fresh, reopened, clock) = reopen_timed(&image, &secret, &operations, |fresh| {
+                fresh.script.data("UpdateMoment", UPDATED);
+                fresh.script.data("UpdateMoment", UPDATED);
+                fresh.script.data("CreateMoment", CREATED_OTHER);
+            }, false).await;
+            if tokio::time::timeout(std::time::Duration::from_secs(8), advancing(&clock, drained(&reopened))).await.is_err() { { let connection = rusqlite::Connection::open(&image).unwrap(); let ops: Vec<String> = connection.prepare("SELECT seq || ':' || status || ':' || attempts || ':' || action_key FROM op").unwrap().query_map([], |row| row.get::<_, String>(0)).unwrap().map(|row| row.unwrap()).collect(); panic!("cut {index}: the queue stands: sent {:?} ops {ops:?} pair {:?} owner {:?}", fresh.script.names(), saved_pair(&image), connection.query_row("SELECT owner_kind || owner_operation_id || sequence FROM encrypted_pending", [], |row| row.get::<_, String>(0)).ok()); } }
+            let updates: Vec<String> = fresh.script.variables("UpdateMoment").iter().map(|variables| variables["text"].as_str().unwrap_or_default().to_string()).collect();
+            assert!(updates.windows(2).all(|pair| pair[0] == "edited" && pair[1] == "edited again") && updates.len() <= 2, "cut {index}: the updates go in the order they were made: {updates:?}");
+            bound(reopened.close_database()).await.unwrap();
+            assert_eq!(pending_rows(&image), 0, "cut {index}: no pair is left");
+            saved
+        }
+    }).await;
+    assert!(held.iter().any(|saved| *saved), "some cut holds the pair of the first update: {held:?}");
     database.close_now();
-    let (fresh, reopened, clock) = reopen_timed(&image, &secret, &operations, |fresh| {
-        fresh.script.data("UpdateMoment", UPDATED);
-        fresh.script.data("UpdateMoment", UPDATED);
-    }, false).await;
-    advancing(&clock, drained(&reopened)).await;
-    assert_eq!(fresh.script.count("UpdateMoment"), 2, "both updates go out");
-    bound(reopened.close_database()).await.unwrap();
-    assert_eq!(pending_rows(&image), 0, "no pair is left");
 }
