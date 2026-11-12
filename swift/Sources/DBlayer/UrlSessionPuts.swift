@@ -20,12 +20,14 @@ protocol PutSession: AnyObject, Sendable {
 
 /// What the session reports: the end of a task and the end of the events the system delivered for a wake.
 protocol PutEvents: AnyObject, Sendable {
+  func sent(description: String?, bytes: UInt64)
   func ended(description: String?, outcome: RawOutcome)
   func eventsFinished()
 }
 
 /// The inputs of the core for the outcomes of the system tasks.
 protocol PutInputs: Sendable {
+  func putProgress(identity: PutIdentity, sent: UInt64)
   func putEnded(identity: PutIdentity, outcome: RawOutcome)
   func putMissing(identity: PutIdentity)
 }
@@ -151,6 +153,11 @@ final class UrlSessionPuts: PutExecutor, PutEvents, Sendable {
     return .response(status: UInt16(clamping: http?.statusCode ?? 0), etag: http?.value(forHTTPHeaderField: "ETag"), body: "")
   }
 
+  func sent(description: String?, bytes: UInt64) {
+    guard let identity = PutDescription.identity(description) else { return }
+    Task { await inputs.get().putProgress(identity: identity, sent: bytes) }
+  }
+
   func ended(description: String?, outcome: RawOutcome) {
     guard let identity = PutDescription.identity(description) else { return }
     Task { await inputs.get().putEnded(identity: identity, outcome: outcome) }
@@ -199,6 +206,10 @@ final class BackgroundPutSession: NSObject, PutSession, URLSessionTaskDelegate, 
   }
 
   func tasks() async -> [any PutTask] { await session.allTasks }
+
+  func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+    events?.sent(description: task.taskDescription, bytes: UInt64(clamping: totalBytesSent))
+  }
 
   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
     events?.ended(description: task.taskDescription, outcome: UrlSessionPuts.outcome(of: task))

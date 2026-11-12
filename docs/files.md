@@ -210,6 +210,8 @@ func application(_ application: UIApplication, handleEventsForBackgroundURLSessi
 DBlayer.open(context, uploadNotification = UploadNotification(title, text, icon))
 ```
 
+While the app runs, the system reports the bytes it sent and `progress` follows them; after a wake the value shown does not fall.
+
 After a restart the library lists its tasks to the system. A task that ended while the app was away gives its outcome, a running task goes on, and a task the system lost starts again without a second `Init`. When the user ends the app from the app switcher, iOS cancels the tasks of the session, and the PUT starts again at the next launch. The preparation of a source (`prepare`) needs the app to run: it does not go to the background, and an interrupted preparation continues at the next launch. macOS and a host without a bundle identifier run the PUT inside the app.
 
 ### Create with an upload

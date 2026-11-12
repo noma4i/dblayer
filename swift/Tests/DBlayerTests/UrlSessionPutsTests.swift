@@ -39,6 +39,8 @@ private final class RecordingInputs: PutInputs, @unchecked Sendable {
   private var waiter: CheckedContinuation<Void, Never>?
   private var want = 0
 
+  func putProgress(identity: PutIdentity, sent: UInt64) { record("sent \(identity.transferId).\(identity.attemptId) \(sent)") }
+
   func putEnded(identity: PutIdentity, outcome: RawOutcome) {
     var text = "ended \(identity.transferId).\(identity.attemptId)"
     if case let .response(status, etag, _) = outcome { text += " \(status) \(etag ?? "-")" }
@@ -97,6 +99,15 @@ struct UrlSessionPutsTests {
     let task = FakeTask(description: PutDescription.text(identity), state: .completed, response: answer(200, etag: "\"abc\""))
     puts.ended(description: task.taskDescription, outcome: UrlSessionPuts.outcome(of: task))
     #expect(await inputs.inputs(1) == ["ended 7.2 200 \"abc\""])
+  }
+
+  /// The bytes the system reports for a task reach the core with the identity of its description.
+  @Test
+  func theSentBytesOfATaskReachTheCore() async {
+    let inputs = RecordingInputs()
+    let puts = executor(FakeSession(), inputs: inputs)
+    puts.sent(description: PutDescription.text(identity), bytes: 4096)
+    #expect(await inputs.inputs(1) == ["sent 7.2 4096"])
   }
 
   /// `ResumePuts` answers for the tasks the system holds: a finished one with its outcome, a missing one with `PutMissing`, a running one with nothing. A task outside the list is cancelled.
