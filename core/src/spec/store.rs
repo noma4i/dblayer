@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use serde_json::json;
 
 use super::lifecycle::{create, input, LifecycleSut};
 use crate::check::model::{Owner, Property, RefModel, Sut};
