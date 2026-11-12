@@ -47,11 +47,21 @@ where
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn refresh_survives_the_cancel_of_an_earlier_refresh() {
+async fn refresh_node_and_nodes_survive_the_cancel_of_an_earlier_call_of_the_same_scope() {
     let rig = rig().await;
     let epoch = rig.database.session_epoch();
     second_call_survives_cancel_of_first(&rig, "MomentsFeed", move |db| async move { db.refresh(epoch, "Moment".into(), Some("feed".into()), "{}".into()).await }, || ()).await;
     assert_eq!(requests(&rig, "MomentsFeed"), 1, "the second refresh sent a request of its own");
+    rig.database.close_now();
+    let rig = self::rig().await;
+    let epoch = rig.database.session_epoch();
+    second_call_survives_cancel_of_first(&rig, "ContainerNode", move |db| async move { db.node(epoch, "Container".into(), "node".into(), "k1".into(), true).await.map(drop) }, || ()).await;
+    assert_eq!(requests(&rig, "ContainerNode"), 1, "the second node sent a request of its own");
+    rig.database.close_now();
+    let rig = self::rig().await;
+    let epoch = rig.database.session_epoch();
+    second_call_survives_cancel_of_first(&rig, "ContainersByIds", move |db| async move { db.nodes(epoch, "Container".into(), "nodes".into(), vec!["k1".into()]).await.map(drop) }, || ()).await;
+    assert_eq!(requests(&rig, "ContainersByIds"), 1, "the second nodes sent a request of its own");
     rig.database.close_now();
 }
 
@@ -65,24 +75,6 @@ async fn load_more_waits_for_the_page_that_an_earlier_cancelled_load_more_starte
     second_call_survives_cancel_of_first(&rig, "MomentsFeed", move |db| async move { db.load_more(epoch, "Moment".into(), Some("feed".into()), "{}".into()).await.map(drop) }, move || world.answer_with("MomentsFeed", feed_page("3"))).await;
     assert!(rig.database.peek_row(epoch, "Moment".into(), "2".into()).unwrap().is_some(), "the page of the held request did not land: the cancel of the first call stopped it");
     assert!(rig.database.peek_row(epoch, "Moment".into(), "3".into()).unwrap().is_some(), "the second load more did not read its own page");
-    rig.database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn node_survives_the_cancel_of_an_earlier_node() {
-    let rig = rig().await;
-    let epoch = rig.database.session_epoch();
-    second_call_survives_cancel_of_first(&rig, "ContainerNode", move |db| async move { db.node(epoch, "Container".into(), "node".into(), "k1".into(), true).await.map(drop) }, || ()).await;
-    assert_eq!(requests(&rig, "ContainerNode"), 1, "the second node sent a request of its own");
-    rig.database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn nodes_survives_the_cancel_of_an_earlier_nodes() {
-    let rig = rig().await;
-    let epoch = rig.database.session_epoch();
-    second_call_survives_cancel_of_first(&rig, "ContainersByIds", move |db| async move { db.nodes(epoch, "Container".into(), "nodes".into(), vec!["k1".into()]).await.map(drop) }, || ()).await;
-    assert_eq!(requests(&rig, "ContainersByIds"), 1, "the second nodes sent a request of its own");
     rig.database.close_now();
 }
 

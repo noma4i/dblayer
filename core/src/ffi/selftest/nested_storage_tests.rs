@@ -82,7 +82,7 @@ async fn nested_shared_cases_round_trip() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_unknown_element_type_keeps_arbitrary_props_in_storage() { stored(0).await }
-
-#[tokio::test(flavor = "multi_thread")]
-async fn ordered_action_lists_keep_nested_conditions_in_storage() { stored(1).await }
+async fn a_screen_spec_with_unknown_element_types_props_and_ordered_actions_is_stored_and_kept() {
+    stored(0).await;
+    stored(1).await;
+}

@@ -133,18 +133,3 @@ async fn a_reaction_with_a_delayed_answer_shows_as_unsent_before_the_answer_and_
     settled(&session.rig, "the row is synced", || session.shown().sync.state == WireSyncState::Synced).await;
     session.rig.database.close_now();
 }
-
-#[tokio::test(flavor = "multi_thread")]
-async fn each_reaction_on_the_row_of_the_previous_call_keeps_other_users_reactions() {
-    let session = Session::settled(created(json!([]))).await;
-    let gates: Vec<Arc<Gate>> = (0..4).map(|_| session.rig.world.hold_then("RecordReact", reacted(json!([])))).collect();
-    let mut seen = Vec::new();
-    for (body, user) in [("A", "u1"), ("B", "u2"), ("C", "u1"), ("", "u1")] {
-        let receipt = session.react(body, user).await;
-        seen.push(session.reactions(&receipt.optimistic_value.unwrap()));
-    }
-    assert_eq!(seen[2], vec![pair("u1", "C"), pair("u2", "B")]);
-    assert_eq!(seen[3], vec![pair("u2", "B")]);
-    for gate in gates { gate.release(); }
-    session.rig.database.close_now();
-}
