@@ -315,7 +315,15 @@ impl SessionState {
         if let Some(held) = self.after_publish.take() { reply(fx, held.reply, Err(SessionError::Closed)); }
         match phase {
             SessionPhase::Sealing { pending, .. } => finish(fx, &pending, Err(SessionError::Closed)),
-            SessionPhase::Persisting { pending, .. } | SessionPhase::Landing { pending, .. } => finish(fx, &pending, Err(SessionError::Closed)),
+            SessionPhase::Persisting { pending, .. } => finish(fx, &pending, Err(SessionError::Closed)),
+            SessionPhase::Landing { mut pending, answer, server_ended, .. } => {
+                if server_ended {
+                    fx.push(SessionEffect::ServerEnded(ServerEnded { epoch: pending.epoch }));
+                    pending.author = None;
+                }
+                let kind = if answer.is_err() { None } else { self.answer_kind.take() };
+                finish_retained(fx, &pending, answer, true, kind);
+            }
             SessionPhase::Calling { pending, phase, .. } => {
                 finish(fx, &pending, Err(SessionError::Closed));
                 if let AttemptPhase::InFlight(attempt_id) = phase { fx.push(SessionEffect::HttpCancel { attempt_id }); }
