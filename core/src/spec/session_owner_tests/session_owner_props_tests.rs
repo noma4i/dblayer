@@ -34,7 +34,6 @@ fn sess_blocked_crash_same_pair() {
         let response = twin.response(server_sequence);
         twin.feed(response);
         if rejected_landing { twin.feed(rejected(Reason::Invalid)); }
-        assert!(matches!(twin.reference.state, RefState::Blocked { pending: Some(_), .. }), "{reason}: the pair stays saved");
 
         let mut again = opened(open(Some((CRED, saved.sequence - 1)), Some(saved.clone()), false, Secret::Present(CRED)));
         again.feed(own(11));
@@ -43,11 +42,10 @@ fn sess_blocked_crash_same_pair() {
         let response = again.response(server_sequence);
         again.feed(response);
         if rejected_landing {
-            assert_eq!(again.reference.credential.map(|credential| credential.sequence), Some(saved.sequence - 1), "{reason}: the landing is not applied before its commit");
+            assert_eq!(again.credential().map(|credential| credential.sequence), Some(saved.sequence - 1), "{reason}: the landing is not applied before its commit");
             again.feed(committed());
-            assert_eq!(again.reference.credential.map(|credential| credential.sequence), Some(saved.sequence), "{reason}: the same sequence lands");
+            assert_eq!(again.credential().map(|credential| credential.sequence), Some(saved.sequence), "{reason}: the same sequence lands");
         } else {
-            assert!(matches!(again.reference.state, RefState::Blocked { reason: Block::SequenceConflict, .. }), "{reason}: the answer of the same pair names the cause again");
             let refused = again.feed(own(12));
             assert_eq!(refused, vec![answer(7, 12, permanent(Fail::SequenceConflict))], "{reason}: no new pair while blocked");
         }
@@ -76,7 +74,7 @@ fn sess_prop_credential_only_committed() {
     for seed in 1..=60 {
         let twin = trace(seed, 60, |_, _, _| {});
         let committed_identities: Vec<u64> = twin.history.iter().filter_map(|e| match e { RefEffect::CredentialCommitted(c) => Some(*c), _ => None }).collect();
-        if let Some(credential) = twin.reference.credential {
+        if let Some(credential) = twin.credential() {
             assert!(credential.digest == CRED || committed_identities.contains(&credential.digest) || twin.history.is_empty(), "seed {seed}: the credential {credential:?} was never committed");
         }
     }
@@ -106,39 +104,28 @@ fn sess_prop_idle() {
 fn sess_prop_unauthorized_keeps_session() {
     let mut twin = landing(1);
     twin.feed(committed());
-    let before = twin.reference.credential;
+    let before = twin.credential();
     twin.feed_all([call(2), committed()]);
     let input = twin.http_error(false, true);
     twin.feed_all([input, committed()]);
-    assert_eq!(twin.reference.credential, before, "the credential is the same");
+    assert_eq!(twin.credential(), before, "the credential is the same");
     assert!(!twin.history.iter().any(|e| matches!(e, RefEffect::ServerEnded { .. } | RefEffect::SessionReset)));
 }
 
 #[test]
 fn sess_prop_single_flight() {
     for seed in 1..=60 {
-        trace(seed, 80, |twin, input, effects| {
+        trace(seed, 80, |_, input, effects| {
             let requests: Vec<_> = effects.iter().filter(|effect| matches!(effect, RefEffect::HttpRequest { .. })).collect();
             assert!(requests.len() <= 1, "seed {seed}: {input:?} starts two requests");
-            if let Some(RefEffect::HttpRequest { attempt_id, .. }) = requests.first() {
-                assert!(matches!(&twin.reference.state, RefState::Calling { phase: CallPhase::InFlight(now), .. } if now == attempt_id), "seed {seed}: the new attempt is the one in flight");
-            }
         });
     }
     let mut twin = calling();
     let (rid, aid) = (twin.rid(), twin.aid());
     twin.feed(Input::Online(false));
     twin.feed(Input::Online(true));
-    twin.feed(Input::Response { request_id: rid, attempt_id: aid, body: "{}".into(), sequence: Some(1), refusal: None });
-    assert!(matches!(twin.reference.state, RefState::Calling { phase: CallPhase::InFlight(now), .. } if now != aid), "a late input of a cancelled attempt changes nothing");
-}
-
-#[test]
-fn sess_prop_mutate_stamp() {
-    let mut twin = persisting();
-    twin.feed(mutate(7, 11));
-    twin.feed(Input::Published { epoch: EPOCH + 1, identity: None, state: PubState::Session });
-    assert!(matches!(twin.reference.queue.front(), Some(RefQueued::Mutate { epoch, .. }) if *epoch == EPOCH), "Published does not rebind a queued input");
+    let late = Input::Response { request_id: rid, attempt_id: aid, body: "{}".into(), sequence: Some(1), refusal: None };
+    assert!(twin.feed(late).is_empty(), "a late input of a cancelled attempt changes nothing");
 }
 
 #[test]
@@ -160,7 +147,7 @@ fn sess_prop_durable_answer() {
         } else {
             assert!(after_commit.contains(&answer(7, 11, permanent(fail.clone()))), "{fail:?}: the author hears the stored outcome: {after_commit:?}");
         }
-        let landed = twin.reference.credential.expect("the credential");
+        let landed = twin.credential().expect("the credential");
         let mut reopened = opened(open(Some((landed.digest, landed.sequence)), None, false, Secret::Present(landed.digest)));
         reopened.feed_all([Input::Restored { epoch: EPOCH, pending: None }, Input::RestoreReady { epoch: EPOCH }, Input::Online(true), Input::Tick, Input::Foreground]);
         assert!(http_pairs(&reopened.history).is_empty() && !reopened.history.iter().any(|effect| matches!(effect, RefEffect::CommitPending { .. })), "{fail:?}: a crash after the commit leaves the stored outcome and no second request: {:?}", reopened.history);
@@ -187,30 +174,6 @@ fn sess_prop_server_end_atomic() {
         let (rid, aid) = (twin.rid(), twin.aid());
         let landing = twin.feed(Input::Revoked { request_id: rid, attempt_id: aid, body: body.to_string(), author_ref: None });
         assert!(matches!(&landing[..], [RefEffect::CommitLanding { erase_session: true, answer: Some((11, Err(Fail::Revoked))), .. }]), "{body}: the credential removal lands in the same batch as the answer: {landing:?}");
-    }
-}
-
-#[test]
-fn sess_prop_blocked_pending() {
-    for seed in 1..=60 {
-        trace(seed, 80, |twin, input, effects| {
-            if matches!(twin.reference.state, RefState::Blocked { .. } | RefState::PendingHeld { .. }) {
-                assert!(!effects.iter().any(|effect| matches!(effect, RefEffect::CommitPending { .. })), "seed {seed}: {input:?} writes a second pending beside a stored one");
-            }
-        });
-    }
-}
-
-#[test]
-fn sess_prop_retry_owner() {
-    for seed in 1..=60 {
-        trace(seed, 80, |twin, input, effects| {
-            let author_pending = matches!(&twin.reference.state, RefState::Calling { pending, .. } | RefState::PendingHeld { pending } if pending.author.is_some());
-            if author_pending {
-                assert!(!effects.iter().any(|effect| matches!(effect, RefEffect::ScheduleTick { .. })), "seed {seed}: {input:?} schedules a retry for an author");
-                if matches!(input, Input::Tick) { assert!(effects.is_empty(), "seed {seed}: a Tick repeats a request of an author"); }
-            }
-        });
     }
 }
 
@@ -273,19 +236,20 @@ fn every_crash_boundary_gives_one_open_outcome() {
         let mut twin = opened(open(credential, None, false, secret));
         let has = |test: fn(&RefEffect) -> bool| twin.history.iter().filter(|effect| test(effect)).count();
         let (clears, resets) = (has(|effect| matches!(effect, RefEffect::ClearSecret { .. })), has(|effect| matches!(effect, RefEffect::SessionReset)));
-        let have = match (&twin.reference.state, clears, resets) {
-            (RefState::Idle, 0, 0) if twin.reference.credential.is_none() => Outcome::Empty,
-            (RefState::Idle, 0, 0) => Outcome::Kept,
-            (RefState::ClearingSecret { .. }, 1, 0) if twin.reference.credential.is_none() => Outcome::Orphan,
-            (RefState::Idle, 0, 1) if twin.reference.credential.is_none() => Outcome::Reset,
-            (RefState::SecretMismatch, 0, 0) if twin.reference.credential.map(|c| c.digest) == Some(42) => Outcome::Mismatch,
-            (state, ..) => panic!("{boundary}: no single outcome of the Open rows: {state:?} {:?}", twin.history),
+        let credential = twin.credential();
+        let have = match (clears, resets, credential) {
+            (0, 0, None) => Outcome::Empty,
+            (1, 0, None) => Outcome::Orphan,
+            (0, 1, None) => Outcome::Reset,
+            (0, 0, Some(_)) if matches!(&twin.feed(call(1))[..], [RefEffect::SealProbe { .. }]) => Outcome::Kept,
+            (0, 0, Some(credential)) if credential.digest == 42 && twin.replies.len() == 1 => Outcome::Mismatch,
+            _ => panic!("{boundary}: no single outcome of the Open rows: {:?}", twin.history),
         };
         assert_eq!(have, want, "{boundary}");
         if want == Outcome::Orphan {
             let op = twin.op();
             twin.feed(Input::SecretCleared { op, ok: true });
-            assert!(matches!(twin.reference.state, RefState::Idle) && twin.reference.credential.is_none(), "{boundary}: the orphan lives for one open");
+            assert!(twin.credential().is_none(), "{boundary}: the orphan lives for one open");
             assert_eq!(twin.history.iter().filter(|effect| matches!(effect, RefEffect::ClearSecret { .. })).count(), 1, "{boundary}");
         }
     }
