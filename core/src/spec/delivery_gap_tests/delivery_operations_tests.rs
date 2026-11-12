@@ -64,20 +64,15 @@ fn dlv_live_operations_commit() {
     let mut twin = live();
     commit(&mut twin, 2, "op");
     assert_eq!(reads(take(&twin.log)), [2]);
+    let before = twin.state().journal(STREAM).len();
+    commit(&mut twin, 9, "moments");
+    assert!(take(&twin.log).is_empty() && twin.state().journal(STREAM).len() == before, "a commit of another table starts no read");
     let sending = vec![info(1, OperationQueueStatus::Sending)];
     read_done(&mut twin, 2, sending.clone());
     assert_eq!(twin.state().journal(STREAM), [d::Value::Operations { revision: 2, items: sending.clone() }], "the unread value is replaced by the new one");
     commit(&mut twin, 3, "op");
     read_done(&mut twin, 3, sending.clone());
     assert_eq!(twin.state().journal(STREAM), [d::Value::Operations { revision: 2, items: sending }], "the same queue gives no value");
-}
-
-#[test]
-fn dlv_live_operations_unrelated() {
-    let mut twin = live();
-    commit(&mut twin, 2, "moments");
-    assert!(take(&twin.log).is_empty());
-    assert_eq!(twin.state().journal(STREAM).len(), 1);
 }
 
 #[test]

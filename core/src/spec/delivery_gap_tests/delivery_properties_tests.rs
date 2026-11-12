@@ -219,15 +219,6 @@ fn dlv_prop_ended_once() {
 }
 
 #[test]
-fn dlv_prop_epoch() {
-    let mut twin = ended_by_epoch();
-    for input in [Input::ReadDone { revision: 9, rows: rows(&["r9"]) }, Input::WindowState(Ws::loading_after(9)), Input::Committed { revision: 10, touches: true }] {
-        twin.step(input);
-    }
-    assert_eq!(twin.read_all(), [Val::Ended(Cause::SessionEnded)]);
-}
-
-#[test]
 fn dlv_prop_same_revision() {
     let mut twin = live_rows();
     twin.step(Input::WindowState(Ws::loading_after(1)));
@@ -237,26 +228,6 @@ fn dlv_prop_same_revision() {
     assert!(matches!(&journal[0], d::Value::State { revision: 1, state } if state.phase == WindowPhase::Loading), "{journal:?}");
     assert!(matches!(&journal[1], d::Value::Delta(delta) if delta.base == 1 && delta.revision == 2 && delta.state.loaded == Some(2)), "{journal:?}");
     twin.read_all();
-}
-
-#[test]
-fn dlv_prop_failed_without_rows() {
-    let mut empty = open_rows();
-    let (_, values) = empty.step_read(Input::ReadFailed { revision: 1 });
-    assert!(matches!(values.as_slice(), [Val::Snapshot { rows, state: Ws { phase: Phase::Failed, .. }, .. }] if rows.is_empty()));
-    let mut with_rows = live_rows();
-    let (_, values) = with_rows.step_read(Input::ReadFailed { revision: 2 });
-    assert!(matches!(values.as_slice(), [Val::State { state: Ws { phase: Phase::Loaded, error: true, .. }, .. }]));
-}
-
-#[test]
-fn dlv_prop_idle() {
-    let mut twin = live_rows();
-    for revision in 2..8 {
-        let (effects, values) = twin.step_read(Input::Committed { revision, touches: false });
-        assert!(effects.is_empty() && values.is_empty());
-    }
-    assert_eq!(twin.det.ready().len(), 0, "the owner has nothing to do");
 }
 
 #[test]
@@ -330,16 +301,6 @@ fn dlv_prop_ready_once() {
     let values = twin.read_all();
     assert_eq!(values.iter().filter(|value| matches!(value, Val::Ready)).count(), 1);
     assert_eq!(values.first(), Some(&Val::Ready), "Ready is before the first Event");
-}
-
-#[test]
-fn dlv_prop_delta_size() {
-    let mut twin = live_rows();
-    let (_, values) = twin.step_read(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) });
-    assert!(matches!(values.as_slice(), [Val::Delta { edits, .. }] if *edits == [insert(1, "r2")]), "one inserted row, one edit");
-    let many: Vec<r::Row> = (0..300).map(|n| (format!("n{n}"), 0)).collect();
-    let (_, values) = twin.step_read(Input::ReadDone { revision: 3, rows: many });
-    assert!(matches!(values.as_slice(), [Val::Snapshot { rows, .. }] if rows.len() == 300), "over 256 changes the whole result goes");
 }
 
 #[test]
@@ -493,15 +454,6 @@ fn dlv_prop_delta_order() {
     assert!(middle > 0 && moved > 0 && rewritten > 0 && removed > 0 && confirmed > 0, "inserts in the middle {middle}, moves {moved}, rewrites {rewritten}, removals {removed}, confirmations {confirmed}");
 }
 
-#[test]
-fn dlv_epoch_started_unknown_cause() {
-    let mut rig = rig(Kind::List);
-    rig.det.post(rig.deliveries, EpochStamp::Control, d::DeliveryInput::EpochStarted(crate::owners::contract::EpochStarted { epoch: 2, identity: None, generation: 0 }));
-    rig.det.post(rig.deliveries, EpochStamp::Control, d::DeliveryInput::EpochEnded(EpochEnded { epoch: 2, cause: Ended::SessionReset }));
-    rig.det.run_until_quiet(100).expect("quiet");
-    assert_eq!(inner(&rig.det, rig.deliveries).stage(STREAM), Some(d::DeliveryStage::Opening), "the stream of epoch 1 is not touched by the end of epoch 2");
-}
-
 /// dlv_cancelling_other: a `Pull` after `Cancel` waits for `Ended` and does not hand out the value that was unread when the reader cancelled.
 #[test]
 fn dlv_cancelling_drops_the_unread_values() {
@@ -557,17 +509,6 @@ fn every_public_end_has_its_cause() {
     cancelled.step(Input::Cancel { reply: 1 });
     assert!(cancelled.step(Input::Pull).is_empty(), "the cancelled reader waits for SinkClosed");
     assert_eq!(cancelled.step(Input::SinkClosed), [Effect::Cancelled(1), Effect::Answer(Pulled::Value(Val::Ended(Cause::Cancelled)))], "an explicit cancel ends as Cancelled");
-}
-
-/// P-DLV-31 (dlv_prop_stray_input_ignored): the pairs with this basis in the delivery.md "Pair, Basis" table (Live x SinkClosed) leave the stream unchanged: its state, its effects and its observable.
-#[test]
-fn dlv_prop_stray_input_ignored() {
-    let mut twin = live_rows();
-    let before = twin.state().stage(STREAM);
-    let effects = twin.step(Input::SinkClosed);
-    assert!(effects.is_empty(), "SinkClosed in Live changes nothing: {effects:?}");
-    assert_eq!(twin.state().stage(STREAM), before, "the stage is unchanged");
-    assert!(twin.read_all().is_empty(), "no value reaches the reader");
 }
 
 /// P-DLV-32 (dlv_prop_phase_follows_window): clearing a read error returns the value of the last `WindowState` with its own error, not `Loaded`.

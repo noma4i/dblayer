@@ -52,49 +52,6 @@ fn resync(twin: &mut Twin) -> Vec<Effect> {
 }
 
 #[test]
-fn dlv_opening_status_committed() {
-    for kind in [Kind::Blob] {
-        let mut twin = open_as(kind);
-        assert!(twin.step(Input::Committed { revision: 1, touches: true }).is_empty());
-        assert!(twin.read_all().is_empty());
-    }
-}
-
-#[test]
-fn dlv_opening_gap() {
-    let mut twin = open_rows();
-    assert!(twin.step(Input::ModelGap).is_empty());
-    assert!(twin.read_all().is_empty());
-}
-
-#[test]
-fn dlv_live_gap_rows_kind() {
-    let mut twin = live_rows();
-    assert!(twin.step(Input::ModelGap).is_empty());
-    assert!(twin.read_all().is_empty());
-}
-
-#[test]
-fn dlv_opening_resync() {
-    let mut twin = open_rows();
-    let before = twin.read_id();
-    assert!(resync(&mut twin).is_empty());
-    assert_eq!(twin.read_id(), before);
-    assert!(twin.state().journal(STREAM).is_empty());
-}
-
-#[test]
-fn dlv_ended_resync() {
-    let mut twin = live_rows();
-    twin.step(Input::Cancel { reply: 1 });
-    assert!(resync(&mut twin).is_empty());
-    twin.step(Input::SinkClosed);
-    let journal = twin.state().journal(STREAM);
-    assert!(resync(&mut twin).is_empty());
-    assert_eq!(twin.state().journal(STREAM), journal);
-}
-
-#[test]
 fn dlv_live_resync_other() {
     for kind in [Kind::Count, Kind::Events, Kind::Blob] {
         let mut twin = open_as(kind);

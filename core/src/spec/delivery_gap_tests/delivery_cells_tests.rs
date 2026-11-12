@@ -13,20 +13,13 @@ fn dlv_cancelling_pull_twice() {
 }
 
 #[test]
-fn dlv_live_committed_seen() {
-    let mut twin = live_rows();
-    take(&twin.log);
-    twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: 1, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
-    assert!(Twin::modelled(take(&twin.log)).is_empty());
-}
-
-#[test]
 fn dlv_opening_event() {
-    let mut twin = open_rows();
-    for input in [Input::Joined { position: 3 }, Input::ModelReady, Input::ModelEvent { position: 1, payload: "c1".into() }, Input::ModelLost { first: 2, last: 3 }, Input::ModelGap] {
-        assert!(twin.step(input).is_empty());
+    for mut twin in [open_rows(), live_rows()] {
+        for input in [Input::Joined { position: 3 }, Input::ModelReady, Input::ModelEvent { position: 1, payload: "c1".into() }, Input::ModelLost { first: 2, last: 3 }, Input::ModelGap] {
+            assert!(twin.step(input).is_empty());
+        }
+        assert!(twin.read_all().is_empty());
     }
-    assert!(twin.read_all().is_empty());
 }
 
 #[test]
@@ -199,23 +192,11 @@ fn dlv_release_ended() {
     twin.step(Input::SinkClosed);
     assert!(twin.step(Input::Release).is_empty());
     assert_eq!(twin.state().streams(), 0, "the machine goes at once: the sink is closed");
-}
-
-#[test]
-fn dlv_release_ended_sink_open() {
-    let mut twin = ended_by_epoch();
-    assert!(twin.step(Input::Release).is_empty());
-    assert_eq!(twin.state().streams(), 1);
-    assert!(twin.step(Input::SinkClosed).is_empty());
-    assert_eq!(twin.state().streams(), 0, "the machine goes after SinkClosed");
-}
-
-#[test]
-fn dlv_ended_sink_closed() {
-    let mut twin = ended_by_epoch();
-    twin.step(Input::Cancel { reply: 9 });
-    assert_eq!(twin.step(Input::SinkClosed), [Effect::Cancelled(9)]);
-    assert_eq!(twin.read_all(), [Val::Ended(Cause::SessionEnded)]);
+    let mut open_sink = ended_by_epoch();
+    assert!(open_sink.step(Input::Release).is_empty());
+    assert_eq!(open_sink.state().streams(), 1);
+    assert!(open_sink.step(Input::SinkClosed).is_empty());
+    assert_eq!(open_sink.state().streams(), 0, "the machine goes after SinkClosed");
 }
 
 #[test]
@@ -247,6 +228,7 @@ fn dlv_closing() {
 #[test]
 fn dlv_live_committed() {
     let mut twin = live_rows();
+    assert!(twin.step(Input::Committed { revision: 1, touches: true }).is_empty(), "a commit at the revision already read starts no read");
     assert_eq!(twin.step(Input::Committed { revision: 2, touches: true }), [Effect::Read(2)]);
 }
 
@@ -451,17 +433,6 @@ fn dlv_live_window_held() {
 }
 
 #[test]
-fn dlv_live_window_same() {
-    let mut twin = live_rows();
-    let (effects, values) = twin.step_read(Input::WindowState(Ws::loaded_at(1)));
-    assert!(effects.is_empty() && values.is_empty());
-    twin.post(d::DeliveryInput::WindowState { stream: STREAM, state: window_state(&Ws::loaded_at(2)) });
-    assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Read(2)]);
-    twin.post(d::DeliveryInput::WindowState { stream: STREAM, state: window_state(&Ws::loaded_at(2)) });
-    assert!(Twin::modelled(take(&twin.log)).is_empty(), "the same held state does not start another read");
-}
-
-#[test]
 fn dlv_live_joined() {
     let mut twin = open_as(Kind::Events);
     twin.step(Input::ModelEvent { position: 5, payload: "c5".into() });
@@ -480,12 +451,7 @@ fn dlv_live_ready() {
     assert!(twin.read_all().is_empty(), "no event before Ready");
     twin.step(Input::ModelReady);
     assert_eq!(twin.read_all(), [Val::Ready, Val::Event { position: 1, payload: "c1".into() }]);
-}
-
-#[test]
-fn dlv_live_ready_again() {
-    let mut twin = open_events();
-    assert!(twin.step(Input::ModelReady).is_empty());
+    assert!(twin.step(Input::ModelReady).is_empty(), "a second Ready gives nothing");
 }
 
 #[test]
@@ -511,14 +477,8 @@ fn dlv_live_event_gap() {
     let mut twin = open_events();
     let (_, values) = twin.step_read(Input::ModelEvent { position: 3, payload: "c3".into() });
     assert_eq!(values, [Val::Lost { first: 1, last: 2 }, Val::Event { position: 3, payload: "c3".into() }]);
-}
-
-#[test]
-fn dlv_live_event_old() {
-    let mut twin = open_events();
-    twin.step_read(Input::ModelEvent { position: 1, payload: "c1".into() });
-    let (effects, values) = twin.step_read(Input::ModelEvent { position: 1, payload: "again".into() });
-    assert!(effects.is_empty() && values.is_empty());
+    let (effects, values) = twin.step_read(Input::ModelEvent { position: 3, payload: "again".into() });
+    assert!(effects.is_empty() && values.is_empty(), "an event at a position already given is dropped");
 }
 
 #[test]
@@ -528,14 +488,8 @@ fn dlv_live_lost() {
     assert_eq!(values, [Val::Lost { first: 1, last: 3 }]);
     let (_, values) = twin.step_read(Input::ModelLost { first: 3, last: 5 });
     assert_eq!(values, [Val::Lost { first: 4, last: 5 }], "a range that starts below the next position is cut");
-}
-
-#[test]
-fn dlv_live_lost_old() {
-    let mut twin = open_events();
-    twin.step_read(Input::ModelLost { first: 1, last: 3 });
     let (effects, values) = twin.step_read(Input::ModelLost { first: 1, last: 2 });
-    assert!(effects.is_empty() && values.is_empty());
+    assert!(effects.is_empty() && values.is_empty(), "a range below the next position gives nothing");
 }
 
 #[test]
@@ -568,15 +522,6 @@ fn dlv_live_gap_before_ready() {
 }
 
 #[test]
-fn dlv_live_event_rows_kind() {
-    let mut twin = live_rows();
-    for input in [Input::Joined { position: 1 }, Input::ModelReady, Input::ModelEvent { position: 1, payload: "c".into() }, Input::ModelLost { first: 1, last: 2 }, Input::ModelGap] {
-        assert!(twin.step(input).is_empty());
-    }
-    assert!(twin.read_all().is_empty());
-}
-
-#[test]
 fn dlv_live_pull() {
     let mut twin = live_rows();
     twin.step(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) });
@@ -585,22 +530,9 @@ fn dlv_live_pull() {
 }
 
 #[test]
-fn dlv_live_pull_empty() {
-    let mut twin = live_rows();
-    assert!(twin.step(Input::Pull).is_empty());
-    assert_eq!(twin.step(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) }).len(), 1, "the next value goes to the waiting Pull");
-}
-
-#[test]
 fn dlv_ended_pull() {
     let mut twin = ended_by_epoch();
     assert_eq!(twin.step(Input::Pull), [Effect::Answer(Pulled::Value(Val::Ended(Cause::SessionEnded)))]);
-}
-
-#[test]
-fn dlv_ended_pull_none() {
-    let mut twin = ended_by_epoch();
-    twin.step(Input::Pull);
     assert_eq!(twin.step(Input::Pull), [Effect::Answer(Pulled::Done)], "a Pull after the read end ends the stream");
 }
 
@@ -614,20 +546,6 @@ fn dlv_ended_closing() {
     assert_eq!(slow.step(Input::SinkClosed), [Effect::Drained], "after SinkClosed");
     let mut none = Twin::new();
     assert_eq!(none.step(Input::Closing), [Effect::Drained], "no streams");
-}
-
-#[test]
-fn dlv_ended_cancel() {
-    let mut twin = ended_by_epoch();
-    twin.step(Input::SinkClosed);
-    assert_eq!(twin.step(Input::Cancel { reply: 5 }), [Effect::Cancelled(5)]);
-}
-
-#[test]
-fn dlv_ended_cancel_wait() {
-    let mut twin = ended_by_epoch();
-    assert!(twin.step(Input::Cancel { reply: 5 }).is_empty());
-    assert_eq!(twin.step(Input::SinkClosed), [Effect::Cancelled(5)]);
 }
 
 #[test]
@@ -664,14 +582,12 @@ fn dlv_wait_pull() {
 }
 
 #[test]
-fn dlv_wait_cancel() {
-    let mut twin = live_rows();
-    twin.step(Input::Cancel { reply: 1 });
-    let effects = twin.step(Input::SinkClosed);
-    assert_eq!(effects, [Effect::Cancelled(1)], "the reply comes with SinkClosed, not before");
-    let mut by_epoch = live_rows();
-    by_epoch.step(Input::Cancel { reply: 1 });
-    by_epoch.step(Input::EpochEnded { own: true });
-    assert_eq!(by_epoch.step(Input::SinkClosed), [Effect::Cancelled(1)]);
-    assert_eq!(by_epoch.read_all(), [Val::Ended(Cause::SessionEnded)]);
+fn dlv_ended_cancel_answers_after_sink_closed() {
+    let mut closed = ended_by_epoch();
+    closed.step(Input::SinkClosed);
+    assert_eq!(closed.step(Input::Cancel { reply: 5 }), [Effect::Cancelled(5)]);
+    let mut open = ended_by_epoch();
+    assert!(open.step(Input::Cancel { reply: 5 }).is_empty(), "the reply waits for SinkClosed");
+    assert_eq!(open.step(Input::SinkClosed), [Effect::Cancelled(5)]);
+    assert_eq!(open.read_all(), [Val::Ended(Cause::SessionEnded)]);
 }

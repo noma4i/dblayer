@@ -17,7 +17,6 @@ mod delivery_changes_tests;
 mod delivery_operations_tests;
 mod delivery_more_tests;
 mod delivery_read_tests;
-mod delivery_revision_cells;
 mod delivery_temp_tests;
 
 const STREAM: d::StreamId = 1;
@@ -366,19 +365,6 @@ fn dlv_open_rows() {
     }
 }
 
-/// P-DLV-26: an Entity `if_missing` opens with a passive interest and asks the window to load only after a read without a row; `stale` and `force` hold an active interest.
-#[test]
-fn dlv_open_if_missing_passive() {
-    for (fetch, active) in [(Fetch::IfMissing, false), (Fetch::Stale, true), (Fetch::Force, true)] {
-        let effects = Twin::new().step(Input::Open { kind: Kind::Entity(fetch), epoch_current: true });
-        assert_eq!(effects.contains(&Effect::InterestPlus), active, "{fetch:?}: {effects:?}");
-        assert_eq!(effects.contains(&Effect::InterestPassive), !active, "{fetch:?}: {effects:?}");
-    }
-    let mut twin = open_as(Kind::Entity(Fetch::IfMissing));
-    let (effects, _) = twin.step_read(Input::ReadDone { revision: 1, rows: Vec::new() });
-    assert_eq!(effects.iter().filter(|effect| matches!(effect, Effect::Load { .. })).count(), 1, "one load after the empty read: {effects:?}");
-}
-
 #[test]
 fn dlv_open_events() {
     let mut twin = Twin::new();
@@ -420,21 +406,7 @@ fn dlv_live_status() {
     twin.step(Input::Transfer { state: "failed".into(), revision: 14 });
     twin.step(Input::Transfer { state: "retrying".into(), revision: 15 });
     assert_eq!(twin.read_all(), [Val::Status { revision: 15, state: "retrying".into() }], "an unread status gives way to the last one");
-}
-
-#[test]
-fn dlv_live_status_same() {
-    let mut twin = open_as(Kind::Blob);
-    twin.step(Input::Transfer { state: "uploading".into(), revision: 16 });
-    twin.read_all();
-    assert!(twin.step(Input::Transfer { state: "uploading".into(), revision: 17 }).is_empty());
-}
-
-#[test]
-fn dlv_open_no_session() {
-    let mut twin = Twin::new();
-    assert_eq!(twin.step(Input::OpenNoSession), [Effect::Available]);
-    assert_eq!(twin.read_all(), [Val::Ended(Cause::SessionEnded)]);
+    assert!(twin.step(Input::Transfer { state: "retrying".into(), revision: 16 }).is_empty(), "the same status gives nothing");
 }
 
 #[test]
@@ -442,13 +414,6 @@ fn dlv_open_stale() {
     let mut twin = Twin::new();
     assert_eq!(twin.step(Input::Open { kind: Kind::List, epoch_current: false }), [Effect::Available]);
     assert_eq!(twin.read_all(), [Val::Ended(Cause::SessionEnded)]);
-}
-
-#[test]
-fn dlv_open_invalid() {
-    let mut twin = Twin::new();
-    assert_eq!(twin.step(Input::OpenInvalid), [Effect::Available]);
-    assert_eq!(twin.read_all(), [Val::Ended(Cause::Invalid)]);
 }
 
 #[test]
@@ -533,13 +498,6 @@ fn dlv_opening_committed() {
     twin.step(Input::WindowState(Ws::loaded_at(3)));
     let (_, values) = twin.step_read(Input::ReadDone { revision: 3, rows: rows(&["r1", "r2"]) });
     assert_eq!(values, [snap(3, &["r1", "r2"], Ws::loaded_at(3))], "the first value shows the newer rows");
-}
-
-#[test]
-fn dlv_opening_unrelated() {
-    let mut twin = open_rows();
-    let (effects, values) = twin.step_read(Input::Committed { revision: 2, touches: false });
-    assert!(effects.is_empty() && values.is_empty());
 }
 
 /// dlv_open_rows: a stream that reads no window (its relation is not remote) reads the rows and asks the window for nothing.

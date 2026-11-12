@@ -17,6 +17,7 @@ fn dlv_changes_each_commit() {
     twin.read_all();
     twin.step(changed(1, &[("row_Chat", "c1"), ("row_Message", "m1")], false));
     twin.step(changed(2, &[("row_Chat", "c1")], false));
+    assert!(twin.step(changed(0, &[], false)).is_empty(), "a commit with no row changes gives nothing");
     twin.step(changed(3, &[], true));
     assert_eq!(
         twin.read_all(),
@@ -26,14 +27,6 @@ fn dlv_changes_each_commit() {
             Val::Changes { revision: 3, rows: Vec::new() },
         ]
     );
-}
-
-#[test]
-fn dlv_changes_quiet() {
-    let mut twin = open_as(Kind::Changes);
-    twin.read_all();
-    assert!(twin.step(changed(1, &[], false)).is_empty());
-    assert!(twin.read_all().is_empty());
 }
 
 #[test]
