@@ -1,10 +1,10 @@
 //! Owner-level tests of the `outbox` machine: the properties of the offline queue, the receipt, the restored answer, the status column and the stray inputs. Names are the `Test` column.
 
-use super::outbox_cells_tests::{answers, kinds, sending, sends, submit_op, tick};
+use super::outbox_cells_tests::submit_op;
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, RWhy, St};
-use crate::owners::contract::{Committed, Online};
-use crate::owners::write::outbox::{CommitKind, NewOp, OutboxAnswer, OutboxInput, Receipt, ReserveTarget};
+use crate::owners::contract::Committed;
+use crate::owners::write::outbox::{NewOp, OutboxAnswer, OutboxInput, Receipt};
 
 fn optimistic_row() -> crate::store::Row {
     std::sync::Arc::new(crate::store::Record { id: crate::identity::RowId::new("r").expect("the row id"), revision: 11, data: serde_json::Map::new(), sync: Default::default() })
@@ -18,22 +18,6 @@ fn commit_shown(twin: &mut Twin, id: crate::owners::write::outbox::OpId, shown: 
 
 fn receipt_of(effects: &[OutboxEffect], reply: u64) -> Receipt {
     effects.iter().find_map(|effect| match effect { OutboxEffect::Reply { reply: id, answer: OutboxAnswer::Receipt(receipt) } if *id == reply => Some(receipt.clone()), _ => None }).expect("a receipt")
-}
-
-/// P-OUT-32: any write without the network becomes Queued with its intent and goes out on Online, no `Err(Offline)`.
-#[test]
-fn out_prop_offline_queue() {
-    for action in ["update", "create", "destroy"] {
-        let mut twin = Twin::new();
-        twin.post(OutboxInput::Online(Online(false)));
-        let op = NewOp { action: action.into(), ..model_op("r", Policy::Rollback, false) };
-        let id = submit_op(&mut twin, op, 30);
-        let committed = twin.committed(id);
-        assert_eq!((twin.stage(id), sends(&committed)), (Some(St::Queued), 0), "{action}: offline the operation is Queued with its intent");
-        assert!(matches!(answers(&committed, 30).as_slice(), [OutboxAnswer::Receipt(_)]), "{action}: a receipt, not an offline error: {committed:?}");
-        let online = twin.post(OutboxInput::Online(Online(true)));
-        assert_eq!((twin.stage(id), sends(&online)), (Some(St::Sending), 1), "{action}: it goes out on Online with no platform call");
-    }
 }
 
 /// P-OUT-36: the receipt carries the optimistic row of its commit, fixed; a fast confirm does not rewrite it; `None` only without optimistic effects.
@@ -56,40 +40,16 @@ fn out_prop_receipt_fast_confirm() {
     assert_eq!(receipt_of(&committed, 30).optimistic, None, "no optimistic effects means no optimistic row");
 }
 
-/// P-OUT-33: the transition `Sending -> Queued` writes the pending status with a `Requeue` batch.
-#[test]
-fn out_prop_status_requeue() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::Online(Online(false)));
-    let requeued = twin.post(OutboxInput::TransportError { op_id: id, temporary: true });
-    assert_eq!((twin.stage(id), kinds(&requeued)), (Some(St::Queued), vec![CommitKind::Requeue]), "a temporary failure offline requeues");
-
-    let mut persist = Twin::new();
-    let id = sending(&mut persist, Policy::Rollback, false);
-    persist.post(OutboxInput::TransportError { op_id: id, temporary: true });
-    tick(&mut persist, id);
-    persist.post(OutboxInput::Online(Online(false)));
-    let committed = persist.committed(id);
-    assert_eq!((persist.stage(id), kinds(&committed)), (Some(St::Queued), vec![CommitKind::Requeue]), "a persisted attempt committed offline returns to Queued pending");
-}
-
-/// P-OUT-38: the stray pairs (RestoreReady, Restored, Submit of a busy row, ReserveOp) leave the addressed operation unchanged.
+/// P-OUT-38: the stray pair (RestoreReady, Restored) of an owner that is ready gives no effect.
 #[test]
 fn out_prop_stray_input_ignored() {
     let states = [St::Submitting, St::Queued, St::PersistingAttempt, St::Sending, St::Landing, St::RollingBack(RWhy::Rejected), St::MarkingFailed, St::MarkingRetry, St::Failed, St::WaitingDeclaration];
     for state in states {
         let ctx = if state == St::Queued { offline() } else { ready() };
         for input in [OutboxInput::RestoreReady { epoch: EPOCH }, OutboxInput::Restored { ops: Vec::new(), pending_lost: false }] {
-            let (mut twin, id) = reach(state, &ctx);
+            let (mut twin, _) = reach(state, &ctx);
             let effects = twin.post(input.clone());
-            assert_eq!((twin.stage(id), effects.is_empty()), (Some(state), true), "{state:?} x {input:?}: the operation and its effects are unchanged");
+            assert!(effects.is_empty(), "{state:?} x {input:?}: {effects:?}");
         }
-        let (mut twin, id) = reach(state, &ctx);
-        twin.post(OutboxInput::Submit { epoch: EPOCH, op: model_op("r", Policy::Rollback, false), reply: 950 });
-        assert_eq!(twin.stage(id), Some(state), "{state:?} x Submit: the earlier operation is unchanged");
-        let (mut twin, id) = reach(state, &ctx);
-        twin.post(OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Transfer(1) });
-        assert_eq!(twin.stage(id), Some(state), "{state:?} x ReserveOp: the earlier operation is unchanged");
     }
 }

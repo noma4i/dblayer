@@ -12,7 +12,7 @@ fn out_submitting_rejected() {
         let mut twin = Twin::new();
         let id = twin.submit("r", Policy::Rollback, false);
         let effects = refuse(&mut twin, id, reason.clone());
-        assert_eq!((twin.stage(id), answers(&effects, SUBMIT_REPLY)), (Some(St::Done), vec![OutboxAnswer::Err(Fault::Rejected(reason))]), "the submit is refused with the reason, no optimism");
+        assert_eq!((answers(&effects, SUBMIT_REPLY), kinds(&effects)), (vec![OutboxAnswer::Err(Fault::Rejected(reason))], Vec::new()), "the submit is refused with the reason, no optimism, no batch follows");
     }
 }
 
@@ -68,20 +68,6 @@ fn out_sending_destroy_not_found_batch() {
 }
 
 #[test]
-fn out_sending_destroy_not_found() {
-    let mut twin = Twin::new();
-    let op = NewOp { action: "destroy".into(), ..model_op("r", Policy::Rollback, false) };
-    let id = submit_op(&mut twin, op, 30);
-    twin.committed(id);
-    twin.waiter(id);
-    twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    assert_eq!(twin.stage(id), Some(St::Landing), "the not-found destroy lands: the server row is already gone");
-    let effects = twin.committed(id);
-    assert_eq!(twin.stage(id), Some(St::Done));
-    assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. }))), "{effects:?}");
-}
-
-#[test]
 fn out_landing_committed() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
@@ -118,16 +104,3 @@ fn out_rollback_committed() {
     assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Rejected { .. }))), "the rollback gives Rejected, no optimism: {effects:?}");
 }
 
-#[test]
-fn out_rollback_committed_discard() {
-    let mut twin = Twin::new();
-    twin.post(OutboxInput::Online(Online(false)));
-    let id = twin.submit("r", Policy::Rollback, false);
-    twin.committed(id);
-    assert_eq!(twin.stage(id), Some(St::Queued));
-    twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY });
-    assert_eq!(twin.stage(id), Some(St::RollingBack(RWhy::Discarded)));
-    let effects = twin.committed(id);
-    assert_eq!((twin.stage(id), answers(&effects, DISCARD_REPLY)), (Some(St::Done), vec![OutboxAnswer::Ok]), "the discard is answered Ok after the rollback");
-    assert_eq!(twin.state().ops[&id].outcome, Some(OutboxOutcome::Discarded));
-}

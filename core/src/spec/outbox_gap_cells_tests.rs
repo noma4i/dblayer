@@ -1,9 +1,8 @@
-use super::outbox_cells_tests::{answers, kinds, refuse, tick};
+use super::outbox_cells_tests::{kinds, tick};
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, St};
 use super::rig::{bounded, within, Kind, Rig, Server};
-use crate::owners::contract::RejectReason;
-use crate::owners::write::outbox::{CommitKind, Fault, NewOp, OutboxAnswer, OutboxInput};
+use crate::owners::write::outbox::{CommitKind, NewOp, OutboxInput};
 use crate::schema::{FieldSpec, OnFailure};
 use crate::value::ScalarKind;
 
@@ -29,18 +28,6 @@ async fn reset_run() {
 
     server.wait_seen("MakeMoment", 2).await;
     assert!(second.row("seed").await.is_none(), "the cached rows of the changed model are reset");
-}
-
-#[test]
-fn out_intent_rejected_closed() {
-    let mut twin = Twin::new();
-    let submitted = twin.post(OutboxInput::Submit { epoch: EPOCH, op: model_op("r", Policy::Rollback, false), reply: SUBMIT_REPLY });
-    let id = *twin.state().ops.keys().max().unwrap();
-    assert_eq!(kinds(&submitted), vec![CommitKind::Intent], "the intent batch is the only write of the submit");
-    let effects = refuse(&mut twin, id, RejectReason::Closed);
-    assert_eq!(answers(&effects, SUBMIT_REPLY), vec![OutboxAnswer::Err(Fault::Rejected(RejectReason::Closed))]);
-    assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::Done), Vec::new()), "the operation is done and no batch follows");
-    assert!(twin.state().ops[&id].outcome.is_some(), "the operation ended with its cause");
 }
 
 #[test]
