@@ -12,7 +12,7 @@ pub fn begin_remove(g: &mut G, t: &mut Transfer, e: &mut Vec<Effect>, why: Why, 
     let mut ops = vec![Op::RemoveUpload { transfer_id: t.id }];
     if intent { ops.push(Op::RemoveIntent); }
     if let Some(u) = &orphan { ops.push(Op::UploadOrphan { upload_id: u.clone(), key: t.key.clone() }); }
-    if matches!(why, Why::Cancel | Why::CopyFailed(_) | Why::Storage) { ops.extend(rollback_op(t)); }
+    if matches!(why, Why::Cancel | Why::CopyFailed(_) | Why::Storage | Why::Invalid) { ops.extend(rollback_op(t)); }
     if let Some(gid) = t.batch {
         if matches!(why, Why::Cancel) {
             if let Some(gr) = g.groups.get(&gid) {

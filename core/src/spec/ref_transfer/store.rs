@@ -147,19 +147,32 @@ pub fn store_rejected(g: &mut G, t: &mut Transfer, st: St, reason: &Reason, e: &
                 e.push(Effect::Rounds(RoundsIn::Idle { epoch: t.epoch, transfer_id: t.id }));
             }
         }
-        St::Removing { prior, why, .. } => {
+        St::Removing { prior, why, orphan } => {
             if why == Why::Discarded && *prior == St::Failed && *reason == Reason::Storage { row(e, "xfer_replace_rejected_keeps_failed"); }
             if ended { end_interrupted(g, t, e, "xfer_removing_no_session", cause); reply_none(); }
             else if *reason == Reason::Storage {
-                row(e, "xfer_removing_rejected");
-                if let Some((r, _)) = t.replies.cancel.take() { reply(e, r, Answer::Err(Fault::Storage)); }
-                for r in std::mem::take(&mut t.replies.discard_waiters) { reply_vec(e, r, Fault::Storage); }
+                row(e, "xfer_removing_storage_retried");
+                retry_write(g, t, e);
+            } else if why == Why::Cancel && t.replies.cancel.is_some() {
+                row(e, "xfer_removing_invalid_cancel");
+                if let Some((r, _)) = t.replies.cancel.take() { reply(e, r, Answer::Err(Fault::Invalid)); }
                 if matches!(*prior, St::Ready { .. }) { e.push(Effect::SelfSlotFreed); }
                 t.st = *prior;
+            } else if why == Why::Cancel {
+                row(e, "xfer_removing_expiry_invalid");
+                t.st = *prior;
+            } else if matches!(why, Why::Confirmed(_) | Why::Discarded) {
+                removing_invalid_outcome(g, t, why, orphan, e);
             } else {
-                row(e, "xfer_persisting_invalid");
-                t.st = St::PersistingFailure { error: fail(ErrKind::InternalInvalid, "invalid"), abort: None };
-                commit(g, t, e, vec![Op::Failed { clear_upload: false }]);
+                row(e, "xfer_removing_accept_invalid");
+                match why {
+                    Why::CopyFailed(error) => reply_accept(g, t, e, Answer::Err(Fault::Copy(error))),
+                    Why::Storage => reply_accept(g, t, e, Answer::Err(Fault::Storage)),
+                    _ => reply_accept(g, t, e, Answer::Err(Fault::Invalid)),
+                }
+                t.local_url = false;
+                t.st = St::Done;
+                remove_from_group(g, t);
             }
         }
         St::PersistingBatchIntent { single, .. } => {
@@ -402,6 +415,11 @@ pub fn removing_committed(g: &mut G, t: &mut Transfer, why: Why, orphan: Option<
             row(e, "xfer_removing_committed_copy_failed");
             e.push(Effect::DeleteFile { transfer_id: t.id });
             reply_accept(g, t, e, Answer::Err(Fault::Storage));
+        }
+        Why::Invalid => {
+            row(e, "xfer_removing_committed_copy_failed");
+            e.push(Effect::DeleteFile { transfer_id: t.id });
+            reply_accept(g, t, e, Answer::Err(Fault::Invalid));
         }
     }
     if had_effects && !is_conf { row(e, "xfer_remove_rolls_back_optimistic"); }
