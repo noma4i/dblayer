@@ -138,13 +138,11 @@ pub(super) fn end_cause(reason: &RejectReason) -> crate::ffi::EndCause {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fault {
     NoSession,
-    SessionEnded,
     NotFound,
     /// The row of the batch element at this index does not exist.
     NotFoundAt(usize),
     InFlight,
     Ended(crate::ffi::EndCause),
-    Closed,
     /// The intent was dropped by the layout move: only `discard` ends it.
     RestoreFailed,
     /// The session lost its pending state: `retry` waits for `session_reset`.
@@ -156,7 +154,15 @@ pub enum Fault {
 }
 
 impl Fault {
-    pub(super) fn of_end(cause: crate::runtime::Cause) -> Self { if cause == crate::runtime::Cause::Close { Self::Closed } else { Self::SessionEnded } }
+    pub(super) fn of_end(cause: crate::runtime::Cause) -> Self { Self::Ended(if cause == crate::runtime::Cause::Close { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded }) }
+    pub(super) fn end_cause(&self) -> crate::ffi::EndCause { if let Self::Ended(cause) = self { cause.clone() } else { crate::ffi::EndCause::SessionEnded } }
+    pub(crate) fn of_reject(reason: RejectReason) -> Self {
+        match reason {
+            RejectReason::NoSession => Self::Ended(crate::ffi::EndCause::SessionEnded),
+            RejectReason::Closed => Self::Ended(crate::ffi::EndCause::Closed),
+            reason => Self::Rejected(reason),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

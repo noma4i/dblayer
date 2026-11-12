@@ -163,7 +163,7 @@ impl OutboxState {
                 OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::DiscardTransfer { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Err(fault.clone())),
                 OutboxInput::RetryTransfer { uploads, .. } => self.retry_transfer_answer(uploads.into_iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(fault.clone()), fx),
                 OutboxInput::Outcome { reply, .. } => {
-                    let cause = if fault == Fault::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded };
+                    let cause = fault.end_cause();
                     Self::reply(fx, reply, OutboxAnswer::Outcome(OutboxOutcome::Ended(cause)))
                 }
                 OutboxInput::ReserveOp { target, .. } => self.opened(fx, target, Err(fault.clone())),
@@ -200,7 +200,7 @@ impl OutboxState {
                 self.answer_held(Fault::of_end(ended.cause), fx);
             }
             OutboxInput::Closing => {
-                self.answer_held(Fault::Closed, fx);
+                self.answer_held(Fault::Ended(crate::ffi::EndCause::Closed), fx);
                 self.closing = true;
                 self.maybe_drained(fx);
             }

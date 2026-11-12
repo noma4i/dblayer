@@ -27,22 +27,19 @@ pub(super) fn refused(fault: Fault, what: &str) -> DbError {
     use crate::owners::contract::RejectReason;
     match fault {
         Fault::NoSession => DbError::NoSession { detail: "the database has no session in this epoch".into() },
-        Fault::SessionEnded => super::cause_error(&super::EndCause::SessionEnded),
         Fault::NotFound => DbError::NotFound { detail: format!("{what}: there is no such operation") },
         Fault::NotFoundAt(index) => DbError::NotFound { detail: format!("{what}: the row of the item {index} does not exist") },
         Fault::InFlight => DbError::InFlight { detail: format!("{what}: the operation is in flight") },
         Fault::Ended(cause) => super::cause_error(&cause),
-        Fault::Closed => super::command::closed(),
         Fault::RestoreFailed => DbError::Invalid { detail: format!("{what}: the stored operation cannot be read, discard it") },
         Fault::StateLost => DbError::Session { code: crate::transport::SessionCode::StateLost, detail: "the pending request of the session was lost".into() },
         Fault::Internal => DbError::Internal { detail: format!("{what}: internal error") },
         Fault::Invalid => DbError::Invalid { detail: format!("{what}: the owner refused the call") },
         Fault::Copy(detail) => DbError::Copy { detail },
-        Fault::Rejected(RejectReason::NoSession) => DbError::NoSession { detail: "the session of this write ended".into() },
-        Fault::Rejected(RejectReason::Closed) => super::command::closed(),
         Fault::Rejected(RejectReason::Storage(detail)) => DbError::Storage { detail },
         Fault::Rejected(RejectReason::StaleGeneration { .. }) => DbError::Invalid { detail: format!("{what}: the write was refused") },
         Fault::Rejected(RejectReason::Invalid(detail)) => DbError::Invalid { detail: format!("{what}: {detail}") },
+        Fault::Rejected(reason @ (RejectReason::NoSession | RejectReason::Closed)) => refused(Fault::of_reject(reason), what),
     }
 }
 

@@ -23,7 +23,7 @@ impl OutboxState {
 
     pub(super) fn local_write(&mut self, now: u64, call: LocalCall, epoch: Epoch, reply: ReplyId, fx: &mut Effects<Outbox>) {
         if self.closing {
-            return Self::reply(fx, reply, OutboxAnswer::Err(Fault::Closed));
+            return Self::reply(fx, reply, OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed)));
         }
         if epoch != self.epoch {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NoSession));

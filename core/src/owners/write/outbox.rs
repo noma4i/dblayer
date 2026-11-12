@@ -248,7 +248,7 @@ impl OutboxState {
     pub(super) fn end_dependents(&mut self, now: u64, create: OpId, reason: &RejectReason, fx: &mut Effects<Outbox>) {
         let dependents = self.ops.get_mut(&create).map(|operation| std::mem::take(&mut operation.ended_dependents)).unwrap_or_default();
         for id in dependents {
-            self.answer_waiters(id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
+            self.answer_waiters(id, &OutboxAnswer::Err(Fault::of_reject(reason.clone())), fx);
             self.finish(now, id, OutboxOutcome::Ended(end_cause(reason)), false, fx);
         }
     }
@@ -755,7 +755,7 @@ impl OutboxState {
     }
 
     pub(super) fn interrupt_all(&mut self, fault: Fault, fx: &mut Effects<Outbox>) {
-        let cause = if fault == Fault::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded };
+        let cause = fault.end_cause();
         let outcome = OutboxOutcome::Ended(cause);
         let open: Vec<OpId> = self.ops.values().filter(|operation| operation.stage != Stage::Done).map(|operation| operation.op_id).collect();
         for op_id in open {
@@ -859,7 +859,7 @@ impl OutboxState {
             OutboxInput::EpochStarted(started) => self.base_generation = started.generation,
             OutboxInput::EpochEnded(ended) => self.interrupt_all(Fault::of_end(ended.cause), fx),
             OutboxInput::Closing => {
-                self.interrupt_all(Fault::Closed, fx);
+                self.interrupt_all(Fault::Ended(crate::ffi::EndCause::Closed), fx);
                 self.closing = true;
                 self.maybe_drained(fx);
             }
@@ -902,10 +902,10 @@ impl StateOwner for Outbox {
                 _ => {}
             }
             match &input {
-                OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::DiscardTransfer { reply, .. } | OutboxInput::Outcome { reply, .. } | OutboxInput::WhenQuiet { reply } | OutboxInput::Landed { reply, .. } | OutboxInput::Resolve { reply, .. } | OutboxInput::LocalWrite { reply, .. } => OutboxState::reply(&mut fx, *reply, OutboxAnswer::Err(Fault::Closed)),
-                OutboxInput::ReserveOp { target, .. } => state.opened(&mut fx, *target, Err(Fault::Closed)),
-                OutboxInput::ReserveReplacement { target, .. } => if let Some(transfer) = state.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, TransferInput::ReplacementReserved { target: *target, result: Err(Fault::Closed) }))); },
-                OutboxInput::RetryTransfer { uploads, .. } => state.retry_transfer_answer(uploads.iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(Fault::Closed), &mut fx),
+                OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::DiscardTransfer { reply, .. } | OutboxInput::Outcome { reply, .. } | OutboxInput::WhenQuiet { reply } | OutboxInput::Landed { reply, .. } | OutboxInput::Resolve { reply, .. } | OutboxInput::LocalWrite { reply, .. } => OutboxState::reply(&mut fx, *reply, OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))),
+                OutboxInput::ReserveOp { target, .. } => state.opened(&mut fx, *target, Err(Fault::Ended(crate::ffi::EndCause::Closed))),
+                OutboxInput::ReserveReplacement { target, .. } => if let Some(transfer) = state.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, TransferInput::ReplacementReserved { target: *target, result: Err(Fault::Ended(crate::ffi::EndCause::Closed)) }))); },
+                OutboxInput::RetryTransfer { uploads, .. } => state.retry_transfer_answer(uploads.iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(Fault::Ended(crate::ffi::EndCause::Closed)), &mut fx),
                 _ => {}
             }
             return fx;

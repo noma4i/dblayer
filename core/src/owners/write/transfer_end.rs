@@ -196,7 +196,7 @@ impl TransferState {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.stage = TransferStage::Failed;
         if let Some(rep) = transfer.retry_reply.take() {
-            Self::refuse(fx, rep, Fault::Rejected(reason));
+            Self::refuse(fx, rep, Fault::of_reject(reason));
         }
     }
 
@@ -331,7 +331,7 @@ impl TransferState {
                     transfer.prior = None;
                     transfer.removal = None;
                     if let Some((rep, _)) = transfer.cancel_reply.take() {
-                        Self::refuse(fx, rep, Fault::Rejected(reason.clone()));
+                        Self::refuse(fx, rep, Fault::of_reject(reason.clone()));
                     }
                     if prior == TransferStage::Ready {
                         self.show(id, Shown::Queued, fx);
@@ -461,7 +461,7 @@ impl TransferState {
         for id in self.open_ids() {
             self.interrupt(id, end.clone(), fx);
         }
-        self.answer_held(if end == crate::ffi::EndCause::Closed { Fault::Closed } else { Fault::SessionEnded }, fx);
+        self.answer_held(Fault::Ended(if end == crate::ffi::EndCause::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded }), fx);
     }
 
     pub(super) fn close(&mut self, fx: &mut Fx) {
@@ -482,7 +482,7 @@ impl TransferState {
                 _ => self.interrupt(id, crate::ffi::EndCause::Closed, fx),
             }
         }
-        self.answer_held(Fault::Closed, fx);
+        self.answer_held(Fault::Ended(crate::ffi::EndCause::Closed), fx);
         self.maybe_drained(fx);
     }
 }

@@ -252,7 +252,7 @@ impl OutboxState {
                     self.commit_write(id, &call, generation, fx);
                     self.batches.insert(id, Batch::Write { reply, call, expire });
                 } else {
-                    Self::reply(fx, reply, OutboxAnswer::Err(Fault::Rejected(rejected.reason)));
+                    Self::reply(fx, reply, OutboxAnswer::Err(Fault::of_reject(rejected.reason)));
                     self.maybe_drained(fx);
                 }
             }
@@ -275,7 +275,7 @@ impl OutboxState {
             match reason {
                 RejectReason::NoSession | RejectReason::Closed => {
                     self.removed.remove(&op_id);
-                    self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
+                    self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::of_reject(reason.clone())), fx);
                     self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
                 }
                 RejectReason::Storage(_) => self.storage_retry(op_id, fx),
@@ -302,9 +302,9 @@ impl OutboxState {
             RejectReason::Storage(_) if stage == Stage::MarkingRetry => {
                 let transfer_ids = self.take_retry_uploads(op_id);
                 self.revert_retry(op_id, !transfer_ids.is_empty());
-                if !transfer_ids.is_empty() { self.retry_transfer_answer(transfer_ids, Err(Fault::Rejected(reason.clone())), fx); }
+                if !transfer_ids.is_empty() { self.retry_transfer_answer(transfer_ids, Err(Fault::of_reject(reason.clone())), fx); }
                 for reply in Self::take_waiters(&mut self.retry_waiters, op_id) {
-                    Self::reply(fx, reply, OutboxAnswer::Err(Fault::Rejected(reason.clone())));
+                    Self::reply(fx, reply, OutboxAnswer::Err(Fault::of_reject(reason.clone())));
                 }
             }
             RejectReason::Storage(_) => self.storage_retry(op_id, fx),
@@ -313,14 +313,14 @@ impl OutboxState {
                 if self.ops[&op_id].cancels == Some(op_id) {
                     let following: Vec<OpId> = self.ops.values().filter(|other| other.op_id != op_id && other.cancels == Some(op_id) && other.stage != Stage::Done).map(|other| other.op_id).collect();
                     for id in following {
-                        self.answer_waiters(id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
+                        self.answer_waiters(id, &OutboxAnswer::Err(Fault::of_reject(reason.clone())), fx);
                         self.finish(now, id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
                     }
                 }
                 self.end_dependents(now, op_id, &reason, fx);
                 let transfer_ids = self.take_retry_uploads(op_id);
-                if !transfer_ids.is_empty() { self.retry_transfer_answer(transfer_ids, Err(Fault::Rejected(reason.clone())), fx); }
-                self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
+                if !transfer_ids.is_empty() { self.retry_transfer_answer(transfer_ids, Err(Fault::of_reject(reason.clone())), fx); }
+                self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::of_reject(reason.clone())), fx);
                 self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
             }
             RejectReason::Invalid(_) if stage == Stage::Landing && !self.rows_dropped(op_id) => self.without_rows(op_id, CommitKind::Land, fx),
@@ -330,9 +330,9 @@ impl OutboxState {
                 Stage::MarkingRetry => {
                     let transfer_ids = self.take_retry_uploads(op_id);
                     self.revert_retry(op_id, !transfer_ids.is_empty());
-                    if !transfer_ids.is_empty() { self.retry_transfer_answer(transfer_ids, Err(Fault::Rejected(reason.clone())), fx); }
+                    if !transfer_ids.is_empty() { self.retry_transfer_answer(transfer_ids, Err(Fault::of_reject(reason.clone())), fx); }
                     for reply in Self::take_waiters(&mut self.retry_waiters, op_id) {
-                        Self::reply(fx, reply, OutboxAnswer::Err(Fault::Rejected(reason.clone())));
+                        Self::reply(fx, reply, OutboxAnswer::Err(Fault::of_reject(reason.clone())));
                     }
                 }
                 Stage::MarkingFailed => {
@@ -344,7 +344,7 @@ impl OutboxState {
                         let following: Vec<OpId> = self.ops.values().filter(|other| other.op_id != op_id && other.cancels == Some(op_id) && other.stage != Stage::Done).map(|other| other.op_id).collect();
                         for id in following {
                             if self.ops[&id].stage == Stage::Submitting {
-                                self.answer_waiters(id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
+                                self.answer_waiters(id, &OutboxAnswer::Err(Fault::of_reject(reason.clone())), fx);
                                 if let Some(operation) = self.ops.get_mut(&id) { operation.stage = Stage::Done; }
                             } else if let Some(operation) = self.ops.get_mut(&id) {
                                 if let Some(previous) = operation.before_cancel.take() { operation.stage = previous; }
@@ -355,7 +355,7 @@ impl OutboxState {
                     }
                     self.return_dependents(op_id);
                     for reply in Self::take_waiters(&mut self.discard_waiters, op_id) {
-                        Self::reply(fx, reply, OutboxAnswer::Err(Fault::Rejected(reason.clone())));
+                        Self::reply(fx, reply, OutboxAnswer::Err(Fault::of_reject(reason.clone())));
                     }
                     self.fail_with(op_id, format!("Internal(Invalid): {detail}"), fx);
                 }
@@ -401,7 +401,7 @@ impl OutboxState {
     }
 
     pub(super) fn submit_refused(&mut self, op_id: OpId, reason: RejectReason, fx: &mut Effects<Outbox>) {
-        self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
+        self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::of_reject(reason.clone())), fx);
         if let Some(operation) = self.ops.get_mut(&op_id) {
             operation.stage = Stage::Done;
             operation.outcome = Some(OutboxOutcome::Ended(end_cause(&reason)));

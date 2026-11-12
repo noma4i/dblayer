@@ -140,7 +140,7 @@ impl TransferState {
     /// `Accept` and `AcceptBatch`: every element is checked before the transaction, the rows of all N elements go in one batch.
     pub(super) fn accept(&mut self, now: Time, epoch: Epoch, items: Vec<BatchItem>, joint: Option<Joint>, rep: ReplyId, fx: &mut Fx) {
         if epoch != self.epoch || self.closing || self.ended {
-            return reply(fx, rep, TransferAnswer::Err(if self.closing { Fault::Closed } else { Fault::NoSession }));
+            return reply(fx, rep, TransferAnswer::Err(if self.closing { Fault::Ended(crate::ffi::EndCause::Closed) } else { Fault::NoSession }));
         }
         if items.is_empty() || !items.iter().all(Self::valid) || joint.as_ref().is_some_and(|joint| !joint.admits(items.len())) {
             return reply(fx, rep, TransferAnswer::Err(Fault::Invalid));
@@ -265,11 +265,7 @@ impl TransferState {
 
     /// `Accepting x Rejected`: no receipt, nothing is accepted.
     pub(super) fn accepting_rejected(&mut self, ids: &[TransferId], reason: RejectReason, fx: &mut Fx) {
-        let fault = if self.closing { Fault::Ended(crate::ffi::EndCause::Closed) } else { match reason {
-            RejectReason::NoSession => Fault::SessionEnded,
-            RejectReason::Closed => Fault::Closed,
-            reason @ (RejectReason::Storage(_) | RejectReason::Invalid(_) | RejectReason::StaleGeneration { .. }) => Fault::Rejected(reason),
-        } };
+        let fault = if self.closing { Fault::Ended(crate::ffi::EndCause::Closed) } else { Fault::of_reject(reason) };
         for &id in ids {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };
             let group_reply = transfer.batch_id.and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));
@@ -487,13 +483,13 @@ impl TransferState {
         let mut removing = Vec::new();
         for &id in ids {
             if self.transfers.get(&id).is_some_and(|transfer| transfer.supply_back.is_some()) {
-                self.source_rejected(id, Fault::Rejected(reason.clone()), fx);
+                self.source_rejected(id, Fault::of_reject(reason.clone()), fx);
                 continue;
             }
             self.remove_with(id, Removal::Storage, fx);
             let accept = self.transfers.get_mut(&id).and_then(|transfer| transfer.accept_reply.take());
             let group = self.group_entry(id).and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));
-            if let Some(rep) = accept.or(group) { reply(fx, rep, TransferAnswer::Err(Fault::Rejected(reason.clone()))); }
+            if let Some(rep) = accept.or(group) { reply(fx, rep, TransferAnswer::Err(Fault::of_reject(reason.clone()))); }
             removing.push(id);
         }
         if !removing.is_empty() { self.store(&removing, StoreKind::Removed, fx); }

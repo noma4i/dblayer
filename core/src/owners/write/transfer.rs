@@ -745,7 +745,7 @@ impl TransferState {
             (RejectReason::Invalid(_), true) if stage == Some(TransferStage::Removing) && pending.kind == StoreKind::Removed => {}
             (RejectReason::Invalid(detail), true) => {
                 if stage == Some(TransferStage::PersistingCopy) && self.transfers.get(&pending.ids[0]).is_some_and(|transfer| transfer.supply_back.is_some()) {
-                    self.source_rejected(pending.ids[0], Fault::Rejected(rejected.reason.clone()), fx);
+                    self.source_rejected(pending.ids[0], Fault::of_reject(rejected.reason.clone()), fx);
                     return;
                 }
                 if stage == Some(TransferStage::PersistingCopy) {
@@ -754,7 +754,7 @@ impl TransferState {
                     return;
                 }
                 if stage == Some(TransferStage::PersistingFailure) {
-                    if let Some(rep) = self.transfers.get_mut(&pending.ids[0]).and_then(|transfer| transfer.supply_reply.take()) { reply(fx, rep, TransferAnswer::Err(Fault::Rejected(rejected.reason.clone()))); }
+                    if let Some(rep) = self.transfers.get_mut(&pending.ids[0]).and_then(|transfer| transfer.supply_reply.take()) { reply(fx, rep, TransferAnswer::Err(Fault::of_reject(rejected.reason.clone()))); }
                 }
                 if stage == Some(TransferStage::PersistingComplete) {
                     if let Some(transfer) = self.transfers.get_mut(&pending.ids[0]) { transfer.signed_id = None; }
@@ -911,7 +911,7 @@ impl TransferState {
                 run(fx, TransferEffect::SnapshotRequest { epoch: started.epoch });
             }
             TransferInput::Closing => {
-                self.answer_held(Fault::Closed, fx);
+                self.answer_held(Fault::Ended(crate::ffi::EndCause::Closed), fx);
                 self.close(fx);
             }
             TransferInput::EpochEnded(ended) => {
@@ -955,7 +955,7 @@ impl TransferState {
             match input {
                 TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::SelectRow { reply: id, .. } => reply(fx, id, TransferAnswer::Err(fault.clone())),
                 TransferInput::Outcome { reply: id, .. } => {
-                    let cause = if fault == Fault::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded };
+                    let cause = fault.end_cause();
                     reply(fx, id, TransferAnswer::Outcome(OutboxOutcome::Ended(cause), None))
                 }
                 _ => {}
