@@ -209,7 +209,7 @@ fn xfer_prop_batch_all_or_none() {
 }
 
 #[test]
-fn xfer_prop_accept_durable() {
+fn xfer_prop_restored_copy_goes_on_without_receipt() {
     let mut row = stored(1, KEY, 2);
     row.copying = true;
     row.size = 0;
@@ -280,7 +280,7 @@ fn xfer_prop_batch_after_all_copies() {
 }
 
 #[test]
-fn xfer_prop_persist_before_step() {
+fn xfer_prop_retry_waits_for_its_write() {
     let mut failed = Twin::new();
     failed.failed(KEY);
     let (_, out) = failed.retry(KEY, None);
