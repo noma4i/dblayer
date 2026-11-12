@@ -38,7 +38,7 @@ fn xfer_accept_while_restoring() {
 
 #[test]
 fn xfer_held_accept_end_cause() {
-    for (closing, expected) in [(false, Fault::SessionEnded), (true, Fault::Closed)] {
+    for (closing, expected) in [(false, Fault::Ended(crate::ffi::EndCause::SessionEnded)), (true, Fault::Ended(crate::ffi::EndCause::Closed))] {
         let mut twin = Twin::bare(1);
         let reply = twin.reply();
         let pending = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 2)), reply });
@@ -157,7 +157,7 @@ fn xfer_accepting_rejected() {
     twin.reserve_batch(&ids);
     let out = twin.reject(RejectReason::NoSession);
     assert_eq!(out.all_replies(), 1, "a batch has one answer and no receipt");
-    assert_eq!(Twin::fault(&out, batch_reply), Some(Fault::SessionEnded), "the refusal reports the ended session");
+    assert_eq!(Twin::fault(&out, batch_reply), Some(Fault::Ended(crate::ffi::EndCause::SessionEnded)), "the refusal reports the ended session");
     assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Done));
 }
 

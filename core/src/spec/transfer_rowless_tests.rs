@@ -115,7 +115,7 @@ fn xfer_accept_check_order_without_row() {
     let mut closing = Twin::new();
     closing.close();
     let out = closing.post(TransferInput::Accept { epoch: EPOCH + 1, item: invalid(), reply: 7 });
-    assert_eq!(Twin::fault(&out, 7), Some(Fault::Closed), "Closed first among Closed, NoSession and Invalid");
+    assert_eq!(Twin::fault(&out, 7), Some(Fault::Ended(crate::ffi::EndCause::Closed)), "Closed first among Closed, NoSession and Invalid");
     let mut twin = Twin::new();
     let out = twin.post(TransferInput::Accept { epoch: EPOCH + 1, item: invalid(), reply: 8 });
     assert_eq!(Twin::fault(&out, 8), Some(Fault::NoSession), "NoSession before Invalid");

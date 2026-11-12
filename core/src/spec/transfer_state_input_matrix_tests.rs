@@ -113,7 +113,7 @@ fn xfer_accept_after_closing() {
         TransferInput::AcceptBatch { epoch: EPOCH, items: vec![item(KEY, 1), item("Moment:r2:upload", 1)], joint: Box::new(joint()), reply: 30 },
     ] {
         let out = twin.post(input);
-        assert_eq!((out.replies(30), out.all_replies(), out.writes()), (vec![TransferAnswer::Err(Fault::Closed)], 1, 0));
+        assert_eq!((out.replies(30), out.all_replies(), out.writes()), (vec![TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))], 1, 0));
         assert!(out.outbox.is_empty() && twin.state().transfers.is_empty());
     }
 }

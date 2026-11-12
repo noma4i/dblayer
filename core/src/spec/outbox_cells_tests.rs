@@ -360,7 +360,7 @@ fn out_submit_after_closing() {
     twin.det.close();
     twin.run();
     let effects = twin.post(OutboxInput::Submit { epoch: EPOCH, op: model_op("r", Policy::Rollback, false), reply: SUBMIT_REPLY });
-    assert_eq!((answers(&effects, SUBMIT_REPLY), effects.len(), twin.state().ops.len()), (vec![OutboxAnswer::Err(Fault::Closed)], 1, 0));
+    assert_eq!((answers(&effects, SUBMIT_REPLY), effects.len(), twin.state().ops.len()), (vec![OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))], 1, 0));
 }
 
 #[test]

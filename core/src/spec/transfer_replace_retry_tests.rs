@@ -80,7 +80,7 @@ fn xfer_replace_rejected_invalid_keeps_failed() {
 
 #[test]
 fn xfer_replace_rejected_ended() {
-    for (reason, cause, fault) in [(RejectReason::NoSession, crate::ffi::EndCause::SessionEnded, Fault::SessionEnded), (RejectReason::Closed, crate::ffi::EndCause::Closed, Fault::Closed)] {
+    for (reason, cause, fault) in [(RejectReason::NoSession, crate::ffi::EndCause::SessionEnded, Fault::Ended(crate::ffi::EndCause::SessionEnded)), (RejectReason::Closed, crate::ffi::EndCause::Closed, Fault::Ended(crate::ffi::EndCause::Closed))] {
         let (mut twin, old, _, _) = replacing();
         let out = twin.reject(reason.clone());
         assert_eq!(Twin::fault(&out, 90), Some(fault), "{reason:?}: the call ends with the cause");

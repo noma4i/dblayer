@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use super::outbox_harness::{In, Out, Policy, RReason, St};
-use crate::owners::contract::{Committed, Online, RejectReason, ReplyId};
+use crate::owners::contract::{Committed, Online, ReplyId};
 
 
 use crate::spec::support::{Emitted, Log};
@@ -24,15 +24,15 @@ fn replies_of(effects: &[OutboxEffect], reply: ReplyId) -> Vec<OutboxAnswer> {
 fn out_wait_submit() {
     let (mut twin, id) = reach(St::Submitting, &ready());
     let ended = { take_fx(&twin.log, state_of(&twin.det)); twin.det.end_epoch(EPOCH, Cause::SessionReset); twin.run(); take_fx(&twin.log, state_of(&twin.det)) };
-    assert_eq!(replies_of(&ended, SUBMIT_REPLY), [OutboxAnswer::Err(Fault::SessionEnded)]);
+    assert_eq!(replies_of(&ended, SUBMIT_REPLY), [OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))]);
     let (mut twin, id3) = reach(St::Submitting, &ready());
     let rejected = twin.rejected(id3, RReason::NoSession);
-    assert_eq!(replies_of(&rejected, SUBMIT_REPLY), [OutboxAnswer::Err(Fault::Rejected(RejectReason::NoSession))]);
+    assert_eq!(replies_of(&rejected, SUBMIT_REPLY), [OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))]);
     let (mut twin, _) = reach(St::Submitting, &ready());
     take_fx(&twin.log, state_of(&twin.det));
     twin.det.close();
     twin.run();
-    assert_eq!(replies_of(&take_fx(&twin.log, state_of(&twin.det)), SUBMIT_REPLY), [OutboxAnswer::Err(Fault::Closed)]);
+    assert_eq!(replies_of(&take_fx(&twin.log, state_of(&twin.det)), SUBMIT_REPLY), [OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))]);
     let _ = id;
 }
 
@@ -61,7 +61,7 @@ fn out_wait_retry() {
     take_fx(&twin.log, state_of(&twin.det));
     twin.det.end_epoch(EPOCH, Cause::SessionReset);
     twin.run();
-    assert_eq!(replies_of(&take_fx(&twin.log, state_of(&twin.det)), 64), [OutboxAnswer::Err(Fault::SessionEnded)]);
+    assert_eq!(replies_of(&take_fx(&twin.log, state_of(&twin.det)), 64), [OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))]);
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn out_wait_discard() {
     take_fx(&twin.log, state_of(&twin.det));
     twin.det.end_epoch(EPOCH, Cause::SessionReset);
     twin.run();
-    assert_eq!(replies_of(&take_fx(&twin.log, state_of(&twin.det)), 74), [OutboxAnswer::Err(Fault::SessionEnded)]);
+    assert_eq!(replies_of(&take_fx(&twin.log, state_of(&twin.det)), 74), [OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))]);
 }
 
 #[test]
