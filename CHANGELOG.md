@@ -4,7 +4,7 @@
 
 ### Added
 
-- Add `NetworkPath` with the transport and the number of the default network to `NetworkStatus`.
+- Add `NetworkPath` with the kind and the number of the default network to `NetworkStatus`.
 - Add `operationFailure`, `syncInfo` and `uploadInfo` builders to the test products of both platforms.
 
 ### Changed

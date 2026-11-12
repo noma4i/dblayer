@@ -36,7 +36,7 @@ public func syncInfo(state: SyncState, error: OperationFailure? = nil) -> SyncIn
   syncInfo(state: state, kind: error?.kind, reason: error?.reason, message: error?.message ?? "")
 }
 
-/// The value of `uploads[action]`: the status, the sent share in percent and the refusal.
+/// The value of `uploads[action]`: the status, the sent share from 0 to 1 and the refusal.
 public func uploadInfo(_ status: UploadStatus, progress: Double = 0, error: OperationFailure? = nil) -> UploadInfo {
   UploadInfo(wire: WireUpload(
     status: wireStatus(status), stage: "", sentBytes: 0, totalBytes: 0, progress: progress, waitReason: nil, attempts: 0,

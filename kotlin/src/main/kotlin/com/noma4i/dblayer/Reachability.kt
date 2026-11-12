@@ -14,7 +14,7 @@ internal object Reachability {
         fun report(network: Network?, capabilities: NetworkCapabilities?) {
             val online = validated(capabilities)
             if (network != null && network != last) { number += 1UL; last = network }
-            changed(NetworkPath(online, if (online) transport(capabilities) else NetworkTransport.NONE, number))
+            changed(NetworkPath(online, if (online) kind(capabilities) else NetworkKind.NONE, number))
         }
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onLost(network: Network) = report(null, null)
@@ -28,10 +28,10 @@ internal object Reachability {
 
     private fun validated(capabilities: NetworkCapabilities?): Boolean = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
 
-    private fun transport(capabilities: NetworkCapabilities?): NetworkTransport = when {
-        capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> NetworkTransport.WIFI
-        capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> NetworkTransport.CELLULAR
-        else -> NetworkTransport.OTHER
+    private fun kind(capabilities: NetworkCapabilities?): NetworkKind = when {
+        capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> NetworkKind.WIFI
+        capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> NetworkKind.CELLULAR
+        else -> NetworkKind.OTHER
     }
 }
 

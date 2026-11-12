@@ -7,11 +7,11 @@ use super::{OnlineSink, PlatformObserver};
 
 /// The kind of the default network of the phone, `None` only while the phone is offline.
 #[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NetworkTransport { Wifi, Cellular, Other, None }
+pub enum NetworkKind { Wifi, Cellular, Other, None }
 
 /// The default network of the phone: `network` grows with each change of the default network, the core does not read it.
 #[derive(uniffi::Record, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NetworkPath { pub online: bool, pub transport: NetworkTransport, pub network: u64 }
+pub struct NetworkPath { pub online: bool, pub kind: NetworkKind, pub network: u64 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Processed { pub(crate) stamp: u64, pub(crate) path: Option<NetworkPath> }
@@ -32,10 +32,10 @@ pub(crate) fn record_network(path: NetworkPath) -> u64 {
     stamp
 }
 
-/// The path of an input that knows only the online flag: the transport is unknown and the network number stays.
+/// The path of an input that knows only the online flag: the kind is unknown and the network number stays.
 pub(crate) fn path_of_online(online: bool) -> NetworkPath {
     let network = network_value().borrow().path.map_or(0, |path| path.network);
-    NetworkPath { online, transport: if online { NetworkTransport::Other } else { NetworkTransport::None }, network }
+    NetworkPath { online, kind: if online { NetworkKind::Other } else { NetworkKind::None }, network }
 }
 
 /// The next stamp of the process for a direct input: the value of the process stays.

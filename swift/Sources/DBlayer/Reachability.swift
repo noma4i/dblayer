@@ -8,8 +8,8 @@ struct SystemPath {
     let network = NetworkCounter()
     monitor.pathUpdateHandler = { path in
       let online = path.status == .satisfied
-      let transport: NetworkTransport = !online ? .none : path.usesInterfaceType(.wifi) ? .wifi : path.usesInterfaceType(.cellular) ? .cellular : .other
-      changed(NetworkPath(online: online, transport: transport, network: network.number(of: path.availableInterfaces.first?.name)))
+      let kind: NetworkKind = !online ? .none : path.usesInterfaceType(.wifi) ? .wifi : path.usesInterfaceType(.cellular) ? .cellular : .other
+      changed(NetworkPath(online: online, kind: kind, network: network.number(of: path.availableInterfaces.first?.name)))
     }
     monitor.start(queue: DispatchQueue(label: "com.noma4i.dblayer.reachability"))
     return { monitor.cancel() }
