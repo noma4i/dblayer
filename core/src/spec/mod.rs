@@ -13,7 +13,7 @@ mod feed_words;
 mod ref_window;
 
 mod lifecycle_tests;
-pub(crate) mod lifecycle_owner_tests;
+mod lifecycle_effects_tests;
 mod lifecycle_restore_tests;
 mod network_owner_tests;
 mod store_owner_tests;
