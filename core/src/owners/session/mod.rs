@@ -198,7 +198,7 @@ pub enum SessionPhase {
 /// What the author of a `Mutate` hears: `Transport{req_id, Response(body) / Error{class, X} / Dropped}`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AuthorOutcome {
-    Response { body: String, kind: crate::transport::AnswerKind },
+    Response { body: String, kind: crate::transport::AnswerKind, pending_retained: bool },
     Error { class: ErrorClass, error: SessionError, pending_retained: bool },
     Dropped,
 }
@@ -374,7 +374,7 @@ fn finish_retained(fx: &mut Vec<SessionEffect>, pending: &PendingCall, result: S
     if let Some(id) = pending.reply { reply(fx, id, result.clone()); }
     if let Some(author) = pending.author {
         let outcome = match (result, kind) {
-            (Ok(body), Some(kind)) => AuthorOutcome::Response { body, kind },
+            (Ok(body), Some(kind)) => AuthorOutcome::Response { body, kind, pending_retained },
             (Ok(_), None) => AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::Invalid, pending_retained },
             (Err(error), _) => AuthorOutcome::Error { class: ErrorClass::Permanent, error, pending_retained },
         };

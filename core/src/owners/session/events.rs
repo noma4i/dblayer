@@ -669,7 +669,7 @@ impl SessionState {
             SessionInput::Response { request_id, attempt_id, body, sequence, refusal, kind } if mine(request_id, attempt_id) => {
                 if let crate::transport::AnswerKind::Transient { reason } = &kind {
                     if let Some(author) = pending.author {
-                        fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome: AuthorOutcome::Response { body, kind } });
+                        fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome: AuthorOutcome::Response { body, kind, pending_retained: false } });
                         self.phase = SessionPhase::PendingHeld { pending };
                     } else { self.retry_direct(pending, attempts, SessionError::Graphql { code: reason.clone(), body }, fx); }
                     return;
@@ -716,7 +716,7 @@ impl SessionState {
                     match body {
                         Some(body) => {
                             let outcome = match serde_json::from_str(&body) {
-                                Ok(value) => AuthorOutcome::Response { body, kind: crate::transport::classify_answer(&crate::transport::WireOutcome::Answer { sequence: None, body: value }, false, true) },
+                                Ok(value) => AuthorOutcome::Response { body, kind: crate::transport::classify_answer(&crate::transport::WireOutcome::Answer { sequence: None, body: value }, false, true), pending_retained: false },
                                 Err(_) => AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::Invalid, pending_retained: true },
                             };
                             fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome });

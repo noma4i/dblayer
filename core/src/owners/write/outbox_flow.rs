@@ -472,7 +472,7 @@ impl OutboxState {
         if self.removed.contains(&op_id) { return; }
         if let Some(operation) = self.ops.get_mut(&op_id) { operation.pair_in_flight = false; }
         match outcome {
-            AuthorOutcome::Response { body, kind: crate::transport::AnswerKind::Transient { .. } } => {
+            AuthorOutcome::Response { body, kind: crate::transport::AnswerKind::Transient { .. }, .. } => {
                 if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = true; operation.reject_error = Some(body); }
                 self.transport_failed(now, op_id, true, None, fx);
             }

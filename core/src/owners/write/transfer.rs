@@ -137,7 +137,7 @@ impl TransferState {
             };
             return self.abort_done(upload_id, result, fx);
         }
-        let seeded = match outcome { crate::owners::session::AuthorOutcome::Response { body, kind } => Some((request_id, Ok((body, kind)))), _ => None };
+        let seeded = match outcome { crate::owners::session::AuthorOutcome::Response { body, kind, .. } => Some((request_id, Ok((body, kind)))), _ => None };
         for transfer in self.transfers.values_mut().filter(|transfer| transfer.pending_step == Some(request_id)) {
             transfer.pending_step = None;
             transfer.seeded.clone_from(&seeded);

@@ -34,7 +34,7 @@ fn call_http_auth_status() {
 fn call_response_preserves_data_and_errors() {
     let body = serde_json::json!({"data":{"root":{"id":"1"}},"errors":[{"message":"Busy","path":["root",0],"extensions":{"code":"SERVICE_UNAVAILABLE","retry":3}}]});
     let expected: crate::transport::Response = serde_json::from_value(body.clone()).unwrap();
-    let outcome = crate::owners::session::AuthorOutcome::Response { body: body.to_string(), kind: crate::transport::AnswerKind::Transient { reason: "SERVICE_UNAVAILABLE".into() } };
+    let outcome = crate::owners::session::AuthorOutcome::Response { body: body.to_string(), kind: crate::transport::AnswerKind::Transient { reason: "SERVICE_UNAVAILABLE".into() }, pending_retained: false };
     let crate::owners::calls::CallsInput::Response { data, errors, kind, .. } = super::calls_runner::answer_input(5, "root", outcome) else { panic!("response missing") };
     assert_eq!((data, errors, kind), (expected.data, expected.errors, crate::transport::AnswerKind::Transient { reason: "SERVICE_UNAVAILABLE".into() }));
 }
@@ -56,5 +56,5 @@ fn call_transport_error_keeps_the_type_and_the_fields() {
     assert_eq!(session(SessionError::Security { code: SecurityCode::TlsTrust, detail: "pin".into() }), CallError::Failed(DbError::Security { code: SecurityCode::TlsTrust, detail: "pin".into() }));
     assert_eq!(session(SessionError::TooLarge { size: 9, limit: 4 }), CallError::Failed(DbError::RequestTooLarge { size: 9, limit: 4 }));
     assert!(matches!(session(SessionError::Rejected(crate::owners::contract::RejectReason::Storage("full".into()))), CallError::Failed(DbError::Storage { .. })));
-    assert!(matches!(typed(AuthorOutcome::Response { body: "not json".into(), kind: crate::transport::AnswerKind::Answered { sequence: None } }), CallError::Failed(DbError::Invalid { .. })));
+    assert!(matches!(typed(AuthorOutcome::Response { body: "not json".into(), kind: crate::transport::AnswerKind::Answered { sequence: None }, pending_retained: false }), CallError::Failed(DbError::Invalid { .. })));
 }

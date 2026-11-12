@@ -50,7 +50,7 @@ impl EncryptedTransport {
         let waiter = life.mutate_for_call(owner, wire_id, path.to_string(), body.to_string(), u8::from(purpose == crate::transport::NetworkPurpose::Transfer));
         match waiter.wait().await {
             crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Mutated(outcome)) => match outcome {
-                crate::owners::session::AuthorOutcome::Response { body, kind } => Ok((Answer { sequence: None, body: serde_json::from_str(&body).map_err(|error| TransportError::Decode(error.to_string()))? }, kind)),
+                crate::owners::session::AuthorOutcome::Response { body, kind, .. } => Ok((Answer { sequence: None, body: serde_json::from_str(&body).map_err(|error| TransportError::Decode(error.to_string()))? }, kind)),
                 crate::owners::session::AuthorOutcome::Error { error: crate::owners::session::SessionError::ResponseTooLarge { limit }, pending_retained: true, .. } => Err(TransportError::SentAnswerTooLarge { limit }),
                 crate::owners::session::AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Network | crate::owners::contract::ErrorClass::Server, pending_retained: true, .. } => Err(TransportError::Network("the server asked to retry".into())),
                 crate::owners::session::AuthorOutcome::Error { error, .. } => Err(session_failure(error)),
