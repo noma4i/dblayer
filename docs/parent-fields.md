@@ -1,9 +1,9 @@
 # Parent fields copied from children
 
-For an upsert, `sets` copies only fields present in the merged child row. An omitted field preserves the parent value. Explicit null clears it.
+The parent fields named by `sets` are derived from the server value of the parent row and the stored children, once per commit. A child with a null field leaves the field to the other side: a parent field is null only when no side has a value.
 These rules also apply when a partial response creates the child locally for the first time. No extra write from the app is needed.
-Deleting the current child selects another child and replaces the copied fields, clearing fields that the replacement does not have.
-If no child remains, all copied fields become null.
+Deleting the newest child derives the fields from the children left and the server value.
+If no child and no server value remain, all copied fields become null.
 
 Read the parent entity after declaring `sets` in the child model:
 

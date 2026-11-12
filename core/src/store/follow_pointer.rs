@@ -32,9 +32,10 @@ pub(super) fn affected_parents(reader: &Reader<'_>, models: &BTreeMap<String, Mo
     Ok(())
 }
 
-pub(super) fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, parents: &BTreeSet<RowRef>) -> Result<(Vec<EntityOp>, usize), StoreError> {
+pub(super) fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, parents: &BTreeSet<RowRef>, revision: i64) -> Result<(Vec<EntityOp>, usize, BTreeSet<String>), StoreError> {
     let mut derived = Vec::new();
     let mut read = 0;
+    let mut stale = BTreeSet::new();
     for parent in parents {
         let Some(stored) = reader.point(parent.model.as_str(), parent.id.as_str())? else { continue };
         let info = models.get(parent.model.as_str()).ok_or_else(|| StoreError::UnknownModel(parent.model.to_string()))?;
@@ -42,6 +43,10 @@ pub(super) fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, Mod
         let mut next = stored.clone();
         for child in models.values() {
             for association in setting(&child.spec).filter(|association| association.target == parent.model) {
+                let named = association.pointer_field().and_then(|field| server.get(field)).and_then(read_id);
+                let gone = match named { Some(id) => reader.tombstone_seq(child.spec.key.as_str(), id.as_str())?, None => None };
+                if gone == Some(revision) { stale.insert(parent.model.to_string()); }
+                let server = if gone.is_some() { Row::new() } else { server.clone() };
                 let mut newest = |permanent: bool| -> Result<Option<Row>, StoreError> {
                     let mut rows = Vec::new();
                     for id in first_ranked(reader, &child.table, association, &parent.id, permanent)? {
@@ -64,7 +69,7 @@ pub(super) fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, Mod
         }
         if !same_fields(&next, &stored) { derived.push(EntityOp::Upsert { model: parent.model.clone(), id: parent.id.clone(), row: next }); }
     }
-    Ok((derived, read))
+    Ok((derived, read, stale))
 }
 
 fn first_ranked(reader: &Reader<'_>, table: &str, association: &AssociationSpec, parent_id: &RowId, permanent: bool) -> Result<Vec<RowId>, StoreError> {

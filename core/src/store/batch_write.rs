@@ -90,7 +90,7 @@ impl Store {
         let own = batch.ops.iter().find_map(|op| match op { crate::owners::store::StoreOp::RemoveIntent { op_id } => i64::try_from(*op_id).ok(), _ => None }).unwrap_or(-1);
         let mut originals = BTreeMap::new();
         let mut results = Vec::new();
-        let mut writer = RowWrite { connection: &transaction, models: &inner.models, generation: inner.generation, revision, now, originals: &mut originals, closing: (own >= 0).then_some(own), candidates: 0, current: Default::default(), feed_fields: Default::default(), feed_tombstones: Default::default(), feed_hidden: None, event: None, replaced: BTreeMap::new() };
+        let mut writer = RowWrite { connection: &transaction, models: &inner.models, generation: inner.generation, revision, now, originals: &mut originals, closing: (own >= 0).then_some(own), candidates: 0, current: Default::default(), feed_fields: Default::default(), feed_tombstones: Default::default(), feed_hidden: None, event: None };
         let mut overlay = Vec::new();
         let rows_source = if batch.author == BatchAuthor::Outbox { crate::schema::RowSource::Response } else { crate::schema::RowSource::Page };
         let (observed, refused) = if batch.author == BatchAuthor::Feed {
@@ -138,7 +138,7 @@ impl Store {
             if let crate::owners::store::StoreOp::RollBack { op_id } = op { rolled_back.insert(*op_id); }
         }
         let parents: std::collections::BTreeSet<_> = results.iter().flat_map(|result| result.parents.iter().cloned()).collect();
-        let (derived, pointer_rows) = super::follow_pointer::derived_parents(&Reader::new(&transaction, &inner.models), &inner.models, &parents)?;
+        let (derived, pointer_rows, named_gone) = super::follow_pointer::derived_parents(&Reader::new(&transaction, &inner.models), &inner.models, &parents, revision)?;
         if !derived.is_empty() { results.push(writer.apply(&super::BatchPlan { entity_ops: derived, ..super::BatchPlan::new(inner.generation) })?); }
         let candidates = writer.candidates;
         let mut live_files = std::collections::HashSet::new();
@@ -149,7 +149,8 @@ impl Store {
         let discarded = transaction.prepare(include_str!("sql/batch_write/write_batch_prepared_select_batch_file_deletions.sql"))?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
         transaction.execute_batch(include_str!("sql/batch_write/write_batch_prepared_drop_trigger_batch_file_delete.sql"))?;
         let (expiring, removed_memory) = super::batch_result::expiry(&transaction, &inner.models, &results, inner.now_ms())?;
-        let stale_parents = super::batch_result::stale_parents(&transaction, &inner.models, &results)?;
+        let mut stale_parents = super::batch_result::stale_parents(&transaction, &inner.models, &results)?;
+        stale_parents.extend(named_gone.into_iter().filter(|model| !stale_parents.contains(model)).collect::<Vec<_>>());
         let removed_operations: Vec<u64> = if batch.author == BatchAuthor::Feed { results.iter().flat_map(|result| result.operations.iter()).filter_map(|seq| u64::try_from(*seq).ok()).collect() } else { Vec::new() };
         let removed_rows: Vec<(String, String)> = results.iter().flat_map(|result| result.server_removed.iter()).map(|row| (row.model.to_string(), row.id.to_string())).collect();
         let target_revision = if writes_database { revision } else { base_revision };

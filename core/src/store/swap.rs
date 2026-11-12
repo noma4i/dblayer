@@ -1,5 +1,5 @@
 use crate::store::{BatchPlan, DestroyReason, EntityOp, OperationTransition};
-use crate::identity::{ModelKey, RowId, RowRef};
+use crate::identity::{ModelKey, RowId};
 use crate::store::Reader;
 use crate::value::read_id;
 
@@ -44,11 +44,6 @@ pub(super) fn plan(writer: &mut super::row_write::RowWrite<'_>, envelope: &mut B
         if outbox.iter().filter(followed).any(|follower| follower.operation.action_key.ends_with(":destroy")) {
             envelope.entity_ops.retain(|operation| !matches!(operation, EntityOp::Upsert { model: owner, id, .. } if owner.as_str() == model && id == real));
             envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: real.clone(), reason: DestroyReason::Local });
-        }
-        if let Some(held) = &held {
-            let real_row = RowRef::new(ModelKey::new(model), real.clone());
-            envelope.replaced.insert(real_row.clone(), held.clone());
-            writer.replaced.insert(real_row, held.clone());
         }
         carry_locals(&reader, envelope, model, real, held)?;
         envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: temp.clone(), reason: DestroyReason::Replaced { by: real.clone() } });

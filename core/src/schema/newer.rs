@@ -22,10 +22,16 @@ fn compare_values(left: &Value, right: &Value) -> Ordering {
     }
 }
 
+fn numeric_id(id: &str) -> Option<u64> {
+    (!id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()) && (id == "0" || !id.starts_with('0'))).then(|| id.parse().ok()).flatten()
+}
+
 fn compare_ids(left: &str, right: &str) -> Ordering {
-    match (left.parse::<u64>(), right.parse::<u64>()) {
-        (Ok(left), Ok(right)) => left.cmp(&right),
-        _ => left.cmp(right),
+    match (numeric_id(left), numeric_id(right)) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => left.as_bytes().cmp(right.as_bytes()),
     }
 }
 
@@ -69,10 +75,6 @@ impl AssociationSpec {
         Order { id: row.get("id").and_then(Value::as_str), tuple: self.newer.iter().map(|newer| present(row.get(&newer.child))).collect() }
     }
 
-    pub fn parent_is_newer(&self, stored: &Map<String, Value>, incoming: &Map<String, Value>) -> bool {
-        self.newer.is_empty() || is_newer(&self.parent_order(incoming), &self.parent_order(stored))
-    }
-
     pub fn child_is_newer(&self, parent: &Map<String, Value>, child: &Map<String, Value>) -> bool {
         self.newer.is_empty() || is_newer(&self.child_order(child), &self.parent_order(parent))
     }
@@ -105,30 +107,6 @@ impl AssociationSpec {
         let (mut values, winner) = if server_wins { (from_child, server) } else { (server, from_child) };
         values.extend(winner);
         values
-    }
-
-    /// P-DATA-57: the `sets` pairs a write of `child` puts into `parent`; `stored` is the child row before the write (for a child that replaced its temporary id in this batch, the temporary row).
-    pub fn written_by<'a>(&'a self, parent: &Map<String, Value>, child: &Map<String, Value>, stored: Option<&Map<String, Value>>) -> Vec<(&'a String, &'a String)> {
-        if !self.child_is_newer(parent, child) {
-            return Vec::new();
-        }
-        let id = child.get("id").and_then(Value::as_str);
-        let pointed = id.is_some() && self.pointer_field().and_then(|field| present(parent.get(field))).and_then(Value::as_str) == id;
-        let predicted = id.is_some_and(is_temp_id);
-        self.sets
-            .iter()
-            .filter(|(parent_field, child_field)| {
-                let Some(value) = child.get(*child_field) else { return false };
-                let Some(held) = present(parent.get(*parent_field)) else { return true };
-                if pointed && !stored.is_some_and(|stored| present(stored.get(*child_field)) != present(Some(value))) {
-                    return false;
-                }
-                if predicted && self.newer.iter().any(|newer| newer.child == **child_field) {
-                    return present(Some(value)).is_some_and(|value| compare_values(value, held) == Ordering::Greater);
-                }
-                true
-            })
-            .collect()
     }
 }
 

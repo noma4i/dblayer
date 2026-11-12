@@ -16,7 +16,7 @@
 
 ### Fixed
 
-- Keep parent fields set by a child stable when the child and parent rows land.
+- Derive parent fields set by children once per commit from the server value and children.
 - Grow the retry pause of a write while the database refuses it in a row.
 - Deliver the upload status to readers after a failed database write of it.
 - Keep a finished multipart upload when a session ends after its upload id write failed.
