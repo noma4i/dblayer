@@ -4,8 +4,6 @@
 pub(crate) mod support;
 mod harness_life;
 mod lifecycle;
-mod ref_lifecycle;
-mod ref_store;
 mod ref_session;
 mod store;
 mod delivery_words;
@@ -16,7 +14,7 @@ mod lifecycle_tests;
 mod lifecycle_effects_tests;
 mod lifecycle_restore_tests;
 mod network_owner_tests;
-mod store_owner_tests;
+mod store_effects_tests;
 mod store_pin_tests;
 mod session_owner_tests;
 mod session_gap_tests;

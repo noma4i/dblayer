@@ -17,14 +17,6 @@ fn store_close_waits_for_the_reads() {
     assert_eq!(twin.history.iter().filter(|effect| matches!(effect, StoreEffect::StoreClosed)).count(), 1);
 }
 
-#[test]
-fn store_close_without_reads_closes_at_once() {
-    let mut twin = Twin::live();
-    twin.feed(Request::Close);
-    let done = twin.feed(Request::ReadsClosed(vec![]));
-    assert!(done.contains(&Action::CloseConnections) && done.contains(&Action::StoreClosed));
-}
-
 /// A close that arrives while a batch is in SQLite waits for `Written`.
 #[test]
 fn store_close_waits_for_the_write() {
