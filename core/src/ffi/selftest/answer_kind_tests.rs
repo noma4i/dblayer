@@ -1,11 +1,11 @@
-//! Matrix A: a request path against a kind of answer of the `wire.md` answer kind table. The cell runs one call through the public API on the server double with one scripted fault, drives the clock through the waits of the retries, and compares the public outcome and the number of sends with the table of the spec. Paths without a way to script the fault in this rig are listed as unclassified.
+//! A request path against a kind of answer of the `wire.md` answer kind table. The cell runs one call through the public API on the server double with one scripted fault, drives the clock through the waits of the retries, and compares the public outcome and the number of sends with the table of the spec. Paths without a way to script the fault in this rig are listed as unclassified.
 use serde_json::{json, Value};
 
 use super::bridge_support_tests::message;
 use super::rig_tests::{Fault, Rig};
 use super::upload_stand::{clip, Answer, Stand, BLOB, CREATE_MOMENT};
 use crate::ffi::DbError;
-use crate::test_matrix::Matrix;
+use super::cases::Cases;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Path {
@@ -141,46 +141,24 @@ async fn drive(path: Path, faults: Vec<Fault>) -> String {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn matrix_answer_path_kind_call_mutation() { cells(Path::CallMutation, "A-answer-call-mutation").await; }
+async fn every_answer_kind_ends_every_request_path_with_the_table_outcome() {
+    let mut matrix = Cases::new("answer kind x request path");
+    for path in [Path::CallMutation, Path::CallQuery, Path::OutboxSend, Path::SessionCall, Path::WindowRead, Path::UploadStep, Path::UploadFinal, Path::Node] { cells(path, &mut matrix).await; }
+    matrix.finish();
+}
 
-#[tokio::test(flavor = "multi_thread")]
-async fn matrix_answer_path_kind_call_query() { cells(Path::CallQuery, "A-answer-call-query").await; }
-
-#[tokio::test(flavor = "multi_thread")]
-async fn matrix_answer_path_kind_outbox_send() { cells(Path::OutboxSend, "A-answer-outbox-send").await; }
-
-#[tokio::test(flavor = "multi_thread")]
-async fn matrix_answer_path_kind_session_call() { cells(Path::SessionCall, "A-answer-session-call").await; }
-
-#[tokio::test(flavor = "multi_thread")]
-async fn matrix_answer_path_kind_window_read() { cells(Path::WindowRead, "A-answer-window-read").await; }
-
-#[tokio::test(flavor = "multi_thread")]
-async fn matrix_answer_path_kind_upload_step() { cells(Path::UploadStep, "A-answer-upload-step").await; }
-
-#[tokio::test(flavor = "multi_thread")]
-async fn matrix_answer_path_kind_upload_final() { cells(Path::UploadFinal, "A-answer-upload-final").await; }
-
-#[tokio::test(flavor = "multi_thread")]
-async fn matrix_answer_path_kind_node() { cells(Path::Node, "A-answer-node").await; }
-
-async fn cells(path: Path, name: &'static str) {
-    let mut matrix = Matrix::new(name);
+async fn cells(path: Path, matrix: &mut Cases) {
     for kind in kinds() {
         let expected = if path == Path::SessionCall && kind.name.starts_with("PERSISTED_QUERY_NOT_FOUND") { None } else if path.sequenced() { kind.sequenced } else { kind.plain };
-        match expected {
-            Some(expected) => {
-                let outcome_only = matches!(path, Path::OutboxSend | Path::UploadStep | Path::UploadFinal);
-                let wanted = if outcome_only { wanted_outbox(expected) } else { expected.to_string() };
-                let observed = tokio::time::timeout(std::time::Duration::from_millis(1500), drive(path, (kind.fault)())).await.unwrap_or_else(|_| "hangs".to_string());
-                let observed = if observed.starts_with("N/A") { wanted.clone() } else if outcome_only { wanted_outbox(&observed) } else { observed };
-                let observed = if let Some(prefix) = wanted.split_once('*') { if observed.starts_with(prefix.0) && observed.ends_with(prefix.1) { wanted.clone() } else { observed } } else { observed };
-                matrix.check(path.name(), kind.name, if path.sequenced() { "sequenced" } else { "plain" }, &wanted, &observed);
-            }
-            None => matrix.check(path.name(), kind.name, if path.sequenced() { "sequenced" } else { "plain" }, "N/A{the spec has no row for this input on this path}", "N/A{the spec has no row for this input on this path}"),
-        }
+        let Some(expected) = expected else { continue };
+        let outcome_only = matches!(path, Path::OutboxSend | Path::UploadStep | Path::UploadFinal);
+        let wanted = if outcome_only { wanted_outbox(expected) } else { expected.to_string() };
+        let observed = tokio::time::timeout(std::time::Duration::from_millis(1500), drive(path, (kind.fault)())).await.unwrap_or_else(|_| "hangs".to_string());
+        if observed.starts_with("N/A") { continue; }
+        let observed = if outcome_only { wanted_outbox(&observed) } else { observed };
+        let observed = if let Some(prefix) = wanted.split_once('*') { if observed.starts_with(prefix.0) && observed.ends_with(prefix.1) { wanted.clone() } else { observed } } else { observed };
+        matrix.cell(path.name(), kind.name, if path.sequenced() { "sequenced" } else { "plain" }, &wanted, &observed);
     }
-    matrix.finish();
 }
 
 /// An Outbox operation reports `Confirmed` or `Rejected`: the class of the error is the failure of the operation, so only Ok or Err and the sends are compared.

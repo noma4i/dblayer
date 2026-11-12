@@ -1,15 +1,15 @@
-//! Matrix E: every exported call of `Database` that names a model and a row, against every subset of the violated admission conditions (stale epoch, unknown model, missing row) and against a closed database. Oracle: the public call admission section of `bridge.md` (D-207): closed -> `Closed`, stale epoch -> `NoSession`, arguments -> `Invalid`, row -> `NotFound`; the first violated step answers.
+//! Every exported call of `Database` that names a model and a row, against every subset of the violated admission conditions (stale epoch, unknown model, missing row) and against a closed database. Oracle: the public call admission section of `bridge.md` (D-207): closed -> `Closed`, stale epoch -> `NoSession`, arguments -> `Invalid`, row -> `NotFound`; the first violated step answers.
 use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::json;
 
 use super::bridge_support_tests::message;
+use super::cases::Cases;
 use super::rig_tests::{bound, Fault, Rig};
 use super::upload_stand::{plain, Stand, CREATE_MOMENT};
 use crate::ffi::upload_wire::{WireSource, WireUploadRequest, WireUploadSource};
 use crate::ffi::{Database, DbError};
-use crate::test_matrix::{crate_dir, Matrix};
 
 struct Args {
     epoch: u64,
@@ -42,58 +42,9 @@ const FILE_CALLS: [&str; 5] = ["file", "url", "attach_file", "detach", "set_loca
 const UPLOAD_CALLS: [&str; 3] = ["upload", "supply_source", "fail_source"];
 const RELATION_CALLS: [&str; 4] = ["node", "nodes", "refresh", "edge_values"];
 
-fn exported_calls() -> Vec<String> {
-    fn files(directory: &Path, found: &mut Vec<std::path::PathBuf>) {
-        let Ok(entries) = std::fs::read_dir(directory) else { return };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if path.file_name().is_some_and(|name| name == "selftest" || name == "tests") { continue; }
-                files(&path, found);
-            } else if path.extension().is_some_and(|extension| extension == "rs") && !path.to_string_lossy().ends_with("_tests.rs") {
-                found.push(path);
-            }
-        }
-    }
-    let mut found = Vec::new();
-    files(&crate_dir().join("src/ffi"), &mut found);
-    let mut names = Vec::new();
-    for file in found {
-        let Ok(text) = std::fs::read_to_string(&file) else { continue };
-        let mut from = 0;
-        while let Some(at) = text[from..].find("#[uniffi::export") {
-            let start = from + at;
-            from = start + 10;
-            let rest = &text[start..];
-            let Some(line_end) = rest.find('\n') else { break };
-            let after = rest[line_end..].trim_start();
-            if !after.starts_with("impl Database {") { continue; }
-            let open = start + line_end + rest[line_end..].find('{').unwrap_or(0);
-            let (mut depth, mut end) = (0usize, open);
-            for (offset, character) in text[open..].char_indices() {
-                match character {
-                    '{' => depth += 1,
-                    '}' => { depth -= 1; if depth == 0 { end = open + offset; break; } }
-                    _ => {}
-                }
-            }
-            for line in text[open..end].lines() {
-                let line = line.strip_prefix("    pub async fn ").or_else(|| line.strip_prefix("    pub fn "));
-                if let Some(name) = line.and_then(|line| line.split('(').next()) { names.push(name.to_string()); }
-            }
-        }
-    }
-    names.sort();
-    names.dedup();
-    names
-}
-
-/// Calls that carry no model and no row: they have no admission steps 3 to 5.
-const WITHOUT_ROW: [&str; 28] = [
-    "retry_progress",
-    "open_report", "admit", "subscription_census", "register_operations", "set_online", "online_sink", "close_database", "session_epoch", "session_status",
-    "interrupted_session_answer", "session_reset", "session_call", "set_round_jobs", "round_started", "round_refused", "round_ended", "outcome",
-    "call", "cable_closes", "subscribe_values", "read_query", "begin_load", "begin_load_all", "load_more", "send", "upload_create_batch", "confirmed",
+/// The calls that name a model and a row, except the upload calls (`UPLOAD_CALLS`, run on the stand of uploads).
+const ROW_CALLS: [&str; 19] = [
+    "peek_row", "read_row", "file", "url", "retry", "discard", "destroy", "update", "act", "set_local", "set_ephemeral", "attach_file", "detach", "create", "cancel_upload", "node", "nodes", "refresh", "edge_values",
 ];
 
 async fn invoke(name: &str, database: &Arc<Database>, args: &Args) -> Option<Result<(), DbError>> {
@@ -160,12 +111,10 @@ fn upload_expected(name: &str, stale: bool, invalid: bool, missing: bool) -> &'s
     }
 }
 
-async fn admission_group(group: usize) {
-    let name = ["E-call-admission-0", "E-call-admission-1", "E-call-admission-2", "E-call-admission-3"][group];
-    let mut matrix = Matrix::new(name);
-    let all = exported_calls();
-    let calls: Vec<String> = all.iter().enumerate().filter(|(index, _)| index % 4 == group).map(|(_, call)| call.clone()).collect();
-    if group == 0 && all.len() < 30 { matrix.unclassified("Database", "-", "-", &format!("the source scan found {} exported calls", all.len())); }
+#[tokio::test(flavor = "multi_thread")]
+async fn every_row_call_answers_the_first_violated_admission_step() {
+    let mut matrix = Cases::new("call admission");
+    let calls = ROW_CALLS;
     let rig = Rig::encrypted_with_options(false, true).await;
     rig.login_ios("A").await;
     rig.world.answer_with("UsersByIds", json!({"data":{"nodes":[]}}));
@@ -220,7 +169,6 @@ async fn admission_group(group: usize) {
         (database, args)
     };
     for name in &calls {
-        if WITHOUT_ROW.contains(&name.as_str()) || UPLOAD_CALLS.contains(&name.as_str()) { continue; }
         for mask in 0u8..8 {
             if name == "create" && mask & 4 != 0 { continue; }
             let (stale, invalid, missing) = (mask & 1 != 0, mask & 2 != 0, mask & 4 != 0 && name != "create");
@@ -230,33 +178,21 @@ async fn admission_group(group: usize) {
             if missing { args.row = "absent-row".into(); }
             let input = format!("stale={stale} invalid_model={invalid} missing_row={missing}");
             match invoke_bounded(name, &database, &args).await {
-                Some(result) => matrix.check(name, "open", &input, expected(false, stale, invalid, missing && !MISSING_ROW_ADMITTED.contains(&name.as_str())), observed(&result)),
-                None => matrix.unclassified(name, "open", &input, "the matrix has no way to call this export"),
+                Some(result) => matrix.cell(name, "open", &input, expected(false, stale, invalid, missing && !MISSING_ROW_ADMITTED.contains(&name)), observed(&result)),
+                None => panic!("{name}: no way to call it"),
             }
         }
         let (database, args) = target(name, true);
         match invoke_bounded(name, &database, &args).await {
-            Some(result) => matrix.check(name, "closed", "valid arguments", "Closed", observed(&result)),
-            None => matrix.unclassified(name, "closed", "valid arguments", "the matrix has no way to call this export"),
+            Some(result) => matrix.cell(name, "closed", "valid arguments", "Closed", observed(&result)),
+            None => panic!("{name}: no way to call it"),
         }
     }
     matrix.finish();
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn matrix_call_admission_0() { admission_group(0).await; }
-
-#[tokio::test(flavor = "multi_thread")]
-async fn matrix_call_admission_1() { admission_group(1).await; }
-
-#[tokio::test(flavor = "multi_thread")]
-async fn matrix_call_admission_2() { admission_group(2).await; }
-
-#[tokio::test(flavor = "multi_thread")]
-async fn matrix_call_admission_3() { admission_group(3).await; }
-
-#[tokio::test(flavor = "multi_thread")]
-async fn matrix_call_admission_receipt() {
+async fn a_receipt_is_refused_by_another_database_a_closed_one_an_unknown_operation_and_an_ended_session() {
     use crate::ffi::receipt::{Ticket, WireReceiptTicket};
     let rig = Rig::encrypted_with_options(false, true).await;
     rig.login_ios("A").await;
@@ -280,8 +216,8 @@ async fn matrix_call_admission_receipt() {
 
 /// The upload calls run on the stand of uploads: a process keeps one open database, so the stand is closed for the last row.
 #[tokio::test(flavor = "multi_thread")]
-async fn matrix_call_admission_uploads() {
-    let mut matrix = Matrix::new("E-call-admission-uploads");
+async fn the_upload_calls_answer_the_first_violated_admission_step() {
+    let mut matrix = Cases::new("E-call-admission-uploads");
     let stand = Stand::new();
     let database = stand.open(None, &[CREATE_MOMENT]).await;
     let epoch = database.session_epoch();
@@ -307,21 +243,21 @@ async fn matrix_call_admission_uploads() {
             if missing { call.row = "absent-row".into(); }
             let input = format!("stale={stale} invalid_model={invalid} missing_row={missing}");
             let result = invoke_bounded(name, &database, &call).await.expect("an upload call");
-            matrix.check(name, "open", &input, upload_expected(name, stale, invalid, missing), observed(&result));
+            matrix.cell(name, "open", &input, upload_expected(name, stale, invalid, missing), observed(&result));
         }
     }
     let _ = database.close_database().await;
     for name in UPLOAD_CALLS {
         let result = invoke_bounded(name, &database, &args(epoch)).await.expect("an upload call");
-        matrix.check(name, "closed", "valid arguments", "Closed", observed(&result));
+        matrix.cell(name, "closed", "valid arguments", "Closed", observed(&result));
     }
     matrix.finish();
 }
 
 /// E isolation: an upload on a missing row is admitted (D-287) and leaves the database open for the next call.
 #[tokio::test(flavor = "multi_thread")]
-async fn matrix_upload_missing_row_leaves_the_database_open() {
-    let mut matrix = Matrix::new("E-upload-missing-row");
+async fn an_upload_on_a_missing_row_leaves_the_database_open() {
+    let mut matrix = Cases::new("E-upload-missing-row");
     let stand = Stand::new();
     let database = stand.open(None, &[CREATE_MOMENT]).await;
     let epoch = database.session_epoch();
@@ -332,15 +268,15 @@ async fn matrix_upload_missing_row_leaves_the_database_open() {
     std::fs::write(&source, b"video").unwrap();
     let request = || WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: source.to_string_lossy().into_owned(), name: None, mime: None }, variables_json: "{}".into() };
     let first = database.upload(epoch, "Moment".into(), "absent-row".into(), "upload_clip".into(), request()).await;
-    matrix.check("upload(missing row)", "first call", "missing_row", "admitted", observed(&first.map(|_| ())));
+    matrix.cell("upload(missing row)", "first call", "missing_row", "admitted", observed(&first.map(|_| ())));
     let next = database.peek_row(epoch, "Moment".into(), row.clone());
-    matrix.check("peek_row(present row)", "next call on the same database", "after the refused upload", "admitted", observed(&next.map(|_| ())));
+    matrix.cell("peek_row(present row)", "next call on the same database", "after the refused upload", "admitted", observed(&next.map(|_| ())));
     let again = database.upload(epoch + 1000, "Moment".into(), "absent-row".into(), "upload_clip".into(), request()).await;
-    matrix.check("upload(stale epoch, missing row)", "second upload", "after the refused upload", "NoSession", observed(&again.map(|_| ())));
+    matrix.cell("upload(stale epoch, missing row)", "second upload", "after the refused upload", "NoSession", observed(&again.map(|_| ())));
     let valid = database.upload(epoch, "Moment".into(), row.clone(), "upload_clip".into(), request()).await;
-    matrix.check("upload(valid row)", "first call", "valid arguments", "admitted", observed(&valid.map(|_| ())));
+    matrix.cell("upload(valid row)", "first call", "valid arguments", "admitted", observed(&valid.map(|_| ())));
     let _ = bound(crate::ffi::settled(&database)).await;
     let after = database.peek_row(epoch, "Moment".into(), row);
-    matrix.check("peek_row(present row)", "next call after a valid upload", "the server has no scripted answer", "admitted", observed(&after.map(|_| ())));
+    matrix.cell("peek_row(present row)", "next call after a valid upload", "the server has no scripted answer", "admitted", observed(&after.map(|_| ())));
     matrix.finish();
 }
