@@ -50,6 +50,7 @@ fn reject(reason: Reason) -> RejectReason {
 fn fail_of(error: &SessionError) -> Fail {
     match error {
         SessionError::Invalid => Fail::Invalid,
+        SessionError::NotSent => Fail::NotSent,
         SessionError::Rejected(other) => panic!("no row of the Session table gives an author Rejected({other:?}): a refused write repeats, ends with the epoch or answers Invalid"),
         SessionError::Session { code: crate::transport::SessionCode::Unauthenticated, .. } => Fail::Unauthorized,
         SessionError::Session { code, .. } => Fail::Session(*code),
@@ -163,14 +164,11 @@ fn phase_of(phase: &SessionPhase) -> RefState {
         SessionPhase::Persisting { pending, batch } => RefState::Persisting { pending: pending_of(pending), batch: *batch },
         SessionPhase::Calling { pending, attempts, phase } => RefState::Calling { pending: pending_of(pending), attempts: *attempts, phase: call_phase(phase) },
         SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended } => RefState::Landing { pending: pending_of(pending), batch: *batch, answer: if pending.class == owner::OperationClass::Login && sequence.is_none() { answer_of(answer) } else { answer.clone().map_err(|error| fail_of(&error)) }, identity: *identity, sequence: *sequence, server_ended: *server_ended },
-        SessionPhase::Blocked { pending, reason, landing } => {
-            assert!(landing.is_none(), "BlockedPending keeps no landing (D-336 (5))");
-            RefState::Blocked { pending: pending.as_ref().map(pending_of), reason: match reason {
-                owner::Block::Storage => panic!("a refused Storage write blocks no pair: it repeats in its own state (lifecycle.md Persisting/Landing x Rejected Storage)"),
-                owner::Block::SequenceConflict => Block::SequenceConflict,
-                owner::Block::StateLost => Block::StateLost,
-            } }
-        }
+        SessionPhase::Blocked { pending, reason } => RefState::Blocked { pending: pending.as_ref().map(pending_of), reason: match reason {
+            owner::Block::Invalid => Block::Invalid,
+            owner::Block::SequenceConflict => Block::SequenceConflict,
+            owner::Block::StateLost => Block::StateLost,
+        } },
         SessionPhase::Closed => RefState::Closed,
     }
 }

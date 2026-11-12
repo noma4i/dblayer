@@ -251,8 +251,7 @@ fn fail(error: &Fail) -> CallError {
         Fail::Graphql(messages) => CallError::Graphql { messages: messages.clone(), extensions: None },
         Fail::Http => CallError::Http { status: 0, detail: String::new() },
         Fail::Dropped => CallError::Dropped,
-        // TEXT: the owner has no `NotSent` kind yet, the closest kind it can take is `Network`.
-        Fail::NotSent => CallError::Network,
+        Fail::NotSent => CallError::NotSent,
         Fail::InvalidResponse => CallError::InvalidResponse,
         Fail::Interrupted => CallError::Interrupted,
         Fail::SessionEnded => CallError::SessionEnded,
@@ -341,6 +340,7 @@ fn error_of(error: &CallError) -> Fail {
         CallError::Graphql { messages, .. } => Fail::Graphql(messages.clone()),
         CallError::Http { .. } | CallError::Session { .. } | CallError::Unauthorized => Fail::Http,
         CallError::Dropped => Fail::Dropped,
+        CallError::NotSent => Fail::NotSent,
         CallError::InvalidResponse => Fail::InvalidResponse,
         CallError::Interrupted => Fail::Interrupted,
         CallError::SessionEnded => Fail::SessionEnded,
