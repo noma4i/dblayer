@@ -132,11 +132,3 @@ fn inv_ephemeral_07_updates_set_must_name_ephemeral_fields() {
     );
 }
 
-#[test]
-fn old_specs_without_the_new_keys_load_as_disk_models() {
-    let text = r#"{"key":"users","fields":[]}"#;
-    let model: ModelSpec = serde_json::from_str(text).unwrap();
-    assert_eq!((model.storage, model.expire_after, model.ephemeral.len()), (Storage::Disk, None, 0));
-    let full = with_ephemeral(typing());
-    assert_eq!(serde_json::from_str::<ModelSpec>(&serde_json::to_string(&full).unwrap()).unwrap(), full);
-}

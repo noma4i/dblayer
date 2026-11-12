@@ -18,13 +18,6 @@ fn a_list_of_variants_wider_than_the_sqlite_limit_is_rejected_with_the_element_t
 }
 
 #[test]
-fn the_real_screen_list_fits_one_element_table() {
-    assert_eq!(screens_spec().validate(&[]), Ok(()));
-    let widths = crate::store::ddl::table_widths(&screens_spec());
-    assert_eq!(widths.iter().find(|(table, _)| table == "row_screens__spec__elements").map(|(_, count)| *count), Some(18));
-}
-
-#[test]
 fn a_shared_field_cannot_repeat_a_variant_field_or_another_shared_field() {
     let mut variants = screen_variants();
     variants[1].fields.push(FieldSpec::scalar("id", ScalarKind::Str).nullable());

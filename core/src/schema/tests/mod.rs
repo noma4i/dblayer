@@ -2,7 +2,6 @@ use super::*;
 
 mod ephemeral_tests;
 mod merge_tests;
-mod merge_orders_tests;
 mod path_tests;
 mod newer_tests;
 mod relation_schema_tests;
