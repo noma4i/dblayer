@@ -69,7 +69,6 @@ private class HeldList(val stream: ValueStream, history: RowHistory) {
 @OptIn(DBlayerTestingApi::class)
 class LifecycleSessionTest {
     private val account = AtomicReference<String?>(null)
-    private val alreadyAuthenticated = java.util.concurrent.atomic.AtomicBoolean(false)
 
     @Test
     fun bridge_prop_session_state_parity_c9() = bounded {
@@ -99,7 +98,6 @@ class LifecycleSessionTest {
 
     private val server = SealedServer { path, body ->
         if (path == "/api/auth/login_link") {
-            if (alreadyAuthenticated.getAndSet(false)) return@SealedServer json("""{"error":"ALREADY_AUTHENTICATED"}""")
             val name = body.getValue("account").jsonPrimitive.content
             account.set(name)
             return@SealedServer json("""{"sessionId":"$name"}""")

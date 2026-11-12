@@ -5,7 +5,6 @@ import Testing
 @testable import DBlayer
 
 private let clubCreated = #"{"data":{"createClub":{"__typename":"Club","id":"g1","name":"friends"}}}"#
-private let letterSent = #"{"data":{"sendLetter":{"__typename":"Letter","id":"l1","chatId":"c1","text":"hello","at":1}}}"#
 private let clubDefs = #"[{"name":"CreateClub","document":"mutation CreateClub($name: String!) { createClub(name: $name) { id name } }"},{"name":"LeaveClub","document":"mutation LeaveClub($clubId: ID!) { leaveClub(clubId: $clubId) { id name } }"},{"name":"AddClubMember","document":"mutation AddClubMember($clubId: ID!, $userIds: [ID!]!) { addClubMember(clubId: $clubId, userIds: $userIds) { id name } }"},{"name":"RemoveClubMember","document":"mutation RemoveClubMember($clubId: ID!, $userIds: [ID!]!) { removeClubMember(clubId: $clubId, userIds: $userIds) { id name } }"},{"name":"ClubMembers","document":"query ClubMembers($clubId: ID!, $order: String!, $first: Int, $after: Cursor) { node(id: $clubId) { ... on Club { members(first: $first, after: $after, order: $order) { edges { cursor node { id name } } pageInfo { hasNextPage endCursor } } } } }"},{"name":"SendLetter","document":"mutation SendLetter($chatId: ID!, $text: String!, $at: Int!) { sendLetter(chatId: $chatId, text: $text, at: $at) { id chatId text at } }"},{"name":"ForwardLetter","document":"mutation ForwardLetter($letterId: ID!, $chatId: ID!) { forwardLetter(letterId: $letterId, chatId: $chatId) { letter { id chatId text at } } }"}]"#
 
 func clubAnswer(_ root: String) -> String {
@@ -16,12 +15,6 @@ func membersReply(_ ids: [String]) -> String {
   return #"{"data":{"node":{"members":{"edges":[\#(edges)],"pageInfo":{"hasNextPage":false,"endCursor":"\#(ids.last ?? "")"}}}}}"#
 }
 
-private let forbidden = DbError.Http(status: 403, detail: "forbidden")
-
-
-private func forwardAnswer(_ id: String, chat: String) -> String {
-  #"{"data":{"forwardLetter":{"letter":{"__typename":"Letter","id":"\#(id)","chatId":"\#(chat)","text":"hello","at":99}}}}"#
-}
 
 private final class MemberEventsTransport: ScriptedTransport, WrapsMock, @unchecked Sendable {
   let base = MockTransport()
@@ -94,15 +87,6 @@ extension BridgeProbeTests {
   }
 
   @MainActor
-  static func confirmedLetter() async throws -> Letter {
-    let sending = Task { try await Letter.create(chatId: "c1", text: "hello", at: 1, in: DB.account()) }
-    let receipt = try await valueBeforeDeadline(sending) {}
-    let waiting = Task { try await receipt.settled() }
-    guard case .confirmed = try await valueBeforeDeadline(waiting, release: {}) else { throw WaitFailure.unexpectedOutcome }
-    return try #require(try await Query<Letter>().read().first)
-  }
-
-  @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aMemberEventKeepsTheOpenJoinInTheList() async throws {
     let transport = MemberEventsTransport()
@@ -144,18 +128,4 @@ extension BridgeProbeTests {
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: models, transport: transport, operations: defs)
   }
 
-  /// Opens a session with a club whose two member lists hold u1 u2 u3 u4 (JOINED) and u2 u1 u3 u4 (OWNER_FIRST).
-  @MainActor
-  static func openClubWithMembers(_ transport: MockTransport, models: String = modelsJSON) async throws -> (Club, Query<Person>, Query<Person>) {
-    transport.enqueue("CreateClub", reply: clubCreated)
-    transport.enqueue("ClubMembers", reply: membersReply(["u1", "u2", "u3", "u4"]))
-    transport.enqueue("ClubMembers", reply: membersReply(["u2", "u1", "u3", "u4"]))
-    try await openClubSession(transport, models: models)
-    let club = try await Self.confirmedClub()
-    let joined = try Person.clubMembers(club.id, "JOINED")
-    let owners = try Person.clubMembers(club.id, "OWNER_FIRST")
-    try await joined.load()
-    try await owners.load()
-    return (club, joined, owners)
-  }
 }

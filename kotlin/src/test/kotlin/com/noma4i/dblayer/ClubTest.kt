@@ -38,10 +38,6 @@ private fun membersReply(ids: List<String>): String {
     return """{"data":{"node":{"members":{"edges":[$edges],"pageInfo":{"hasNextPage":false,"endCursor":"${ids.lastOrNull() ?: ""}"}}}}}"""
 }
 
-private val FORBIDDEN = DbException.Http(403.toUShort(), "forbidden")
-
-private fun forwardAnswer(id: String, chat: String) = """{"data":{"forwardLetter":{"letter":{"__typename":"Letter","id":"$id","chatId":"$chat","text":"hello","at":99}}}}"""
-
 private class MemberEventsTransport(override val base: MockTransport = MockTransport()) : ScriptedTransport, WrapsMock {
     override suspend fun query(request: TransportRequest): String = base.query(request)
     override suspend fun mutate(request: TransportRequest): String = base.mutate(request)
@@ -95,12 +91,6 @@ class ClubTest {
         withTimeout(5000) { receipt.confirmed() }
     }
 
-    private suspend fun confirmedLetter(): Letter {
-        val receipt = withTimeout(5000) { Letter.create(chatId = "c1", text = "hello", at = 1, account = AccountScope.current()) }
-        withTimeout(5000) { receipt.confirmed() }
-        return Query("Letter", Letter).read().first()
-    }
-
     @Test
     fun aMemberEventKeepsTheOpenJoinInTheList() = bounded {
         val transport = MemberEventsTransport()
@@ -146,17 +136,4 @@ class ClubTest {
 
     private suspend fun club(id: String) = Query("Club", Club).readRow(id)!!
 
-    /** Opens a session with a club whose two member lists hold u1 u2 u3 u4 (JOINED) and u2 u1 u3 u4 (OWNER_FIRST). */
-    private suspend fun openClubWithMembers(transport: MockTransport, models: String = modelsJSON): Triple<Club, Query<Person>, Query<Person>> {
-        transport.enqueue("CreateClub", CLUB_CREATED)
-        transport.enqueue("ClubMembers", membersReply(listOf("u1", "u2", "u3", "u4")))
-        transport.enqueue("ClubMembers", membersReply(listOf("u2", "u1", "u3", "u4")))
-        openClubSession(transport, models)
-        val created = confirmedClub()
-        val joined = Person.clubMembers(created.id, "JOINED")
-        val owners = Person.clubMembers(created.id, "OWNER_FIRST")
-        joined.load()
-        owners.load()
-        return Triple(created, joined, owners)
-    }
 }

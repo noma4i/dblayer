@@ -69,20 +69,12 @@ private final class Outcome: @unchecked Sendable {
   }
 }
 
-private final class OneShot: @unchecked Sendable {
-  private let lock = NSLock()
-  private var armed = false
-  func arm() { lock.withLock { armed = true } }
-  func take() -> Bool { lock.withLock { defer { armed = false }; return armed } }
-}
-
 private struct LoginLink: Encodable, Sendable { let account: String }
 private struct NoBody: Encodable, Sendable {}
 
 /// The tests share `DB.database` with the rest of `BridgeProbeTests`, so they run in its serialized suite.
 extension BridgeProbeTests {
   private static let account = SignedAccount()
-  private static let alreadyAuthenticated = OneShot()
 
   @Test @MainActor
   func bridge_prop_session_state_parity_c9() async throws {
@@ -110,7 +102,6 @@ extension BridgeProbeTests {
     account.signOut()
     let server = try SealedServer { path, body in
       if path == "/api/auth/login_link" {
-        if Self.alreadyAuthenticated.take() { return ["error": "ALREADY_AUTHENTICATED"] }
         let name = body["account"] as? String ?? ""
         account.signIn(name)
         return ["sessionId": name]
