@@ -638,7 +638,7 @@ impl SessionState {
                     }
                     if !server_ended || self.restored_active != Some(delivered.request_id) { self.resume_finish_retained(&delivered, answer, true, fx); }
                     if self.failed_batch == Some(batch) { self.report_failed(fx); }
-                    self.phase = SessionPhase::Blocked { pending: Some(PendingCall { reply: None, ..pending }), reason: Block::Invalid };
+                    self.phase = SessionPhase::Blocked { pending: Some(PendingCall { reply: None, ..delivered }), reason: Block::Invalid };
                 }
                 RejectReason::Storage(_) => {
                     self.phase = SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended };
