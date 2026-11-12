@@ -428,6 +428,8 @@ pub struct Transfer {
     pub stage: TransferStage,
     pub attempt_id: AttemptId,
     pub attempts: u32,
+    /// Storage refusals in a row of the writes of the transfer (P-DATA-102).
+    pub storage_refusals: u32,
     pub in_flight: bool,
     pub waiting_retry: bool,
     pub next_step: NextStep,

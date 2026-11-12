@@ -323,6 +323,8 @@ pub struct QueuedOperation {
     pub stage: Stage,
     /// The durable attempt counter of the cycle.
     pub attempts: u32,
+    /// Storage refusals in a row of the batches of the operation (P-DATA-102).
+    pub storage_refusals: u32,
     pub cycle_id: u64,
     pub request_id: RequestId,
     pub sequence: u64,

@@ -67,6 +67,7 @@ impl TransferState {
             stage,
             attempt_id: 0,
             attempts: 0,
+            storage_refusals: 0,
             in_flight: false,
             waiting_retry: false,
             next_step: NextStep::Part(1),
@@ -406,7 +407,7 @@ impl TransferState {
     }
 
     fn backoff_restore(&mut self, id: TransferId, fx: &mut Fx) {
-        let attempt = self.transfers.get(&id).map_or(1, |transfer| transfer.attempts).max(1);
+        let Some(attempt) = self.storage_refused(id) else { return };
         let timer = self.timer();
         fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt, input: TransferInput::Tick { kind: TransferTick::StagedRestore { transfer_id: id } } });
     }

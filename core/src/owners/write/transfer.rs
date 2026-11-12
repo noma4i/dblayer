@@ -80,7 +80,7 @@ impl TransferState {
         let Some(&id) = pending.written.keys().next() else { return };
         match reason {
             RejectReason::Storage(_) => {
-                let Some(attempt) = self.transfers.get(&id).map(|transfer| transfer.attempts) else { return };
+                let Some(attempt) = self.storage_refused(id) else { return };
                 let timer = self.timer();
                 fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt: attempt.max(1), input: TransferInput::Tick { kind: TransferTick::Shown { transfer_id: id } } });
             }
@@ -485,12 +485,27 @@ impl TransferState {
     }
 
     pub(super) fn schedule_retry(&mut self, id: TransferId, fx: &mut Fx) {
+        let Some(attempt) = self.transfers.get(&id).map(|transfer| transfer.attempts) else { return };
+        self.retry_after(id, attempt, fx);
+    }
+
+    pub(super) fn storage_retry(&mut self, id: TransferId, fx: &mut Fx) {
+        let Some(attempt) = self.storage_refused(id) else { return };
+        self.retry_after(id, attempt, fx);
+    }
+
+    pub(super) fn storage_refused(&mut self, id: TransferId) -> Option<u32> {
+        let transfer = self.transfers.get_mut(&id)?;
+        transfer.storage_refusals = transfer.storage_refusals.saturating_add(1);
+        Some(transfer.storage_refusals)
+    }
+
+    fn retry_after(&mut self, id: TransferId, attempt: u32, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.waiting_retry = true;
         transfer.in_flight = false;
         let attempt_id = self.next_attempt;
         self.next_attempt += 1;
-        let attempt = transfer.attempts;
         transfer.attempt_id = attempt_id;
         let timer = ScheduleId(RETRY_TIMER + attempt_id);
         fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt: attempt.max(1), input: TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id } } });
@@ -534,6 +549,9 @@ impl TransferState {
 
     fn committed(&mut self, now: Time, (batch, revision, shown): (crate::owners::contract::BatchId, i64, Vec<Option<crate::store::Row>>), fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&batch) else { return };
+        for id in pending.ids.iter().chain(pending.written.keys()) {
+            if let Some(transfer) = self.transfers.get_mut(id) { transfer.storage_refusals = 0; }
+        }
         if pending.kind == StoreKind::SyncUpload {
             for id in &pending.ids {
                 if let Some((old, _)) = self.replacements.remove(id) {
@@ -663,7 +681,7 @@ impl TransferState {
             return;
         }
         if pending.kind == StoreKind::MixedOutcomes && storage.is_some() {
-            self.schedule_retry(pending.ids[0], fx);
+            self.storage_retry(pending.ids[0], fx);
             return;
         }
         let stage = pending.ids.first().and_then(|id| self.stage_of(*id));
@@ -696,7 +714,7 @@ impl TransferState {
             (Some(TransferStage::Accepting), _) => self.accepting_rejected(&pending.ids, rejected.reason, fx),
             (Some(TransferStage::Removing), _) => self.removing_rejected(now, &pending.ids, rejected.reason, fx),
             (Some(TransferStage::PersistingRetry), Some(_)) => self.retry_rejected(pending.ids[0], rejected.reason, fx),
-            (Some(TransferStage::PersistingBatchIntent), Some(_)) => self.schedule_retry(pending.ids[0], fx),
+            (Some(TransferStage::PersistingBatchIntent), Some(_)) => self.storage_retry(pending.ids[0], fx),
             (Some(TransferStage::PersistingFailure), Some(_)) => self.failure_rejected(pending.ids[0], fx),
             (Some(TransferStage::PersistingCopy), Some(_)) => self.copy_rejected(&pending.ids, rejected.reason, fx),
             (Some(TransferStage::PersistingAttempt | TransferStage::PersistingPart | TransferStage::PersistingComplete), Some(error)) => {

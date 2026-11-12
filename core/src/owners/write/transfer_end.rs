@@ -222,7 +222,7 @@ impl TransferState {
         self.send_orphans(false, fx);
     }
 
-    pub(super) fn failure_rejected(&mut self, id: TransferId, fx: &mut Fx) { self.schedule_retry(id, fx); }
+    pub(super) fn failure_rejected(&mut self, id: TransferId, fx: &mut Fx) { self.storage_retry(id, fx); }
 
     fn removal_replies(&mut self, id: TransferId, removal: &Removal, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };

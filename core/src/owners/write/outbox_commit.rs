@@ -28,7 +28,10 @@ impl OutboxState {
                 }
                 self.maybe_drained(fx);
             }
-            Batch::Operation { op_id, kind } => self.operation_committed(now, op_id, kind, (committed.revision, committed.shown), fx),
+            Batch::Operation { op_id, kind } => {
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.storage_refusals = 0; }
+                self.operation_committed(now, op_id, kind, (committed.revision, committed.shown), fx);
+            }
         }
     }
 
@@ -270,7 +273,7 @@ impl OutboxState {
                     self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Rejected(reason.clone())), fx);
                     self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
                 }
-                RejectReason::Storage(_) => self.retry_timer(op_id, fx),
+                RejectReason::Storage(_) => self.storage_retry(op_id, fx),
                 RejectReason::Invalid(_) if kind == CommitKind::RemoveRow => self.discard_removed(now, op_id, fx),
                 RejectReason::Invalid(_) | RejectReason::StaleGeneration { .. } => self.remove_row_operation(op_id, fx),
             }
@@ -324,7 +327,7 @@ impl OutboxState {
                 self.answer_discarded_outcome(op_id, OutboxAnswer::Err(fault.clone()), fx);
                 for reply in Self::take_waiters(&mut self.discard_waiters, op_id) { Self::reply(fx, reply, OutboxAnswer::Err(fault.clone())); }
             }
-            RejectReason::Storage(_) => self.retry_timer(op_id, fx),
+            RejectReason::Storage(_) => self.storage_retry(op_id, fx),
             RejectReason::NoSession | RejectReason::Closed if stage == Stage::Submitting => self.submit_refused(op_id, reason, fx),
             RejectReason::NoSession | RejectReason::Closed => {
                 if self.ops[&op_id].cancels == Some(op_id) {

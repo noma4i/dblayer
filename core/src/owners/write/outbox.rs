@@ -288,6 +288,7 @@ impl OutboxState {
                 created_at,
                 stage,
                 attempts: 1,
+                storage_refusals: 0,
                 cycle_id: 1,
                 request_id: crate::owners::contract::next_request_id(),
                 sequence,
@@ -464,6 +465,12 @@ impl OutboxState {
         }).chain(batch.basis.clone());
         batch.basis = crate::owners::store::basis_for(entries);
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
+    }
+
+    pub(super) fn storage_retry(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
+        let Some(operation) = self.ops.get_mut(&op_id) else { return };
+        operation.storage_refusals = operation.storage_refusals.saturating_add(1);
+        fx.push(Effect::Backoff { id: ScheduleId(op_id), policy: RetryPolicy::Outbox, attempt: operation.storage_refusals, input: OutboxInput::RetryDue { op_id, cycle_id: operation.cycle_id } });
     }
 
     pub(super) fn retry_timer(&self, op_id: OpId, fx: &mut Effects<Outbox>) {
