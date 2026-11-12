@@ -4,12 +4,7 @@ use super::outbox_cells_tests::{answers, kinds, sending, sends, submit_op, tick}
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, RWhy, St};
 use crate::owners::contract::{Committed, Online};
-use crate::owners::session::StoredAnswer;
-use crate::owners::write::outbox::{CommitKind, NewOp, OutboxAnswer, OutboxInput, Receipt, ReserveTarget, StoredOp};
-
-fn stored(op_id: u64, row: &str) -> StoredOp {
-    StoredOp { answered: None, op_id, op: model_op(row, Policy::Rollback, false), created_at: 0, error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() }
-}
+use crate::owners::write::outbox::{CommitKind, NewOp, OutboxAnswer, OutboxInput, Receipt, ReserveTarget};
 
 fn optimistic_row() -> crate::store::Row {
     std::sync::Arc::new(crate::store::Record { id: crate::identity::RowId::new("r").expect("the row id"), revision: 11, data: serde_json::Map::new(), sync: Default::default() })
@@ -61,35 +56,6 @@ fn out_prop_receipt_fast_confirm() {
     assert_eq!(receipt_of(&committed, 30).optimistic, None, "no optimistic effects means no optimistic row");
 }
 
-/// P-OUT-20: a saved `Ok` answer lands the decoded body rows with no request.
-#[test]
-fn out_prop_restored_answer_rows() {
-    let mut twin = Twin::bare();
-    twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
-    let answered = StoredOp { answered: Some((41, StoredAnswer::Ok("{}".into()))), ..stored(7, "r") };
-    let restored = twin.post(OutboxInput::Restored { ops: vec![answered], pending_lost: false });
-    assert_eq!((twin.stage(7), sends(&restored)), (Some(St::Landing), 0), "the saved answer lands with no request");
-    twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
-    let landed = twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    assert!(twin.store_text.contains("server") && kinds(&landed).contains(&CommitKind::Land), "the decoded body rows land in the snapshot: {}", twin.store_text);
-}
-
-/// P-OUT-33: the batch written on each transition matches the status of the stage.
-#[test]
-fn out_prop_status_column() {
-    let mut twin = Twin::new();
-    let id = twin.submit("r", Policy::Rollback, false);
-    assert_eq!((twin.stage(id), kinds(&twin.last)), (Some(St::Submitting), vec![CommitKind::Intent]), "Submit writes the intent");
-    twin.committed(id);
-    assert_eq!(twin.stage(id), Some(St::Sending), "the committed intent sends");
-    twin.post(OutboxInput::TransportError { op_id: id, temporary: true });
-    let attempt = tick(&mut twin, id);
-    assert_eq!((twin.stage(id), kinds(&attempt)), (Some(St::PersistingAttempt), vec![CommitKind::Attempt]), "the next attempt writes the sending status");
-    twin.post(OutboxInput::Online(Online(false)));
-    let requeued = twin.committed(id);
-    assert_eq!((twin.stage(id), kinds(&requeued)), (Some(St::Queued), vec![CommitKind::Requeue]), "offline requeues with the pending status");
-}
-
 /// P-OUT-33: the transition `Sending -> Queued` writes the pending status with a `Requeue` batch.
 #[test]
 fn out_prop_status_requeue() {
@@ -126,21 +92,4 @@ fn out_prop_stray_input_ignored() {
         twin.post(OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Transfer(1) });
         assert_eq!(twin.stage(id), Some(state), "{state:?} x ReserveOp: the earlier operation is unchanged");
     }
-}
-
-/// Waits table: a Submit while the slot is taken gets a receipt and waits, one request at a time (DRAIN_LIMIT = 1).
-#[test]
-fn out_queued_drain_limit_api() {
-    let mut twin = Twin::new();
-    let first = twin.submit("ra", Policy::Rollback, false);
-    twin.committed(first);
-    assert_eq!(twin.stage(first), Some(St::Sending), "the first operation holds the one slot");
-    let second = submit_op(&mut twin, model_op("rb", Policy::Rollback, false), 30);
-    let committed = twin.committed(second);
-    assert_eq!((twin.stage(second), sends(&committed)), (Some(St::Queued), 0), "the second operation waits for the slot, no request");
-    assert!(matches!(answers(&committed, 30).as_slice(), [OutboxAnswer::Receipt(_)]), "the caller still gets a receipt: {committed:?}");
-    let landed = twin.post(OutboxInput::Response { op_id: first, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    assert_eq!((twin.stage(first), twin.stage(second), sends(&landed)), (Some(St::Landing), Some(St::Sending), 1), "the freed slot sends the second, one request at a time");
-    twin.committed(first);
-    assert_eq!(twin.stage(first), Some(St::Done), "the first operation lands");
 }

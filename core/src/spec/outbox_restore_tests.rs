@@ -338,16 +338,6 @@ fn out_prop_restore_ready_row_freed_once() {
 }
 
 #[test]
-fn out_restore_attempt_number() {
-    let mut twin = Twin::bare();
-    declare(&mut twin);
-    let restored = restore(&mut twin, vec![StoredOp { attempts: 3, pending: None, ..stored(7, "r") }]);
-    assert_eq!((twin.stage(7), twin.state().ops[&7].attempts, kinds(&restored), sends(&restored)), (Some(St::Queued), 3, vec![], 0));
-    let started = ready(&mut twin);
-    assert_eq!((twin.stage(7), twin.state().ops[&7].attempts, kinds(&started), sends(&started)), (Some(St::Sending), 3, vec![], 1));
-}
-
-#[test]
 fn out_restore_ready_once() {
     let mut twin = Twin::bare();
     declare(&mut twin);

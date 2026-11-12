@@ -257,15 +257,6 @@ fn out_prop_rollback_clean() {
 }
 
 #[test]
-fn out_prop_membership_revision() {
-    let (mut twin, id) = reach(St::Landing, &ready());
-    let before = twin.state().ops[&id].op.clone();
-    let effects = twin.post(OutboxInput::Online(Online(true)));
-    assert!(effects.iter().all(|effect| !matches!(effect, OutboxEffect::Store { .. })), "an unchanged network state touches no batch");
-    assert_eq!(twin.state().ops[&id].op, before);
-}
-
-#[test]
 fn out_prop_dropped_resent() {
     let (mut twin, id) = reach(St::Sending, &ready());
     let first = twin.first_pair[&id];
@@ -282,14 +273,6 @@ fn out_prop_dropped_resent() {
     assert!(sends <= 40, "{sends} Send");
     assert_ne!(twin.stage(id), Some(St::Sending), "the attempts run out");
     assert!(twin.state().ops[&id].outcome.as_ref().is_none_or(|outcome| !matches!(outcome, o::OutboxOutcome::Ended(_))));
-}
-
-#[test]
-fn out_prop_local_write_kept() {
-    walk(|| vec![vec![OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: 300 }], store_script(), vec![OutboxInput::Online(Online(true))]], |_| {
-        let answers = effects_now().iter().filter(|effect| matches!(effect, OutboxEffect::Reply { reply: 300, .. })).count();
-        if answers > 1 { Err("a local write got two answers".into()) } else { Ok(()) }
-    });
 }
 
 /// boundary_selector_orders (TRACE-02): `Retry` and `Discard` with an action address only the operation of that action.

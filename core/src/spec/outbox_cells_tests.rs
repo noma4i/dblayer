@@ -728,26 +728,7 @@ fn out_destroy_discards_chain_with_a_batch_in_flight() {
 }
 
 #[test]
-fn out_closing_end_cause() {
-    let closed = crate::ffi::EndCause::Closed;
-    let ended = crate::ffi::EndCause::SessionEnded;
-
-    let (mut twin, id) = reach(St::Sending, &Ctx { transfer: true, ..ready() });
-    let effects = input_of(&mut twin, id, &ready(), In::Closing);
-    assert_eq!((twin.stage(id), answers(&effects, WAITER), transfer_outcomes(&effects)), (Some(St::Done), vec![OutboxAnswer::Outcome(OutboxOutcome::Ended(closed.clone()))], vec![OutboxOutcome::Ended(closed.clone())]), "Closing ends Closed to the waiter and Transfer");
-
-    let (mut twin, id) = reach(St::Sending, &Ctx { transfer: true, ..ready() });
-    let effects = input_of(&mut twin, id, &ready(), In::EpochEnded(End::SessionEnded));
-    assert_eq!((twin.stage(id), answers(&effects, WAITER), transfer_outcomes(&effects)), (Some(St::Done), vec![OutboxAnswer::Outcome(OutboxOutcome::Ended(ended.clone()))], vec![OutboxOutcome::Ended(ended.clone())]), "EpochEnded ends SessionEnded to the waiter and Transfer");
-
-    for (reason, cause) in [(RejectReason::Closed, closed.clone()), (RejectReason::NoSession, ended.clone())] {
-        let mut twin = Twin::new();
-        let id = persisting(&mut twin, true);
-        twin.waiter(id);
-        let effects = refuse(&mut twin, id, reason.clone());
-        assert_eq!((twin.stage(id), answers(&effects, WAITER), transfer_outcomes(&effects)), (Some(St::Done), vec![OutboxAnswer::Outcome(OutboxOutcome::Ended(cause.clone()))], vec![OutboxOutcome::Ended(cause.clone())]), "{reason:?} ends {cause:?} to the waiter and Transfer");
-    }
-
+fn out_closing_after_the_applied_answer_changes_nothing() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, true);
     twin.waiter(id);

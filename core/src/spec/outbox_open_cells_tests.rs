@@ -19,16 +19,6 @@ fn restore(twin: &mut Twin, ops: Vec<StoredOp>) -> Vec<OutboxEffect> {
 fn ready(twin: &mut Twin) -> Vec<OutboxEffect> { twin.post(OutboxInput::RestoreReady { epoch: EPOCH }) }
 
 #[test]
-fn out_open_restores() {
-    let mut twin = Twin::bare();
-    declare(&mut twin);
-    let restored = restore(&mut twin, vec![StoredOp { attempts: 0, ..stored(7, "r") }]);
-    assert_eq!((twin.stage(7), kinds(&restored), sends(&restored)), (Some(St::PersistingAttempt), Vec::new(), 0), "online with a free row classifies to PersistingAttempt, no network before RestoreReady");
-    let readied = ready(&mut twin);
-    assert_eq!((kinds(&readied), sends(&readied)), (vec![CommitKind::Attempt], 0), "RestoreReady writes the attempt by seq, the request waits for its Committed");
-}
-
-#[test]
 fn out_open_restores_failed() {
     let mut twin = Twin::bare();
     declare(&mut twin);

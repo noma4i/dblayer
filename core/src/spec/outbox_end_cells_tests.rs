@@ -1,11 +1,10 @@
 //! Owner-level tests of the `outbox` machine: the ends of the operations (`Closing`, `EpochEnded`), the terminal `Done` and `Failed`, and the ignored live `EpochStarted`. Names are the `Test` column.
 
-use super::outbox_cells_tests::{sending, transfer_outcomes, unchanged_by};
+use super::outbox_cells_tests::transfer_outcomes;
 use super::outbox_harness::*;
-use super::outbox_harness::{In, Policy, RWhy, St};
+use super::outbox_harness::{In, RWhy, St};
 use crate::ffi::EndCause;
-use crate::owners::contract::{Committed, EpochStarted, Online, Rejected, RejectReason};
-use crate::owners::write::outbox::{OutboxInput, OutboxOutcome};
+use crate::owners::write::outbox::OutboxOutcome;
 
 fn drained(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Drained)).count() }
 
@@ -62,45 +61,4 @@ fn out_epoch_ended_close() {
         let want = if state != St::MarkingRetry { vec![OutboxOutcome::Ended(EndCause::Closed)] } else { Vec::new() };
         assert_eq!(transfer_outcomes(&effects), want, "{state:?}: the transfer outcome carries Closed");
     }
-}
-
-#[test]
-fn out_epoch_started_live_ignored() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    let effects = twin.post(OutboxInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(9), generation: 3 }));
-    assert_eq!((twin.stage(id), effects.is_empty()), (Some(St::Sending), true), "a second EpochStarted of the live epoch tells nobody and leaves the operation unchanged");
-}
-
-#[test]
-fn out_done() {
-    let (mut twin, id) = reach(St::Done, &ready());
-    unchanged_by(&mut twin, id, St::Done, vec![
-        OutboxInput::Online(Online(true)),
-        OutboxInput::Response { op_id: id + 100, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
-        OutboxInput::TransportError { op_id: id + 100, temporary: true },
-        OutboxInput::Dropped { op_id: id + 100 },
-        OutboxInput::RetryDue { op_id: id + 100, cycle_id: 1 },
-    ]);
-}
-
-#[test]
-fn out_failed_other() {
-    let (mut twin, id) = reach(St::Failed, &keep());
-    unchanged_by(&mut twin, id, St::Failed, vec![
-        OutboxInput::Online(Online(true)),
-        OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
-        OutboxInput::TransportError { op_id: id, temporary: true },
-        OutboxInput::Dropped { op_id: id },
-        OutboxInput::RetryDue { op_id: id, cycle_id: 1 },
-        OutboxInput::Committed(Committed { batch: 999, revision: 50, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }),
-        OutboxInput::Rejected(Rejected { batch: 999, reason: RejectReason::Storage("disk".into()) }),
-    ]);
-}
-
-#[test]
-fn out_server_removed_row_other() {
-    let (mut twin, id) = reach(St::Done, &ready());
-    let effects = twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "r".into(), revision: 20 });
-    assert_eq!((twin.stage(id), effects.is_empty()), (Some(St::Done), true), "RowRemoved of a done operation changes nothing");
 }

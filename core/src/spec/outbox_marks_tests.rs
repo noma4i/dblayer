@@ -2,9 +2,9 @@
 
 use super::outbox_cells_tests::*;
 use super::outbox_harness::*;
-use super::outbox_harness::{Policy, RReason, St};
+use super::outbox_harness::{Policy, St};
 use crate::owners::contract::{Online, RejectReason};
-use crate::owners::write::outbox::{CommitKind, Fault, NewOp, OpId, OutboxAnswer, OutboxInput, OutboxOutcome, Receipt};
+use crate::owners::write::outbox::{CommitKind, Fault, NewOp, OutboxAnswer, OutboxInput, OutboxOutcome, Receipt};
 
 #[test]
 fn out_marking_failed_committed() {

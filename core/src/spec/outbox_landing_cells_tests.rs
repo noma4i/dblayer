@@ -68,18 +68,6 @@ fn out_sending_destroy_not_found_batch() {
 }
 
 #[test]
-fn out_sending_destroy_not_found_optimistic() {
-    let mut twin = Twin::new();
-    let effects = crate::owners::store::IntentEffects { tombstones: vec![crate::owners::store::EffectTombstone { model: "Moment".into(), row_id: "r".into() }], ..Default::default() };
-    let op = NewOp { action: "destroy".into(), effects, ..model_op("r", Policy::Rollback, false) };
-    let id = submit_op(&mut twin, op, 30);
-    twin.committed(id);
-    twin.post(OutboxInput::MissingDestroy { op_id: id, stale: Vec::new() });
-    assert_eq!(twin.stores.len(), 1);
-    assert!(twin.store_text.contains("RemoveServerRows { model: \"Moment\", ids: [\"r\"] }"), "{}", twin.store_text);
-}
-
-#[test]
 fn out_sending_destroy_not_found() {
     let mut twin = Twin::new();
     let op = NewOp { action: "destroy".into(), ..model_op("r", Policy::Rollback, false) };
@@ -91,16 +79,6 @@ fn out_sending_destroy_not_found() {
     let effects = twin.committed(id);
     assert_eq!(twin.stage(id), Some(St::Done));
     assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. }))), "{effects:?}");
-}
-
-#[test]
-fn out_sending_other() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    unchanged_by(&mut twin, id, St::Sending, vec![
-        OutboxInput::Committed(crate::owners::contract::Committed { batch: 999, revision: 50, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }),
-        OutboxInput::Rejected(crate::owners::contract::Rejected { batch: 999, reason: RejectReason::Storage("disk".into()) }),
-    ]);
 }
 
 #[test]

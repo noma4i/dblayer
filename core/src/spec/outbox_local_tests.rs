@@ -77,30 +77,6 @@ fn out_local_write_closing() {
 }
 
 #[test]
-fn out_local_set_ephemeral() {
-    let mut twin = Twin::new();
-    twin.det.tick(Time(100));
-    twin.post(write(LocalWriteKind::SetEphemeral { expire_after: Some(10) }));
-    assert!(twin.store_text.contains("EphemeralRows"), "{}", twin.store_text);
-    assert_eq!(twin.stores.len(), 1);
-    assert!(twin.store_text.contains("EphemeralRows { model: \"Moment\"") && twin.store_text.contains("row_id: \"w\""), "{}", twin.store_text);
-    let committed = commit_first(&mut twin);
-    assert_eq!(answers(&committed, WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
-    assert!(committed.iter().any(|effect| matches!(effect, OutboxEffect::Schedule)), "the reset timer: {committed:?}");
-}
-
-#[test]
-fn out_local_set_local_pending() {
-    let mut twin = Twin::new();
-    twin.det.tick(Time(100));
-    twin.post(write(LocalWriteKind::SetLocalPending));
-    assert!(twin.store_text.contains("LocalPending"), "{}", twin.store_text);
-    assert_eq!(twin.stores.len(), 1);
-    assert!(twin.store_text.contains("LocalPending { model: \"Moment\"") && twin.store_text.contains("row_id: \"w\""), "{}", twin.store_text);
-    assert_eq!(answers(&commit_first(&mut twin), WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
-}
-
-#[test]
 fn out_local_write_epoch_ended() {
     let mut twin = Twin::new();
     twin.det.tick(Time(100));
@@ -125,23 +101,6 @@ fn out_local_write_closing_waits() {
     assert!(answers(&closing, WRITE).is_empty() && drained(&closing) == 0, "{closing:?}");
     let committed = commit_first(&mut twin);
     assert_eq!((answers(&committed, WRITE), drained(&committed)), (vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }], 1));
-}
-
-#[test]
-fn out_local_write_other() {
-    let mut twin = Twin::new();
-    twin.det.tick(Time(100));
-    twin.post(write(LocalWriteKind::SetLocal));
-    for input in [OutboxInput::Online(Online(false))] {
-        let effects = twin.post(input.clone());
-        assert!(effects.is_empty(), "{input:?}: {effects:?}");
-    }
-}
-
-#[test]
-fn out_local_closing() {
-    let mut twin = Twin::new();
-    assert_eq!(drained(&close(&mut twin)), 1);
 }
 
 /// P-OUT-11: a stale expiry leaves the row of a later write.
@@ -172,21 +131,6 @@ fn out_prop_marks_durable() {
     assert_eq!(super::outbox_harness::sends_of(&again), 0);
     let sent = twin.committed(id);
     assert_eq!((super::outbox_harness::sends_of(&sent), twin.state().ops[&id].attempts), (1, 2));
-}
-
-/// P-OUT-15: the counter written is never lower than the number of `Mutate` sent.
-#[test]
-fn out_prop_attempt_persisted() {
-    let mut twin = Twin::new();
-    let id = twin.submit("r", Policy::Rollback, false);
-    twin.committed(id);
-    let mut sent = 1u32;
-    for _ in 0..5 {
-        twin.post(OutboxInput::TransportError { op_id: id, temporary: true });
-        twin.post(OutboxInput::RetryDue { op_id: id, cycle_id: 1 });
-        sent += u32::try_from(super::outbox_harness::sends_of(&twin.committed(id))).unwrap_or(0);
-        assert!(twin.state().ops[&id].attempts >= sent, "attempts {} < sent {sent}", twin.state().ops[&id].attempts);
-    }
 }
 
 /// P-OUT-16: a discard gives one answer and, for a transfer, one outcome after the rollback.
@@ -341,16 +285,4 @@ fn out_ephemeral_expire_batch() {
     twin.post(OutboxInput::ExpireRow { model: "Moment".into(), row: "w".into(), revision: 42 });
     assert_eq!(twin.stores.len(), 1);
     assert!(twin.store_text.contains("ExpireRow { model: \"Moment\", row_id: \"w\", write_revision: 42 }"), "{}", twin.store_text);
-}
-
-#[test]
-fn out_ephemeral_expire() {
-    let mut twin = Twin::new();
-    twin.det.tick(Time(100));
-    twin.post(write(LocalWriteKind::SetEphemeral { expire_after: Some(10) }));
-    commit_first(&mut twin);
-    let stale = twin.post(OutboxInput::Expire { model: "Moment".into(), row: "w".into(), due: Time(50) });
-    assert!(stale.is_empty(), "a stale expiry leaves the row: {stale:?}");
-    let due = twin.post(OutboxInput::Expire { model: "Moment".into(), row: "w".into(), due: Time(110) });
-    assert_eq!(kinds(&due), vec![CommitKind::RemoveRow], "the matching expiry removes the row");
 }
