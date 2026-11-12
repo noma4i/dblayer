@@ -59,7 +59,7 @@ final class Running: @unchecked Sendable {
 
 enum VideoWrite {
   static func run(
-    _ job: PrepareJob, plan: VideoPlan, audio: AudioTarget, mirror: Bool, entry: Running, progress: PrepareProgress
+    _ job: PrepareJob, plan: VideoPlan, audio: AudioTarget, mirror: Bool, entry: Running, report: @escaping @Sendable (Double) -> Void
   ) async throws -> PrepareOutcome {
     let asset = AVURLAsset(url: URL(fileURLWithPath: job.source))
     guard let track = try await asset.loadTracks(withMediaType: .video).first else {
@@ -76,11 +76,11 @@ enum VideoWrite {
     let encode = try EncodeJob(
       asset: asset, track: track, audioTrack: audioTrack, naturalSize: size, transform: transform, duration: duration,
       encoding: plan.reencode ? Encoding(plan: plan, audio: audio, mirror: mirror) : nil,
-      formats: (formats.first, audioFormats.first), output: URL(fileURLWithPath: job.destination), progress: progress
+      formats: (formats.first, audioFormats.first), output: URL(fileURLWithPath: job.destination), report: report
     )
     entry.attach(encode)
     try await encode.run()
-    progress.report(fraction: 1)
+    report(1)
     return .done(name: nil, mime: "video/mp4")
   }
 }
@@ -98,7 +98,7 @@ private final class EncodeJob: @unchecked Sendable {
   private let audioOutput: AVAssetReaderOutput?
   private let audioInput: AVAssetWriterInput?
   private let duration: Double
-  private let progress: PrepareProgress
+  private let report: @Sendable (Double) -> Void
   private let queue = DispatchQueue(label: "dblayer.prepare.video")
   private let state = Serial(State())
   private let stopped = PumpGate()
@@ -106,13 +106,13 @@ private final class EncodeJob: @unchecked Sendable {
   init(
     asset: AVURLAsset, track: AVAssetTrack, audioTrack: AVAssetTrack?, naturalSize: CGSize, transform: CGAffineTransform,
     duration: CMTime, encoding: Encoding?, formats: (video: CMFormatDescription?, audio: CMFormatDescription?),
-    output: URL, progress: PrepareProgress
+    output: URL, report: @escaping @Sendable (Double) -> Void
   ) throws {
     reader = try AVAssetReader(asset: asset)
     writer = try AVAssetWriter(outputURL: output, fileType: .mp4)
     writer.shouldOptimizeForNetworkUse = true
     self.duration = duration.seconds
-    self.progress = progress
+    self.report = report
     if let encoding {
       let composed = AVAssetReaderVideoCompositionOutput(videoTracks: [track], videoSettings: nil)
       composed.videoComposition = Self.composition(track: track, naturalSize: naturalSize, transform: transform, duration: duration, encoding: encoding)
@@ -202,7 +202,7 @@ private final class EncodeJob: @unchecked Sendable {
             return
           }
           if reportsProgress, duration > 0 {
-            progress.report(fraction: min(max(CMSampleBufferGetPresentationTimeStamp(buffer).seconds / duration, 0), 1))
+            report(min(max(CMSampleBufferGetPresentationTimeStamp(buffer).seconds / duration, 0), 1))
           }
         }
       }

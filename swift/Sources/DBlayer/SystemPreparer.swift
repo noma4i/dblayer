@@ -28,6 +28,10 @@ public final class SystemPreparer: Preparer, @unchecked Sendable {
   }
 
   public func run(job: PrepareJob, progress: PrepareProgress) async -> PrepareOutcome {
+    await write(job) { progress.report(fraction: $0) }
+  }
+
+  func write(_ job: PrepareJob, report: @escaping @Sendable (Double) -> Void) async -> PrepareOutcome {
     let entry = Running()
     running.update { $0[job.attemptId] = entry }
     defer { running.update { $0[job.attemptId] = nil } }
@@ -36,10 +40,10 @@ public final class SystemPreparer: Preparer, @unchecked Sendable {
         switch job.plan {
         case let .video(plan, _, audioBitrate, audioChannels, audioSampleRate, mirror):
           let audio = AudioTarget(bitrate: audioBitrate, channels: audioChannels, sampleRate: audioSampleRate)
-          return try await VideoWrite.run(job, plan: plan, audio: audio, mirror: mirror, entry: entry, progress: progress)
+          return try await VideoWrite.run(job, plan: plan, audio: audio, mirror: mirror, entry: entry, report: report)
         case let .image(plan, quality, format):
           try ImageWrite.run(job, plan: plan, quality: quality, format: format)
-          progress.report(fraction: 1)
+          report(1)
           return .done(name: nil, mime: format == .png ? "image/png" : "image/jpeg")
         }
       } catch {
