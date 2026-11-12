@@ -42,6 +42,7 @@ Every read is a stream of an `AccountScope` shown through `Projected`. See [live
 - `RetryProgress` is read by pull: `RetryProgress.changes` in Swift and `RetryProgress.flow` in Kotlin. See [server sync](server-sync.md#retries).
 - `upload` on a row that does not exist is accepted, and the answer of the final mutation writes the row. See [files](files.md#upload-to-a-row-that-does-not-exist).
 - Send a file with `upload: UploadCommand(action:, request:)` on a send, or call `scope.upload(row, action:, request)` for an existing record. The `.dbl` files declare the upload steps once per project in `uploads do ... end`.
+- Start a file with `scope.stage(Model, action, request)` when the user picks it and the row does not exist yet, then call `staged.commit(values, variables)` or `staged.discard()`. Remove the own upload of the app that waits for the form. See [files](files.md#upload-before-the-final-mutation).
 - Pass `prepare` settings in the source to recompress a video or an image, and remove the recompression of the app before an upload. See [files](files.md#source-preparation).
 
 ## 6. Models in `.dbl`

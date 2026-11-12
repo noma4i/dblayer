@@ -5,6 +5,7 @@
 ### Added
 
 - Add `NetworkPath` with the kind and the number of the default network to `NetworkStatus`.
+- Add `stage` and `StagedUpload` to both platforms: a file goes up before its row exists, and `commit` or `discard` ends it.
 - Add `operationFailure`, `syncInfo` and `uploadInfo` builders to the test products of both platforms.
 
 ### Changed

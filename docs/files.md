@@ -377,6 +377,33 @@ A finished upload closes its operation and removes its entry from `uploads`, exc
 - `scope.uploadStatus(row, action)` streams the status of one transfer (`TransferProgress`: `state`, `progress`, `error`, `localUrl`, `processing`). Its last item is `ended` with the cause.
 - `cancelUpload(action)` returns `true` when it stopped the transfer. `retry(action)` sends a failed transfer again and `discard(action)` removes it with its optimistic row.
 
+## Upload before the final mutation
+
+A file may go up before its row exists, such as a photo the user picks while the form is still open. Start it with `stage`, then end it with `commit` or `discard`.
+
+```swift
+let staged = try await scope.stage(Moment.self, action: "upload_clip", UploadRequest(path: path, prepare: prepare))
+let status = scope.uploadStatus(staged)
+let receipt = try await staged.commit(values: ["text": .string("hello")], variables: [:])
+let confirmed = try await receipt.confirmed()
+let removed = try await staged.discard()
+```
+
+```kotlin
+val staged = scope.stage(Moment, "upload_clip", UploadRequest(path, prepare = prepare))
+val status = scope.uploadStatus(staged).uploadStatus
+val receipt = staged.commit(buildJsonObject { put("text", "hello") })
+val confirmed = receipt.confirmed()
+val removed = staged.discard()
+```
+
+- `stage` takes the same `UploadRequest` as `upload`: a file, `name`, `mime`, `prepare` and `maxBytes`. A request with no file is refused with `Invalid`. `staged.id` is the id of the row that `commit` creates, `staged.action` the declared action. The typed call of a generated model is `Model.stage<Action>(source:, in:)`.
+- Start `stage` when the user picks the file. The library copies, prepares and sends the parts at once and holds the last step. No row exists and no final mutation leaves the device.
+- `scope.uploadStatus(staged)` streams the status before `commit`. A transfer that sent all parts shows `uploading` with the share 0.99. After `commit` the same stream and `uploads[action]` of the row go on.
+- `commit(values, variables)` creates the row with `values`, sends the final mutation with `variables` and returns the `MutationReceipt` of `send`. The typed variables helpers of the model build `variables`. A second `commit` of the same `staged` throws `Invalid`. A `commit` before the end of the transfer lets the transfer go on. A `commit` of a failed transfer shows the row with the error, and `retry` and `discard` work as for any row.
+- `discard()` stops the transfer, removes its files and aborts the multipart upload of the server. It returns the value of the core, `true` when it removed the transfer.
+- The app that closes before `commit` ends the transfer: the next open removes it with its files. The library keeps no staged upload for the next run, so the app starts `stage` again.
+
 ## Upload to a row that does not exist
 
 An upload may target a row that is not in the base yet, such as the avatar of the registration step or a singleton before its first read. The call is on the type of the model: `Model.<action>(id:, source:, ...variables)`, or `Model.<action>(source:, ...variables)` for a singleton model. The call on an instance uses it. The receipt shows no `optimisticValue`, and the final mutation answer writes the row. The queue, retry, reading the file in pieces, restart and cleanup are those of an upload to a row. A refusal of the final mutation throws `Rejected` from `confirmed` with `kept: true`, like every upload. `operations()` shows the transfer by its key before any row exists.

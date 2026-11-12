@@ -62,6 +62,8 @@ transport.respondWith("MomentsFeed") { request -> if (request.variablesJson.cont
 
 A file upload needs one scripted reply for each PUT: `enqueuePut(url, etag:)` in Swift, and `enqueuePut` in Kotlin, answer one PUT of that URL. A PUT without a queued reply fails like a call without one, and `putCalls` lists the URLs the library sent. A failure takes `enqueuePut(url, failure:)`.
 
+A staged upload needs the replies of the steps of a multipart upload (`InitMultipart`, `PresignParts`, one `enqueuePut` for the part) and, for `commit`, `CompleteMultipart` and the final mutation. `stage` and `commit` use the same transport double as `send`, and `ScriptedPreparer` prepares a staged source without a change in the app.
+
 For model events, open the reader before calling `emit`: `let events = try scope.events(Message.self)` in Swift, `val events = scope.events(Message).events(Message)` in Kotlin. The call returns after the stream is registered in the core. Emit immediately after it returns, then read or collect the returned stream. No sleep, retry or request-count check is needed. Events sent before opening are not replayed.
 
 Keep the projections and streams of a test alive until every asynchronous assertion finishes. A stream ends in the core when its reader is released. A stream has one reader: a test that iterates one `ValueStream` twice sees `ended(.invalid)` on the second iterator.
