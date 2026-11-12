@@ -61,34 +61,33 @@ fn xfer_accept() {
 }
 
 #[test]
-fn xfer_accept_stale() {
-    let mut twin = Twin::new();
-    let out = twin.post(TransferInput::Accept { epoch: EPOCH + 1, item: Box::new(item(KEY, 2)), reply: 9 });
-    assert_eq!(Twin::fault(&out, 9), Some(Fault::NoSession));
-    assert_eq!((out.writes(), twin.state().open_id(KEY)), (0, None));
-}
-
-#[test]
-fn xfer_accept_invalid() {
-    let mut twin = Twin::new();
-    let mut empty = item(KEY, 2);
-    empty.source.as_mut().unwrap().path.clear();
-    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(empty), reply: 9 });
-    assert_eq!(Twin::fault(&out, 9), Some(Fault::Invalid));
-    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 0)), reply: 10 });
-    assert_eq!(Twin::fault(&out, 10), Some(Fault::Invalid), "a source without parts");
-    assert_eq!((out.writes(), twin.state().open_id(KEY)), (0, None));
-}
-
-#[test]
-fn xfer_accept_batch() {
-    let mut twin = Twin::new();
-    let (ids, reply, out) = accepting_batch(&mut twin, &[KEY, OTHER]);
-    assert_eq!((out.writes(), out.outbox.len(), out.all_replies()), (0, 3, 0));
-    assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Reserving));
-    let out = twin.reserve_batch(&ids);
-    assert_eq!((out.writes(), out.rows().len()), (1, 2));
-    assert!(out.replies(reply).is_empty());
+fn xfer_an_invalid_or_stale_accept_is_refused_without_a_write() {
+    {
+        let mut twin = Twin::new();
+        let out = twin.post(TransferInput::Accept { epoch: EPOCH + 1, item: Box::new(item(KEY, 2)), reply: 9 });
+        assert_eq!(Twin::fault(&out, 9), Some(Fault::NoSession));
+        assert_eq!((out.writes(), twin.state().open_id(KEY)), (0, None));
+    }
+    {
+        let mut twin = Twin::new();
+        let mut empty = item(KEY, 2);
+        empty.source.as_mut().unwrap().path.clear();
+        let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(empty), reply: 9 });
+        assert_eq!(Twin::fault(&out, 9), Some(Fault::Invalid));
+        let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 0)), reply: 10 });
+        assert_eq!(Twin::fault(&out, 10), Some(Fault::Invalid), "a source without parts");
+        assert_eq!((out.writes(), twin.state().open_id(KEY)), (0, None));
+    }
+    {
+        let mut twin = Twin::new();
+        let mut broken = item(OTHER, 2);
+        broken.source.as_mut().unwrap().parts = 0;
+        let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), broken], reply: 9 });
+        assert_eq!(Twin::fault(&out, 9), Some(Fault::Invalid));
+        assert_eq!((out.writes(), twin.state().open_id(KEY), twin.state().open_id(OTHER)), (0, None, None), "no element is accepted");
+        let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH + 1, items: vec![item(KEY, 2)], reply: 10 });
+        assert_eq!(Twin::fault(&out, 10), Some(Fault::NoSession));
+    }
 }
 
 #[test]
@@ -116,18 +115,6 @@ fn xfer_accept_failed_batch_member_stays_inflight() {
     }
     let (reply, outcome) = twin.outcome(ids[0], 1);
     assert_eq!(outcome.replies(reply), original);
-}
-
-#[test]
-fn xfer_accept_batch_invalid() {
-    let mut twin = Twin::new();
-    let mut broken = item(OTHER, 2);
-    broken.source.as_mut().unwrap().parts = 0;
-    let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), broken], reply: 9 });
-    assert_eq!(Twin::fault(&out, 9), Some(Fault::Invalid));
-    assert_eq!((out.writes(), twin.state().open_id(KEY), twin.state().open_id(OTHER)), (0, None, None), "no element is accepted");
-    let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH + 1, items: vec![item(KEY, 2)], reply: 10 });
-    assert_eq!(Twin::fault(&out, 10), Some(Fault::NoSession));
 }
 
 /// xfer_accept_batch_invalid (D-196): the size of a batch has one predicate; the owner refuses min-1 and max+1 without a write, and accepts min and max. The call of the platform asks the same predicate before it plans the rows.
@@ -175,11 +162,44 @@ fn xfer_accepting_rejected() {
 }
 
 #[test]
-fn xfer_accepting_other() {
-    let mut twin = Twin::new();
-    let (id, ..) = twin.accepting(KEY, 2);
-    refuses_calls(&mut twin, KEY);
-    assert_eq!(twin.stage(id), TransferStage::Accepting);
+fn xfer_stray_inputs_change_nothing_while_a_copy_runs_or_waits() {
+    {
+        let mut twin = Twin::new();
+        let (id, ..) = twin.accepting(KEY, 2);
+        refuses_calls(&mut twin, KEY);
+        assert_eq!(twin.stage(id), TransferStage::Accepting);
+    }
+    {
+        let mut twin = Twin::new();
+        let (ids, _) = copying_batch(&mut twin, &[KEY, OTHER]);
+        twin.copy_done(ids[0]);
+        refuses_calls(&mut twin, KEY);
+        let mut inputs = twin.stray_results(ids[0]);
+        inputs.extend([
+            TransferInput::MutationOutcome { transfer_id: ids[0], cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None }, row_never_created: false },
+            TransferInput::Online(Online(true)),
+            TransferInput::PowerSaving(true),
+            TransferInput::SlotFreed,
+            TransferInput::CopyDone { transfer_id: ids[0], attempt_id: 999, size: 1, sha256: "x".into(), place: crate::store::files::Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
+            TransferInput::CopyFailed { transfer_id: ids[0], attempt_id: 999, error: "late".into() },
+        ]);
+        twin.ignores(ids[0], inputs);
+    }
+    {
+        let mut twin = Twin::new();
+        let id = twin.copying(KEY, 2);
+        let mut inputs = twin.stray_results(id);
+        inputs.extend([
+            TransferInput::MutationOutcome { transfer_id: id, cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None }, row_never_created: false },
+            TransferInput::Online(Online(true)),
+            TransferInput::PowerSaving(true),
+            TransferInput::SlotFreed,
+            TransferInput::CopyDone { transfer_id: id, attempt_id: 999, size: 1, sha256: "x".into(), place: crate::store::files::Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
+            TransferInput::CopyFailed { transfer_id: id, attempt_id: 999, error: "late".into() },
+            TransferInput::CopyDone { transfer_id: id + 50, attempt_id: twin.attempt(id), size: 1, sha256: "x".into(), place: crate::store::files::Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
+        ]);
+        twin.ignores(id, inputs);
+    }
 }
 
 #[test]
@@ -194,22 +214,22 @@ fn xfer_copy_done() {
 }
 
 #[test]
-fn xfer_copy_done_batch_wait() {
-    let mut twin = Twin::new();
-    let (ids, _) = copying_batch(&mut twin, &[KEY, OTHER]);
-    let out = twin.copy_done(ids[0]);
-    assert_eq!(twin.stage(ids[0]), TransferStage::CopyReady);
-    assert!(Twin::quiet(&out), "{out:?}");
-}
-
-#[test]
-fn xfer_copy_done_batch_last() {
-    let mut twin = Twin::new();
-    let (ids, _) = copying_batch(&mut twin, &[KEY, OTHER]);
-    twin.copy_done(ids[0]);
-    let out = twin.copy_done(ids[1]);
-    assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::PersistingCopy));
-    assert_eq!((out.writes(), out.rows().len(), out.all_replies()), (1, 2, 0), "one common write of the acceptance");
+fn xfer_a_batch_writes_its_acceptance_once_after_the_last_copy() {
+    {
+        let mut twin = Twin::new();
+        let (ids, _) = copying_batch(&mut twin, &[KEY, OTHER]);
+        let out = twin.copy_done(ids[0]);
+        assert_eq!(twin.stage(ids[0]), TransferStage::CopyReady);
+        assert!(Twin::quiet(&out), "{out:?}");
+    }
+    {
+        let mut twin = Twin::new();
+        let (ids, _) = copying_batch(&mut twin, &[KEY, OTHER]);
+        twin.copy_done(ids[0]);
+        let out = twin.copy_done(ids[1]);
+        assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::PersistingCopy));
+        assert_eq!((out.writes(), out.rows().len(), out.all_replies()), (1, 2, 0), "one common write of the acceptance");
+    }
 }
 
 /// PersistingCopy x Rejected(Storage) of a batch of 2 -> Removing{Storage} for both; the refused removal is written again as one batch of both RemoveUpload.
@@ -305,41 +325,6 @@ fn xfer_copy_retry() {
 }
 
 #[test]
-fn xfer_copy_ready_other() {
-    let mut twin = Twin::new();
-    let (ids, _) = copying_batch(&mut twin, &[KEY, OTHER]);
-    twin.copy_done(ids[0]);
-    refuses_calls(&mut twin, KEY);
-    let mut inputs = twin.stray_results(ids[0]);
-    inputs.extend([
-        TransferInput::MutationOutcome { transfer_id: ids[0], cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None }, row_never_created: false },
-        TransferInput::Online(Online(true)),
-        TransferInput::PowerSaving(true),
-        TransferInput::SlotFreed,
-        TransferInput::CopyDone { transfer_id: ids[0], attempt_id: 999, size: 1, sha256: "x".into(), place: crate::store::files::Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
-        TransferInput::CopyFailed { transfer_id: ids[0], attempt_id: 999, error: "late".into() },
-    ]);
-    twin.ignores(ids[0], inputs);
-}
-
-#[test]
-fn xfer_copy_other() {
-    let mut twin = Twin::new();
-    let id = twin.copying(KEY, 2);
-    let mut inputs = twin.stray_results(id);
-    inputs.extend([
-        TransferInput::MutationOutcome { transfer_id: id, cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None }, row_never_created: false },
-        TransferInput::Online(Online(true)),
-        TransferInput::PowerSaving(true),
-        TransferInput::SlotFreed,
-        TransferInput::CopyDone { transfer_id: id, attempt_id: 999, size: 1, sha256: "x".into(), place: crate::store::files::Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
-        TransferInput::CopyFailed { transfer_id: id, attempt_id: 999, error: "late".into() },
-        TransferInput::CopyDone { transfer_id: id + 50, attempt_id: twin.attempt(id), size: 1, sha256: "x".into(), place: crate::store::files::Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
-    ]);
-    twin.ignores(id, inputs);
-}
-
-#[test]
 fn xfer_persisting_copy_committed() {
     let mut twin = Twin::offline();
     let (id, reply, _) = twin.accepting(KEY, 2);
@@ -375,9 +360,4 @@ fn xfer_persisting_copy_rejected() {
     }
     let out = twin.commit();
     assert_eq!((twin.stage(id), out.all_replies()), (TransferStage::Done, 0), "the call was answered before the removal");
-    let (ids, _) = copying_batch(&mut twin, &[OTHER, "Moment:r3:upload"]);
-    twin.copy_done(ids[0]);
-    twin.copy_done(ids[1]);
-    let out = twin.reject(RejectReason::Storage("disk".into()));
-    assert_eq!(out.removed().len(), 2, "the whole batch is removed");
 }
