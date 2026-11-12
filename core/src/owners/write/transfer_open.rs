@@ -13,7 +13,7 @@ impl TransferState {
             transfer.stage = stage;
             return row.transfer_id;
         }
-        let item = BatchItem { key: row.key.clone(), fields: row.fields.clone(), urgent: false, source: row.source.clone(), prepare: row.prepare.clone(), mutation: row.mutation.clone(), steps: row.steps.clone() };
+        let item = BatchItem { key: row.key.clone(), held: row.held, fields: row.fields.clone(), urgent: false, source: row.source.clone(), prepare: row.prepare.clone(), mutation: row.mutation.clone(), steps: row.steps.clone() };
         let id = row.transfer_id;
         self.next_id = self.next_id.max(id + 1);
         let created = self.create(item, row.batch.filter(|group| self.groups.contains_key(group)), row.created_at, stage);
@@ -89,6 +89,11 @@ impl TransferState {
         if row.restore_failed.is_some() {
             let id = self.insert_restored(&row, TransferStage::Failed);
             return self.failed_restored(id, "RestoreFailed".into(), fx);
+        }
+        if row.held {
+            let id = self.insert_restored(&row, TransferStage::Ready);
+            self.delete_prepare_files(id, fx);
+            return self.discard_held(id, fx);
         }
         if !self.declarations.contains(&(row.mutation.model.clone(), row.mutation.action.clone())) {
             let id = self.insert_restored(&row, TransferStage::WaitingDeclaration);

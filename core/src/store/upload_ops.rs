@@ -58,7 +58,7 @@ pub(super) fn put_upload(connection: &Connection, row: &UploadRow, kind: UploadK
             i64::try_from(row.seq).unwrap_or(i64::MAX), row.source, row.batch.and_then(|group| i64::try_from(group).ok()), row.upload_id, row.completed,
             i64::try_from(row.created_at).unwrap_or(i64::MAX), row.inline, i64::try_from(row.size).unwrap_or(i64::MAX), row.sha256, row.path, row.body,
             on_failure, row.steps_path, row.steps_body, i64::try_from(row.transfer_id).unwrap_or(i64::MAX), i64::try_from(row.cycle_id).unwrap_or(i64::MAX),
-            row.signed_id, row.aborted, row.op_id.and_then(|op| i64::try_from(op).ok()), row.fields, row.attempts, wait_reason, row.staged, row.failed_at.and_then(|at| i64::try_from(at).ok()), row.blob_created_at.and_then(|at| i64::try_from(at).ok()), row.progress],
+            row.signed_id, row.aborted, row.op_id.and_then(|op| i64::try_from(op).ok()), row.fields, row.attempts, wait_reason, row.staged, row.failed_at.and_then(|at| i64::try_from(at).ok()), row.blob_created_at.and_then(|at| i64::try_from(at).ok()), row.progress, row.held],
     )?;
     if let Some(prepare) = &row.prepare { super::prepare_rows::put_prepare(connection, row.transfer_id, prepare)?; }
     connection.execute(include_str!("sql/upload_ops/put_upload_delete_sync_upload_part.sql"), params![model, id, action])?;

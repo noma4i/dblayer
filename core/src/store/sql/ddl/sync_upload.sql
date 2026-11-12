@@ -35,5 +35,6 @@ CREATE TABLE IF NOT EXISTS sync_upload (
   staged INTEGER,
   failed_at INTEGER,
   blob_created_at INTEGER,
+  held INTEGER,
   PRIMARY KEY (model, row_id, action)
 ) STRICT, WITHOUT ROWID

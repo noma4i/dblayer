@@ -94,6 +94,13 @@ pub struct WireUploadSource {
     pub prepare: Option<WirePrepare>,
 }
 
+/// A file accepted before its row: `row_id` is the id of the row `commit_staged` creates.
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct WireStagedUpload {
+    pub row_id: String,
+    pub receipt: super::receipt::WireOperationReceipt,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct WireUploadBatch {
     pub operation: String,

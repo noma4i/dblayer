@@ -34,7 +34,7 @@ fn upload(transfer_id: u64, cycle_id: u64) -> crate::owners::store::UploadRow {
         batch: Some(9), fields: None, upload_id: None, confirmed_parts: 1, progress: 0, attempts: 1, completed: true,
         failed: None, created_at: 0, inline: true, size: 1, sha256: String::new(), path: String::new(),
         body: String::new(), on_failure: crate::schema::OnFailure::Keep, steps_path: Some(String::new()),
-        steps_body: Some(String::new()), transfer_id, cycle_id, signed_id: None, aborted: false, staged: false, failed_at: None, blob_created_at: None, op_id: Some(4), etags: Vec::new(), prepare: None,
+        steps_body: Some(String::new()), transfer_id, cycle_id, signed_id: None, aborted: false, staged: false, failed_at: None, blob_created_at: None, held: false, op_id: Some(4), etags: Vec::new(), prepare: None,
     }
 }
 

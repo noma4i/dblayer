@@ -300,7 +300,10 @@ impl TransferState {
         transfer.stage = TransferStage::Ready;
         transfer.next_step = if transfer.last_part { NextStep::Complete } else { NextStep::Part(transfer.confirmed_parts + 1) };
         let Some(progress) = Self::share(transfer, self.sizing.part_size, transfer.last_part) else { return self.begin_failure(now, id, "Internal(InvalidSource)".into(), false, fx) };
+        let held = transfer.held && transfer.last_part;
+        if held { transfer.stage = TransferStage::Held; }
         self.show(id, Shown::Uploading { progress }, fx);
+        if held { self.rounds_idle(id, fx); }
         self.start_in_order(now, fx);
     }
 

@@ -20,6 +20,7 @@ pub mod outbox_executor;
 pub mod transfer;
 mod transfer_accept;
 mod transfer_batch;
+mod transfer_commit;
 mod transfer_end;
 mod transfer_open;
 mod transfer_prepare;

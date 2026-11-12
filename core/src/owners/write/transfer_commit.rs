@@ -1,0 +1,62 @@
+//! Owner `Transfer`: a file accepted before its row (D-372): `Commit` gives the transfer its row and its final mutation, the opening discards what no `Commit` reached.
+
+use super::outbox::Fault;
+use super::transfer::{reply, Fx, TransferState};
+use super::transfer_types::*;
+use crate::owners::contract::{RejectReason, ReplyId};
+use crate::runtime::{Epoch, Time};
+
+impl TransferState {
+    /// `Commit`: one Store batch writes the row, its effects and the body of the final mutation, whatever stage the file is in.
+    pub(super) fn commit(&mut self, epoch: Epoch, key: &str, request: CommitRequest, rep: ReplyId, fx: &mut Fx) {
+        if self.closing || self.ended { return reply(fx, rep, TransferAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))); }
+        if epoch != self.epoch { return reply(fx, rep, TransferAnswer::Err(Fault::NoSession)); }
+        let Some(id) = self.open_id(key) else { return reply(fx, rep, TransferAnswer::Err(Fault::NotFound)) };
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        if !transfer.held || transfer.commit_reply.is_some() { return reply(fx, rep, TransferAnswer::Err(Fault::Invalid)); }
+        let open = matches!(transfer.stage, TransferStage::Preparing | TransferStage::Measuring | TransferStage::PersistingPrepared | TransferStage::Ready | TransferStage::PersistingAttempt | TransferStage::Uploading | TransferStage::PersistingPart | TransferStage::Held | TransferStage::Failed);
+        if !open { return reply(fx, rep, TransferAnswer::Err(Fault::InFlight)); }
+        let Some(body) = merged_body(&transfer.mutation.body, &request.variables, request.wrap.as_deref()) else { return reply(fx, rep, TransferAnswer::Err(Fault::Invalid)) };
+        transfer.commit = Some(CommitPlan { effects: request.effects, body });
+        transfer.commit_reply = Some(rep);
+        if transfer.stage == TransferStage::Held { transfer.stage = TransferStage::PersistingCommit; }
+        self.store(&[id], StoreKind::Commit, fx);
+    }
+
+    /// `Commit x Committed`: the row is shown, `complete` goes by the usual rows when the parts are all on the server.
+    pub(super) fn commit_committed(&mut self, now: Time, id: TransferId, shown: &[Option<crate::store::Row>], fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        let Some(plan) = transfer.commit.take() else { return };
+        transfer.held = false;
+        transfer.has_operation = !plan.effects.is_empty();
+        transfer.mutation.body = plan.body;
+        transfer.optimistic = shown.first().cloned().flatten();
+        let rep = transfer.commit_reply.take();
+        let resumed = matches!(transfer.stage, TransferStage::Held | TransferStage::PersistingCommit);
+        if resumed { transfer.stage = TransferStage::Ready; transfer.next_step = NextStep::Complete; }
+        let receipt = self.receipt(id);
+        if let Some(rep) = rep { reply(fx, rep, TransferAnswer::Receipt(receipt)); }
+        if resumed {
+            self.show_queued(id, fx);
+            self.rounds_needed(vec![id], fx);
+        }
+        self.start_in_order(now, fx);
+    }
+
+    /// `Commit x Rejected`: the transfer stays as it was, held, and the call learns the refusal.
+    pub(super) fn commit_rejected(&mut self, id: TransferId, reason: RejectReason, fx: &mut Fx) {
+        if let RejectReason::Closed | RejectReason::NoSession = reason {
+            return self.interrupt(id, super::outbox_types::end_cause(&reason), fx);
+        }
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        transfer.commit = None;
+        if transfer.stage == TransferStage::PersistingCommit { transfer.stage = TransferStage::Held; }
+        if let Some(rep) = transfer.commit_reply.take() { reply(fx, rep, TransferAnswer::Err(Fault::of_reject(reason))); }
+    }
+
+    /// The opening finds a held row: the editor that began it died with the process, the transfer goes like a `discard`.
+    pub(super) fn discard_held(&mut self, id: TransferId, fx: &mut Fx) {
+        self.remove_with(id, Removal::Discarded, fx);
+        self.store(&[id], StoreKind::Removed, fx);
+    }
+}

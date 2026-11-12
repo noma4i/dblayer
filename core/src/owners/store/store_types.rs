@@ -111,6 +111,8 @@ pub struct UploadRow {
     pub failed_at: Option<u64>,
     /// `Clock.now()` of the answer of the creation of the blob: the term of its cache entry counts from it.
     pub blob_created_at: Option<u64>,
+    /// The final mutation waits for `Commit`: the file goes up to the last part and no further.
+    pub held: bool,
     /// The operation the optimistic effects of the transfer belong to (`ReserveOp`).
     pub op_id: Option<u64>,
     /// The etag of each confirmed part, in the order of the parts (`sync_upload_part`).

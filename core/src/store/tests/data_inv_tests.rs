@@ -159,7 +159,7 @@ fn store_retry_preserves_transfer_outcome() {
         completed: true, failed: Some("refused".into()), created_at: 1, inline: false,
         size: 3, sha256: "hash".into(), path: "/mutation".into(), body: "{}".into(),
         on_failure: OnFailure::Keep, steps_path: Some("/steps".into()), steps_body: Some("{}".into()),
-        transfer_id: 3, cycle_id: 1, signed_id: Some("signed".into()), aborted: false, staged: false, failed_at: None, blob_created_at: None,
+        transfer_id: 3, cycle_id: 1, signed_id: Some("signed".into()), aborted: false, staged: false, failed_at: None, blob_created_at: None, held: false,
         op_id: Some(5), etags: vec![None], prepare: None,
     };
     write(&db, BatchAuthor::Transfer, Vec::new(), vec![StoreOp::Upload { row, kind: UploadKind::Failed }]);

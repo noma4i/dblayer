@@ -5,14 +5,14 @@ use serde_json::{Map, Value};
 
 use super::database::id;
 use super::receipt::{receipt_of_transfer, ItemId, WireBatchReceipt, WireItemReceipt, WireOperationReceipt};
-use super::upload_wire::{WireSource, WireUploadBatch, WireUploadItem, WireUploadRequest, WireUploadSource};
+use super::upload_wire::{WireSource, WireStagedUpload, WireUploadBatch, WireUploadItem, WireUploadRequest, WireUploadSource};
 use super::write::refused;
 use super::{Database, DbError};
 use crate::store::Planned;
 use crate::owners::life::LifeReply;
 use crate::owners::store::IntentEffects;
 use crate::owners::write::outbox::{NewOp, OpSource, OutboxOutcome, Receipt};
-use crate::owners::write::transfer::{batch_size_admitted, BatchItem, Joint, Renumber, Source, SuppliedSource, TransferAnswer, SIGNED_ID_SENTINEL};
+use crate::owners::write::transfer::{batch_size_admitted, BatchItem, CommitRequest, Joint, Renumber, Source, SuppliedSource, TransferAnswer, SIGNED_ID_SENTINEL};
 use crate::owners::write::upload_codec::StepsBody;
 use crate::schema::ActionDeclaration;
 use crate::transport::GraphQLRequest;
@@ -52,12 +52,14 @@ impl Database {
     }
 
     /// The size of the file and the number of its steps: a single step for a small file, parts for a large one.
-    fn source_of(&self, path: &str) -> Result<(Source, bool), DbError> {
+    fn source_of(&self, path: &str, held: bool) -> Result<(Source, bool), DbError> {
         #[cfg(test)] self.db.files().record_source_read();
         let total = std::fs::metadata(path).map_err(|error| invalid(format!("the source file is unreadable: {error}")))?.len();
         if total == 0 { return Err(invalid("the source file is empty")); }
         let config = self.upload_config();
-        let (parts, multipart) = self.upload_operations()?.sizing(&config).of(total);
+        let sizing = self.upload_operations()?.sizing(&config);
+        if held && !sizing.multipart_declared { return Err(invalid("a staged upload needs the multipart steps")); }
+        let (parts, multipart) = sizing.of(total, held);
         Ok((Source { path: path.to_string(), parts }, multipart))
     }
 
@@ -69,9 +71,9 @@ impl Database {
     }
 
     /// The source of a call: the prepare settings are checked before the file is read.
-    fn checked_source(&self, source: &WireSource) -> Result<Option<(Source, bool)>, DbError> {
+    fn checked_source(&self, source: &WireSource, held: bool) -> Result<Option<(Source, bool)>, DbError> {
         self.checked_prepare(source.prepare())?;
-        source.path().map(|path| self.source_of(path)).transpose()
+        source.path().map(|path| self.source_of(path, held)).transpose()
     }
 
     fn supplied_source(&self, model: &str, row: &crate::identity::RowId, action: &str, source: WireUploadSource) -> Result<SuppliedSource, DbError> {
@@ -80,7 +82,7 @@ impl Database {
         let variables = super::upload_wire::object(&source.variables_json)?;
         let (planned, local) = self.db.plan_supplied(model, row, values)?;
         let effects = planned.effects;
-        let (file, multipart) = self.source_of(&source.path)?;
+        let (file, multipart) = self.source_of(&source.path, false)?;
         let name = source.name.unwrap_or_else(|| std::path::Path::new(&source.path).file_name().map_or_else(|| source.path.clone(), |name| name.to_string_lossy().into_owned()));
         let spec = self.db.spec(model)?;
         let declaration = spec.upload_action(action).ok_or_else(|| invalid("upload action is not declared"))?;
@@ -109,15 +111,15 @@ impl Database {
             let name = file_name(plan.file, &file.path);
             StepsBody { multipart: *multipart, mime: plan.file.source.mime().map_or_else(|| mime_of(&name).to_string(), str::to_string), name, signed_variable: "signedId".into(), item: item.to_string() }.steps()
         });
-        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), fields, urgent: false, source: source.map(|(source, _)| source), prepare: plan.file.source.prepare().cloned(), mutation: self.upload_mutation(plan, mutation)?, steps })
+        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), held: false, fields, urgent: false, source: source.map(|(source, _)| source), prepare: plan.file.source.prepare().cloned(), mutation: self.upload_mutation(plan, mutation)?, steps })
     }
 
-    fn single_of(&self, model: &str, action: &str, file: &UploadFile) -> Result<Single, DbError> {
+    fn single_of(&self, model: &str, action: &str, file: &UploadFile, held: bool) -> Result<Single, DbError> {
         self.upload_operations()?;
         let spec = self.db.spec(model)?;
         let declaration = spec.upload_action(action).filter(|declared| declared.batch.is_none()).cloned().ok_or_else(|| invalid(format!("{model} declares no single upload action {action}")))?;
         let mutation = declaration.mutation.clone().ok_or_else(|| invalid(format!("{model} {action} declares no mutation")))?;
-        Ok(Single { declaration, mutation, source: self.checked_source(&file.source)? })
+        Ok(Single { declaration, mutation, source: self.checked_source(&file.source, held)? })
     }
 
     fn single_upload(&self, (model, row, action): (&str, &str, &str), single: Single, file: &UploadFile, effects: IntentEffects) -> Result<BatchItem, DbError> {
@@ -152,7 +154,7 @@ impl Database {
         };
         let file = UploadFile { source: item.source.clone(), variables: Map::new() };
         let correlate = spec.actions.iter().find(|declared| declared.name == action).and_then(|declared| declared.correlate.first()).and_then(|field| item.values.get(field)).and_then(Value::as_str).unwrap_or(planned.row_id.as_str()).to_string();
-        let source = self.checked_source(&file.source)?;
+        let source = self.checked_source(&file.source, false)?;
         let mut built = self.upload_item(&Plan { model, row: planned.row_id.as_str(), action, declaration, variables, file: &file, effects: planned.effects.clone() }, &mutation, (shown, &correlate), source)?;
         if let Some(name) = single_name { built.mutation.action = name; }
         Ok(built)
@@ -215,7 +217,7 @@ impl Database {
     pub async fn upload(&self, epoch: u64, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<WireOperationReceipt, DbError> {
         self.account_call(epoch)?;
         let file = self.offload(move || request.into_file()).await?;
-        let single = self.single_of(&model, &action, &file)?;
+        let single = self.single_of(&model, &action, &file, false)?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name, verb, target, args) = (self.db.clone(), model.clone(), action.clone(), row.clone(), file.variables.clone());
         let effects = self.offload(move || {
@@ -229,6 +231,35 @@ impl Database {
         let item = self.single_upload((&model, row.as_str(), &action), single, &file, effects)?;
         let waiter = self.life.accept_upload(epoch, item);
         let TransferAnswer::Receipt(held) = self.transfer_answer(epoch, waiter, "upload").await? else { return Err(DbError::Internal { detail: "the owner answered an upload with no receipt".into() }) };
+        let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&model, shown)).transpose()?;
+        Ok(self.transfer_receipt(epoch, model, held, value))
+    }
+
+    /// The file goes up before its row exists: `commit_staged` sends the final mutation (D-372).
+    pub async fn stage(&self, epoch: u64, model: String, action: String, request: WireUploadRequest) -> Result<WireStagedUpload, DbError> {
+        self.account_call(epoch)?;
+        let file = self.offload(move || request.into_file()).await?;
+        let single = self.single_of(&model, &action, &file, true)?;
+        if single.source.is_none() { return Err(invalid("a staged upload needs a file")); }
+        let row = crate::identity::RowId::generate_temp(None);
+        let mut item = self.single_upload((&model, row.as_str(), &action), single, &file, IntentEffects::default())?;
+        item.held = true;
+        let waiter = self.life.accept_upload(epoch, item);
+        let TransferAnswer::Receipt(held) = self.transfer_answer(epoch, waiter, "stage").await? else { return Err(DbError::Internal { detail: "the owner answered a stage with no receipt".into() }) };
+        Ok(WireStagedUpload { row_id: row.to_string(), receipt: self.transfer_receipt(epoch, model, held, None) })
+    }
+
+    pub async fn commit_staged(&self, epoch: u64, model: String, row_id: String, action: String, values_json: String, variables_json: String) -> Result<WireOperationReceipt, DbError> {
+        self.account_call(epoch)?;
+        let (db, name, row) = (self.db.clone(), model.clone(), row_id.clone());
+        let (planned, variables) = self.offload(move || {
+            let mut values = super::upload_wire::object(&values_json)?;
+            values.insert("id".into(), Value::String(row));
+            Ok((db.plan_create(&name, values, Map::new())?, super::upload_wire::object(&variables_json)?))
+        }).await?;
+        let wrap = self.db.spec(&model)?.upload_action(&action).ok_or_else(|| invalid("upload action is not declared"))?.wrap.clone();
+        let waiter = self.life.commit_upload(epoch, key_of(&model, &row_id, &action), CommitRequest { effects: planned.effects, variables, wrap });
+        let TransferAnswer::Receipt(held) = self.transfer_answer(epoch, waiter, "commit").await? else { return Err(DbError::Internal { detail: "the owner answered a commit with no receipt".into() }) };
         let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&model, shown)).transpose()?;
         Ok(self.transfer_receipt(epoch, model, held, value))
     }
@@ -285,7 +316,7 @@ impl Database {
         let Some(upload) = request.upload else { return Err(invalid("a command without a file goes through the owners")) };
         let (db, name, texts) = (self.db.clone(), request.model.clone(), (request.values_json.clone(), request.args_json.clone()));
         let (file, planned) = self.offload(move || Ok((upload.request.into_file()?, db.plan_create(&name, serde_json::from_str(&texts.0)?, serde_json::from_str(&texts.1)?)?))).await?;
-        let single = self.single_of(&request.model, &upload.action, &file)?;
+        let single = self.single_of(&request.model, &upload.action, &file, false)?;
         let item = self.single_upload((&request.model, planned.row_id.as_str(), &upload.action), single, &file, planned.effects.clone())?;
         let waiter = self.life.accept_upload(epoch, item);
         let TransferAnswer::Receipt(held) = self.transfer_answer(epoch, waiter, "send").await? else { return Err(DbError::Internal { detail: "the owner answered a send with no receipt".into() }) };

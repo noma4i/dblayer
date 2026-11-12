@@ -57,8 +57,11 @@ impl TransferState {
         let (transfer_id, seq) = (self.next_id, self.next_seq);
         self.next_id += 1;
         self.next_seq += 1;
-        let BatchItem { key, fields, urgent, source, prepare, mutation, steps, .. } = item;
+        let BatchItem { key, held, fields, urgent, source, prepare, mutation, steps } = item;
         let transfer = Transfer {
+            held,
+            commit_reply: None,
+            commit: None,
             prep: None,
             transfer_id,
             key,
@@ -147,7 +150,8 @@ impl TransferState {
         if epoch != self.epoch || self.closing || self.ended {
             return reply(fx, rep, TransferAnswer::Err(if self.closing { Fault::Ended(crate::ffi::EndCause::Closed) } else { Fault::NoSession }));
         }
-        if items.is_empty() || !items.iter().all(Self::valid) || joint.as_ref().is_some_and(|joint| !joint.admits(items.len())) {
+        let held_wrong = items.iter().any(|item| item.held && (item.source.is_none() || joint.is_some()));
+        if items.is_empty() || held_wrong || !items.iter().all(Self::valid) || joint.as_ref().is_some_and(|joint| !joint.admits(items.len())) {
             return reply(fx, rep, TransferAnswer::Err(Fault::Invalid));
         }
         let group = joint.as_ref().map(|_| {
@@ -290,7 +294,7 @@ impl TransferState {
         if transfer.stage != TransferStage::Copying || transfer.attempt_id != attempt_id {
             return;
         }
-        let cached = if transfer.prepare.is_some() { CachedBlob::Miss } else { cached };
+        let cached = if transfer.prepare.is_some() || transfer.held { CachedBlob::Miss } else { cached };
         transfer.size = size;
         transfer.sha256 = sha256;
         transfer.place = Some(place);

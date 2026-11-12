@@ -46,6 +46,7 @@ pub(crate) struct UploadRaw {
     staged: bool,
     failed_at: Option<i64>,
     blob_created_at: Option<i64>,
+    held: bool,
     prepare: Option<crate::ffi::upload_wire::WirePrepare>,
 }
 
@@ -101,6 +102,7 @@ pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result
             failed_at: row.get(28)?,
             blob_created_at: row.get(29)?,
             progress: row.get(30)?,
+            held: row.get::<_, Option<bool>>(31)?.unwrap_or(false),
         })
     })?;
     rows.collect()
@@ -125,7 +127,7 @@ impl Store {
             etags: Vec::new(), completed: false, signed_id: None, failed: None, aborted: false, op_id: number("op_id"), copying: false,
             file_present, created_at: Time(number("created_at").unwrap_or(0)), place: Location::Directory, size: number("size").unwrap_or(0),
             sha256: text("sha256").unwrap_or_default(), cycle_id: number("cycle_id").unwrap_or(1).max(1), has_intent: false, has_operation: false,
-            mutation, steps: None, staged: false, failed_at: None, blob_created_at: None, restore_failed: Some(row.reason.clone()), prepare: None,
+            mutation, steps: None, staged: false, failed_at: None, blob_created_at: None, held: false, restore_failed: Some(row.reason.clone()), prepare: None,
             restore_element: Some((row.key.clone(), holder)), pending_step: None, saved_answer: None,
         }))
     }
@@ -196,6 +198,7 @@ impl Store {
                 expires_after: None,
             },
             prepare: raw.prepare,
+            held: raw.held,
             steps: raw.steps_path.zip(raw.steps_body).map(|(path, body)| Steps { path, body }),
             restore_failed: None,
             restore_element: None,

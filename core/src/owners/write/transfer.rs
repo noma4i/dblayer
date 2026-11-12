@@ -34,7 +34,7 @@ impl TransferState {
             TransferStage::AwaitingSource => Shown::WaitingSource,
             TransferStage::Failed => Shown::Failed { error: transfer.error.clone().unwrap_or_default() },
             TransferStage::Done => Shown::Gone,
-            TransferStage::Completing | TransferStage::PersistingComplete => Shown::Uploading { progress: Self::share(transfer, self.sizing.part_size, true).unwrap_or(transfer.floor) },
+            TransferStage::Completing | TransferStage::PersistingComplete | TransferStage::Held | TransferStage::PersistingCommit => Shown::Uploading { progress: Self::share(transfer, self.sizing.part_size, true).unwrap_or(transfer.floor) },
             TransferStage::BatchReady | TransferStage::PersistingBatchIntent | TransferStage::Mutating => Shown::Uploading { progress: 100 },
             TransferStage::Uploading | TransferStage::PersistingPart => match Self::share(transfer, self.sizing.part_size, false) {
                 Some(progress) => Shown::Uploading { progress },
@@ -292,6 +292,10 @@ impl TransferState {
                         if transfer.supply_local != "{}" && !transfer.supply_local.is_empty() {
                             ops.push(StoreOp::LocalFields { model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), values: transfer.supply_local.clone() });
                         }
+                        ops.push(StoreOp::Show { model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone() });
+                    }
+                    if let (StoreKind::Commit, Some(op_id), Some(plan)) = (kind, transfer.op_id, transfer.commit.as_ref()) {
+                        ops.push(StoreOp::Effects { op_id, created_at: transfer.created_at.0, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: plan.body.clone(), effects: plan.effects.clone() });
                         ops.push(StoreOp::Show { model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone() });
                     }
                     if kind == StoreKind::SyncUpload && transfer.stage == TransferStage::Accepting {
@@ -583,6 +587,7 @@ impl TransferState {
         replies.extend(transfer.cancel_reply.take().map(|(reply, _)| reply));
         replies.extend(transfer.retry_reply.take());
         replies.extend(transfer.supply_reply.take());
+        replies.extend(transfer.commit_reply.take());
         replies.extend(transfer.staged_failed.take().and_then(|(rep, _)| rep));
         replies.append(&mut transfer.discard_waiters);
         let in_flight = std::mem::replace(&mut transfer.in_flight, false) && transfer.stage != TransferStage::PersistingAttempt;
@@ -640,6 +645,7 @@ impl TransferState {
         }
         if pending.kind == StoreKind::StagedRestored { return self.staged_restored(pending.ids[0], fx); }
         if matches!(pending.kind, StoreKind::Shown | StoreKind::StagedCleared) { return; }
+        if pending.kind == StoreKind::Commit { self.commit_committed(now, pending.ids[0], &shown, fx); return self.maybe_drained(fx); }
         if pending.kind == StoreKind::OrphanRemoved {
             if let Some((upload_id, _)) = pending.orphan {
                 self.orphans.remove(&upload_id);
@@ -734,6 +740,7 @@ impl TransferState {
             return;
         }
         if pending.kind == StoreKind::StagedCleared { return; }
+        if pending.kind == StoreKind::Commit { return self.commit_rejected(pending.ids[0], rejected.reason, fx); }
         if pending.kind == StoreKind::Shown { return self.shown_rejected(&pending, rejected.reason, fx); }
         if pending.kind == StoreKind::StagedRestored { return self.staged_restore_rejected(pending.ids[0], rejected.reason, fx); }
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan) {
@@ -833,7 +840,7 @@ impl TransferState {
     }
 
     fn handle(&mut self, now: Time, input: TransferInput, fx: &mut Fx) {
-        if let (Some(error), TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::SelectRow { reply: id, .. }) = (&self.queue_error, &input) {
+        if let (Some(error), TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::Commit { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::SelectRow { reply: id, .. }) = (&self.queue_error, &input) {
             return reply(fx, *id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
         match input {
@@ -887,6 +894,7 @@ impl TransferState {
             TransferInput::Rejected(rejected) => self.rejected(now, rejected, fx),
             TransferInput::Cancel { key, reply } => self.cancel(now, &key, reply, true, fx),
             TransferInput::SupplySource { epoch, key, source, reply } => self.supply_source(epoch, &key, source, reply, fx),
+            TransferInput::Commit { epoch, key, request, reply } => self.commit(epoch, &key, request, reply, fx),
             TransferInput::SourceFailed { epoch, key, message, reply } => self.source_failed(now, epoch, &key, message, reply, fx),
             TransferInput::Discard { key, reply } => self.cancel(now, &key, reply, false, fx),
             TransferInput::SelectRow { model, rows, outbox_min, kind, reply, version } => self.select_row((model, rows), outbox_min, kind, reply, version, fx),
@@ -935,7 +943,7 @@ impl TransferState {
                 self.replay_held(now, fx);
             }
             held @ (TransferInput::Accept { .. } | TransferInput::AcceptBatch { .. }) if Self::in_epoch(&held, self.epoch) => self.held.push(held),
-            held @ (TransferInput::Cancel { .. } | TransferInput::SupplySource { .. } | TransferInput::SourceFailed { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. } | TransferInput::MutationOutcome { .. } | TransferInput::MutationOutcomes { .. }) => self.held.push(held),
+            held @ (TransferInput::Cancel { .. } | TransferInput::SupplySource { .. } | TransferInput::Commit { .. } | TransferInput::SourceFailed { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. } | TransferInput::MutationOutcome { .. } | TransferInput::MutationOutcomes { .. }) => self.held.push(held),
             TransferInput::EpochStarted(started) => {
                 self.epoch = started.epoch;
                 self.base_generation = started.generation;
@@ -986,7 +994,7 @@ impl TransferState {
         let fault = Fault::Ended(cause.clone());
         for input in std::mem::take(&mut self.held) {
             match input {
-                TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::SelectRow { reply: id, .. } => reply(fx, id, TransferAnswer::Err(fault.clone())),
+                TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::Commit { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::SelectRow { reply: id, .. } => reply(fx, id, TransferAnswer::Err(fault.clone())),
                 TransferInput::Outcome { reply: id, .. } => reply(fx, id, TransferAnswer::Outcome(OutboxOutcome::Ended(cause.clone()), None)),
                 _ => {}
             }
@@ -1039,7 +1047,7 @@ impl StateOwner for Transfers {
 
 pub(super) fn upload_kind(kind: StoreKind) -> UploadKind {
     match kind {
-        StoreKind::SyncUpload | StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan | StoreKind::OrphanRemoved | StoreKind::Removed | StoreKind::BatchIntent | StoreKind::MixedOutcomes | StoreKind::Shown | StoreKind::StagedCleared => UploadKind::SyncUpload,
+        StoreKind::SyncUpload | StoreKind::Commit | StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan | StoreKind::OrphanRemoved | StoreKind::Removed | StoreKind::BatchIntent | StoreKind::MixedOutcomes | StoreKind::Shown | StoreKind::StagedCleared => UploadKind::SyncUpload,
         StoreKind::StagedRestored => UploadKind::Failed,
         StoreKind::ConfirmedParts => UploadKind::ConfirmedParts,
         StoreKind::Completed => UploadKind::Completed,

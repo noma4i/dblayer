@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 use super::{Life, LifeReply};
 use crate::owners::write::outbox::{Fault, Receipt};
 use crate::owners::write::rounds::RoundsInput;
-use crate::owners::write::transfer::{BatchItem, Joint, SuppliedSource, TransferAnswer, TransferInput};
+use crate::owners::write::transfer::{BatchItem, CommitRequest, Joint, SuppliedSource, TransferAnswer, TransferInput};
 use crate::runtime::{Epoch, EpochStamp, Waiter};
 
 impl Life {
@@ -28,6 +28,8 @@ impl Life {
     pub fn supply_source(&self, epoch: Epoch, key: String, source: SuppliedSource) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::SupplySource { epoch, key, source, reply }) }
 
     pub fn fail_source(&self, epoch: Epoch, key: String, message: String) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::SourceFailed { epoch, key, message, reply }) }
+
+    pub fn commit_upload(&self, epoch: Epoch, key: String, request: CommitRequest) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Commit { epoch, key, request, reply }) }
 
     pub fn discard_upload(&self, epoch: Epoch, key: String) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Discard { key, reply }) }
 

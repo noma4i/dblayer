@@ -23,8 +23,8 @@ impl TransferState {
     pub(super) fn cancel(&mut self, now: crate::runtime::Time, key: &str, rep: ReplyId, cancel: bool, fx: &mut Fx) {
         let Some(id) = self.open_id(key) else { return Self::refuse(fx, rep, Fault::NotFound) };
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        let (stage, batched) = (transfer.stage, transfer.batch_id.is_some());
-        if self.group_entry(id).is_some_and(|group| self.phase_of(group) == Some(BatchPhase::Mutating)) {
+        let (stage, batched, committing) = (transfer.stage, transfer.batch_id.is_some(), transfer.commit_reply.is_some());
+        if self.group_entry(id).is_some_and(|group| self.phase_of(group) == Some(BatchPhase::Mutating)) || committing {
             return Self::refuse(fx, rep, Fault::InFlight);
         }
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
@@ -54,6 +54,7 @@ impl TransferState {
             }
             TransferStage::Failed => self.discard_failed(id, Some((rep, cancel)), fx),
             TransferStage::BatchReady => self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::BatchReady), fx),
+            TransferStage::Held => self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::Held), fx),
             TransferStage::Mutating if cancel => reply(fx, rep, if batched { TransferAnswer::Err(Fault::InFlight) } else { TransferAnswer::Cancelled(false) }),
             TransferStage::Mutating => self.discard_through_outbox(id, Some((rep, false)), fx),
             _ => Self::refuse(fx, rep, Fault::InFlight),
@@ -175,9 +176,15 @@ impl TransferState {
         transfer.error = None;
         transfer.failed_at = None;
         let (rep, preparing) = (transfer.retry_reply.take(), transfer.prepare.is_some());
+        let held = transfer.held && transfer.next_step == NextStep::Complete;
+        if held { transfer.stage = TransferStage::Held; }
         let receipt = self.receipt(id);
         if let Some(rep) = rep {
             reply(fx, rep, TransferAnswer::Receipt(receipt));
+        }
+        if held {
+            self.show(id, Shown::Uploading { progress: 99 }, fx);
+            return self.rounds_idle(id, fx);
         }
         if preparing { self.queue_prepare(id, fx); } else { self.show_queued(id, fx); }
         self.rounds_needed(vec![id], fx);
@@ -342,6 +349,9 @@ impl TransferState {
                     }
                     if prior == TransferStage::Ready {
                         self.show_queued(id, fx);
+                    }
+                    if prior == TransferStage::Held {
+                        self.show(id, Shown::Uploading { progress: 99 }, fx);
                     }
                     if prior == TransferStage::BatchReady {
                         self.show(id, Shown::Uploading { progress: 100 }, fx);

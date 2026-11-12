@@ -67,7 +67,7 @@ impl TransferState {
         self.schedule_expire(fx);
     }
 
-    fn delete_prepare_files(&self, id: TransferId, fx: &mut Fx) {
+    pub(super) fn delete_prepare_files(&self, id: TransferId, fx: &mut Fx) {
         run(fx, TransferEffect::DeleteFile { path: prepared_file_id(id) });
         run(fx, TransferEffect::DeleteFile { path: staged_file_id(id) });
     }
@@ -197,12 +197,13 @@ impl TransferState {
         transfer.size = size;
         transfer.sha256 = sha256;
         transfer.place = Some(place);
+        let cached = if transfer.held { CachedBlob::Miss } else { cached };
         transfer.cache_stale = cached == CachedBlob::Stale;
         if let CachedBlob::Fresh { blob_id } = cached {
             transfer.from_cache = true;
             transfer.signed_id = Some(blob_id);
         }
-        let (parts, multipart) = sizing.of(size);
+        let (parts, multipart) = sizing.of(size, transfer.held);
         if let Some(source) = transfer.source.as_mut() { source.parts = parts; }
         let (name, mime) = transfer.prep.as_ref().map_or((None, None), |prep| (prep.name.clone(), prep.mime.clone()));
         if let Some(steps) = transfer.steps.as_ref().and_then(|steps| serde_json::from_str::<super::upload_codec::StepsBody>(&steps.body).ok()) {

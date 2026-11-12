@@ -127,6 +127,7 @@ pub struct StoredTransfer {
     pub staged: bool,
     pub failed_at: Option<Time>,
     pub blob_created_at: Option<Time>,
+    pub held: bool,
     pub restore_failed: Option<String>,
     pub restore_element: Option<(String, Option<TransferId>)>,
     pub pending_step: Option<u64>,
@@ -217,6 +218,8 @@ pub enum BatchPhase {
 #[derive(Clone, Debug)]
 pub struct BatchItem {
     pub key: Key,
+    /// The final mutation waits for `Commit`: the file goes up to the last part (D-372).
+    pub held: bool,
     /// The fields of the element in the list of the mutation of the batch: `SIGNED_ID_SENTINEL` stands for the signed id.
     pub fields: serde_json::Map<String, serde_json::Value>,
     /// The action asks to go on in power saving.
@@ -225,6 +228,21 @@ pub struct BatchItem {
     pub prepare: Option<crate::ffi::upload_wire::WirePrepare>,
     pub mutation: NewOp,
     pub steps: Option<Steps>,
+}
+
+/// What `Commit` gives a held transfer: the effects of the new row and the variables the final mutation gets.
+#[derive(Clone, Debug)]
+pub struct CommitRequest {
+    pub effects: crate::owners::store::IntentEffects,
+    pub variables: serde_json::Map<String, serde_json::Value>,
+    pub wrap: Option<String>,
+}
+
+/// The `Commit` the Store has not confirmed: the effects and the body of the final mutation that the batch writes.
+#[derive(Clone, Debug)]
+pub struct CommitPlan {
+    pub effects: crate::owners::store::IntentEffects,
+    pub body: String,
 }
 
 /// The refusal of an `abort`: `status` is the HTTP status of the answer, `None` when the call dropped before an answer.
@@ -272,6 +290,7 @@ pub enum TransferInput {
     Rejected(Rejected),
     Cancel { key: Key, reply: ReplyId },
     SupplySource { epoch: Epoch, key: Key, source: SuppliedSource, reply: ReplyId },
+    Commit { epoch: Epoch, key: Key, request: CommitRequest, reply: ReplyId },
     SourceFailed { epoch: Epoch, key: Key, message: String, reply: ReplyId },
     Retry { key: Key, source: Option<SuppliedSource>, reply: ReplyId },
     Discard { key: Key, reply: ReplyId },
@@ -364,6 +383,8 @@ pub enum StoreKind {
     StagedCleared,
     /// The old row is written back after a failed swap: the temporary file goes and the call is answered after `Committed`.
     StagedRestored,
+    /// The row of a held transfer: its values and the final mutation.
+    Commit,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -420,6 +441,9 @@ pub enum TransferStage {
     PersistingPart,
     Completing,
     PersistingComplete,
+    /// Every part is on the server and `complete` waits for `Commit` (D-372).
+    Held,
+    PersistingCommit,
     BatchReady,
     PersistingBatchIntent,
     Mutating,
@@ -465,6 +489,9 @@ pub struct PrepareRun {
 
 #[derive(Clone, Debug)]
 pub struct Transfer {
+    pub held: bool,
+    pub commit_reply: Option<ReplyId>,
+    pub commit: Option<CommitPlan>,
     pub prep: Option<PrepareRun>,
     pub transfer_id: TransferId,
     pub key: Key,
@@ -751,7 +778,7 @@ pub(super) fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
         size: transfer.size,
         sha256: transfer.sha256.clone(),
         path: transfer.mutation.path.clone(),
-        body: supplied.map_or_else(|| transfer.mutation.body.clone(), |source| source.body.clone()),
+        body: supplied.map(|source| source.body.clone()).or_else(|| transfer.commit.as_ref().map(|plan| plan.body.clone())).unwrap_or_else(|| transfer.mutation.body.clone()),
         on_failure: transfer.mutation.on_failure,
         steps_path: steps.map(|steps| steps.path.clone()),
         steps_body: steps.map(|steps| steps.body.clone()),
@@ -762,20 +789,24 @@ pub(super) fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
         staged: transfer.previous.is_some(),
         failed_at: transfer.failed_at.map(|at| at.0),
         blob_created_at: transfer.blob_created_at.map(|at| at.0),
+        held: transfer.held && transfer.commit.is_none(),
         op_id: transfer.op_id,
         etags: if kind == StoreKind::Failed && transfer.failure_abort { Vec::new() } else { transfer.etags.clone() },
         prepare: transfer.prepare.clone(),
     }
 }
 
-pub(super) fn supplied_body(body: &str, source: &SuppliedSource) -> Option<String> {
-    if source.variables.is_empty() { return Some(body.to_string()); }
+pub(super) fn supplied_body(body: &str, source: &SuppliedSource) -> Option<String> { merged_body(body, &source.variables, source.wrap.as_deref()) }
+
+/// The request body with `extra` added to the variables of the mutation (inside `wrap` when the action wraps its input).
+pub(super) fn merged_body(body: &str, extra: &serde_json::Map<String, serde_json::Value>, wrap: Option<&str>) -> Option<String> {
+    if extra.is_empty() { return Some(body.to_string()); }
     let mut body: serde_json::Value = serde_json::from_str(body).ok()?;
     let variables = body.get_mut("variables")?.as_object_mut()?;
-    let target = match &source.wrap {
+    let target = match wrap {
         Some(key) => variables.get_mut(key)?.as_object_mut()?,
         None => variables,
     };
-    target.extend(source.variables.clone());
+    target.extend(extra.clone());
     Some(body.to_string())
 }

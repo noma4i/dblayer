@@ -20,9 +20,9 @@ pub struct Sizing {
 }
 
 impl Sizing {
-    /// The number of parts and whether the upload is multipart.
-    pub fn of(&self, total: u64) -> (u32, bool) {
-        let multipart = self.multipart_declared && (!self.single_declared || scenario_for(total, self.threshold) == UploadScenario::Multipart);
+    /// The number of parts and whether the upload is multipart. A held file is always multipart: it has no single PUT (D-372).
+    pub fn of(&self, total: u64, held: bool) -> (u32, bool) {
+        let multipart = self.multipart_declared && (held || !self.single_declared || scenario_for(total, self.threshold) == UploadScenario::Multipart);
         (if multipart { part_count(total, self.part_size) } else { 1 }, multipart)
     }
 }
