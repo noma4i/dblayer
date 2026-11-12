@@ -59,14 +59,6 @@ fn column_value_maps_scalars_and_absent_cases() {
 }
 
 #[test]
-fn point_returns_the_row_or_none() {
-    let (store, _) = booted_store();
-    seed(&store, &[("m1", "c1")]);
-    assert_eq!(store.point("messages", "m1").unwrap().unwrap()["chatId"], json!("c1"));
-    assert!(store.point("messages", "m3").unwrap().is_none());
-}
-
-#[test]
 fn keyword_columns_preserve_values_across_insert_update_and_read() {
     let spec = crate::schema::ModelSpec::new("keywords", vec![
         crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id),

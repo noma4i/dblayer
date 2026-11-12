@@ -1,6 +1,9 @@
 use std::cmp::Ordering;
 
-use serde_json::{json, Value};
+use serde_json::Value;
+
+use crate::check::explore::{find, minimize};
+use crate::check::model::{DivergenceKind, Owner};
 
 use crate::store::Store;
 

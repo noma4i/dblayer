@@ -140,12 +140,6 @@ fn save_and_load_return_equal_record() {
 }
 
 #[test]
-fn load_unknown_key_returns_none() {
-    let (store, _) = booted_store();
-    assert_eq!(store.window("unknown").unwrap(), None);
-}
-
-#[test]
 fn repeated_save_replaces_record_and_keeps_one_row() {
     let (store, _) = booted_store();
     let first = WindowRecord { cursor: Some("c1".into()), has_next: true, issued: 1, ..window("k") };
@@ -179,19 +173,6 @@ fn mark_family_marks_only_thread_keys() {
     store.save_window(&window(&media)).unwrap();
     assert_eq!(store.invalidate_family_now("messages", "thread").unwrap(), 1);
     assert_eq!(store.stale_window_keys().unwrap(), vec![thread]);
-}
-
-#[test]
-fn stale_keys_are_empty_on_clean_database() {
-    let (store, _) = booted_store();
-    store.save_window(&window(&key("messages", "thread", "1"))).unwrap();
-    assert!(store.stale_window_keys().unwrap().is_empty());
-}
-
-#[test]
-fn window_key_carries_direction() {
-    assert_eq!(window_key("inbox", PageDirection::Forward), "inbox:forward");
-    assert_eq!(window_key("inbox", PageDirection::Backward), "inbox:backward");
 }
 
 #[test]

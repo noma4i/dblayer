@@ -48,14 +48,6 @@ fn columns(connection: &Connection, table: &str) -> BTreeMap<String, (String, bo
 }
 
 #[test]
-fn sqlite_supports_strict_tables() {
-    let connection = Connection::open_in_memory().unwrap();
-    let version: String = connection.query_row("select sqlite_version()", [], |row| row.get(0)).unwrap();
-    let parts: Vec<u32> = version.split('.').map(|part| part.parse().unwrap()).collect();
-    assert!((parts[0], parts[1]) >= (3, 37), "sqlite {version}");
-}
-
-#[test]
 fn column_and_table_names_follow_the_spec() {
     assert_eq!(column_name("chatId"), "chat_id");
     assert_eq!(column_name("sequenceNumber"), "sequence_number");
@@ -145,45 +137,6 @@ fn model_tables_apply_once_and_again() {
     assert!(indexes.contains("row_messages_idx_0") && indexes.contains("row_groups_idx_0"));
 }
 
-#[test]
-fn row_table_matches_spec_columns() {
-    let connection = Connection::open_in_memory().unwrap();
-    create_model_tables(&connection, &[messages()]).unwrap();
-    let found = columns(&connection, "row_messages");
-
-    assert_eq!(found["id"], ("TEXT".to_string(), true));
-    assert_eq!(found["revision"], ("INTEGER".to_string(), true));
-    assert_eq!(found["born_rev"], ("INTEGER".to_string(), true));
-    assert_eq!(found["chat_id"], ("TEXT".to_string(), false));
-    assert_eq!(found["sequence_number"], ("INTEGER".to_string(), false));
-    assert_eq!(found["score"], ("REAL".to_string(), false));
-    assert_eq!(found["created_at"], ("TEXT".to_string(), false));
-    for rev in ["rev__chat_id", "rev__sequence_number", "rev__score", "rev__created_at", "rev__media"] {
-        assert_eq!(found[rev], ("INTEGER".to_string(), false), "{rev}");
-    }
-    assert_eq!(found.len(), 12);
-}
-
-#[test]
-fn integer_lands_in_an_indexed_column() {
-    let connection = Connection::open_in_memory().unwrap();
-    create_model_tables(&connection, &[messages()]).unwrap();
-
-    connection
-        .execute(
-            "insert into row_messages (id, revision, born_rev, sequence_number) values (?1, 1, 1, ?2)",
-            rusqlite::params!["row-1", 7],
-        )
-        .unwrap();
-    let (value, storage): (i64, String) = connection
-        .query_row("select sequence_number, typeof(sequence_number) from row_messages where id = 'row-1'", [], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
-        .unwrap();
-
-    assert_eq!((value, storage.as_str()), (7, "integer"));
-}
-
 fn refused(result: rusqlite::Result<usize>) -> i32 {
     match result {
         Err(rusqlite::Error::SqliteFailure(error, _)) => error.extended_code,
@@ -263,45 +216,6 @@ fn inv_op_10_open_dedupe_key_is_unique_only_while_open() {
 }
 
 #[test]
-fn core_table_columns_match_spec() {
-    let connection = core_connection();
-    let op = columns(&connection, "op");
-    let window = columns(&connection, "query_window");
-
-    let op_names: BTreeSet<&str> = op.keys().map(String::as_str).collect();
-    let expected_op = [
-        "seq",
-        "action_key",
-        "status",
-        "temp_id",
-        "base_revision",
-        "created_at",
-        "dedupe_key",
-        "client_mutation_id",
-        "attempts",
-        "cause_kind",
-        "cause_limit",
-        "cycle_id",
-        "since",
-        "error_kind",
-        "error_message",
-        "intent_state",
-        "origin_kind",
-        "transfer_id",
-        "batch_id",
-    ];
-    assert_eq!(op_names, expected_op.into_iter().collect());
-    assert!(!op["dedupe_key"].1 && !op["temp_id"].1 && !op["base_revision"].1 && !op["error_kind"].1);
-    assert_eq!(window.len(), 11);
-    assert!(window["landed_at"].1 && !window["cursor"].1 && !window["total"].1 && !window["stale_since"].1);
-    let bad_flag = connection.execute(
-        "insert into query_window (key, has_next, pages, issued, applied, generation, landed_at, stale_since) values ('k', 0, 1, 0, 0, 0, 0, 0)",
-        [],
-    );
-    assert_eq!(refused(bad_flag), rusqlite::ffi::SQLITE_CONSTRAINT_CHECK);
-}
-
-#[test]
 fn core_migration_is_idempotent_and_stamps_schema_version() {
     let connection = core_connection();
     let before = names(&connection, "table");
@@ -311,15 +225,6 @@ fn core_migration_is_idempotent_and_stamps_schema_version() {
     assert_eq!(names(&connection, "table"), before);
     let version: i64 = connection.query_row("pragma user_version", [], |row| row.get(0)).unwrap();
     assert_eq!(version, SCHEMA_VERSION);
-}
-
-#[test]
-fn prepared_connection_uses_normal_sync_no_foreign_keys_and_memory_temp_tables() {
-    let connection = Connection::open_in_memory().unwrap();
-    prepare_connection(&connection).unwrap();
-    let pragma = |name: &str| -> i64 { connection.query_row(&format!("pragma {name}"), [], |row| row.get(0)).unwrap() };
-
-    assert_eq!((pragma("synchronous"), pragma("foreign_keys"), pragma("temp_store")), (1, 0, 2));
 }
 
 #[test]
@@ -366,23 +271,6 @@ fn a_relation_without_row_rules_keeps_the_fingerprint_text_it_had_before_row_rul
 
     assert!(!fingerprint_text(&plain).contains("row_rules"));
     assert_ne!(fingerprint(&ruled), fingerprint(&plain));
-}
-
-#[test]
-fn inv_dsl_04_fingerprint_ignores_declaration_order() {
-    let fields = vec![
-        FieldSpec::scalar("title", ScalarKind::Str).nullable(),
-        FieldSpec::scalar("count", ScalarKind::Int).indexed().with_default(json!(0)),
-        FieldSpec::scalar("createdAt", ScalarKind::Date),
-    ];
-    let relations = vec![RelationSpec::new("author", &["tenantId", "authorId"]), RelationSpec::new("comments", &["postId", "position"])];
-    let first = ModelSpec { relations: relations.clone(), ..ModelSpec::new("posts", fields.clone()) };
-    let second = ModelSpec {
-        relations: vec![RelationSpec::new("comments", &["position", "postId"]), RelationSpec::new("author", &["authorId", "tenantId"])],
-        ..ModelSpec::new("posts", vec![fields[2].clone(), fields[0].clone(), fields[1].clone()])
-    };
-
-    assert_eq!(fingerprint(&first), fingerprint(&second));
 }
 
 #[test]

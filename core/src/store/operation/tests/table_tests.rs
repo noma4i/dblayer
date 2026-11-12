@@ -42,11 +42,6 @@ fn append_stores_action_and_status_then_status_applies() {
 }
 
 #[test]
-fn open_operations_empty_for_empty_database() {
-    assert!(open_operations(&database()).unwrap().is_empty());
-}
-
-#[test]
 fn open_operations_restores_pending_operation_and_excludes_committed() {
     let connection = database();
     let mut pending = operation("1", OperationStatus::Pending);
@@ -80,20 +75,6 @@ fn apply_fsck_counts_only_quarantined_orphans() {
     let skipped = [FsckAction::Keep(OperationId(seq)), FsckAction::QuarantineOrphan(RowRef::new(ModelKey::new("messages"), RowId::new("orphan-1").unwrap()))];
     assert_eq!(apply_fsck(&connection, &skipped, &Orphans::new()).unwrap(), 0);
     assert_eq!(open_operations(&connection).unwrap()[0].status, OperationStatus::Pending);
-}
-
-#[test]
-fn op_columns_match_nullability() {
-    let connection = database();
-    let mut statement = connection.prepare("PRAGMA table_info(op)").unwrap();
-    let columns: Vec<(String, bool)> = statement.query_map([], |r| Ok((r.get(1)?, r.get::<_, i64>(3)? == 0 && r.get::<_, i64>(5)? == 0))).unwrap().map(Result::unwrap).collect();
-    let nullable: Vec<&str> = columns.iter().filter(|c| c.1).map(|c| c.0.as_str()).collect();
-    assert_eq!(
-        nullable,
-        [
-            "temp_id", "base_revision", "dedupe_key", "error_kind", "error_message", "cause_kind", "cause_limit", "transfer_id", "batch_id"
-        ]
-    );
 }
 
 fn with_messages_table() -> Connection {

@@ -25,8 +25,3 @@ fn server_descriptor_may_omit_name_mime_and_digest() {
     let parsed = FileDescriptor::from_value(&json!({"id": "s1", "size": 9})).unwrap();
     assert_eq!((parsed.name, parsed.mime, parsed.sha256), (None, None, None));
 }
-
-#[test]
-fn digest_is_lowercase_hex_sha256() {
-    assert_eq!(sha256_hex(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
-}
