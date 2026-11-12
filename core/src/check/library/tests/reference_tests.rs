@@ -57,13 +57,20 @@ fn stream_letters(left_out: &[&str]) -> Vec<Input> {
 /// Coordinator answer H23: a stream name is a handle of the stand, a program that opens the name of a live stream again is not in the family.
 const REOPENED: &str = "H23_stream_opened_again_under_the_name_of_a_live_one";
 
+/// Coordinator answer H16: the library does not promise the order of requests that start in one step (they go out as parallel tasks), so a program that starts several loads in one step is not in the family.
+const UNORDERED: &str = "H16_order_of_loads_that_start_together";
+
+fn without_unpromised(mut programs: Vec<Vec<Input>>) -> Vec<Vec<Input>> {
+    programs.retain(|program| !matches!(first_hole(program), Some(REOPENED | UNORDERED)));
+    programs
+}
+
 fn stream_family(anonymous: bool, left_out: &[&str], deep: usize) -> Vec<Vec<Input>> {
     let letters = stream_letters(left_out);
     let head = prelude(anonymous);
     let mut out: Vec<Vec<Input>> = all_traces(&letters, deep).into_iter().map(|trace| [head.clone(), trace].concat()).collect();
     out.extend((first_seed()..first_seed() + seeds()).map(|seed| [head.clone(), seeded(&letters, seed, LENGTH)].concat()));
-    out.retain(|program| first_hole(program) != Some(REOPENED));
-    out
+    without_unpromised(out)
 }
 
 /// One family of programs: its prelude (with or without a session), its body inputs, its exhaustive depth and its extra programs.
@@ -73,7 +80,7 @@ fn family(anonymous: bool, keep: fn(&Input) -> bool, deep: usize, extra: Vec<Vec
     let mut out: Vec<Vec<Input>> = all_traces(&letters, deep).into_iter().map(|trace| [head.clone(), trace].concat()).collect();
     out.extend((first_seed()..first_seed() + seeds()).map(|seed| [head.clone(), seeded(&letters, seed, LENGTH)].concat()));
     out.extend(extra);
-    out
+    without_unpromised(out)
 }
 
 /// Part `part` of `parts` of a family: the programs whose index modulo `parts` is `part - 1`.
@@ -252,4 +259,14 @@ async fn library_matches_reference_stream_phase_without_network() {
     let waiting = vec![count.clone(), offline.clone(), pull.clone()];
     let cancelled = vec![count, offline, cancel, pull];
     assert_matches([waiting, cancelled].into_iter().map(|body| [prelude(false), body].concat()).collect()).await;
+}
+
+/// Requirement: library.md section 7 `close` + `open`: the windows take `saved`, the network is unknown until the first message of the platform, the identity stays.
+/// Observable: the requests, the answers, the outcomes after the first input that follows the reopening. Assert: no program `prelude ; close ; open ; <letter>` diverges.
+#[tokio::test(flavor = "multi_thread")]
+async fn library_matches_reference_after_reopen() {
+    let reopen = [Input::new("close"), Input::new("open").with("encrypted", true)];
+    let letters: Vec<Input> = alphabet().into_iter().filter(modeled).collect();
+    let programs = all_traces(&letters, 1).into_iter().map(|body| [prelude(false), reopen.to_vec(), body].concat()).collect();
+    assert_matches(without_unpromised(programs)).await;
 }

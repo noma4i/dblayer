@@ -96,6 +96,12 @@ async fn assert_green(properties: Vec<Property>) {
     assert!(found.is_empty(), "{}", found.join("\n\n"));
 }
 
+/// The programs `prelude ; close ; open ; <letter>` for every letter of the alphabet.
+fn reopen_programs() -> Vec<Program> {
+    let reopen = [Input::new("close"), Input::new("open").with("encrypted", true)];
+    all_traces(&alphabet(), 1).into_iter().enumerate().map(|(index, body)| Program { tag: format!("r{index}"), inputs: [prelude(false), reopen.to_vec(), body].concat() }).collect()
+}
+
 /// Requirement: every program of depth 1 and 2 of the alphabet runs on the stand without a panic and without an unsupported input.
 /// Observable: the observations of each program. Assert: none is `unsupported`.
 #[tokio::test(flavor = "multi_thread")]
@@ -123,6 +129,14 @@ async fn library_alphabet_runs() {
 #[tokio::test(flavor = "multi_thread")]
 async fn library_seed_requests() {
     assert_green(request_rules()).await;
+}
+
+/// Requirement: I2, I9, I12 and I13 of invariants.md hold on the first input after `close` + `open`.
+/// Observable: the requests of the mock log, the network flag, the session. Assert: no program `prelude ; close ; open ; <letter>` breaks a rule.
+#[tokio::test(flavor = "multi_thread")]
+async fn library_reopen_requests() {
+    let found = sweep(Arc::new(LibraryOwner { properties: [request_rules(), outcome_rules()].concat(), reference: false }), reopen_programs()).await;
+    assert!(found.is_empty(), "{}", found.join("\n\n"));
 }
 
 /// Requirement: I7 of invariants.md: every accepted load ends with exactly one outcome, none only while the mock holds its request.
