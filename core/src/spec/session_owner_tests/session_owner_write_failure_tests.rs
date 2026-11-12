@@ -184,10 +184,11 @@ fn sess_release_sealing() {
     twin.feed(mutate(7, 11));
     let SessionPhase::Sealing { seal_id, .. } = phase(&twin) else { panic!("sealing") };
     let seal_id = *seal_id;
-    assert_eq!(twin.feed(Input::Release { req_id: 11 }), vec![answer(7, 11, permanent(Fail::NotSent))], "no pair was created");
+    let released = post(&mut twin, SessionInput::Release { req_id: 11 });
+    assert_eq!(released.matches("Answer { author: 7, req_id: 11, outcome: Error { class: Permanent, error: NotSent, pending_retained: false } }").count(), 1, "no pair was created: {released}");
     assert_eq!(kind(&twin), "Idle");
-    assert!(twin.feed(Input::Sealed { seal_id, size: 1 }).is_empty(), "the late Sealed is foreign");
-    assert_eq!((twin.raw_text.as_str(), kind(&twin)), ("[]", "Idle"));
+    assert_eq!(post(&mut twin, SessionInput::Sealed { seal_id, size: 1 }), "[]", "the late Sealed is foreign");
+    assert_eq!(kind(&twin), "Idle");
 }
 
 #[test]

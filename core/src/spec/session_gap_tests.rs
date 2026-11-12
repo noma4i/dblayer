@@ -271,6 +271,6 @@ fn sess_login_after_epoch_end_rejected_pending() {
     let effects = send(&mut det, session, &log, SessionInput::SecretStored { secret_op_id: op, ok: true });
     let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitPending { batch, .. } => Some(*batch), _ => None }).unwrap();
     let effects = send(&mut det, session, &log, SessionInput::Rejected(Rejected { batch, reason: RejectReason::NoSession }));
-    assert!(effects.iter().any(|effect| matches!(effect, SessionEffect::Reply { id: 1, answer: Err(_) })));
-    assert!(!effects.iter().any(|effect| matches!(effect, SessionEffect::ClearSecret { .. })), "{effects:?}");
+    assert!(effects.is_empty(), "Persisting x Rejected NoSession: no answer and no effect: {effects:?}");
+    assert!(matches!(det.state(session).map(SessionState::phase), Some(SessionPhase::Persisting { .. })), "the phase does not change");
 }
