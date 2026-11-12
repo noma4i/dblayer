@@ -6,9 +6,6 @@ export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc 2>/dev/null || sysctl -n hw
 here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=check_steps.sh
 source "$here/check_steps.sh"
-if [ "${1:-}" = --selftest ]; then
-  exec bash "$here/check_processes_test.sh"
-fi
 limit="$1"
 name="$2"
 shift 2

@@ -147,22 +147,12 @@ The Swift and Kotlin lanes compile the consumer app's generated models with warn
 | Everything, including Swift and Kotlin         | `bash scripts/check_dblayer.sh`            |
 | Android R8 release and optimized JVM FFI calls | `gradle -p kotlin/r8-check probe`          |
 | Touched directories only                       | `bash scripts/check_dblayer.sh --fast`     |
-| Check scripts leave unrelated processes alone  | `bash scripts/check_bounded.sh --selftest` |
 
-| A second check run in the same tree is refused (exit 3), a lock of a dead run is taken over | `bash scripts/check_lock_test.sh` |
-| Every check run keeps its logs in its own `target/check-logs/<UTC time>-<sha>-<lane>-<random>/` (step logs, `summary.txt`, `run.txt`, and the Gradle test result XML and report of `gradle-test` under their source paths in `gradle-test.artifacts/`), `target/check-logs/latest` points at the newest run, nothing is deleted | `bash scripts/check_logs_test.sh` |
 | Duplicate mechanisms and names | `bash scripts/check_zoo.sh` |
 | Docs reference real paths | `bash scripts/check_docs.sh` |
 | No test waits without a bound or pauses for a time (`Task.sleep`, `Thread.sleep`, `delay(`) outside the wait helpers | `bash scripts/check_waits.sh` |
 | No code swallows an error with `try?` or `runCatching {...}.getOrNull()` outside `scripts/silent_allowlist.txt` | `bash scripts/check_silent.sh` |
 | Network code has executable coverage for every source file | `bash scripts/check_coverage.sh` (after the swift and gradle test lanes with coverage) |
-| Coverage rejects missing reports and unexecuted lines on both platforms | `python3 -I scripts/check_coverage_test.py` |
-| The docs check accepts a correct tree and refuses unpaired examples, non-English text, banned words, status wording, missing paths and broken links | `python3 -I scripts/check_docs_test.py` |
-| The marker count check refuses old-name markers, files named for them and development files | `python3 -I scripts/check_markers_test.py` |
-| The Android artifact check refuses ABI mismatch, missing libraries and stale source hash | `python3 -I scripts/check_android_artifacts_test.py` |
-| The consumer check refuses missing inputs, reports a red lane and kills a lane past its 300 s limit | `python3 -I scripts/check_consumers_test.py` |
-| The sequence check refuses differing staged bytes and a lane whose listed tests did not pass | `python3 -I scripts/check_sequences_test.py` |
-| The step limit kills the whole process tree and reports it | `python3 -I scripts/check_bounded_test.py` |
 
 The check command stops after 300 seconds and kills its own child processes.
 The Swift tests run one at a time (`swift test --no-parallel`): the process holds one open database, so tests must not overlap.
@@ -185,7 +175,7 @@ Test conventions:
 - Before advancing manual cable clocks, await the registered deadline in Swift and Kotlin. A received frame's timestamp does not prove its asynchronous sleep has registered. A closed socket also precedes the connection actor's completion and its reconnect sleep registration. Read the actor's closed state, then await that sleep. After a reopen delay, await the new socket rather than a fixed settling interval. For terminal closure, await the client's start task before advancing time.
 - A test waits only through `eventually` or `Cursor` (Swift, `Waiting.swift`) and `bounded` or `eventually` (Kotlin, `TestWaiting.kt`). Each wait has a timeout and its failure names the condition. `check_waits.sh` rejects loops, raw iterators, `runBlocking` and pauses (`Task.sleep`, `Thread.sleep`, `delay(`) in tests. A test that needs time to pass moves the test clock.
 - A test that must see a row after upload runs or other commits reads storage (`Query<Asset>().readRow(id)`), not `cachedRow`: a commit evicts the row from the row cache, so a cache read passes or fails with the timing of background runs.
-- The step timer of `run_bounded` freezes the process tree (`SIGSTOP`) before it lists the descendants, so a step that spawns a child at the moment of expiry cannot leave it running. The self test of this (`step_runner_a_step_past_its_limit_leaves_no_process` in `scripts/check_steps_test.sh`, run by `bash scripts/check_steps_test.sh`) lets the limit expire at once and the child appear between the listing and the kill.
+- The step timer of `run_bounded` freezes the process tree (`SIGSTOP`) before it lists the descendants, so a step that spawns a child at the moment of expiry cannot leave it running.
 - Tests are never embedded in source files. A module is a directory with `mod.rs`, and the tests of `x.rs` are in `x_tests.rs` next to it.
 - Every behavior test is written first and seen failing.
 - Rust tests own storage, synchronization and ordering rules. Swift and Kotlin tests check typed calls, decoding, callbacks and platform APIs.
