@@ -13,6 +13,7 @@ android {
 
   defaultConfig {
     minSdk = 33
+    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     consumerProguardFiles("consumer-rules.pro")
     ndk {
       abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -51,11 +52,17 @@ dependencies {
   implementation("com.squareup.okhttp3:okhttp:5.5.0")
   implementation("androidx.lifecycle:lifecycle-process:2.11.0")
   implementation("net.java.dev.jna:jna:5.19.1@aar")
+  implementation("androidx.media3:media3-transformer:1.11.1")
+  implementation("androidx.media3:media3-effect:1.11.1")
+  implementation("androidx.media3:media3-inspector:1.11.1")
   testImplementation("net.java.dev.jna:jna:5.19.1")
   testImplementation("junit:junit:4.13.2")
   testImplementation("org.robolectric:robolectric:4.17")
   testImplementation("com.squareup.okhttp3:mockwebserver:5.5.0")
   testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+  testImplementation("androidx.test:core:1.7.0")
+  androidTestImplementation("androidx.test:runner:1.7.0")
+  androidTestImplementation("androidx.test.ext:junit:1.3.0")
 }
 
 if (providers.gradleProperty("releaseVersion").isPresent && providers.gradleProperty("stagingRepo").isPresent) {
