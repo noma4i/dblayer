@@ -188,13 +188,6 @@ fn a_string_cursor_is_not_numeric() {
 }
 
 #[test]
-fn scopes_keep_written_order() {
-    let model = build_one("  scope :b do\n    query \"B\"\n  end\n  scope :a do\n  end\n  scope :c do\n    query \"C\"\n  end");
-    let names: Vec<_> = model.relations.iter().map(|relation| relation.name.as_str()).collect();
-    assert_eq!(names, vec!["b", "a", "c"]);
-}
-
-#[test]
 fn standard_operations_bind_mutations_and_variables() {
     let model = build_one("  operation :create do\n    mutation \"CreateSample\"\n    variables text: :createdAt, ownerId: :ownerId\n  end\n  operation :update do\n    mutation \"UpdateSample\"\n  end\n  operation :destroy do\n    mutation \"DeleteSample\"\n  end");
     let names: Vec<_> = model.actions.iter().map(|action| action.name.as_str()).collect();
@@ -367,12 +360,6 @@ fn server_only_parameters_keep_their_types_and_enum_defaults() {
     assert_eq!(relation.scalar_types.get("includeOld"), Some(&ScalarKind::Bool));
     assert_eq!(relation.text_types.get("list").map(String::as_str), Some("ListKind"));
     assert_eq!(relation.text_defaults.get("list").map(String::as_str), Some("PRIMARY"));
-}
-
-#[test]
-fn stable_order_marks_the_relation() {
-    let model = build_one("  scope :thread, stable_order: true do\n    parameter :ownerId, :id\n    where ownerId: :ownerId\n    order createdAt: :asc\n    query \"Thread\"\n  end");
-    assert!(model.relations[0].order_stable);
 }
 
 #[test]

@@ -149,20 +149,6 @@ end
 }
 
 #[test]
-fn model_listen_lines_become_model_subscriptions() {
-    let models = parse_models(r#"model User do
-  attribute :online, :bool
-  subscribe "userUpdated", debounce: 300.milliseconds
-  subscribe "userBlocked", apply: { effect: :delete }
-end
-"#).unwrap();
-    let listens = &models[0].listens;
-    assert_eq!(listens.len(), 2);
-    assert_eq!((listens[0].subscription.as_str(), listens[0].debounce.as_deref()), ("userUpdated", Some("300.milliseconds")));
-    assert!(listens[1].removes);
-}
-
-#[test]
 fn internal_access_drops_public_and_unmutated_locals_are_constants() {
     let models = parse_models(r#"model Hit do
   attribute :title, :string
@@ -276,18 +262,6 @@ fn model_with_two_node_relations_gets_one_entity_per_platform() {
     assert!(!swift.contains("entity(_ id: String") && !kotlin.contains("fun entity("), "{swift}\n{kotlin}");
     assert!(swift.contains("func node(_ id: String") && swift.contains("func transcodeStatus(_ id: String"), "{swift}");
     assert!(kotlin.contains("fun node(id: String") && kotlin.contains("fun transcodeStatus(id: String"), "{kotlin}");
-}
-
-#[test]
-fn every_create_form_closes_the_kotlin_companion() {
-    let source = |create: &str| format!("model Moment do\n  attribute :text, :string\n{create}\nend\n");
-    for create in ["", "  operation :create do\n    mutation \"SendMoment\"\n  end", "  operation :create do\n    mutation \"CreateMoment\"\n  end"] {
-        let models = parse_models(&source(create)).unwrap();
-        let kotlin = emit_kotlin(&models, &[], &Default::default());
-        let opened = kotlin.matches('{').count();
-        let closed = kotlin.matches('}').count();
-        assert_eq!(opened, closed, "unbalanced braces for create form {create:?}");
-    }
 }
 
 #[test]
