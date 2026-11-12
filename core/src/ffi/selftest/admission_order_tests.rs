@@ -71,7 +71,7 @@ async fn invoke(name: &str, database: &Arc<Database>, args: &Args) -> Option<Res
         "refresh" => database.refresh(epoch, model, Some("profile".into()), "{}".into()).await,
         "edge_values" => database.edge_values(epoch, model, Some("profile".into()), "{}".into(), vec![row]).await.map(|_| ()),
         "upload" => database.upload(epoch, model, row, args.action.clone(), WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: args.source_path.clone(), name: None, mime: None, prepare: None }, variables_json: "{}".into() }).await.map(|_| ()),
-        "supply_source" => database.supply_source(epoch, model, row, args.action.clone(), WireUploadSource { path: args.source_path.clone(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into() }).await.map(|_| ()),
+        "supply_source" => database.supply_source(epoch, model, row, args.action.clone(), WireUploadSource { path: args.source_path.clone(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into(), prepare: None }).await.map(|_| ()),
         "fail_source" => database.fail_source(epoch, model, row, args.action.clone(), "preparation".into()).await,
         _ => return None,
     })

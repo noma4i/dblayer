@@ -27,7 +27,7 @@ async fn xfer_prop_pending_no_io() {
     let path = directory.path().join("source");
     std::fs::write(&path, b"source").unwrap();
     stand.script.data("CreateBlob", &blob(0));
-    let source = WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into() };
+    let source = WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into(), prepare: None };
     bound(database.supply_source(epoch, "Asset".into(), receipt.items[0].optimistic_value.id.clone(), "create_files".into(), source)).await.unwrap();
     crate::test_wait::settled(&database, "the supplied file reaches the server", || stand.script.count("CreateBlob") > 0).await;
     let life = database.life_handle();
@@ -49,7 +49,7 @@ async fn pending_source_rejects_unknown_row_fields() {
     let path = directory.path().join("source");
     std::fs::write(&path, b"data").unwrap();
     let id = receipt.items[0].optimistic_value.id.clone();
-    let source = WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: r#"{"unknown":1}"#.into(), variables_json: "{}".into() };
+    let source = WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: r#"{"unknown":1}"#.into(), variables_json: "{}".into(), prepare: None };
     assert!(matches!(bound(database.supply_source(epoch, "Asset".into(), id, "create_files".into(), source)).await, Err(crate::ffi::DbError::Invalid { .. })));
     assert_eq!(stand.script.count("CreateBlob"), 0);
     database.close_now();
@@ -68,7 +68,7 @@ async fn transfers_use_the_row_id_when_batches_share_a_correlation_key() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("source");
     std::fs::write(&path, b"data").unwrap();
-    let source = || WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into() };
+    let source = || WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into(), prepare: None };
     let key = "key-0".to_string();
     assert!(matches!(bound(database.supply_source(epoch, "Asset".into(), key.clone(), "create_files".into(), source())).await, Err(crate::ffi::DbError::NotFound { .. })));
     assert!(matches!(bound(database.fail_source(epoch, "Asset".into(), key.clone(), "create_files".into(), "failed".into())).await, Err(crate::ffi::DbError::NotFound { .. })));
@@ -124,7 +124,7 @@ async fn xfer_prop_pending_terminates() {
         let receipt = bound(database.upload_create_batch(epoch, "Asset".into(), items, WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
         for index in order {
             let id = receipt.items[index].optimistic_value.id.clone();
-            let source = WireUploadSource { path: paths[index].to_str().unwrap().into(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into() };
+            let source = WireUploadSource { path: paths[index].to_str().unwrap().into(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into(), prepare: None };
             bound(database.supply_source(epoch, "Asset".into(), id, "create_files".into(), source)).await.unwrap();
         }
         for item in receipt.items {

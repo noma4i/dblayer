@@ -24,7 +24,7 @@ impl Preparer for Refusing {
 fn video(change: impl FnOnce(&mut VideoLimits)) -> WirePrepare {
     let mut limits = default_video_limits();
     change(&mut limits);
-    WirePrepare::Video { limits: Some(limits), mirror: false }
+    WirePrepare::Video { limits: Some(limits), mirror: false, on_cannot_decode: crate::ffi::upload_wire::CannotDecode::Fail }
 }
 
 pub(super) fn image(change: impl FnOnce(&mut PhotoEdit)) -> WirePrepare {
@@ -73,7 +73,7 @@ async fn xfer_prepare_invalid_settings() {
 
     let without = Stand::new();
     let database = without.open(Some(&directory.path().join("other.sqlite")), &[CREATE_MOMENT]).await;
-    let refused = bound(database.send(send(database.session_epoch(), &source, WirePrepare::Video { limits: None, mirror: false }))).await.map(|_| ());
+    let refused = bound(database.send(send(database.session_epoch(), &source, WirePrepare::Video { limits: None, mirror: false, on_cannot_decode: crate::ffi::upload_wire::CannotDecode::Fail }))).await.map(|_| ());
     assert!(matches!(refused, Err(DbError::Invalid { .. })), "no preparer: {refused:?}");
     database.close_now();
 }
@@ -196,7 +196,7 @@ async fn xfer_prepare_failed_and_retry() {
     assert_eq!(failed.error.map(|error| error.kind), Some("prepare_failed".to_string()));
     assert!(files_left(&path) > 0, "the copy of the source stays");
     assert_eq!(stand.script.count("CreateBlob"), 0);
-    let again = crate::ffi::upload_wire::WireUploadSource { path: source.to_str().unwrap().into(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into() };
+    let again = crate::ffi::upload_wire::WireUploadSource { path: source.to_str().unwrap().into(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into(), prepare: None };
     assert!(matches!(bound(database.retry(epoch, "Moment".into(), id.clone(), Some("upload_clip".into()), Some(again))).await, Err(DbError::Invalid { .. })), "a new source is a new upload");
     let retried = bound(database.retry(epoch, "Moment".into(), id.clone(), Some("upload_clip".into()), None)).await.unwrap();
     bound(database.confirmed(retried, false)).await.unwrap();

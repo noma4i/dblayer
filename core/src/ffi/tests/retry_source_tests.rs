@@ -67,7 +67,7 @@ async fn xfer_retry_source_swap_reopen() {
     assert_eq!(std::fs::read(&copy).unwrap(), b"original image");
     let before = names(copy.parent().unwrap());
     database.set_online(false).unwrap();
-    let bad = WireUploadSource { path: directory.path().to_string_lossy().into_owned(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into() };
+    let bad = WireUploadSource { path: directory.path().to_string_lossy().into_owned(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into(), prepare: None };
     let retry = within(database.retry(epoch, "Moment".into(), "r1".into(), Some("upload".into()), Some(bad))).await;
     assert!(matches!(retry, Err(DbError::Copy { .. })), "retry: {retry:?}");
     assert_eq!(std::fs::read(&copy).unwrap(), b"original image");

@@ -421,8 +421,8 @@ impl Preparer for ScriptedPreparer {
 }
 
 /// The source of `supply_source` that carries the prepare settings of the transfer.
-pub(super) fn source_of(path: &Path, values_json: &str, _prepare: &crate::ffi::upload_wire::WirePrepare) -> crate::ffi::upload_wire::WireUploadSource {
-    crate::ffi::upload_wire::WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: values_json.into(), variables_json: "{}".into() }
+pub(super) fn source_of(path: &Path, values_json: &str, prepare: &crate::ffi::upload_wire::WirePrepare) -> crate::ffi::upload_wire::WireUploadSource {
+    crate::ffi::upload_wire::WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: values_json.into(), variables_json: "{}".into(), prepare: Some(prepare.clone()) }
 }
 
 /// The video the platform read: `reencode` is a source that the table of limits cannot keep as it is, `keys` are the metadata keys of the file.
@@ -431,11 +431,11 @@ pub(super) fn video_probe(keys: &[&str], reencode: bool) -> ProbeOutcome {
 }
 
 /// The settings of a video that say what a device that cannot decode the source does: the field of the settings comes with the type.
-pub(super) fn cannot_decode_settings(_upload_source: bool) -> crate::ffi::upload_wire::WirePrepare {
-    crate::ffi::upload_wire::WirePrepare::Video { limits: Some(crate::prepare::default_video_limits()), mirror: false }
+pub(super) fn cannot_decode_settings(upload_source: bool) -> crate::ffi::upload_wire::WirePrepare {
+    crate::ffi::upload_wire::WirePrepare::Video { limits: Some(crate::prepare::default_video_limits()), mirror: false, on_cannot_decode: if upload_source { crate::ffi::upload_wire::CannotDecode::UploadSource } else { crate::ffi::upload_wire::CannotDecode::Fail } }
 }
 
 /// The typed reason of a failed upload: the field of the failure comes with the type.
 pub(super) fn failure_reason(upload: &crate::ffi::wire::WireUpload) -> Option<String> {
-    upload.error.as_ref().and_then(|error| format!("{error:?}").contains("device_cannot_decode").then(|| "device_cannot_decode".to_string()))
+    upload.error.as_ref().and_then(|error| error.reason.clone())
 }
