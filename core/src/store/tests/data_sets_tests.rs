@@ -571,6 +571,73 @@ fn data_sets_hidden_value_is_not_read() {
     assert_eq!(changes.iter().flat_map(|(_, fields)| hidden(fields.clone())).collect::<Vec<_>>(), Vec::<String>::new(), "the changed fields");
 }
 
+fn parent_operation(db: &Arc<Store>, op_id: u64, action: &str, row: &RowValue) {
+    let effects = crate::owners::store::IntentEffects { rows: vec![crate::owners::store::EffectRow { model: "chats".into(), row_id: row.row_id.clone(), values: row.values.clone() }], ..Default::default() };
+    write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id, model: "chats".into(), row_id: row.row_id.clone(), action: action.into(), payload: row.values.clone(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
+}
+
+fn local_parent(db: &Arc<Store>, path: &str, values: Value) {
+    let row = RowValue { row_id: values["id"].as_str().unwrap().into(), values: values.to_string() };
+    match path {
+        "rows" => write(db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::LocalRows { model: "chats".into(), rows: vec![row] }]),
+        "operation" => parent_operation(db, 7, "create", &row),
+        other => panic!("no path {other}"),
+    }
+}
+
+fn shown_parent(db: &Store) -> serde_json::Map<String, Value> {
+    db.read(&["chats"], |reader| reader.point("chats", "c1")).unwrap().unwrap()
+}
+
+/// P-DATA-121: the row of a parent written on the device keeps the value its own write gave to a `sets:` field, and its children compete with that value.
+#[test]
+fn data_sets_own_value_of_a_local_parent() {
+    for path in ["rows", "operation"] {
+        let db = open();
+        local_parent(&db, path, json!({"id": "c2", "title": "new", "lastMessageAt": 5}));
+        assert_eq!(super::sets_reference_tests::stored_sets_of(&db, "c2").at, Some(5), "{path}: no children, the value of the create");
+        land_children(&db, vec![child("m1", "c2", 3, None)]);
+        assert_eq!(super::sets_reference_tests::stored_sets_of(&db, "c2").at, Some(5), "{path}: an older confirmed child");
+        land_children(&db, vec![child("m2", "c2", 9, None)]);
+        let newer = super::sets_reference_tests::stored_sets_of(&db, "c2");
+        assert_eq!((newer.id.as_deref(), newer.at), (Some("m2"), Some(9)), "{path}: a newer child");
+        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RemoveRows { model: "messages".into(), ids: vec!["m2".into(), "m1".into()] }]);
+        assert_eq!(super::sets_reference_tests::stored_sets_of(&db, "c2").at, Some(5), "{path}: the children are destroyed");
+        let mut answer = vec![StoreOp::Rows { model: "chats".into(), rows: vec![RowValue { row_id: "c2".into(), values: json!({"id": "c2", "title": "new", "lastMessageAt": 7}).to_string() }] }];
+        if path == "operation" { answer.push(StoreOp::RemoveIntent { op_id: 7 }); }
+        write(&db, BatchAuthor::Outbox, Vec::new(), answer);
+        assert_eq!(super::sets_reference_tests::stored_sets_of(&db, "c2").at, Some(7), "{path}: the row of the server");
+    }
+}
+
+/// P-DATA-121: a local write of the parent that leaves the `sets:` fields alone does not turn the shown value of a child into the value of the row.
+#[test]
+fn data_sets_local_edit_of_the_parent_keeps_the_own_value() {
+    let db = open();
+    parent_row(&db, server_row("m5", 7, 3));
+    land_children(&db, vec![child("m9", "c1", 9, Some(4))]);
+    assert_eq!(sets(&db), shown("m9", 9, Some(4), "m9"), "the newer child");
+    let mut row = shown_parent(&db);
+    row.insert("title".into(), json!("renamed"));
+    local_parent(&db, "rows", Value::Object(row));
+    assert_eq!(sets(&db), shown("m9", 9, Some(4), "m9"), "the edit of another field");
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RemoveRows { model: "messages".into(), ids: vec!["m9".into()] }]);
+    assert_eq!(sets(&db), sets_of("m5", 7, 3), "the value of the server after the child is destroyed");
+}
+
+/// P-DATA-121: a local operation that edits a `sets:` field of the parent gives the value of the row, its rollback returns the value before the operation.
+#[test]
+fn data_sets_local_edit_of_the_field_and_its_rollback() {
+    let db = open();
+    parent_row(&db, server_row("m5", 7, 3));
+    let mut row = shown_parent(&db);
+    row.insert("lastMessageAt".into(), json!(20));
+    parent_operation(&db, 7, "edit", &RowValue { row_id: "c1".into(), values: Value::Object(row).to_string() });
+    assert_eq!(sets(&db), sets_of("m5", 20, 3), "the value of the operation");
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RollBack { op_id: 7 }, StoreOp::RemoveIntent { op_id: 7 }]);
+    assert_eq!(sets(&db), sets_of("m5", 7, 3), "the value before the operation");
+}
+
 /// data_sets_hidden_value_is_not_read_declared (P-DATA-58): a field `server__x` of a `.dbl` model is refused when the schema is built.
 #[test]
 fn data_sets_hidden_value_is_not_read_declared() {

@@ -82,3 +82,30 @@ async fn flow_chat_last_message_follows_a_message_event() {
     assert_eq!(chat_cell(&rig, &rows, "lastActivityAt"), Some(int(200)));
     rig.database.close_now();
 }
+
+fn add_chat_create(models: &mut serde_json::Value) {
+    let chat = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Chat").unwrap();
+    let mut create = crate::schema::ActionDeclaration::new("create", crate::schema::RootShape::Upsert);
+    create.mutation = Some("CreateChat".into());
+    create.has_optimistic = true;
+    create.has_temp_row_retention = true;
+    create.variables.insert("name".into(), "name".into());
+    chat["actions"].as_array_mut().unwrap().push(serde_json::to_value(create).unwrap());
+}
+
+/// P-DATA-121: a chat created on the device shows the activity time its create gave, in the receipt and in a read.
+#[tokio::test(flavor = "multi_thread")]
+async fn flow_chat_created_on_the_device_keeps_its_own_activity_time() {
+    let rig = Rig::signed_as(World::new("server", "A", true), false, events(|models| { add_chat(models); add_chat_create(models); })).await;
+    let _answer = rig.world.hold_next("CreateChat");
+    let epoch = rig.database.session_epoch();
+
+    let receipt = bound(rig.database.create(epoch, "Chat".into(), json!({"name": "new", "lastActivityAt": 5}).to_string(), "{}".into())).await.unwrap();
+
+    let shown = receipt.optimistic_value.clone().unwrap();
+    assert_eq!(cell(&rig, "Chat", &shown, "lastActivityAt"), int(5), "the row of the receipt");
+    let read = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(r#"{"model":"Chat"}"#))).await.unwrap();
+    let stored = read.iter().find(|row| row.id == shown.id).expect("the created chat is stored");
+    assert_eq!(cell(&rig, "Chat", stored, "lastActivityAt"), int(5), "the stored row");
+    rig.database.close_now();
+}
