@@ -68,3 +68,8 @@ gen/src/schema_check/fields.rs	let base = association.and_then(|association| ass
 gen/src/schema_check/fields.rs	Some(attribute.from.as_ref().map_or(name, |found| found.item.as_str()).split('.').map(str::to_string).collect())	M59
 gen/src/schema_check/fields.rs	let segment = selected.first().map_or(*key, |field| field.name.as_str());	M32
 gen/src/decl/lower/fields.rs	decl.null = null_given.map_or(schema_null, |pair| boolean(cx, &pair.value, "`null`").unwrap_or(false));	M63
+gen/src/decl/lower/scopes.rs	Value::Array(items) => items.iter().filter_map(|item| symbol(cx, item, what)).collect(),	P-DATA-57
+gen/src/decl/lower/fields.rs	let derived = line.opt(cx, "derived").and_then(|pair| boolean(cx, &pair.value, "`derived`")).unwrap_or(false);	P-DATA-56
+gen/src/check/derived.rs	errors.push(at(child.file, association.newer_pos.unwrap_or(association.pos), format!("`newer` of `{}` needs `sets:`", association.name)));	P-DATA-57
+gen/src/check/derived.rs	errors.push(at(child.file, association.newer_pos.unwrap_or(association.pos), format!("`newer` of `{}` names unknown field `{field}` of {}", association.name, child.name)));	P-DATA-57
+gen/src/check/derived.rs	match writers.get(&(node.name.as_str(), attribute.name.as_str())).copied().unwrap_or(0) {	P-DATA-56
