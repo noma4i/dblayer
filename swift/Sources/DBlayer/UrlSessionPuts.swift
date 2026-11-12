@@ -69,15 +69,18 @@ enum PutDescription {
   }
 }
 
-/// What the delegate of the system session and the app report, in the order it came.
+/// What the delegate of the system session, the core and the app report, in the order it came.
 private enum PutEvent: Sendable {
+  case start(PutIdentity, PutTarget, PutFile)
+  case cancel(PutIdentity)
+  case resume([PutIdentity])
   case sent(PutIdentity, UInt64)
   case ended(PutIdentity, RawOutcome)
   case handed(@Sendable () -> Void)
   case finished
 }
 
-/// The one line the events of the session and the completions of the app go through: its single reader sees them in the order they came.
+/// The one line the calls of the core, the events of the session and the completions of the app go through: its single reader sees them in the order they came.
 final class PutFeed: PutEvents, Sendable {
   fileprivate let stream: AsyncStream<PutEvent>
   private let continuation: AsyncStream<PutEvent>.Continuation
@@ -97,9 +100,15 @@ final class PutFeed: PutEvents, Sendable {
   func eventsFinished() { continuation.yield(.finished) }
 
   func handed(_ completion: @escaping @Sendable () -> Void) { continuation.yield(.handed(completion)) }
+
+  fileprivate func start(_ identity: PutIdentity, _ target: PutTarget, _ file: PutFile) { continuation.yield(.start(identity, target, file)) }
+
+  fileprivate func cancel(_ identity: PutIdentity) { continuation.yield(.cancel(identity)) }
+
+  fileprivate func resume(_ identities: [PutIdentity]) { continuation.yield(.resume(identities)) }
 }
 
-/// The executor of the PUTs outside the process: every call is one call of the system session or one input of the core. The events of the session reach the core in the order they came, and the completions of a wake run after the core is quiet.
+/// The executor of the PUTs outside the process: every call is one call of the system session or one input of the core, and all of them run in the order of the feed. The events of the session reach the core in the order they came, and the completions of a wake run after the core is quiet.
 final class UrlSessionPuts: PutExecutor, Sendable {
   /// The one executor of the process: one open is one background session.
   static let process: UrlSessionPuts? = available()
@@ -132,38 +141,11 @@ final class UrlSessionPuts: PutExecutor, Sendable {
 
   func attach(_ database: any PutInputs) { Task { await inputs.set(database) } }
 
-  func startPut(identity: PutIdentity, target: PutTarget, file: PutFile) {
-    guard let address = URL(string: target.url) else {
-      Task { await inputs.get().putMissing(identity: identity) }
-      return
-    }
-    var request = URLRequest(url: address, timeoutInterval: TimeInterval(target.requestMs) / 1000)
-    request.httpMethod = "PUT"
-    target.headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
-    session.upload(request, fromFile: URL(fileURLWithPath: file.path), description: PutDescription.text(identity))
-  }
+  func startPut(identity: PutIdentity, target: PutTarget, file: PutFile) { feed.start(identity, target, file) }
 
-  func cancelPut(identity: PutIdentity) {
-    let text = PutDescription.text(identity)
-    Task { await session.tasks().filter { $0.taskDescription == text }.forEach { $0.cancel() } }
-  }
+  func cancelPut(identity: PutIdentity) { feed.cancel(identity) }
 
-  func resumePuts(identities: [PutIdentity]) {
-    Task {
-      let tasks = await session.tasks()
-      let listed = Set(identities)
-      var found: [PutIdentity: any PutTask] = [:]
-      for task in tasks {
-        guard let held = PutDescription.identity(task.taskDescription) else { continue }
-        if listed.contains(held) { found[held] = task } else { task.cancel() }
-      }
-      let inputs = await inputs.get()
-      for identity in identities {
-        guard let task = found[identity] else { inputs.putMissing(identity: identity); continue }
-        if task.state == .completed { inputs.putEnded(identity: identity, outcome: Self.outcome(of: task)) }
-      }
-    }
-  }
+  func resumePuts(identities: [PutIdentity]) { feed.resume(identities) }
 
   static func outcome(of task: any PutTask) -> RawOutcome {
     if let error = task.error { return .failed(error) }
@@ -180,10 +162,43 @@ final class UrlSessionPuts: PutExecutor, Sendable {
 
   private func deliver(_ stream: AsyncStream<PutEvent>) async {
     var handed: [@Sendable () -> Void] = []
+    var started: Set<PutIdentity> = []
+    var ended: Set<PutIdentity> = []
     for await event in stream {
       switch event {
+      case let .start(identity, target, file):
+        guard let request = Self.request(target) else {
+          await inputs.get().putEnded(identity: identity, outcome: .failed(failure: RawFailure(domain: "url", code: nil, message: "the PUT target is not a URL")))
+          continue
+        }
+        started.insert(identity)
+        session.upload(request, fromFile: URL(fileURLWithPath: file.path), description: PutDescription.text(identity))
+      case let .cancel(identity):
+        started.remove(identity)
+        let text = PutDescription.text(identity)
+        await session.tasks().filter { $0.taskDescription == text }.forEach { $0.cancel() }
+      case let .resume(identities):
+        let tasks = await session.tasks()
+        let listed = Set(identities)
+        var found: [PutIdentity: any PutTask] = [:]
+        for task in tasks {
+          guard let held = PutDescription.identity(task.taskDescription) else { continue }
+          if listed.contains(held) { found[held] = task } else if !started.contains(held) { task.cancel() }
+        }
+        let inputs = await inputs.get()
+        let delivered = ended
+        ended = []
+        for identity in identities where !delivered.contains(identity) {
+          guard let task = found[identity] else { inputs.putMissing(identity: identity); continue }
+          guard task.state == .completed else { continue }
+          ended.insert(identity)
+          inputs.putEnded(identity: identity, outcome: Self.outcome(of: task))
+        }
       case let .sent(identity, bytes): await inputs.get().putProgress(identity: identity, sent: bytes)
-      case let .ended(identity, outcome): await inputs.get().putEnded(identity: identity, outcome: outcome)
+      case let .ended(identity, outcome):
+        started.remove(identity)
+        guard ended.insert(identity).inserted else { continue }
+        await inputs.get().putEnded(identity: identity, outcome: outcome)
       case let .handed(completion): handed.append(completion)
       case .finished:
         let ready = handed
@@ -193,6 +208,14 @@ final class UrlSessionPuts: PutExecutor, Sendable {
         ready.forEach { DispatchQueue.main.async(execute: $0) }
       }
     }
+  }
+
+  private static func request(_ target: PutTarget) -> URLRequest? {
+    guard let address = URL(string: target.url) else { return nil }
+    var request = URLRequest(url: address, timeoutInterval: TimeInterval(target.requestMs) / 1000)
+    request.httpMethod = "PUT"
+    target.headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
+    return request
   }
 }
 

@@ -25,8 +25,13 @@ private final class FakeTask: PutTask, @unchecked Sendable {
 private final class FakeSession: PutSession, @unchecked Sendable {
   private(set) var uploads: [(URLRequest, URL, String)] = []
   var held: [FakeTask] = []
+  let uploaded = Awaited<Void>()
 
-  func upload(_ request: URLRequest, fromFile file: URL, description: String) { uploads.append((request, file, description)) }
+  func upload(_ request: URLRequest, fromFile file: URL, description: String) {
+    uploads.append((request, file, description))
+    held.append(FakeTask(description: description))
+    Task { await uploaded.set(()) }
+  }
 
   func tasks() async -> [any PutTask] { held }
 }
@@ -46,7 +51,10 @@ private final class RecordingInputs: PutInputs, @unchecked Sendable {
 
   func putEnded(identity: PutIdentity, outcome: RawOutcome) {
     var text = "ended \(identity.transferId).\(identity.cycleId).\(identity.attempt)"
-    if case let .response(status, etag, _) = outcome { text += " \(status) \(etag ?? "-")" }
+    switch outcome {
+    case let .response(status, etag, _): text += " \(status) \(etag ?? "-")"
+    case let .failed(failure): text += " failed \(failure.message)"
+    }
     record(text)
   }
 
@@ -75,6 +83,8 @@ private func answer(_ status: Int, etag: String?) -> HTTPURLResponse {
   HTTPURLResponse(url: URL(string: "https://storage.test/1")!, statusCode: status, httpVersion: nil, headerFields: etag.map { ["ETag": $0] })!
 }
 
+private func target(_ url: String, headers: [String: String] = [:]) -> PutTarget { PutTarget(url: url, headers: headers, connectMs: 1, requestMs: 2000, responseLimit: 10) }
+
 private let identity = PutIdentity(transferId: 7, cycleId: 1, attempt: 2)
 
 private let sessionIdentifier = "test.dblayer.uploads"
@@ -88,10 +98,11 @@ private func executor(_ session: FakeSession, inputs: RecordingInputs) -> UrlSes
 struct UrlSessionPutsTests {
   /// `StartPut` hands the system a task of the file with the identity as its description, the method and the headers of the target.
   @Test
-  func startPutCreatesATaskNamedByTheIdentity() {
+  func startPutCreatesATaskNamedByTheIdentity() async {
     let session = FakeSession()
     let puts = executor(session, inputs: RecordingInputs())
-    puts.startPut(identity: identity, target: PutTarget(url: "https://storage.test/1", headers: ["Content-Type": "video/mp4"], connectMs: 1, requestMs: 2000, responseLimit: 10), file: PutFile(path: "/tmp/copy", offset: 0, length: 5))
+    puts.startPut(identity: identity, target: target("https://storage.test/1", headers: ["Content-Type": "video/mp4"]), file: PutFile(path: "/tmp/copy", offset: 0, length: 5))
+    await session.uploaded.get()
     let (request, file, description) = session.uploads[0]
     #expect((request.httpMethod, request.value(forHTTPHeaderField: "Content-Type"), file.path, PutDescription.identity(description)) == ("PUT", "video/mp4", "/tmp/copy", identity))
   }
@@ -128,6 +139,48 @@ struct UrlSessionPutsTests {
     puts.resumePuts(identities: [identity, PutIdentity(transferId: 8, cycleId: 1, attempt: 1), PutIdentity(transferId: 9, cycleId: 1, attempt: 1)])
     #expect(await inputs.inputs(2) == ["ended 7.1.2 200 e", "missing 9.1.1"])
     #expect((finished.cancelled, running.cancelled, foreign.cancelled) == (false, false, true))
+  }
+
+  /// A target that is not a URL ends the attempt with a failure that carries the reason: the core classifies it, the executor does not decide and no `PutMissing` comes.
+  @Test
+  func aTargetThatIsNotAUrlEndsTheAttemptWithAFailure() async {
+    let session = FakeSession()
+    let inputs = RecordingInputs()
+    let puts = executor(session, inputs: inputs)
+    puts.startPut(identity: identity, target: target("not a url"), file: PutFile(path: "/tmp/copy", offset: 0, length: 5))
+    puts.feed.sent(description: PutDescription.text(identity), bytes: 1)
+    #expect(await inputs.inputs(2) == ["ended 7.1.2 failed the PUT target is not a URL", "sent 7.1.2 1"])
+    #expect(session.uploads.isEmpty)
+  }
+
+  /// A task whose end the system already delivered gets no `PutMissing` from `ResumePuts`, whichever of the two comes first: the core receives one `PutEnded`.
+  @Test(arguments: [true, false])
+  func aDeliveredEndGetsNeitherAMissingNorASecondEnd(endFirst: Bool) async {
+    let session = FakeSession()
+    let finished = FakeTask(description: PutDescription.text(identity), state: .completed, response: answer(200, etag: "e"))
+    let inputs = RecordingInputs()
+    let puts = executor(session, inputs: inputs)
+    if endFirst {
+      puts.feed.ended(description: finished.taskDescription, outcome: UrlSessionPuts.outcome(of: finished))
+    } else {
+      session.held = [finished]
+    }
+    puts.resumePuts(identities: [identity])
+    if !endFirst { puts.feed.ended(description: finished.taskDescription, outcome: UrlSessionPuts.outcome(of: finished)) }
+    puts.feed.sent(description: PutDescription.text(identity), bytes: 1)
+    #expect(await inputs.inputs(2) == ["ended 7.1.2 200 e", "sent 7.1.2 1"])
+  }
+
+  /// A task `StartPut` created before `ResumePuts` runs is not cancelled as foreign, though the list of the core does not name it.
+  @Test
+  func aTaskStartedBeforeTheResumeIsNotCancelled() async {
+    let session = FakeSession()
+    let inputs = RecordingInputs()
+    let puts = executor(session, inputs: inputs)
+    puts.startPut(identity: identity, target: target("https://storage.test/1"), file: PutFile(path: "/tmp/copy", offset: 0, length: 5))
+    puts.resumePuts(identities: [PutIdentity(transferId: 9, cycleId: 1, attempt: 1)])
+    #expect(await inputs.inputs(1) == ["missing 9.1.1"])
+    #expect(session.held.map(\.cancelled) == [false])
   }
 
   /// `CancelPut` cancels the task with that description and no other.
