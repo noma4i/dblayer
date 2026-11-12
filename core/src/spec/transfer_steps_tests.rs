@@ -421,22 +421,6 @@ fn xfer_uploading_retry() {
 }
 
 #[test]
-fn xfer_uploading_stray() {
-    let mut twin = Twin::new();
-    let id = twin.uploading(KEY, 3);
-    let attempt_id = twin.attempt(id);
-    twin.ignores(
-        id,
-        vec![
-            TransferInput::StepOk { transfer_id: id, attempt_id: attempt_id + 1, part: Some(1), upload_id: None, etag: None },
-            TransferInput::StepError { transfer_id: id, attempt_id: attempt_id + 1, temporary: false, error: super::transfer_harness::refusal() },
-            TransferInput::StepOk { transfer_id: id + 40, attempt_id, part: Some(1), upload_id: None, etag: None },
-            TransferInput::StepOk { transfer_id: id, attempt_id, part: Some(3), upload_id: None, etag: None },
-        ],
-    );
-}
-
-#[test]
 fn xfer_uploading_other() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 3);
@@ -447,6 +431,10 @@ fn xfer_uploading_other() {
             TransferInput::Completed { transfer_id: id, attempt_id, signed_id: None },
             TransferInput::CompleteError { transfer_id: id, attempt_id, temporary: false, error: super::transfer_harness::refusal() },
             TransferInput::MutationOutcome { transfer_id: id, cycle_id: 1, intent_removed: true, outcome: OutboxOutcome::Confirmed { revision: 1, result: None, row_id: None }, row_never_created: false },
+            TransferInput::StepOk { transfer_id: id, attempt_id: attempt_id + 1, part: Some(1), upload_id: None, etag: None },
+            TransferInput::StepError { transfer_id: id, attempt_id: attempt_id + 1, temporary: false, error: super::transfer_harness::refusal() },
+            TransferInput::StepOk { transfer_id: id + 40, attempt_id, part: Some(1), upload_id: None, etag: None },
+            TransferInput::StepOk { transfer_id: id, attempt_id, part: Some(3), upload_id: None, etag: None },
         ],
     );
 }
@@ -488,6 +476,7 @@ fn xfer_persisting_other() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 3);
     twin.step_ok(id, 1, None);
+    refuses_calls(&mut twin, KEY);
     assert!(Twin::quiet(&twin.online(false)));
     assert!(Twin::quiet(&twin.post(TransferInput::PowerSaving(true))));
     assert_eq!((twin.state().online, twin.state().saving, twin.stage(id)), (Some(false), true, TransferStage::PersistingPart), "the fields are updated, the state stays");
@@ -557,15 +546,6 @@ fn xfer_persisting_storage_failure() {
     assert_eq!(again.batches[0].ops, first.batches[0].ops, "completed and the intent are written again together");
     let committed = complete.commit();
     assert_eq!((complete.stage(id), committed.submits(), committed.completes()), (TransferStage::Mutating, 1, 0));
-}
-
-#[test]
-fn xfer_persisting_part_refuses() {
-    let mut twin = Twin::new();
-    let id = twin.uploading(KEY, 3);
-    twin.step_ok(id, 1, None);
-    refuses_calls(&mut twin, KEY);
-    assert_eq!(twin.stage(id), TransferStage::PersistingPart);
 }
 
 #[test]
