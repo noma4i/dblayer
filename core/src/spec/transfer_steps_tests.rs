@@ -532,7 +532,8 @@ fn xfer_attempt_tick() {
     let stale = twin.post(TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id: twin.attempt(id) + 1000 } });
     assert!(Twin::quiet(&stale), "{stale:?}");
     let again = twin.tick_retry(id);
-    assert_eq!((again.writes(), again.steps().len(), again.rows().len()), (1, 0, 1));
+    assert_eq!((again.writes(), again.steps().len(), twin.stage(id)), (1, 0, TransferStage::PersistingAttempt));
+    assert_eq!((again.kinds(), again.rows()[0].0.failed.clone()), (first.kinds(), None), "the mark of the attempt, not Failed");
     assert_eq!(again.rows()[0].0.attempts, first.rows()[0].0.attempts, "attempts + 1 of the same value");
 }
 
