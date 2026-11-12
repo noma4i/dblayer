@@ -195,6 +195,7 @@ impl Database {
                     Self::start(config, models_json, transport, endpoint, clock)?
                 }
             };
+            super::transport::follow_life(&database.life);
             Ok(database)
         }).await
     }

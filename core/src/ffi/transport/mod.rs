@@ -104,15 +104,12 @@ impl OnlineSink {
             connectivity.change(online);
             return Ok(());
         }
-        if matches!(self.target, SignalTarget::Status) { return Ok(()); }
-        let Some(life) = self.life() else { return Err(super::command::closed()) };
-        let waiter = life.set_online(online);
-        match crate::blocking::blocking_unit(|| block_on(waiter.wait())) {
-            crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Online { closed: false }) => Ok(()),
-            crate::runtime::Outcome::Value(_) | crate::runtime::Outcome::Closing => Err(super::command::closed()),
-            crate::runtime::Outcome::EpochEnded(cause) => Err(super::cause_error(&super::EndCause::of(cause))),
-            crate::runtime::Outcome::Internal => Err(DbError::Internal { detail: "the answer of the owner was lost".into() }),
+        if matches!(self.target, SignalTarget::Status) {
+            feed_followers(online);
+            return Ok(());
         }
+        let Some(life) = self.life() else { return Err(super::command::closed()) };
+        deliver_life(&life, online)
     }
 
     pub(crate) fn registrations(&self) -> Arc<Registrations> { self.registrations.clone() }
@@ -143,6 +140,66 @@ impl OnlineSink {
     /// One return to the foreground. Dropped when the registration of `token` ended, also after `stop` of the observers was asked.
     pub fn enter_foreground(&self, token: u64) {
         if let Some(life) = self.life() { self.registrations.deliver(token, || drop(life.foreground())); }
+    }
+}
+
+enum Follower {
+    Life(std::sync::Weak<crate::owners::life::Life>),
+    Connectivity(std::sync::Weak<crate::transport::Connectivity>),
+}
+
+fn followers() -> &'static std::sync::Mutex<Vec<Follower>> {
+    static FOLLOWERS: std::sync::OnceLock<std::sync::Mutex<Vec<Follower>>> = std::sync::OnceLock::new();
+    FOLLOWERS.get_or_init(Default::default)
+}
+
+fn alive(follower: &Follower) -> bool {
+    match follower {
+        Follower::Life(life) => life.strong_count() > 0,
+        Follower::Connectivity(connectivity) => connectivity.strong_count() > 0,
+    }
+}
+
+pub(crate) fn follow_life(life: &Arc<crate::owners::life::Life>) {
+    let mut all = crate::lock::lock(followers());
+    all.retain(alive);
+    all.push(Follower::Life(Arc::downgrade(life)));
+    drop(all);
+    if let Some(online) = *super::network_status::network_value().borrow() { let _ = deliver_life(life, online); }
+}
+
+pub(crate) fn follow_connectivity(connectivity: &Arc<crate::transport::Connectivity>) {
+    let mut all = crate::lock::lock(followers());
+    all.retain(alive);
+    all.push(Follower::Connectivity(Arc::downgrade(connectivity)));
+    drop(all);
+    if let Some(online) = *super::network_status::network_value().borrow() { connectivity.change(online); }
+}
+
+pub(crate) fn feed_followers(online: bool) {
+    let live: Vec<Follower> = {
+        let mut all = crate::lock::lock(followers());
+        all.retain(alive);
+        all.iter().map(|follower| match follower {
+            Follower::Life(life) => Follower::Life(life.clone()),
+            Follower::Connectivity(connectivity) => Follower::Connectivity(connectivity.clone()),
+        }).collect()
+    };
+    for follower in live {
+        match follower {
+            Follower::Life(life) => { if let Some(life) = life.upgrade() { let _ = deliver_life(&life, online); } }
+            Follower::Connectivity(connectivity) => { if let Some(connectivity) = connectivity.upgrade() { connectivity.change(online); } }
+        }
+    }
+}
+
+pub(super) fn deliver_life(life: &Arc<crate::owners::life::Life>, online: bool) -> Result<(), DbError> {
+    let waiter = life.set_online(online);
+    match crate::blocking::blocking_unit(|| block_on(waiter.wait())) {
+        crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Online { closed: false }) => Ok(()),
+        crate::runtime::Outcome::Value(_) | crate::runtime::Outcome::Closing => Err(super::command::closed()),
+        crate::runtime::Outcome::EpochEnded(cause) => Err(super::cause_error(&super::EndCause::of(cause))),
+        crate::runtime::Outcome::Internal => Err(DbError::Internal { detail: "the answer of the owner was lost".into() }),
     }
 }
 

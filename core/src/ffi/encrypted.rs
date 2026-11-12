@@ -189,6 +189,7 @@ async fn fetch_observed(encrypted: EncryptedConfig, platform: core::AppPlatform,
     }
     let FetchPorts { http, retries, observers } = ports;
     let connectivity = core::Connectivity::new(false);
+    super::transport::follow_connectivity(&connectivity);
     let _stop = StopOnDrop(observers.clone());
     if let Some(observers) = observers {
         let sink = super::OnlineSink::of_connectivity(connectivity.clone());
