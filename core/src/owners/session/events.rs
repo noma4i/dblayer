@@ -450,7 +450,6 @@ impl SessionState {
             }
             (SessionPhase::Idle, SessionInput::Mutate { author, owner, req_id, epoch, path, body, purpose }) => {
                 self.phase = SessionPhase::Idle;
-                if let Some(error) = self.admission(Some(epoch)) { author_error(fx, author, req_id, ErrorClass::Permanent, error); return; }
                 if self.awaits_publication() {
                     self.queue_mutate(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
                     return;
