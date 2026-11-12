@@ -6,7 +6,6 @@ use serde_json::{Map, Value};
 use crate::store::{BatchPlan, CommitResult, DestroyReason, EntityOp, OperationTransition, PendingLocal, WindowDebt};
 use crate::identity::{Generation, ModelKey, RowId, RowRef};
 use crate::owners::store::RowValue;
-use crate::schema::AssociationSpec;
 
 use super::merge::{admitted_with_fields, unconfirmed_fields, Admission, RowKind};
 use super::{ModelInfo, Reader, StoreError};
@@ -22,7 +21,6 @@ fn number_at(row: &mut Map<String, Value>, path: &[&str], number: i64) {
 pub(super) struct RowWrite<'a> {
     pub connection: &'a Connection,
     pub models: &'a BTreeMap<String, ModelInfo>,
-    pub guards: &'a BTreeMap<String, Vec<AssociationSpec>>,
     pub generation: Generation,
     pub revision: i64,
     pub now: i64,
@@ -158,8 +156,7 @@ impl RowWrite<'_> {
         if let Some(row) = self.stored(model, id.as_str())? { stored.insert(id.to_string(), row); }
         let spec = &self.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
         let reader = Reader::new(self.connection, self.models);
-        let guards = self.guards.get(model).map(Vec::as_slice).unwrap_or_default();
-        admitted_with_fields(&reader, kind, admission, model, patch, spec, guards, self.feed_fields.get(&(model.to_string(), admission.closing)), self.feed_tombstones.get(model), Some(&stored))
+        admitted_with_fields(&reader, kind, admission, model, patch, spec, self.feed_fields.get(&(model.to_string(), admission.closing)), self.feed_tombstones.get(model), Some(&stored))
     }
 
     pub fn upsert(&mut self, model: &str, row: &RowValue, source: crate::schema::RowSource) -> Result<Option<CommitResult>, StoreError> {

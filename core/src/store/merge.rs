@@ -4,7 +4,7 @@ use rusqlite::params;
 use serde_json::{Map, Value};
 
 use crate::store::plan::PriorRow;
-use crate::schema::{AssociationSpec, ModelSpec};
+use crate::schema::ModelSpec;
 use crate::value::read_id;
 
 use super::{admit_upsert, Reader, StoreError, UpsertAdmission};
@@ -53,7 +53,7 @@ pub(crate) enum RowKind {
     Server,
 }
 
-pub(crate) fn admitted_with_fields(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, spec: &ModelSpec, guards: &[AssociationSpec], fields: Option<&HashMap<String, HashSet<String>>>, tombstones: Option<&std::collections::BTreeMap<String, i64>>, stored: Option<&std::collections::BTreeMap<String, super::rows::StoredRow>>) -> Result<Option<Map<String, Value>>, StoreError> {
+pub(crate) fn admitted_with_fields(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, spec: &ModelSpec, fields: Option<&HashMap<String, HashSet<String>>>, tombstones: Option<&std::collections::BTreeMap<String, i64>>, stored: Option<&std::collections::BTreeMap<String, super::rows::StoredRow>>) -> Result<Option<Map<String, Value>>, StoreError> {
     let Some(id) = patch.get("id").and_then(read_id) else { return Ok(None) };
     if kind == RowKind::Local { return Ok(Some(patch.clone())); }
     let mut decoded = decode_nested(spec, patch)?;
@@ -81,16 +81,11 @@ pub(crate) fn admitted_with_fields(reader: &Reader<'_>, kind: RowKind, admission
         };
     }
     let Some(mut row) = spec.merged(stored.as_ref().map(|stored| &stored.row), &row) else { return Ok(None) };
-    let Some(stored) = stored else { return Ok(Some(row)) };
-    for association in guards {
-        let moves = association.sets.keys().any(|field| row.get(field) != stored.row.get(field));
-        if !moves || association.parent_is_newer(&stored.row, &row) { continue; }
-        for field in association.sets.keys() {
-            match stored.row.get(field) {
-                Some(value) => row.insert(field.clone(), value.clone()),
-                None => row.remove(field),
-            };
-        }
+    for (declared, _) in spec.server_values() {
+        match stored.as_ref().and_then(|stored| stored.row.get(declared)) {
+            Some(value) => row.insert(declared.to_string(), value.clone()),
+            None => row.remove(declared),
+        };
     }
     Ok(Some(row))
 }

@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use crate::store::files::{FileDirectories, Location};
 use crate::owners::contract::BatchAuthor;
 use crate::owners::store::{RowValue, StoreBatch};
-use crate::schema::AssociationSpec;
 
 use super::row_write::RowWrite;
 use super::{Reader, Store, StoreError, TombstoneRetention};
@@ -48,10 +47,10 @@ pub(crate) struct BatchWritten {
 }
 
 impl Store {
-    pub(crate) fn write_batch(&self, batch: &StoreBatch, files: &FileDirectories, guards: &BTreeMap<String, Vec<AssociationSpec>>, min_pin_revision: Option<u64>) -> Result<BatchWritten, StoreError> {
+    pub(crate) fn write_batch(&self, batch: &StoreBatch, files: &FileDirectories, min_pin_revision: Option<u64>) -> Result<BatchWritten, StoreError> {
         let now = self.lock().now_ms();
         let prepared = super::file_write::prepare_files(files, &batch.ops, now)?;
-        let written = self.write_batch_prepared(batch, guards, min_pin_revision, now, &prepared);
+        let written = self.write_batch_prepared(batch, min_pin_revision, now, &prepared);
         match written {
             Err(error) => {
                 for file in prepared.iter().filter(|file| file.record.location == Location::Directory) {
@@ -81,7 +80,7 @@ impl Store {
         }
     }
 
-    fn write_batch_prepared<'a>(&'a self, batch: &StoreBatch, guards: &BTreeMap<String, Vec<AssociationSpec>>, min_pin_revision: Option<u64>, now: i64, files: &[super::file_write::PreparedFile]) -> Result<WrittenBatch<'a>, StoreError> {
+    fn write_batch_prepared<'a>(&'a self, batch: &StoreBatch, min_pin_revision: Option<u64>, now: i64, files: &[super::file_write::PreparedFile]) -> Result<WrittenBatch<'a>, StoreError> {
         let inner = self.lock();
         if !inner.ready { return Err(StoreError::Refused); }
         let transaction = inner.connection.unchecked_transaction()?;
@@ -91,7 +90,7 @@ impl Store {
         let own = batch.ops.iter().find_map(|op| match op { crate::owners::store::StoreOp::RemoveIntent { op_id } => i64::try_from(*op_id).ok(), _ => None }).unwrap_or(-1);
         let mut originals = BTreeMap::new();
         let mut results = Vec::new();
-        let mut writer = RowWrite { connection: &transaction, models: &inner.models, guards, generation: inner.generation, revision, now, originals: &mut originals, closing: (own >= 0).then_some(own), candidates: 0, current: Default::default(), feed_fields: Default::default(), feed_tombstones: Default::default(), feed_hidden: None, event: None, replaced: BTreeMap::new() };
+        let mut writer = RowWrite { connection: &transaction, models: &inner.models, generation: inner.generation, revision, now, originals: &mut originals, closing: (own >= 0).then_some(own), candidates: 0, current: Default::default(), feed_fields: Default::default(), feed_tombstones: Default::default(), feed_hidden: None, event: None, replaced: BTreeMap::new() };
         let mut overlay = Vec::new();
         let rows_source = if batch.author == BatchAuthor::Outbox { crate::schema::RowSource::Response } else { crate::schema::RowSource::Page };
         let (observed, refused) = if batch.author == BatchAuthor::Feed {

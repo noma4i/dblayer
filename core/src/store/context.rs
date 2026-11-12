@@ -11,7 +11,7 @@ use crate::store::files::FileDirectories;
 use crate::identity::{ModelKey, RowRef};
 use crate::store::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, FsckAction, Orphan, Orphans};
 use crate::owners::write::operation_outbox::OutboxQueue;
-use crate::schema::{reserved_member_names, resolve_types, validate_models, AssociationKind, AssociationSpec, ModelSpec};
+use crate::schema::{reserved_member_names, resolve_types, validate_models, ModelSpec};
 use crate::store::sync_state::rebuild_sync;
 
 use super::db_error::CoreError;
@@ -63,7 +63,6 @@ impl CommitSink {
 
 pub(crate) struct Context {
     pub specs: BTreeMap<String, ModelSpec>,
-    pub pointer_guards: BTreeMap<String, Vec<AssociationSpec>>,
     pub files: Arc<FileDirectories>,
     pub opened: OpenReport,
     pub replaced: Arc<ReplacedLog>,
@@ -76,7 +75,6 @@ impl Context {
     pub(super) fn empty() -> Self {
         Self {
             specs: BTreeMap::new(),
-            pointer_guards: BTreeMap::new(),
             files: Arc::new(FileDirectories::scratch()),
             opened: OpenReport { recreated: None, changed_models: Vec::new(), reset_models: Vec::new(), dropped: Vec::new() },
             replaced: Arc::default(),
@@ -135,7 +133,6 @@ impl Store {
             StoreEvent::Renewed => {}
         }))?;
         store.context = Context {
-            pointer_guards: pointer_guards(&models),
             specs: models.into_iter().map(|spec| (spec.key.as_str().to_string(), spec)).collect(),
             files: Arc::new(path.map_or_else(FileDirectories::scratch, FileDirectories::beside)),
             opened,
@@ -152,8 +149,6 @@ impl Store {
     }
 
     pub(crate) fn specs(&self) -> &BTreeMap<String, ModelSpec> { &self.context.specs }
-
-    pub(crate) fn pointer_guards(&self) -> &BTreeMap<String, Vec<AssociationSpec>> { &self.context.pointer_guards }
 
     pub(crate) fn files(&self) -> &Arc<FileDirectories> { &self.context.files }
 
@@ -221,12 +216,3 @@ fn recover_operations(store: &Store, models: &[ModelSpec], restore_rows: bool) -
     Ok(())
 }
 
-fn pointer_guards(models: &[ModelSpec]) -> BTreeMap<String, Vec<AssociationSpec>> {
-    let mut guards: BTreeMap<String, Vec<AssociationSpec>> = BTreeMap::new();
-    for association in models.iter().flat_map(|spec| &spec.associations) {
-        if association.kind == AssociationKind::BelongsTo && !association.sets.is_empty() && !association.newer.is_empty() {
-            guards.entry(association.target.to_string()).or_default().push(association.clone());
-        }
-    }
-    guards
-}
