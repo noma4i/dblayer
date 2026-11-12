@@ -9,6 +9,7 @@
 
 ### Changed
 
+- Remove an upload at open when its copy was not durable, and read the file of the caller only during the call.
 - Deliver a `NetworkPath` instead of a `Bool` from `NetworkStatus.changes` and `NetworkStatus.flow`.
 
 ## 6.30.0 - 2026-11-13

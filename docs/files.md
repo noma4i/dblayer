@@ -105,6 +105,18 @@ An upload belongs to a declared upload action of the model. A standalone blob up
 An upload sends a local file to storage and then runs one content mutation with the stored blob. It is an operation of the library: it lives in the same queue as other pending operations, survives restarts, and shows its state on the record.
 
 After the upload call returns, the library owns a copy of the source. The application can delete its temporary file.
+The library reads the file of the application only while the call that brought its path runs: `send`, `upload`, `stage`, the attaching of a deferred source and `attach`. After the call returns, and after a restart of the application, the library reads its own copy only. A process that dies before the call returns leaves no upload: the library removes the unfinished copy and the optimistic record at the next open.
+
+```swift
+let receipt = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: request))
+try FileManager.default.removeItem(at: url)
+```
+
+```kotlin
+val receipt = AccountScope.current().send(Moment, values, upload = UploadCommand("upload_clip", request))
+file.delete()
+```
+
 The upload reports the copied file size as `totalBytes` before transfer starts, including while its record awaits create confirmation.
 Source copying and SHA-256 calculation run before the SQLite write, on a blocking task, in 1 MiB chunks.
 The copy of an upload is always a file in the file directory beside the database. An in-memory database keeps it in a temporary directory.
