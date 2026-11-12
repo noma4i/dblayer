@@ -58,6 +58,7 @@ mod upload_stand;
 mod upload_answer_tests;
 mod upload_refusal_tests;
 mod upload_prepare_tests;
+mod upload_progress_tests;
 mod upload_expiry_tests;
 mod upload_batch_shift_tests;
 mod upload_pending_tests;

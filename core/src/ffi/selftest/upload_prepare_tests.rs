@@ -374,23 +374,24 @@ async fn xfer_prepare_of_a_supplied_source() {
     let hold = preparer.hold_next();
     let stand = Stand::new().with_preparer(preparer.clone());
     let database = stand.open(Some(&directory.path().join("pending.sqlite")), &OPERATIONS).await;
-    stand.script.data("CreateBlob", &blob(0));
-    stand.script.data("CreateAssets", r#"{"data":{"createAssets":{"assets":[{"id":"a0","clientKey":"key-0","size":3,"position":0}]}}}"#);
+    for index in 0..2 { stand.script.data("CreateBlob", &blob(index)); }
+    stand.script.data("CreateAssets", r#"{"data":{"createAssets":{"assets":[{"id":"a0","clientKey":"key-0","size":3,"position":0},{"id":"a1","clientKey":"key-1","size":3,"position":1}]}}}"#);
     let epoch = database.session_epoch();
-    let items = vec![WireUploadItem { values_json: r#"{"clientKey":"key-0","size":3,"position":0}"#.into(), source: WireSource::Pending, variables_json: "{}".into() }];
+    let items = (0..2).map(|index| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":3,"position":{index}}}"#), source: WireSource::Pending, variables_json: "{}".into() }).collect();
     let batch = bound(database.upload_create_batch(epoch, "Asset".into(), items, WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
-    let item = batch.items.into_iter().next().unwrap();
-    let id = item.optimistic_value.id.clone();
     quiet(&database).await;
-    assert_eq!((preparer.calls(), upload_of_asset(&database, &id).map(|upload| upload.status)), (0, Some(WireUploadStatus::Waiting)), "the step waits for the source");
+    let first = batch.items[0].optimistic_value.id.clone();
+    assert_eq!((preparer.calls(), upload_of_asset(&database, &first).map(|upload| upload.status)), (0, Some(WireUploadStatus::Waiting)), "the step waits for the source");
     let supplied = source_file(directory.path(), "supplied.jpg", SOURCE);
-    bound(database.supply_source(epoch, "Asset".into(), id.clone(), "create_files".into(), source_of(&supplied, "{}", &shrink()))).await.unwrap();
+    for item in &batch.items {
+        bound(database.supply_source(epoch, "Asset".into(), item.optimistic_value.id.clone(), "create_files".into(), source_of(&supplied, "{}", &shrink()))).await.unwrap();
+    }
     hold.entered().await;
-    assert_eq!(upload_of_asset(&database, &id).map(|upload| upload.status), Some(WireUploadStatus::Preparing), "the supplied source goes through the step");
+    assert_eq!(upload_of_asset(&database, &first).map(|upload| upload.status), Some(WireUploadStatus::Preparing), "the supplied source goes through the step");
     hold.release();
-    bound(database.confirmed(item.receipt, false)).await.unwrap();
-    assert_eq!(preparer.probes(), vec![SOURCE.to_vec()]);
-    assert_eq!(*stand.puts.bodies.lock().unwrap(), vec![PREPARED.to_vec()], "the body of the PUT is the prepared file");
+    for item in batch.items { bound(database.confirmed(item.receipt, false)).await.unwrap(); }
+    assert_eq!(preparer.probes(), vec![SOURCE.to_vec(); 2]);
+    assert_eq!(*stand.puts.bodies.lock().unwrap(), vec![PREPARED.to_vec(); 2], "the body of every PUT is the prepared file");
     database.close_now();
 }
 
