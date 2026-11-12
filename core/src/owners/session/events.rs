@@ -412,7 +412,7 @@ impl SessionState {
         match self.published {
             PublishedState::EndingFailed | PublishedState::StorageFailed => reply(fx, id, Err(SessionError::Storage("the session could not be saved".into()))),
             PublishedState::Ending => self.queue.push_back(Queued::Call { operation, body, reply: id }),
-            _ if self.awaits_publication() => self.queue.push_back(Queued::Call { operation, body, reply: id }),
+            _ if self.awaits_publication() || self.epoch_ended() => self.queue.push_back(Queued::Call { operation, body, reply: id }),
             _ => self.begin(Queued::Call { operation, body, reply: id }, fx),
         }
     }

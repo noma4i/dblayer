@@ -50,9 +50,11 @@ impl SessionState {
 
     pub(super) fn admission(&self, epoch: Option<Epoch>) -> Option<SessionError> {
         if self.published == PublishedState::Closing { return Some(SessionError::Closed); }
-        if epoch.is_some_and(|epoch| epoch != self.epoch) { return Some(SessionError::NoSession); }
+        if epoch.is_some_and(|epoch| epoch != self.epoch || !self.current(epoch)) { return Some(SessionError::NoSession); }
         None
     }
+
+    pub(super) fn epoch_ended(&self) -> bool { !self.current(self.epoch) }
 
     pub(super) fn def(&self, operation: &str) -> Option<SessionOperation> { self.operations.iter().find(|def| def.name == operation).cloned() }
 
@@ -83,7 +85,7 @@ impl SessionState {
                 PublishedState::Ending | PublishedState::Closing => return,
                 _ => {}
             }
-            if self.awaits_publication() { return; }
+            if self.awaits_publication() || self.epoch_ended() { return; }
             let Some(queued) = self.queue.pop_front() else { return };
             self.begin(queued, fx);
         }
@@ -93,6 +95,7 @@ impl SessionState {
         match queued {
             Queued::Call { operation, body, reply: id } => {
                 if let Some(error) = self.admission(None) { reply(fx, id, Err(error)); return; }
+                if self.epoch_ended() { self.queue.push_back(Queued::Call { operation, body, reply: id }); return; }
                 let Some(def) = self.def(&operation) else {
                     reply(fx, id, Err(SessionError::Invalid));
                     return;
