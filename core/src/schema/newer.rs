@@ -81,6 +81,32 @@ impl AssociationSpec {
         children.into_iter().reduce(|best, child| if is_newer(&self.child_order(child), &self.child_order(best)) { child } else { best })
     }
 
+    /// P-DATA-59: the fields `sets:` from the server value of the parent and its newest child, a temporary child keeps the newer values of the newest confirmed one.
+    pub fn derived(&self, server: &Map<String, Value>, newest: Option<&Map<String, Value>>, confirmed: Option<&Map<String, Value>>) -> Map<String, Value> {
+        let mut values = self.chosen(server, newest);
+        if newest.and_then(|child| child.get("id")).and_then(Value::as_str).is_some_and(is_temp_id) {
+            let behind = self.chosen(server, confirmed);
+            for newer in &self.newer {
+                let Some(held) = behind.get(&newer.parent) else { continue };
+                if values.get(&newer.parent).is_none_or(|value| compare_values(held, value) == Ordering::Greater) { values.insert(newer.parent.clone(), held.clone()); }
+            }
+        }
+        values
+    }
+
+    fn chosen(&self, server: &Map<String, Value>, child: Option<&Map<String, Value>>) -> Map<String, Value> {
+        let server: Map<String, Value> = self.sets.keys().filter_map(|field| present(server.get(field)).map(|value| (field.clone(), value.clone()))).collect();
+        let Some(child) = child else { return server };
+        let from_child: Map<String, Value> = self.sets.iter().filter_map(|(parent, field)| present(child.get(field)).map(|value| (parent.clone(), value.clone()))).collect();
+        let id = child.get("id").and_then(Value::as_str);
+        let pointed = self.pointer_field().and_then(|field| server.get(field)).and_then(Value::as_str).is_some_and(|pointer| Some(pointer) == id);
+        let beats = self.newer.iter().find_map(|newer| Some((from_child.get(&newer.parent)?, server.get(&newer.parent)?))).is_some_and(|(child, server)| compare_values(child, server) == Ordering::Greater);
+        let server_wins = !server.is_empty() && (pointed || (!id.is_some_and(is_temp_id) && !beats));
+        let (mut values, winner) = if server_wins { (from_child, server) } else { (server, from_child) };
+        values.extend(winner);
+        values
+    }
+
     /// P-DATA-57: the `sets` pairs a write of `child` puts into `parent`; `stored` is the child row before the write (for a child that replaced its temporary id in this batch, the temporary row).
     pub fn written_by<'a>(&'a self, parent: &Map<String, Value>, child: &Map<String, Value>, stored: Option<&Map<String, Value>>) -> Vec<(&'a String, &'a String)> {
         if !self.child_is_newer(parent, child) {
