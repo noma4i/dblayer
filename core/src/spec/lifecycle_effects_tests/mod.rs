@@ -234,6 +234,43 @@ fn life_save_failed_stale() {
     assert!(twin.replies().contains(&(7, Err(LifecycleError::Storage))));
 }
 
+/// life_storage_failed_retried_on_event: `Online(true)` and `Foreground` write the last active publication again, once per event; `Saved` leaves `StorageFailed`.
+#[test]
+fn life_storage_failed_retried_on_event() {
+    let publishes = |effects: &[LifecycleEffect]| effects.iter().filter(|effect| matches!(effect, LifecycleEffect::Publish { .. })).count();
+    let mut twin = Twin::new();
+    twin.feed(credential(1));
+    let first = twin.publications()[0];
+    twin.feed(save_failed(first));
+    assert_eq!(twin.cell().state, PublishedState::StorageFailed);
+    assert_eq!(publishes(&twin.feed(LifecycleInput::Online(false))), 0, "offline repeats nothing");
+    let effects = twin.feed(LifecycleInput::Online(true));
+    let retry = twin.publications();
+    assert_eq!((publishes(&effects), retry.len(), twin.cell().state), (1, 1, PublishedState::StorageFailed), "one write per event, the state stays until `Saved`");
+    twin.feed(save_failed(retry[0]));
+    assert_eq!(twin.cell().state, PublishedState::StorageFailed, "a refused retry stays");
+    assert_eq!(publishes(&twin.feed(LifecycleInput::Foreground)), 1, "the next event writes again");
+    let retry = twin.publications();
+    let effects = twin.feed(saved(retry[0]));
+    assert_eq!((twin.cell().state, twin.cell().identity), (PublishedState::Session, Some(1)));
+    assert!(effects.iter().any(|effect| matches!(effect, LifecycleEffect::EpochStarted { identity: Some(1), .. })), "the epoch of the refused publication starts with the retry: {effects:?}");
+    assert_eq!(publishes(&twin.feed(LifecycleInput::Online(true))), 0, "no event writes once the state is left");
+}
+
+/// life_network_event_ignored: with no `StorageFailed` an event writes nothing, in every phase.
+#[test]
+fn life_network_event_ignored() {
+    let mut twin = Twin::new();
+    let mut ending = ending();
+    for fresh in [&mut twin, &mut ending] {
+        for input in [LifecycleInput::Online(true), LifecycleInput::Online(false), LifecycleInput::Foreground] {
+            assert!(fresh.feed(input).is_empty());
+        }
+    }
+    let mut session = session(1);
+    assert!(session.feed(LifecycleInput::Foreground).is_empty());
+}
+
 /// The publication of an epoch that ended before its `Saved` answers `Interrupted` once and starts nothing.
 #[test]
 fn life_saved_stale() {

@@ -139,6 +139,9 @@ pub enum LifecycleInput {
     Drained(Drained),
     Started { owner: Peer, epoch: Epoch },
     RestoreClassified { owner: Peer, epoch: Epoch },
+    /// The platform is online (`true`) or not: only `true` repeats a refused save.
+    Online(bool),
+    Foreground,
     /// `Tick`, `EpochEnded` and `Closing` are not inputs of Lifecycle.
     Idle,
 }
@@ -153,6 +156,8 @@ pub struct LifecycleState {
     ended_up_to: Option<Epoch>,
     restoring: Option<Restoring>,
     open_reply: Option<ReplyId>,
+    /// The `EpochStarted` of the publication the disk refused: the retry carries it.
+    failed_start: Option<Started>,
     next_publication: PublicationId,
     next_erase: EraseId,
     /// `issued_generation`: the highest generation reserved for an erase.
@@ -186,7 +191,7 @@ impl Default for LifecycleState {
 impl LifecycleState {
     /// Before `Open`: no session, epoch 0.
     pub fn new() -> Self {
-        Self { phase: LifecyclePhase::NoSession { epoch: 0 }, published: Published::initial(), publishing: Vec::new(), cell: Published::initial(), cell_publication: 0, ended_up_to: None, restoring: None, open_reply: None, next_publication: 1, next_erase: 1, allocated: 0 }
+        Self { phase: LifecyclePhase::NoSession { epoch: 0 }, published: Published::initial(), publishing: Vec::new(), cell: Published::initial(), cell_publication: 0, ended_up_to: None, restoring: None, open_reply: None, failed_start: None, next_publication: 1, next_erase: 1, allocated: 0 }
     }
 
     pub fn phase(&self) -> &LifecyclePhase { &self.phase }

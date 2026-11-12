@@ -24,6 +24,8 @@ impl LifecycleState {
             LifecycleInput::Saved { publication_id } => return self.saved(publication_id, true, fx),
             LifecycleInput::SaveFailed { publication_id, .. } => return self.saved(publication_id, false, fx),
             LifecycleInput::ExecutorFailed { .. } => return self.executor_failed(fx),
+            LifecycleInput::Online(true) | LifecycleInput::Foreground => return self.storage_failed_retried(fx),
+            LifecycleInput::Online(false) => return,
             LifecycleInput::Started { owner, epoch } => return self.restore(owner, epoch, true, fx),
             LifecycleInput::RestoreClassified { owner, epoch } => return self.restore(owner, epoch, false, fx),
             _ => {}
@@ -223,6 +225,7 @@ impl LifecycleState {
                 return;
             }
             if !restricting {
+                self.failed_start = None;
                 self.cell = publication.published.clone();
                 self.cell_publication = id;
                 fx.push(LifecycleEffect::PublishCell(publication.published.clone()));
@@ -240,8 +243,20 @@ impl LifecycleState {
             reply_all(restoring.open_reply.into_iter().collect(), Err(LifecycleError::Storage), fx);
         }
         if !newer {
+            if publication.started.is_some() { self.failed_start = publication.started; }
             self.cell.state = PublishedState::StorageFailed;
             fx.push(LifecycleEffect::PublishCell(self.cell.clone()));
+        }
+    }
+
+    /// `life_storage_failed_retried_on_event`, `life_network_event_ignored`: a refused save of the active publication is written again once per event, `Saved` leaves `StorageFailed`.
+    fn storage_failed_retried(&mut self, fx: &mut Vec<LifecycleEffect>) {
+        if self.cell.state == PublishedState::StorageFailed && matches!(self.phase, LifecyclePhase::NoSession { .. } | LifecyclePhase::Session { .. }) {
+            let started = self.failed_start.take();
+            if let Some(Started { epoch, identity: Some(_), .. }) = &started {
+                self.restoring = Some(self.new_restoring(*epoch, None));
+            }
+            self.publish(started, Vec::new(), fx);
         }
     }
 

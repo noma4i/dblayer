@@ -108,6 +108,7 @@ mod xfer_held_pair_wait_tests;
 mod xfer_undeclared_tests;
 mod xfer_session_lost_tests;
 mod sess_unavailable_secret_tests;
+mod life_storage_failed_exit_tests;
 mod sess_held_pair_origin_tests;
 mod crash_image_revoked_tests;
 mod crash_image_group_tests;

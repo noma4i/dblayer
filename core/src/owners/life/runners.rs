@@ -271,6 +271,7 @@ impl EffectRunner<Network> for NetworkRunner {
                 wiring.to_outbox(OutboxInput::Online(Online(online)));
                 wiring.to_transfer(TransferInput::Online(Online(online)));
                 wiring.to_session(SessionInput::Online(Online(online)));
+                wiring.to_lifecycle(LifecycleInput::Online(online));
                 wiring.to_calls(CallsInput::Online(Online(online)));
                 wiring.tell_network(&ALL_PEERS, NetworkEvent::Online { online, epoch: None });
             }
@@ -306,6 +307,7 @@ impl EffectRunner<Network> for NetworkRunner {
             NetworkEffect::Foreground(seq) => {
                 wiring.to_windows(WindowsInput::Foreground(seq));
                 wiring.to_rounds(RoundsInput::Foreground);
+                wiring.to_lifecycle(LifecycleInput::Foreground);
                 wiring.tell_network(&[Peer::Rounds, Peer::Session, Peer::Windows], NetworkEvent::Foreground(seq));
             }
             NetworkEffect::PowerSaving(saving) => {
