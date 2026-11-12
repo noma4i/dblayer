@@ -373,11 +373,17 @@ fn xfer_persisting_copy_rejected() {
     let (id, reply, _) = twin.accepting(KEY, 2);
     twin.commit();
     twin.copy_done(id);
-    let out = twin.reject(RejectReason::Storage("disk".into()));
-    assert_eq!((twin.stage(id), out.removed(), out.all_replies()), (TransferStage::Removing, vec![KEY.to_string()], 0));
+    let out = twin.reject(storage());
+    assert_eq!((twin.stage(id), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
+    assert!(matches!(Twin::fault(&out, reply), Some(Fault::Rejected(RejectReason::Storage(_)))), "the call is answered by the step of the refusal: {:?}", out.replies(reply));
+    assert_eq!(out.all_replies(), 1);
+    for round in 1..=3 {
+        let refused = twin.reject(storage());
+        assert_eq!((twin.stage(id), refused.all_replies(), refused.timers), (TransferStage::Removing, 0, 1), "the removal is written again, the call is not answered twice: {round}");
+        assert_eq!(twin.tick_retry(id).removed(), vec![KEY.to_string()], "{round}");
+    }
     let out = twin.commit();
-    assert_eq!(Twin::fault(&out, reply), Some(Fault::Rejected(RejectReason::Storage("storage".into()))));
-    assert_eq!(twin.stage(id), TransferStage::Done);
+    assert_eq!((twin.stage(id), out.all_replies()), (TransferStage::Done, 0), "the call was answered before the removal");
     let (ids, _) = copying_batch(&mut twin, &[OTHER, "Moment:r3:upload"]);
     twin.copy_done(ids[0]);
     twin.copy_done(ids[1]);
