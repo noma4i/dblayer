@@ -115,13 +115,13 @@ fn net_status_feeds_database_and_config() {
         assert!(!call.is_finished() && !fetch.is_finished(), "both wait for the value");
         assert_eq!((posts.0.load(Ordering::SeqCst), rig.server.executed().len()), (0, before), "nothing leaves before the value");
         os.set_online(true);
-        assert_eq!(within(reader.next()).await, Some(true));
+        assert_eq!(within(reader.next()).await.map(|path| path.online), Some(true));
         within(call).await.unwrap().unwrap();
         within_named(8, "the fetch got the value", fetch).await.unwrap().unwrap();
         assert_eq!((posts.0.load(Ordering::SeqCst), rig.server.executed().len()), (1, before + 1), "each wait left once");
         let mut next = Box::pin(reader.next());
         assert!(std::future::Future::poll(next.as_mut(), &mut std::task::Context::from_waker(std::task::Waker::noop())).is_pending(), "one input gives one frame");
-        assert_eq!(status.current(), Some(true));
+        assert_eq!(status.current().map(|path| path.online), Some(true));
         within(database.close_database()).await.unwrap();
     }));
 }

@@ -101,8 +101,7 @@ impl OnlineSink {
     pub(crate) fn apply_online(&self, online: bool) -> Result<(), DbError> {
         match &self.target {
             SignalTarget::Status => {
-                let stamp = super::network_status::record_network(online);
-                feed_followers(online, stamp);
+                self.apply_path(super::network_status::path_of_online(online));
                 Ok(())
             }
             SignalTarget::Connectivity(connectivity) => {
@@ -114,6 +113,11 @@ impl OnlineSink {
                 deliver_life(&life, online, super::network_status::next_stamp())
             }
         }
+    }
+
+    fn apply_path(&self, path: super::NetworkPath) {
+        let stamp = super::network_status::record_network(path);
+        feed_followers(path.online, stamp);
     }
 
     pub(crate) fn registrations(&self) -> Arc<Registrations> { self.registrations.clone() }
@@ -130,6 +134,14 @@ impl OnlineSink {
 impl OnlineSink {
     /// Returns once the owners heard the change.
     pub fn set_online(&self, online: bool) { let _ = self.apply_online(online); }
+
+    /// The status input of the process: the default network of the phone, its online flag feeds the owners as `set_online` does.
+    pub fn set_path(&self, path: super::NetworkPath) {
+        match &self.target {
+            SignalTarget::Status => self.apply_path(path),
+            SignalTarget::Connectivity(_) | SignalTarget::Life(_) => { let _ = self.apply_online(path.online); }
+        }
+    }
 
     pub fn set_power_saving(&self, saving: bool) {
         if let Some(life) = self.life() { drop(life.set_power_saving(saving)); }
@@ -170,7 +182,7 @@ pub(crate) fn follow_life(life: &Arc<crate::owners::life::Life>) {
     all.push(Follower::Life(Arc::downgrade(life)));
     drop(all);
     let processed = *super::network_status::network_value().borrow();
-    if let Some(online) = processed.online { let _ = deliver_life(life, online, processed.stamp); }
+    if let Some(path) = processed.path { let _ = deliver_life(life, path.online, processed.stamp); }
 }
 
 pub(crate) fn follow_connectivity(connectivity: &Arc<crate::transport::Connectivity>) {
@@ -179,7 +191,7 @@ pub(crate) fn follow_connectivity(connectivity: &Arc<crate::transport::Connectiv
     all.push(Follower::Connectivity(Arc::downgrade(connectivity)));
     drop(all);
     let processed = *super::network_status::network_value().borrow();
-    if let Some(online) = processed.online { connectivity.change(online, processed.stamp); }
+    if let Some(path) = processed.path { connectivity.change(path.online, processed.stamp); }
 }
 
 pub(crate) fn feed_followers(online: bool, stamp: u64) {

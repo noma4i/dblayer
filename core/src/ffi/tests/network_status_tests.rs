@@ -428,7 +428,7 @@ fn net_path_wakes_on_change_only() {
         assert!(poll_once(&mut held).is_pending(), "the same path woke the reader");
         sink.set_path(path(NetworkTransport::Other, 1));
         assert_eq!(within(held).await, Some(path(NetworkTransport::Other, 1)), "a changed transport");
-        let mut next = reading!(&reader);
+        let next = reading!(&reader);
         sink.set_path(path(NetworkTransport::Other, 2));
         assert_eq!(within(next).await, Some(path(NetworkTransport::Other, 2)), "a changed network number");
     }));
