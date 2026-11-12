@@ -117,4 +117,4 @@ val removed = staged.discard()
 ```
 
 - `registerOperations`, and an `open` that passes a read or a mutation, fail with `Invalid` when the definitions leave out an operation the library sends by itself. The error names every missing operation. Pass the generated `GraphQLOperations.all`. See [server sync](server-sync.md#connecting).
-- The parents of a changed row are touched once per batch, and the queue order of restored operations is kept. The app changes nothing for these two fixes.
+- The parents of a changed row are touched once per batch, the queue order of restored operations is kept, and a failed operation with a lost answer stops no other write. The app changes nothing for these fixes.
