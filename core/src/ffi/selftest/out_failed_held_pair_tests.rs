@@ -127,10 +127,10 @@ async fn out_failed_held_pair_restart_frees_the_queue() {
     rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
     let image = directory.path().join("image.sqlite");
     super::crash_image_call_tests::copy_image(&live, &image);
-    let held = super::crash_image_support::saved_pair(&image).is_some();
+    assert!(super::crash_image_support::saved_pair(&image).is_some(), "the image holds the pair of the failed operation");
     database.close_now();
-    let (_fresh, reopened, clock) = super::crash_image_support::reopen_timed(&image, &secret, &operations, |fresh| {
-        if held { fresh.script.data("CreateMoment", REFUSED); }
+    let (fresh, reopened, clock) = super::crash_image_support::reopen_timed(&image, &secret, &operations, |fresh| {
+        fresh.script.data("CreateMoment", REFUSED);
         fresh.script.data("CreateMoment", OTHER);
     }, true).await;
     let epoch = reopened.session_epoch();
@@ -138,6 +138,7 @@ async fn out_failed_held_pair_restart_frees_the_queue() {
     advancing(&clock, until_failed(&reopened)).await;
     bound(reopened.send(plain("Moment", r#"{"text":"B"}"#, epoch))).await.unwrap();
     row_present(&reopened, &clock, "m78", "the second row landed without a retry or discard of the first").await;
+    assert_eq!(fresh.script.operation_pairs("CreateMoment").len(), 2, "the held pair goes once, then the pair of the second row");
     crate::test_wait::settled(&reopened, "the first operation stays failed", || shows(&rows, WireSyncState::Failed)).await;
     bound(reopened.close_database()).await.unwrap();
 }

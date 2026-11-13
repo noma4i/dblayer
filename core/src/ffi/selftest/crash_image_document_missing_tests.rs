@@ -104,7 +104,7 @@ async fn sess_held_pair_document_missing_any_origin() {
 const INVALID_INPUT: &str = r#"{"errors":[{"extensions":{"code":"INVALID_INPUT"},"message":"INVALID_INPUT"}]}"#;
 
 #[tokio::test(flavor = "multi_thread")]
-async fn sess_held_pair_not_consumed_ends_the_call() {
+async fn sess_refused_held_pair_is_not_sent_again_and_spends_no_number() {
     let (stand, clock) = super::crash_image_support::timed_stand();
     let directory = tempfile::tempdir().unwrap();
     let live = directory.path().join("live.sqlite");

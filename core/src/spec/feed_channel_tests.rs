@@ -164,9 +164,9 @@ fn feed_dropped_stale_survives_crash() {
     assert!(reopened.window_freshness(&key).unwrap().unwrap().stale_since.is_some(), "the stale debt must survive reopen");
 }
 
-/// feed_changed_by_node, feed_changed_by_named, feed_changed_by_observed (D-393, D-316): the batch of an event carries the debt of its form as typed ops.
+/// feed_changed_by_node, feed_changed_by_named, feed_changed_by_observed (D-393, D-316): the batch of an event carries the reread debt or the stale mark of its form as typed ops.
 #[test]
-fn feed_event_batch_carries_its_debt() {
+fn feed_event_batch_carries_its_debt_or_stale_mark() {
     use crate::owners::store::StoreOp;
     use crate::owners::read::windows::WindowKey;
     let node = WindowKey::relation("Chat", "node", &[(crate::schema::NODE_PARAM.to_string(), serde_json::json!("c1"))].into_iter().collect());
@@ -185,10 +185,7 @@ fn feed_event_batch_carries_its_debt() {
         rig.post(FeedInput::Event { connection_id: FIRST, channel: "A".into(), event: FramedEvent { model: "Chat".into(), payload: "x".into(), reread, refused: false } });
         let batches = take(&rig.store_batches);
         assert_eq!(batches.len(), 1, "{form}");
-        assert_eq!(batches[0].ops.len(), ops.len(), "{form}");
-        for (got, wanted) in batches[0].ops.iter().zip(&ops) {
-            assert_eq!(format!("{got:?}"), format!("{wanted:?}"), "{form}");
-        }
+        assert_eq!(batches[0].ops, ops, "{form}");
     }
 }
 

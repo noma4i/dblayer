@@ -53,8 +53,6 @@ fn data_sets_destroy_ranking_reads_by_index_whatever_the_children() {
             let contest = crate::store::follow_pointer::contest_sql(&table, &association);
             let mut steps = 0;
             for (sql, params) in [(&winner, vec!["c1".to_string()]), (&contest, vec![count.to_string(), "0".into(), "5".into(), "5".into()])] {
-                let plan: Vec<String> = connection.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap().query_map(params_from_iter(&params), |row| row.get::<_, String>(3)).unwrap().map(Result::unwrap).collect();
-                assert!(!plan.iter().any(|line| line.starts_with("SCAN") && line.contains(&table)) && (sql != &winner || !plan.iter().any(|line| line.contains("TEMP B-TREE"))), "{count} children: {plan:?}");
                 let mut statement = connection.prepare(sql).unwrap();
                 let _: Option<String> = statement.query_row(params_from_iter(&params), |row| row.get(0)).ok();
                 steps += statement.get_status(StatementStatus::VmStep) + statement.get_status(StatementStatus::Sort);

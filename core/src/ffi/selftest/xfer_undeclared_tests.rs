@@ -32,7 +32,7 @@ async fn xfer_saved_upload_without_its_operation_fails_and_goes_after_declaring_
     let upload = || reopened.peek_row(epoch, "Moment".into(), temporary.clone()).unwrap().and_then(|row| row.uploads.into_iter().find(|entry| entry.action == "upload_clip")).map(|entry| entry.upload);
     advancing(&clock, crate::test_wait::settled(&reopened, "the upload failed", || upload().is_some_and(|upload| upload.status == WireUploadStatus::Failed))).await;
     let error = upload().unwrap().error.unwrap();
-    assert!(format!("{error:?}").contains("is not declared"), "{error:?}");
+    assert!(error.message.contains("is not declared"), "{error:?}");
     let refused = bound(reopened.retry(epoch, "Moment".into(), temporary.clone(), Some("upload_clip".into()), None)).await;
     assert!(matches!(refused, Err(DbError::Invalid { .. })), "{refused:?}");
     assert_eq!(fresh.script.count("CreateBlob"), 0);

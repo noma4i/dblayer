@@ -634,18 +634,20 @@ async fn feed_prop_node_event_rereads_the_shown_row() {
             node_event(&transport, &token, "c1");
             crate::test_wait::settled(&database, "the event is done", || true).await;
         }
+        let mut late_window = None;
         let reader = match reader { Some(rows) => rows, None => {
             let late = Arc::new(crate::ffi::tape::Rows::default());
-            let _late = database.watch_query(SHOWN_LIST, late.clone());
-            std::mem::forget(_late);
+            late_window = Some(database.watch_query(SHOWN_LIST, late.clone()));
             late
         } };
         crate::test_wait::settled(&database, "the shown row is the server value", || shows(&reader, "after")).await;
         crate::test_wait::settled(&database, "quiet", || true).await;
         let asked = world.count("ChatNode") - nodes;
-        assert!(asked >= 1 && asked <= events + 1, "events {events} reader_first {reader_first}: {asked} node requests");
+        let (least, most) = if events == 1 { (1, 1) } else { (1, events + 1) };
+        assert!((least..=most).contains(&asked), "events {events} reader_first {reader_first}: {asked} node requests, expected {least} to {most}");
         assert_eq!(world.count("ChatList"), lists, "events {events} reader_first {reader_first}: the list is never read");
         bound(database.close_database()).await.unwrap();
+        drop(late_window);
     }
 }
 

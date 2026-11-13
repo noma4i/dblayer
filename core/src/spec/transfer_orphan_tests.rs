@@ -580,6 +580,22 @@ fn removed_with_init_in_flight(discard: bool) -> (Twin, u64) {
     (twin, request_id)
 }
 
+/// A transfer that failed its `Init` step and was retried: the cycle grew, the request id is the one of the cycle before.
+fn failed_then_retried() -> (Twin, u64) {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    let cycle = twin.t(id).cycle_id;
+    let request_id = crate::owners::write::wire::step_request_id(id, cycle, crate::owners::write::upload::UploadStage::Init, 1);
+    twin.step_error(id, false);
+    while twin.has_pending() { twin.commit(); }
+    assert_eq!(twin.stage(id), TransferStage::Failed);
+    let (reply, out) = twin.retry(KEY, None);
+    assert_ne!(Twin::fault(&out, reply), Some(crate::owners::write::outbox::Fault::InFlight), "the retry of a failed transfer starts a new cycle");
+    while twin.has_pending() { twin.commit(); }
+    assert!(twin.t(id).cycle_id > cycle, "the retry gave a new cycle");
+    (twin, request_id)
+}
+
 /// xfer_released_init_answer_owes_abort: the answer of a released `Init` pair that created a multipart upload no transfer owns writes its debt like a late `UploadMinted`, then the abort goes; an answer without the upload, with errors, or for an upload that has an owner writes nothing.
 #[test]
 fn xfer_released_init_answer_owes_abort() {
@@ -598,15 +614,12 @@ fn xfer_released_init_answer_owes_abort() {
     let dropped = twin.post(TransferInput::StepAnswer { request_id, outcome: crate::owners::session::AuthorOutcome::Dropped });
     assert!(Twin::quiet(&dropped), "a dropped pair owes nothing");
 
-    let mut twin = Twin::new();
-    let id = twin.uploading(KEY, 3);
-    minted(&mut twin, id, &owed);
-    let stale = crate::owners::write::wire::step_request_id(id, twin.t(id).cycle_id + 5, crate::owners::write::upload::UploadStage::Init, 1);
-    assert!(Twin::quiet(&init_answer(&mut twin, INIT, stale)), "the upload of a live transfer has its owner, an answer of an older cycle owes nothing for it");
-    let mut other = Twin::new();
-    let id = other.uploading(KEY, 3);
-    let older = crate::owners::write::wire::step_request_id(id, other.t(id).cycle_id + 5, crate::owners::write::upload::UploadStage::Init, 1);
-    let out = init_answer(&mut other, INIT, older);
+    let (mut owner, request_id) = failed_then_retried();
+    let live = owner.state().open_id(KEY).expect("the retried transfer");
+    minted(&mut owner, live, &owed);
+    assert!(Twin::quiet(&init_answer(&mut owner, INIT, request_id)), "the upload of a live transfer has its owner, an answer of an older cycle owes nothing for it");
+    let (mut other, request_id) = failed_then_retried();
+    let out = init_answer(&mut other, INIT, request_id);
     assert_eq!(out.orphans_written(), vec![(owed, "k".to_string())], "an answer of an older cycle of a live transfer, for an upload nobody owns, is a debt");
 }
 

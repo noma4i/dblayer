@@ -61,7 +61,7 @@ async fn store_prop_temp_row_has_a_holder() {
                 if matches!(case, Case::DiscardedFailedCreate) {
                     bound(database.discard(epoch, "Moment".into(), temporary.clone(), None)).await.unwrap();
                 }
-                crate::test_wait::settled(&database, "the row ended", || matches!(case, Case::DiscardedFailedCreate) == !present(&database, &temporary) || !present(&database, &temporary)).await;
+                crate::test_wait::settled(&database, "the row ended", || !present(&database, &temporary)).await;
             }
             Case::DiscardedFailedUpload => {
                 stand.script.data("CreateBlob", REFUSED);
