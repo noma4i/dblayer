@@ -46,7 +46,7 @@ class FilePutTest {
         }
     }
 
-    /** bridge_prop_raw_io (P-BR-08): the body of a PUT answer reaches the core as it is, the empty one too. */
+    /** bridge_prop_raw_io (P-BR-16): the body of a PUT answer reaches the core as it is, the empty one too. */
     @Test
     fun putCarriesTheBodyOfTheAnswerToTheCore() = bounded {
         val file = File.createTempFile("body", ".bin").apply { writeBytes("0123".toByteArray()); deleteOnExit() }

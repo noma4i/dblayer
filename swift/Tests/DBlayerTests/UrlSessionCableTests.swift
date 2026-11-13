@@ -126,7 +126,7 @@ struct UrlSessionCableTests {
     #expect(socket.sent == ["client frame"])
   }
 
-  /// bridge_prop_raw_io (P-BR-08): the failure of a send completion reaches the core as the end of the socket, with the native failure.
+  /// bridge_prop_raw_io (P-BR-16): the failure of a send completion reaches the core as the end of the socket, with the native failure.
   @Test func aFailedSendReachesTheCoreWithTheNativeFailure() async throws {
     let socket = Socket()
     socket.incoming = []

@@ -107,7 +107,7 @@ class BootstrapConfigTest {
         assertEquals(1, calls.get())
     }
 
-    /** bridge_prop_bootstrap_reader (P-BR-10): a collector that does not pull while the call retries and leaves gets the final snapshot as its next value, not the snapshots between. */
+    /** bridge_prop_bootstrap_reader (P-BR-18): a collector that does not pull while the call retries and leaves gets the final snapshot as its next value, not the snapshots between. */
     @Test
     fun bridge_prop_bootstrap_reader_aSlowCollectorGetsTheFinalSnapshotAndNothingIsBuffered() = bounded {
         val http = object : ScriptedHttp {

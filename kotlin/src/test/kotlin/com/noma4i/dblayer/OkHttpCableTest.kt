@@ -56,7 +56,7 @@ class OkHttpCableTest {
         }
     }
 
-    /** bridge_prop_raw_io (P-BR-08): a send on a socket the peer broke reaches the core as the end of the socket with the native failure. */
+    /** bridge_prop_raw_io (P-BR-16): a send on a socket the peer broke reaches the core as the end of the socket with the native failure. */
     @Test
     fun bridge_prop_raw_io_aSendOnABrokenSocketReachesTheCoreWithTheNativeFailure() = bounded {
         MockWebServer().use { server ->

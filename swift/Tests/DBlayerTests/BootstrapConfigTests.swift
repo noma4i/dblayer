@@ -209,7 +209,7 @@ struct BootstrapConfigTests {
     #expect(http.calls == 1)
   }
 
-  /// bridge_prop_bootstrap_reader (P-BR-10): a reader that does not pull while the call retries and leaves gets the final snapshot as its next value, not the snapshots between.
+  /// bridge_prop_bootstrap_reader (P-BR-18): a reader that does not pull while the call retries and leaves gets the final snapshot as its next value, not the snapshots between.
   @Test
   func bridge_prop_bootstrap_reader_aSlowReaderGetsTheFinalSnapshotAndNothingIsBuffered() async throws {
     await StatusProbe.shared.set(true)

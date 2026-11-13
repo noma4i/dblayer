@@ -111,7 +111,7 @@ private final class NoProgress: ByteProgress, @unchecked Sendable {
 }
 
 struct UrlSessionPutTests {
-  /// bridge_prop_raw_io (P-BR-08): the body of the PUT answer reaches the core as it is, the empty one too.
+  /// bridge_prop_raw_io (P-BR-16): the body of the PUT answer reaches the core as it is, the empty one too.
   @Test(arguments: ["stored", ""])
   func thePutAnswerBodyReachesTheCore(body: String) async throws {
     let configuration = URLSessionConfiguration.ephemeral
