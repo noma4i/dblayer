@@ -201,3 +201,92 @@ fn out_waits_for_the_first_online_value() {
     let online = twin.post(OutboxInput::Online(Online(true)));
     assert_eq!(sent_ids(&online), vec![id], "{online:?}");
 }
+
+#[derive(Clone, Copy, Debug)]
+enum Answer {
+    Stale(usize),
+    Commit(usize),
+    Storage(usize),
+}
+
+fn orders(items: &mut Vec<usize>, from: usize, found: &mut Vec<Vec<usize>>) {
+    if from == items.len() {
+        found.push(items.clone());
+        return;
+    }
+    for at in from..items.len() {
+        items.swap(from, at);
+        orders(items, from + 1, found);
+        items.swap(from, at);
+    }
+}
+
+/// P-OUT-70: the `Mutate` of the operations leave in the order of `Submit`, whatever the order of the Store answers to their intent batches.
+#[test]
+fn out_prop_operations_leave_in_submit_order() {
+    let mut perms = Vec::new();
+    orders(&mut vec![0, 1, 2], 0, &mut perms);
+    let mut scripts: Vec<(Vec<Answer>, Option<usize>)> = Vec::new();
+    for perm in &perms {
+        for stale in 0..8usize {
+            let stale_ops: Vec<usize> = perm.iter().copied().filter(|op| stale >> op & 1 == 1).collect();
+            let first: Vec<Answer> = stale_ops.iter().map(|op| Answer::Stale(*op)).chain(perm.iter().map(|op| Answer::Commit(*op))).collect();
+            let mixed: Vec<Answer> = perm.iter().flat_map(|op| if stale >> op & 1 == 1 { vec![Answer::Stale(*op), Answer::Commit(*op)] } else { vec![Answer::Commit(*op)] }).collect();
+            scripts.push((first, None));
+            scripts.push((mixed, None));
+        }
+        for refused in 0..3 {
+            let refusing: Vec<Answer> = perm.iter().map(|op| if *op == refused { Answer::Storage(*op) } else { Answer::Commit(*op) }).collect();
+            scripts.push((refusing, Some(refused)));
+        }
+    }
+    for (script, refused) in scripts {
+        let mut twin = Twin::new();
+        let ids: Vec<OpId> = (0..3).map(|row| twin.submit(&format!("r{row}"), Policy::Rollback, false)).collect();
+        let mut left: Vec<OpId> = Vec::new();
+        for answer in &script {
+            let effects = match *answer {
+                Answer::Stale(op) => twin.rejected(ids[op], RReason::StaleGeneration),
+                Answer::Commit(op) => twin.committed(ids[op]),
+                Answer::Storage(op) => twin.rejected(ids[op], RReason::Storage),
+            };
+            left.extend(sent_ids(&effects));
+        }
+        let mut answered = 0;
+        while answered < left.len() {
+            let effects = respond(&mut twin, left[answered]);
+            answered += 1;
+            left.extend(sent_ids(&effects));
+        }
+        let expected: Vec<OpId> = ids.iter().enumerate().filter(|(op, _)| Some(*op) != refused).map(|(_, id)| *id).collect();
+        assert_eq!(left, expected, "answers {script:?}: the Mutate leave in the order of Submit");
+    }
+
+    let mut twin = Twin::new();
+    let failed = twin.submit("r1", Policy::Keep, false);
+    twin.committed(failed);
+    twin.post(OutboxInput::TransportError { op_id: failed, temporary: false });
+    twin.committed(failed);
+    assert_eq!(twin.stage(failed), Some(St::Failed), "the earlier operation of r1 failed");
+    let behind_failed = twin.submit("r1", Policy::Rollback, false);
+    let other_row = twin.submit("r2", Policy::Rollback, false);
+    assert!(sent_ids(&twin.committed(other_row)).is_empty(), "B waits for the earlier intent");
+    let effects = twin.committed(behind_failed);
+    assert_eq!(sent_ids(&effects), vec![other_row], "B leaves in the step the earlier intent is written, A2 waits behind the failed operation");
+    assert_eq!(twin.stage(behind_failed), Some(St::Queued));
+
+    let mut twin = Twin::new();
+    twin.post(OutboxInput::Online(Online(false)));
+    twin.submit_as("c", Policy::Rollback, false, "create");
+    let created = *twin.state().ops.keys().max().expect("the create");
+    twin.committed(created);
+    twin.submit_as("c", Policy::Rollback, false, "destroy");
+    let other_row = twin.submit("r2", Policy::Rollback, false);
+    twin.committed(other_row);
+    twin.post(OutboxInput::Online(Online(true)));
+    assert!(twin.state().ops[&other_row].stage == Stage::Queued, "B waits for the cancelling destroy");
+    let destroy = *twin.state().ops.keys().find(|id| twin.state().ops[id].cancels == Some(created) && **id != created).expect("the destroy");
+    let effects = twin.committed(created);
+    assert_eq!(twin.stage(destroy), Some(St::Done), "the destroy ended with the rollback of the create");
+    assert_eq!(sent_ids(&effects), vec![other_row], "B leaves in the step the cancelled operation ends");
+}
