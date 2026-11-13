@@ -183,3 +183,22 @@ fn store_owed_kept_by_an_answer_older_than_the_event() {
         assert!(owed(&db, "c1"), "{path}: a write without the request of a load keeps the debt");
     }
 }
+
+/// store_owed_goes_with_the_row: the delete of the row and the end of the account take the debt with them, a row created again under the same id is not in debt.
+#[test]
+fn store_owed_goes_with_the_row() {
+    let row = || RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "again"}).to_string() };
+    let removed = |db: &Arc<Store>| { write_as(db, 2, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RemoveServerRows { model: "Chat".into(), ids: vec!["c1".into()] }]); };
+    let account = |erase_encrypted: bool| move |db: &Arc<Store>| { db.erase_account(db.generation(), erase_encrypted).unwrap(); };
+    type Ends = Box<dyn Fn(&Arc<Store>)>;
+    let ends: [(&str, Ends); 3] = [("delete", Box::new(removed)), ("account", Box::new(account(false))), ("session end", Box::new(account(true)))];
+    for (path, end) in ends {
+        let db = open();
+        owe(&db, 1, "c1");
+        assert!(owed(&db, "c1"), "{path}: the debt stands");
+        end(&db);
+        put(&db, "Chat", json!({"id": "c1", "title": "again"}));
+        write_as(&db, 3, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::LocalRows { model: "Chat".into(), rows: vec![row()] }]);
+        assert!(!owed(&db, "c1"), "{path}: the row created again owes nothing");
+    }
+}
