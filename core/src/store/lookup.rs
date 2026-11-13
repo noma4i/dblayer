@@ -198,7 +198,7 @@ impl Store {
             let connection = reader.connection();
             let mut links = connection.prepare_cached("SELECT transfer_id, op_id FROM op_transfer")?;
             let linked: HashMap<i64, i64> = links.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?.collect::<rusqlite::Result<_>>()?;
-            let mut statement = connection.prepare_cached("SELECT model, row_id, action, transfer_id, op_id FROM sync_upload WHERE transfer_id IS NOT NULL ORDER BY seq")?;
+            let mut statement = connection.prepare_cached("SELECT model, row_id, action, transfer_id, op_id FROM sync_upload WHERE transfer_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM transfer_outcome AS outcome WHERE outcome.transfer_id = sync_upload.transfer_id AND outcome.cycle_id = sync_upload.cycle_id AND outcome.kind IN ('confirmed', 'discarded')) ORDER BY seq")?;
             let keys = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?, row.get::<_, Option<i64>>(4)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
             let mut grouped: HashMap<String, Vec<String>> = HashMap::new();
             for (model, row_id, _, _, _) in &keys { grouped.entry(model.clone()).or_default().push(row_id.clone()); }

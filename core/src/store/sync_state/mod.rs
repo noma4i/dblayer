@@ -89,8 +89,14 @@ fn read_uploads(connection: &Connection, model: &str, ids: &[String]) -> rusqlit
         let ids = serde_json::to_string(ids).map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
         let mut rows = statement.query(params![model, ids])?;
         while let Some(row) = rows.next()? {
+            let outcome: Option<String> = row.get(17)?;
+            if matches!(outcome.as_deref(), Some("confirmed" | "discarded")) { continue; }
             if let Some(mut info) = info_at(row, 2)? {
                 let (id, action): (String, String) = (row.get(0)?, row.get(1)?);
+                if matches!(outcome.as_deref(), Some("failed" | "rejected")) {
+                    info.status = crate::owners::write::upload::UploadStatus::Failed;
+                    info.error = Some(crate::owners::write::failure::parse(&row.get::<_, Option<String>>(18)?.unwrap_or_default()));
+                }
                 let size = row.get::<_, Option<i64>>(10)?.map_or(Ok(0), |size| unsigned(size, 10))?;
                 info.copy_file = crate::owners::write::upload::TransferFile::of(size, crate::owners::write::transfer::file_id(unsigned(row.get(11)?, 11)?), row.get::<_, Option<String>>(15)?, info.status == crate::owners::write::upload::UploadStatus::Failed);
                 if let (None, Some(reason)) = (&info.error, row.get::<_, Option<String>>(13)?) {

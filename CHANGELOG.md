@@ -15,6 +15,7 @@
 - Land the answer rows of an uploadBatch whose sources were supplied with values.
 - Confirm a created row edited before the answer with the edit on the real row.
 - Keep a row the server removed before the answer of its create removed and end its queued edits.
+- Show the failed or finished upload in the same revision as its operation outcome.
 
 ## 6.34.1 - 2026-11-14
 

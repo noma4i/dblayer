@@ -77,7 +77,7 @@ pub(super) fn remove_upload(connection: &Connection, key: &str) -> Result<(), St
     Ok(())
 }
 
-pub(super) fn put_outcome(connection: &Connection, transfer_id: u64, cycle_id: u64, outcome: &crate::owners::write::outbox::OutboxOutcome, (revision, now): (i64, i64)) -> Result<(), StoreError> {
+pub(super) fn put_outcome(connection: &Connection, transfer_id: u64, cycle_id: u64, outcome: &crate::owners::write::outbox::OutboxOutcome, (revision, now): (i64, i64)) -> Result<bool, StoreError> {
     use crate::owners::write::outbox::OutboxOutcome;
     let id = i64::try_from(transfer_id).map_err(|_| StoreError::Constraint("transfer id is too large".into()))?;
     let cycle = i64::try_from(cycle_id).map_err(|_| StoreError::Constraint("cycle id is too large".into()))?;
@@ -88,8 +88,7 @@ pub(super) fn put_outcome(connection: &Connection, transfer_id: u64, cycle_id: u
         OutboxOutcome::Discarded => ("discarded", None, None),
         OutboxOutcome::Ended(_) => return Err(StoreError::Constraint("interrupted outcome is not durable".into())),
     };
-    connection.execute(include_str!("sql/upload_ops/put_outcome.sql"), params![id, cycle, kind, rev, value, now])?;
-    Ok(())
+    Ok(connection.execute(include_str!("sql/upload_ops/put_outcome.sql"), params![id, cycle, kind, rev, value, now])? == 1)
 }
 
 fn shown_columns(shown: &crate::owners::write::transfer::Shown) -> (Option<String>, Option<String>, Option<String>) {

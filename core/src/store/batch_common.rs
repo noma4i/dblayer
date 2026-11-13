@@ -91,11 +91,13 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             results.push(super::intent_write::intent(writer, *op_id, (model, row_id, action), payload, effects, (true, *created_at))?);
             writer.connection.execute(include_str!("sql/batch_common/apply_common.sql"), [i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?])?;
         }
-        StoreOp::TransferOutcome { transfer_id, cycle_id, outcome } => super::upload_ops::put_outcome(writer.connection, *transfer_id, *cycle_id, outcome, (writer.revision, writer.now))?,
+        StoreOp::TransferOutcome { transfer_id, cycle_id, outcome } => {
+            if super::upload_ops::put_outcome(writer.connection, *transfer_id, *cycle_id, outcome, (writer.revision, writer.now))? { touch_transfer(writer, (*transfer_id, *cycle_id), results)?; }
+        }
         StoreOp::RetireTransferOutcome { transfer_id, cycle_id } => {
             let id = i64::try_from(*transfer_id).map_err(|_| StoreError::Constraint("transfer id is too large".into()))?;
             let cycle = i64::try_from(*cycle_id).map_err(|_| StoreError::Constraint("cycle id is too large".into()))?;
-            writer.connection.execute(include_str!("sql/upload_ops/retire_transfer_outcome.sql"), rusqlite::params![id, cycle])?;
+            if writer.connection.execute(include_str!("sql/upload_ops/retire_transfer_outcome.sql"), rusqlite::params![id, cycle])? > 0 { touch_transfer(writer, (*transfer_id, *cycle_id), results)?; }
         }
         StoreOp::RollBack { op_id } => results.push(super::rollback::apply(writer, *op_id)?),
         StoreOp::Window { landed_at, key, model, page, replace_all, cursor, roots, related, total, base_revision, source } => {
@@ -135,6 +137,15 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
         }
     }
     Ok(true)
+}
+
+fn touch_transfer(writer: &mut RowWrite<'_>, (transfer_id, cycle_id): (u64, u64), results: &mut Vec<CommitResult>) -> Result<(), StoreError> {
+    use rusqlite::OptionalExtension;
+    let id = i64::try_from(transfer_id).map_err(|_| StoreError::Constraint("transfer id is too large".into()))?;
+    let cycle = i64::try_from(cycle_id).map_err(|_| StoreError::Constraint("cycle id is too large".into()))?;
+    let key: Option<String> = writer.connection.query_row(include_str!("sql/batch_common/upload_key_by_cycle.sql"), [id, cycle], |row| row.get(0)).optional()?;
+    if let Some(key) = key { results.push(writer.touch_upload(&key)?); }
+    Ok(())
 }
 
 fn join_local(row: &mut serde_json::Map<String, serde_json::Value>, name: String, value: serde_json::Value) {

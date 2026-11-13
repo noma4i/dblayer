@@ -50,3 +50,31 @@ fn the_staged_marker_is_written_with_the_row_and_cleared_by_its_own_op() {
     write(&db, vec![StoreOp::UploadStaged { key: KEY.into() }]);
     assert_eq!(staged(&db), 0);
 }
+
+/// D-427: an upload whose cycle has a written outcome shows that outcome in the batch of the outcome, before the transfer writes its own row: failed and rejected show failed with the error, confirmed and discarded hide the upload.
+#[test]
+fn the_outcome_of_a_cycle_is_shown_before_the_transfer_writes_its_row() {
+    use crate::owners::write::outbox::OutboxOutcome;
+    let cases = [
+        (OutboxOutcome::Failed { error: "boom".into() }, Some(("failed".to_string(), "boom".to_string()))),
+        (OutboxOutcome::Rejected { error: "no".into() }, Some(("failed".to_string(), "no".to_string()))),
+        (OutboxOutcome::Confirmed { revision: 0, result: None, row_id: None }, None),
+        (OutboxOutcome::Discarded, None),
+    ];
+    for (outcome, expected) in cases {
+        let db = Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+        crate::store::fixtures::put(&db, "moments", serde_json::json!({"id": "m1", "userId": null}));
+        write(&db, vec![StoreOp::Upload { row: row(), kind: UploadKind::SyncUpload }, shown(Shown::Uploading { progress: 66 }, 2, 3, 3)]);
+        let notices = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = notices.clone();
+        db.on_commit(move |notice| sink.lock().unwrap().push(notice)).unwrap();
+        let batch = StoreBatch { author: BatchAuthor::Outbox, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::TransferOutcome { transfer_id: 2, cycle_id: 1, outcome: outcome.clone() }] };
+        db.write_batch(&batch, db.files(), None).unwrap();
+        let sync = crate::store::sync_state::read_sync(&db.lock().connection, "moments", &["m1".to_string()]).unwrap();
+        let shown = sync.get("m1").and_then(|info| info.uploads.get("upload")).map(|info| (format!("{:?}", info.status).to_lowercase(), info.error.as_ref().map(|error| error.message.clone()).unwrap_or_default()));
+        assert_eq!(shown, expected, "{outcome:?}");
+        let notice = notices.lock().unwrap().pop().expect("the batch of the outcome announces a commit");
+        let announced = (notice.rows.unwrap_or_default().iter().any(|(_, id)| id == "m1"), notice.tables.iter().any(|table| table == crate::store::operation::QUEUE_TABLE));
+        assert_eq!(announced, (true, true), "{outcome:?}: the row and the queue of the upload are announced");
+    }
+}
