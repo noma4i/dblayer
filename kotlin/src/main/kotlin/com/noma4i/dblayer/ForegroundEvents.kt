@@ -9,12 +9,16 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import java.util.concurrent.atomic.AtomicBoolean
 
 internal object ForegroundEvents {
-    /** Calls [deliver] on every start of the process lifecycle. After the returned stop no new [deliver] starts and a queued registration is void; the stop needs no main thread. */
-    fun observe(lifecycle: Lifecycle = ProcessLifecycleOwner.get().lifecycle, post: (() -> Unit) -> Unit = ::onMain, deliver: () -> Unit): () -> Unit {
+    /** Calls [deliver] on every start and [background] on every stop of the process lifecycle. After the returned stop no new [deliver] starts and a queued registration is void; the stop needs no main thread. */
+    fun observe(lifecycle: Lifecycle = ProcessLifecycleOwner.get().lifecycle, post: (() -> Unit) -> Unit = ::onMain, background: () -> Unit = {}, deliver: () -> Unit): () -> Unit {
         val live = AtomicBoolean(true)
         val observer = object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) {
                 if (live.get()) deliver()
+            }
+
+            override fun onStop(owner: LifecycleOwner) {
+                if (live.get()) background()
             }
         }
         post { if (live.get()) lifecycle.addObserver(observer) }

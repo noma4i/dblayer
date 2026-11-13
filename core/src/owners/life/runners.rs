@@ -265,9 +265,9 @@ impl EffectRunner<Network> for NetworkRunner {
     fn run(&mut self, _stamp: EpochStamp, effect: NetworkEffect, _back: &Back<Network>) {
         let wiring = &self.wiring;
         match effect {
-            NetworkEffect::Broadcast { online, online_seq } => {
+            NetworkEffect::Broadcast { online, online_seq, cable } => {
                 wiring.to_windows(WindowsInput::Online { online: Online(online), online_seq });
-                wiring.to_feed(FeedInput::Online { online: Online(online), online_seq });
+                if let Some(cable) = cable { wiring.to_feed(FeedInput::Online { online: Online(cable), online_seq }); }
                 wiring.to_outbox(OutboxInput::Online(Online(online)));
                 wiring.to_transfer(TransferInput::Online(Online(online)));
                 wiring.to_session(SessionInput::Online(Online(online)));
@@ -304,12 +304,13 @@ impl EffectRunner<Network> for NetworkRunner {
                     wiring.tell_network(&[owner], NetworkEvent::PowerSaving { saving, epoch: Some(epoch) });
                 }
             }
-            NetworkEffect::Foreground(seq) => {
-                wiring.to_windows(WindowsInput::Foreground(seq));
+            NetworkEffect::Foreground { seq, online_seq } => {
+                wiring.to_windows(WindowsInput::Foreground { seq, online_seq });
                 wiring.to_rounds(RoundsInput::Foreground);
                 wiring.to_lifecycle(LifecycleInput::Foreground);
                 wiring.tell_network(&[Peer::Rounds, Peer::Session, Peer::Windows], NetworkEvent::Foreground(seq));
             }
+            NetworkEffect::Cable { cable, online_seq } => wiring.to_feed(FeedInput::Online { online: Online(cable), online_seq }),
             NetworkEffect::PowerSaving(saving) => {
                 wiring.to_windows(WindowsInput::PowerSaving { saving });
                 wiring.to_transfer(TransferInput::PowerSaving(saving));

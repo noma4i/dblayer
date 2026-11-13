@@ -27,7 +27,7 @@ Each piece of mutable state in the core has one owner with one queue. The owner 
 - `scope.entity(Model, id)` opens a stream whose first value comes from the cache of the core.
 - Cancelling or dropping a stream stops its work at once without leaking tasks. Cancelling a pending `pull` cancels the stream: its next value is `Ended(Cancelled)` and no delivery follows.
 - A stream whose window loads from the server returns its handle at once. Its first value carries the rows and the state together.
-- When the app is in the background the core keeps working until the OS stops the process. Returning to the foreground is an input of the network owner.
+- When the app is in the background the core keeps working until the OS stops the process, except the server cable: it closes in the background and opens again on return. Moves between foreground and background are inputs of the network owner.
 - A request, a load, an upload and a subscription hold a lease that a session end, a reset or a close ends. `close` returns after every lease ended and frees the open slot. A stream opened after the close ends at once. A reopened database has no old work left.
 - A pending native call resumes your coroutine or Swift task from a library lane, never from the thread that produced the result or released the call. Cancelling a call hands the cancel and the free to that lane, so neither runs while the library holds a lock.
 - Load, send and upload code plans and commits SQLite work as whole units. With a multi-thread Tokio scheduler a unit hands its worker thread over while it waits for a reader slot or the writer, so a busy store cannot stop unrelated tasks, timers or cancellation. A current-thread scheduler runs the unit inline.

@@ -268,8 +268,8 @@ pub enum WindowsInput {
     Online { online: Online, online_seq: u64 },
     /// The device saves power: a key that only the preload watches waits (Network snapshot and broadcast).
     PowerSaving { saving: bool },
-    /// The application came to the front; `seq` grows by 1 with every return.
-    Foreground(u64),
+    /// The application came to the front; `seq` grows by 1 with every return, `online_seq` is the one of the cable that opens with it.
+    Foreground { seq: u64, online_seq: u64 },
     /// The answer of `ReadWindow`: the saved window of a key that had no machine.
     WindowRead { key: WindowKey, read_id: u64, result: Result<Option<SavedWindow>, String> },
     TaskFailed { id: EffectId },
@@ -296,7 +296,7 @@ pub(super) enum Ev {
     Committed { request: RequestId, revision: i64 },
     Rejected { request: RequestId, reason: RejectReason },
     Stale { cause: StaleCause },
-    Foreground,
+    Foreground { online_seq: u64 },
     SourceChanged { revision: i64 },
     RetryDue { request: RequestId },
     Online { online: bool, online_seq: u64 },

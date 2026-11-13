@@ -89,6 +89,16 @@ class ForegroundEventsTest {
         assertEquals("calls at the close: $atClose, calls now: ${transport.calls.map { "${it.operationName} ${it.variablesJson}" }}", before, transport.calls.size)
     }
 
+    @Test
+    fun aStopOfTheProcessLifecycleIsDeliveredAsBackground() {
+        owner.lifecycle.currentState = Lifecycle.State.STARTED
+        val backgrounds = java.util.concurrent.atomic.AtomicInteger()
+        val stop = ForegroundEvents.observe(owner.lifecycle, post = { it() }, background = { backgrounds.incrementAndGet() }) {}
+        owner.lifecycle.currentState = Lifecycle.State.CREATED
+        assertEquals(1, backgrounds.get())
+        stop()
+    }
+
     /** boundary_observer_stop_orders (P-BND-09, D-177): a registration queued on the main thread and stopped before it ran never delivers, and the stop needs no main thread. */
     @Test
     fun aStopBeforeTheQueuedRegistrationRanVoidsIt() {

@@ -82,3 +82,36 @@ async fn an_old_encrypted_cable_cannot_deliver_into_the_next_account() {
     database.cancel_stream(second);
     database.close_now();
 }
+
+/// net_background_closes_the_cable (D-444): the move to the background closes the open cable, the idle minute sends nothing, the return opens it again.
+#[tokio::test(flavor = "multi_thread")]
+async fn net_background_closes_the_cable() {
+    let clock = crate::ffi::TestClock::new(1_000_000);
+    let rig = Rig { server: crate::transport::encrypted::tests::fake_server_tests::FakeServer::new(clock.manual()), credentials: Arc::default() };
+    let config = crate::transport::encrypted::tests::protocol_tests::config();
+    let (subscribed, mut subscriptions) = mpsc::unbounded_channel();
+    let (closed, mut closes) = mpsc::unbounded_channel();
+    let peer = Arc::new(Peer::new(config.clone(), subscribed, closed));
+    let database = Database::open_with_clock(Config { path: None }, crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(peer.clone()), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone()).await.unwrap();
+    database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}]"#.into()).await.unwrap();
+    database.set_online(true).await.unwrap();
+    bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
+    let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Notice".into() });
+    let token = crate::test_wait::within(subscriptions.recv()).await.unwrap();
+
+    let sink = crate::ffi::OnlineSink::of_life(&database.life);
+    let registration = sink.register_foreground();
+    sink.enter_background(registration);
+    assert_eq!(crate::test_wait::within(closes.recv()).await.as_deref(), Some(token.as_str()));
+    let sent = peer.cable.received();
+    clock.advance(60_000);
+    let life = database.life_handle();
+    crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
+    assert_eq!((peer.cable.received() - sent, peer.cable.connects()), (0, 1), "a minute in the background sends no frame and opens no cable");
+
+    sink.enter_foreground(registration);
+    crate::test_wait::within(subscriptions.recv()).await.unwrap();
+    assert_eq!(peer.cable.connects(), 2);
+    drop(stream);
+    database.close_now();
+}

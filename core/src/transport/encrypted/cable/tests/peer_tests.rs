@@ -35,6 +35,7 @@ pub(crate) struct CablePeer {
     config: crate::transport::EncryptedConfig,
     connections: Arc<Mutex<HashMap<String, Arc<Connection>>>>,
     next: Arc<AtomicUsize>,
+    received: Arc<AtomicUsize>,
     observer: Option<Observer>,
     contract: Option<Arc<Mutex<crate::server_contract::CableContract>>>,
 }
@@ -64,7 +65,7 @@ impl PlatformSocket for PeerLink {
 
 impl CablePeer {
     pub(crate) fn new(config: crate::transport::EncryptedConfig) -> Self {
-        Self { config, connections: Arc::default(), next: Arc::default(), observer: None, contract: None }
+        Self { config, connections: Arc::default(), next: Arc::default(), received: Arc::default(), observer: None, contract: None }
     }
 
     pub(crate) fn with_contract(mut self, contract: Arc<Mutex<crate::server_contract::CableContract>>) -> Self {
@@ -78,6 +79,9 @@ impl CablePeer {
 
     /// The sockets opened so far.
     pub(crate) fn connects(&self) -> usize { self.next.load(Ordering::SeqCst) }
+
+    /// The texts the client sent so far.
+    pub(crate) fn received(&self) -> usize { self.received.load(Ordering::SeqCst) }
 
     fn observe(&self, event: PeerEvent) {
         if let Some(observer) = &self.observer { observer(event); }
@@ -97,6 +101,7 @@ impl CablePeer {
 
     /// The client sends a text: the hello answers `ready`, a subscribe answers `subscribed`. The result is the id of the subscription a subscribe opened.
     pub(crate) fn receive(&self, token: &str, text: &str) -> Result<Option<String>, DbError> {
+        self.received.fetch_add(1, Ordering::SeqCst);
         let Some(connection) = self.connection(token) else { return Err(DbError::Network { detail: "no such socket".into() }) };
         let command: Value = serde_json::from_str(text)?;
         if command["command"] == "subscribe" {

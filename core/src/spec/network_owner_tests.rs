@@ -39,7 +39,7 @@ fn online(online: bool) -> NetworkInput {
 fn saving(saving: bool) -> NetworkInput { NetworkInput::PowerSaving { saving, reply: 1 } }
 fn foreground() -> NetworkInput { NetworkInput::Foreground { reply: 1 } }
 fn snapshot(owner: Peer, epoch: u64) -> NetworkInput { NetworkInput::SnapshotRequest { owner, epoch } }
-fn broadcast(online: bool, online_seq: u64) -> NetworkEffect { NetworkEffect::Broadcast { online, online_seq } }
+fn broadcast(online: bool, online_seq: u64) -> NetworkEffect { NetworkEffect::Broadcast { online, online_seq, cable: Some(online) } }
 
 #[test]
 fn net_online_broadcasts_only_a_change() {
@@ -69,8 +69,8 @@ fn net_open_before_first_value() {
 #[test]
 fn net_foreground_numbers_every_call() {
     let mut twin = Twin::new();
-    assert_eq!(twin.feed(foreground()), vec![NetworkEffect::Foreground(1)]);
-    assert_eq!(twin.feed(foreground()), vec![NetworkEffect::Foreground(2)]);
+    assert_eq!(twin.feed(foreground()), vec![NetworkEffect::Foreground { seq: 1, online_seq: 0 }]);
+    assert_eq!(twin.feed(foreground()), vec![NetworkEffect::Foreground { seq: 2, online_seq: 0 }]);
 }
 
 #[test]

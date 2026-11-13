@@ -62,6 +62,7 @@ impl Facts {
         match event {
             Ev::EpochEnded { cause } => self.end_cause = cause.clone(),
             Ev::Closing => self.end_cause = EndCause::Closed,
+            Ev::Foreground { online_seq } => self.online_seq = self.online_seq.max(*online_seq),
             Ev::Online { online, online_seq, .. } => {
                 self.online = Some(*online);
                 if *online {

@@ -42,7 +42,7 @@ internal class SystemObservers(private val context: Context) : PlatformObserver 
     override fun start(sink: OnlineSink) {
         val registration = sink.registerForeground()
         stops = listOf(
-            ForegroundEvents.observe { sink.enterForeground(registration) },
+            ForegroundEvents.observe(background = { sink.enterBackground(registration) }) { sink.enterForeground(registration) },
             PowerSaving.observe(context) { sink.setPowerSaving(it) },
         )
     }

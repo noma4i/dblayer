@@ -115,3 +115,33 @@ async fn gap_keeps_the_window_of_a_scope_that_declares_it() {
     ];
     assert_eq!(format!("{table:?}"), format!("{wanted:?}"), "(break, requests of the window without the declaration, requests of the window with it, their rows, the event shown by both)");
 }
+
+/// net_background_closes_the_cable (D-444): after a stay in the background, a watched window reads once on the return, with or without `refresh_on_foreground`.
+/// Observable: the requests of each window between the return and the reopened cable.
+/// Defect caught: the load of the foreground and the gap of the reopened cable both reread the declared window.
+#[tokio::test(flavor = "multi_thread")]
+async fn net_background_return_loads_each_window_once() {
+    let world = World::new("server", "A", true);
+    world.answer_with("ChatList", page(&["c1", "c2"], "old"));
+    let held: Arc<crate::ffi::tests::session_guards_tests::WatchedHeld> = Arc::default();
+    let (database, transport) = open_at(None, held, &world).await;
+    let events = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
+    assert!(matches!(bound(events.pull_next()).await, Some(ReadValue::Ready)));
+    let (plain, _plain_handle) = watch(&database, "list", "PRIMARY");
+    let (declared, _declared_handle) = watch(&database, "foreground", "SECONDARY");
+    settled(&database, "both windows show their first page", || ids(&plain) == ["c1", "c2"] && ids(&declared) == ["c1", "c2"]).await;
+    signalled(&transport.opened, "the subscription opens", || transport.token.lock().unwrap().is_some()).await;
+    transport.token.lock().unwrap().take();
+    let before = (requests(&world, "PRIMARY"), requests(&world, "SECONDARY"));
+
+    let sink = crate::ffi::OnlineSink::of_life(&database.life);
+    let registration = sink.register_foreground();
+    sink.enter_background(registration);
+    settled(&database, "the background reached the owners", || true).await;
+    sink.enter_foreground(registration);
+    signalled(&transport.opened, "the subscription opens again", || transport.token.lock().unwrap().is_some()).await;
+    settled(&database, "the windows were read after the return", || true).await;
+
+    assert_eq!((requests(&world, "PRIMARY") - before.0, requests(&world, "SECONDARY") - before.1), (1, 1), "(window without the declaration, window with it)");
+    database.close_now();
+}

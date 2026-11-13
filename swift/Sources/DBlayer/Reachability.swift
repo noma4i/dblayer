@@ -34,7 +34,7 @@ final class SystemObservers: PlatformObserver, @unchecked Sendable {
   func start(sink: OnlineSink) {
     let registration = sink.registerForeground()
     stops = [
-      ForegroundEvents.observe { sink.enterForeground(token: registration) },
+      ForegroundEvents.observe({ sink.enterForeground(token: registration) }, background: { sink.enterBackground(token: registration) }),
       PowerSaving.observe { sink.setPowerSaving(saving: $0) }
     ]
   }

@@ -254,7 +254,7 @@ impl Twin {
                 self.post(w::WindowsInput::Stale { model: "Moment".into(), keys, cause: w::StaleCause::Change });
             }
             Input::StaleGap => self.post(w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::all(), cause: w::StaleCause::Gap { online_seq: self.online_seq } }),
-            Input::Foreground { seq } => self.post(w::WindowsInput::Foreground(*seq)),
+            Input::Foreground { seq } => self.post(w::WindowsInput::Foreground { seq: *seq, online_seq: 0 }),
             Input::SourceChanged { revision } => self.post(w::WindowsInput::StoreCommitted { models: vec!["Moment".into()], revision: *revision }),
             Input::Online(on) => {
                 self.online_seq += u64::from(*on);

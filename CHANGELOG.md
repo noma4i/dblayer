@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Close the server cable while the app is in the background.
+
 ### Fixed
 
 - Keep the revision when the server repeats the delete of a removed row.

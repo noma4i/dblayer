@@ -85,7 +85,7 @@ impl Window {
                     return effects;
                 }
                 Ev::StoreSeen { .. } | Ev::SourceChanged { .. } => return self.run(event, ids, now),
-                Ev::Foreground => return Vec::new(),
+                Ev::Foreground { .. } => return Vec::new(),
                 held => {
                     opening.held.push(held);
                     return Vec::new();
@@ -574,14 +574,15 @@ impl StateOwner for Windows {
                     Self::on(state, &key, Ev::SourceChanged { revision }, now, &mut out);
                 }
             }
-            WindowsInput::Foreground(seq) if seq > state.foreground_seen => {
+            WindowsInput::Foreground { seq, online_seq } if seq > state.foreground_seen => {
                 state.foreground_seen = seq;
+                state.online_seq = state.online_seq.max(online_seq);
                 let named: Vec<WindowKey> = state.windows.keys().filter(|key| (state.on_foreground)(key)).cloned().collect();
                 for key in named {
-                    Self::on(state, &key, Ev::Foreground, now, &mut out);
+                    Self::on(state, &key, Ev::Foreground { online_seq }, now, &mut out);
                 }
             }
-            WindowsInput::Foreground(_) => {}
+            WindowsInput::Foreground { .. } => {}
             WindowsInput::Online { online: Online(online), online_seq } => {
                 state.online = Some(online);
                 if online {

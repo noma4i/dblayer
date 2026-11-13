@@ -84,6 +84,16 @@ extension BridgeProbeTests {
     stop()
   }
 
+  @Test(.timeLimit(.minutes(1)))
+  func aMoveToTheBackgroundIsDelivered() async {
+    let (events, continuation) = AsyncStream<Void>.makeStream()
+    let name = Notification.Name("DBlayerTestBackground")
+    let stop = ForegroundEvents.observe(name: Notification.Name("DBlayerTestBackgroundForeground"), active: { false }, backgroundName: name, {}, background: { continuation.yield() })
+    NotificationCenter.default.post(name: name, object: nil)
+    #expect(await Cursor(events).next("background delivery") != nil)
+    stop()
+  }
+
   /// boundary_observer_stop_orders (P-BND-09): a first call queued on the main queue and stopped before it ran never delivers.
   @MainActor
   @Test(.timeLimit(.minutes(1)))

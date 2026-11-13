@@ -131,6 +131,11 @@ impl OnlineSink {
     pub fn enter_foreground(&self, token: u64) {
         if let Some(life) = self.life() { self.registrations.deliver(token, || drop(life.foreground())); }
     }
+
+    /// One move to the background. Dropped when the registration of `token` ended.
+    pub fn enter_background(&self, token: u64) {
+        if let Some(life) = self.life() { self.registrations.deliver(token, || drop(life.background())); }
+    }
 }
 
 enum Follower {

@@ -65,7 +65,7 @@ impl Facts {
                 self.fresh = false;
                 Handled
             }
-            Ev::Foreground if !self.interest.is_empty() && self.is_online() => self.begin(context, 1, false, true),
+            Ev::Foreground { .. } if !self.interest.is_empty() && self.is_online() => self.begin(context, 1, false, true),
             Ev::SourceChanged { revision } => {
                 self.push_fx(WindowEffect::DerivePreload { revision: *revision });
                 Handled

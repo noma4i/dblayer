@@ -77,7 +77,10 @@ pub(super) async fn feed_database_at(path: Option<String>, held: Arc<crate::ffi:
     let mut pinned = list.clone();
     pinned.name = "pinned".into();
     pinned.keep_on_gap = true;
-    chat.relations.extend([node, list, pinned]);
+    let mut foreground = list.clone();
+    foreground.name = "foreground".into();
+    foreground.refresh_on_foreground = true;
+    chat.relations.extend([node, list, pinned, foreground]);
     chat.changes = changes.into_iter().map(|read| serde_json::from_value(read).unwrap()).collect();
     if let Some(listen) = listen { chat.listens.push(serde_json::from_value(listen).unwrap()); }
     chat.change_feed = Some(crate::schema::ChangeFeed { subscription: "RecordEvents".into(), root: "recordEvents.entries".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
