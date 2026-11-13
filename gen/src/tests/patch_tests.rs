@@ -7,7 +7,7 @@ const NOTE: &str = "model Note do\n  attribute :title, :string\n  attribute :bod
 fn a_nullable_field_has_three_states_in_update_and_set_on_both_platforms() {
     let declared = parse_all(&[NOTE]).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &SchemaTypes::default());
-    for line in ["@concurrent public func update(title: String? = nil, body: String?? = nil, in scope_: AccountScope? = nil)", "@concurrent public func set(typing: Bool? = nil, mood: String?? = nil, in scope_: AccountScope? = nil)"] {
+    for line in ["nonisolated(nonsending) public func update(title: String? = nil, body: String?? = nil, in scope_: AccountScope? = nil)", "nonisolated(nonsending) public func set(typing: Bool? = nil, mood: String?? = nil, in scope_: AccountScope? = nil)"] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &SchemaTypes::default());

@@ -27,7 +27,7 @@ fn a_model_operation_takes_schema_enums_and_input_objects_as_typed_args() {
     let declared = compile(MODEL, Some(SCHEMA)).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
     for line in [
-        "@concurrent public func answerConnection(decision: ConnectionAction, note: NoteInput? = nil, status: ConnectionStatus, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {",
+        "nonisolated(nonsending) public func answerConnection(decision: ConnectionAction, note: NoteInput? = nil, status: ConnectionStatus, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {",
         "public enum ConnectionAction: Codable, Sendable, Hashable {",
         "public struct NoteInput",
         "values_[\"connectionStatus\"] = try JSONValue.encode(status)",

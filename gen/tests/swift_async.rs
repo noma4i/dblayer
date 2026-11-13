@@ -15,14 +15,16 @@ fn generate(arguments: &[&str], sources: &[PathBuf]) -> String {
 }
 
 #[test]
-fn every_generated_swift_async_entry_is_declared_concurrent() {
+fn every_generated_swift_entry_to_an_owner_runs_on_the_actor_of_the_caller() {
     let schema = PathBuf::from(".").join("../fixtures/operations/schema.graphql");
     let models = generate(&["swift"], &fixtures(""));
     let operations = generate(&["--schema", schema.to_str().unwrap(), "swift"], &fixtures("operations"));
     for (label, source) in [("models", models), ("operations", operations)] {
-        let entries: Vec<&str> = source.lines().filter(|line| line.contains(") async throws") && line.trim_start().starts_with(['p', '@'])).collect();
+        let entries: Vec<&str> = source.lines().filter(|line| line.contains(") async throws") && line.trim_start().starts_with(['p', '@', 'n'])).collect();
         assert!(entries.len() > 10, "{label}: the fixtures declare async entries, found {}", entries.len());
-        let local: Vec<&&str> = entries.iter().filter(|line| !line.contains("@concurrent")).collect();
-        assert!(local.is_empty(), "{label}: async entries not declared @concurrent: {local:?}");
+        let local: Vec<&&str> = entries.iter().filter(|line| !line.contains("@concurrent") && !line.contains("nonisolated(nonsending)")).collect();
+        assert!(local.is_empty(), "{label}: async entries run on neither the actor of the caller nor off it by declaration: {local:?}");
+        let leaves: Vec<&&str> = entries.iter().filter(|line| line.contains("@concurrent") && !line.contains("Edge(")).collect();
+        assert!(leaves.is_empty(), "{label}: async entries that reach an owner leave the actor of the caller before the library takes the place: {leaves:?}");
     }
 }

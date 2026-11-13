@@ -122,7 +122,7 @@ end
     assert_eq!(action.root.as_deref(), Some("containerMute.container"));
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
-    assert!(swift.contains("@concurrent public func mute(mute: Bool, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self>"));
+    assert!(swift.contains("nonisolated(nonsending) public func mute(mute: Bool, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self>"));
     assert!(swift.contains("values_[\"muted\"] = try JSONValue.encode(mute)"));
     assert!(swift.contains("args: [\"mute\": try JSONValue.encode(mute)]"));
     assert!(kotlin.contains("suspend fun mute(mute: Boolean, account: AccountScope? = null): MutationReceipt<Container>"));
@@ -144,7 +144,7 @@ end
 "#).unwrap();
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
-    assert!(swift.contains("@concurrent public static func create(name: String? = nil, unreadCount: Int, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self>"));
+    assert!(swift.contains("nonisolated(nonsending) public static func create(name: String? = nil, unreadCount: Int, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self>"));
     assert!(kotlin.contains("suspend fun create(name: String? = null, unreadCount: Long, account: AccountScope? = null): MutationReceipt<Container>"));
 }
 
@@ -184,7 +184,7 @@ fn a_local_field_is_in_the_model_type_but_not_in_create_or_update() {
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
     assert!(swift.contains("public let tone: String?") && kotlin.contains("val tone: String? = null"), "{swift}\n{kotlin}");
-    assert!(swift.contains("@concurrent public static func create(text: String, in scope_: AccountScope? = nil)") && swift.contains("@concurrent public func update(text: String? = nil, in scope_: AccountScope? = nil)"), "{swift}");
+    assert!(swift.contains("nonisolated(nonsending) public static func create(text: String, in scope_: AccountScope? = nil)") && swift.contains("nonisolated(nonsending) public func update(text: String? = nil, in scope_: AccountScope? = nil)"), "{swift}");
     assert!(kotlin.contains("suspend fun create(text: String, account: AccountScope? = null)") && kotlin.contains("suspend fun update(text: String? = null, account: AccountScope? = null)"), "{kotlin}");
 }
 

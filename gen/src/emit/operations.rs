@@ -53,7 +53,7 @@ pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCal
         let params = super::swift_scope(&params, scope);
         let returns = if operation.result.is_none() { String::new() } else { format!(" -> {}", returned(operation, true)) };
         let binding = if operation.args.is_empty() { "let" } else { "var" };
-        writeln!(out, "    @concurrent public static func {method}({params}) async throws{returns} {{\n        {binding} variables_: [String: JSONValue] = [:]").unwrap();
+        writeln!(out, "    nonisolated(nonsending) public static func {method}({params}) async throws{returns} {{\n        {binding} variables_: [String: JSONValue] = [:]").unwrap();
         for (arg, kind) in &operation.args {
             if kind.ends_with('?') { writeln!(out, "        if let value = {printed} {{ variables_[\"{arg}\"] = try JSONValue.encode(value) }}", printed = identifier(arg, true)).unwrap(); }
             else { writeln!(out, "        variables_[\"{arg}\"] = try JSONValue.encode({printed})", printed = identifier(arg, true)).unwrap(); }

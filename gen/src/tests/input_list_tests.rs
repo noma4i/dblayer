@@ -164,7 +164,7 @@ fn list_args_of_create_and_of_other_model_actions_become_typed_parameters() {
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
     for line in [
         "widgets: [WidgetInput]? = nil",
-        "@concurrent public func decorate(widgets: [WidgetInput], in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {",
+        "nonisolated(nonsending) public func decorate(widgets: [WidgetInput], in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {",
         "\"widgets\": try JSONValue.encode(widgets)",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");

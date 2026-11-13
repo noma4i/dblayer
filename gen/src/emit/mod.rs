@@ -265,10 +265,7 @@ pub fn emit_swift_with(models: &[ModelSpec], operations: &[OperationCall], schem
     source.lines().map(|line| {
         let indent = line.len() - line.trim_start().len();
         let trimmed = line.trim_start();
-        let (attribute, declaration) = match trimmed.strip_prefix("@concurrent ") {
-            Some(rest) => ("@concurrent ", rest),
-            None => ("", trimmed),
-        };
+        let (attribute, declaration) = ["@concurrent ", "nonisolated(nonsending) "].into_iter().find_map(|attribute| trimmed.strip_prefix(attribute).map(|rest| (attribute, rest))).unwrap_or(("", trimmed));
         match declaration.strip_prefix("public ") {
             Some(rest) => format!("{}{}{}", &line[..indent], attribute, rest),
             None => line.to_string(),
@@ -352,7 +349,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             format!("{}: {}{}", identifier(&field.name, true), kind, if optional { " = nil" } else { "" })
         }).chain(create_args.iter().map(|(name, kind)| format!("{}: {}{}{}", identifier(name, true), arg_type(kind, true), if kind.ends_with('?') { "?" } else { "" }, if kind.ends_with('?') { " = nil" } else { "" }))).collect::<Vec<_>>().join(", ");
         let params = swift_scope(&params, &scope);
-        writeln!(out, "    @concurrent public static func create({params}) async throws -> MutationReceipt<Self> {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
+        writeln!(out, "    nonisolated(nonsending) public static func create({params}) async throws -> MutationReceipt<Self> {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
         if !create_args.is_empty() { writeln!(out, "        var {args}: [String: JSONValue] = [:]").unwrap(); }
         for field in &create_fields {
             if create_optional(model, field) { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = try JSONValue.encode(value) }}", identifier(&field.name, true), field.name).unwrap(); }
@@ -366,7 +363,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
         let update_args = standard_args(model, "update");
         let params = fields.iter().map(|field| format!("{}: {}? = nil", identifier(&field.name, true), field_type(field, true))).chain(update_args.iter().map(|(name, kind)| format!("{}: {}? = nil", identifier(name, true), arg_type(kind, true)))).collect::<Vec<_>>().join(", ");
         let params = swift_scope(&params, &scope);
-        writeln!(out, "    @concurrent public func update({params}) async throws -> MutationReceipt<Self> {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
+        writeln!(out, "    nonisolated(nonsending) public func update({params}) async throws -> MutationReceipt<Self> {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
         if !update_args.is_empty() { writeln!(out, "        var {args}: [String: JSONValue] = [:]").unwrap(); }
         for field in &fields { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = try JSONValue.encode(value) }}", identifier(&field.name, true), field.name).unwrap(); }
         for (name, _) in &update_args { writeln!(out, "        if let value = {printed} {{ {args}[\"{name}\"] = try JSONValue.encode(value) }}", printed = identifier(name, true)).unwrap(); }
@@ -374,7 +371,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
         if !model.ephemeral.is_empty() {
             let params = model.ephemeral.iter().map(|field| format!("{}: {}? = nil", identifier(&field.field.name, true), field_type(&field.field, true))).collect::<Vec<_>>().join(", ");
             let params = swift_scope(&params, &scope);
-            writeln!(out, "    @concurrent public func set({params}) async throws {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
+            writeln!(out, "    nonisolated(nonsending) public func set({params}) async throws {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
             for field in &model.ephemeral { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = try JSONValue.encode(value) }}", identifier(&field.field.name, true), field.field.name).unwrap(); }
             writeln!(out, "        try await self.set(values: {values}, in: {scope})\n    }}").unwrap();
         }
@@ -388,7 +385,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
             let returns = "MutationReceipt<Self>";
             let params = swift_scope(&params, &scope);
-            writeln!(out, "    @concurrent public func {}({params}) async throws -> {returns} {{", identifier(&name(&action.name), true)).unwrap();
+            writeln!(out, "    nonisolated(nonsending) public func {}({params}) async throws -> {returns} {{", identifier(&name(&action.name), true)).unwrap();
             writeln!(out, "        {} {values} = try JSONValue.readObject(#\"{}\"#)", if action.optimistic.values().any(|value| value.get("$arg").is_some()) { "var" } else { "let" }, serde_json::to_string(&literals).unwrap()).unwrap();
             for (field, value) in &action.optimistic { if let Some(arg) = value.get("$arg").and_then(|arg| arg.as_str()) { writeln!(out, "        {values}[\"{field}\"] = try JSONValue.encode({printed})", printed = identifier(arg, true)).unwrap(); } }
             let args = action.args.keys().map(|arg| format!("\"{arg}\": try JSONValue.encode({printed})", printed = identifier(arg, true))).collect::<Vec<_>>().join(", ");
@@ -401,14 +398,14 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             let id_param = if singleton { String::new() } else { "id: String, ".to_string() };
             let params = upload_args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, true), arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
             let params = if params.is_empty() { String::new() } else { format!(", {params}") };
-            writeln!(out, "    @concurrent public static func {method}({id_param}source: String{params}, in scope_: AccountScope) async throws -> MutationReceipt<Self> {{\n        {} variables_: [String: JSONValue] = [:]", if upload_args.is_empty() { "let" } else { "var" }).unwrap();
+            writeln!(out, "    nonisolated(nonsending) public static func {method}({id_param}source: String{params}, in scope_: AccountScope) async throws -> MutationReceipt<Self> {{\n        {} variables_: [String: JSONValue] = [:]", if upload_args.is_empty() { "let" } else { "var" }).unwrap();
             for (arg, kind) in &upload_args {
                 if kind.ends_with('?') { writeln!(out, "        if let value = {printed} {{ variables_[\"{arg}\"] = try JSONValue.encode(value) }}", printed = identifier(arg, true)).unwrap(); }
                 else { writeln!(out, "        variables_[\"{arg}\"] = try JSONValue.encode({printed})", printed = identifier(arg, true)).unwrap(); }
             }
             writeln!(out, "        return try await scope_.upload(Self.self, id: {}, action: \"{}\", UploadRequest(path: source, variables: variables_))\n    }}", if singleton { "\"singleton\"" } else { "id" }, action.name).unwrap();
-            writeln!(out, "    @concurrent public func {method}(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {{\n        try await scope_.upload(Self.self, id: id, action: \"{}\", request)\n    }}", action.name).unwrap();
-            writeln!(out, "    @concurrent public static func stage{}(source: String, in scope_: AccountScope) async throws -> StagedUpload<Self> {{\n        try await scope_.stage(Self.self, action: \"{}\", UploadRequest(path: source))\n    }}", upper_first(&method), action.name).unwrap();
+            writeln!(out, "    nonisolated(nonsending) public func {method}(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {{\n        try await scope_.upload(Self.self, id: id, action: \"{}\", request)\n    }}", action.name).unwrap();
+            writeln!(out, "    nonisolated(nonsending) public static func stage{}(source: String, in scope_: AccountScope) async throws -> StagedUpload<Self> {{\n        try await scope_.stage(Self.self, action: \"{}\", UploadRequest(path: source))\n    }}", upper_first(&method), action.name).unwrap();
         }
         out.push_str("}\n\n");
         for action in model.actions.iter().filter(|action| (action.upload && action.batch.is_none()) || action.returns.is_some()) {
@@ -504,7 +501,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             format!("{}: {}{}", identifier(&field.name, false), kind, if optional { " = null" } else { "" })
         }).chain(create_args.iter().map(|(name, kind)| format!("{}: {}{}", identifier(name, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" }))).collect::<Vec<_>>().join(", ");
         let params = kotlin_scope(&params, &account);
-        writeln!(out, "        suspend fun create({params}): MutationReceipt<{class}> = onAccount({account}) {{ database_, epoch_ ->\n            val {values} = buildJsonObject {{").unwrap();
+        writeln!(out, "        suspend fun create({params}): MutationReceipt<{class}> = onAccountOf({account}) {{ database_, ordered_, epoch_ ->\n            val {values} = buildJsonObject {{").unwrap();
         for field in &create_fields {
             if create_optional(model, field) { writeln!(out, "                {}?.let {{ this.put(\"{}\", jsonValue(it)) }}", identifier(&field.name, false), field.name).unwrap(); }
             else { writeln!(out, "                this.put(\"{}\", jsonValue({}))", field.name, identifier(&field.name, false)).unwrap(); }
@@ -518,12 +515,12 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             }
             out.push_str("            }\n");
         }
-        writeln!(out, "            MutationReceipt(database_, {class}, database_.create(epoch_, \"{class}\", {values}.jsonText(), {}))\n        }}", if create_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
+        writeln!(out, "            MutationReceipt(database_, {class}, ordered_.create(epoch_, \"{class}\", {values}.jsonText(), {}))\n        }}", if create_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
         out.push_str("    }\n");
         let update_args = standard_args(model, "update");
         let params = fields.iter().map(|field| kotlin_patch_param(field)).chain(update_args.iter().map(|(name, kind)| format!("{}: {}? = null", identifier(name, false), arg_type(kind, false)))).collect::<Vec<_>>().join(", ");
         let params = kotlin_scope(&params, &account);
-        writeln!(out, "    suspend fun update({params}): MutationReceipt<{class}> = onAccount({account}) {{ database_, epoch_ ->\n        val {values} = buildJsonObject {{").unwrap();
+        writeln!(out, "    suspend fun update({params}): MutationReceipt<{class}> = onAccountOf({account}) {{ database_, ordered_, epoch_ ->\n        val {values} = buildJsonObject {{").unwrap();
         for field in &fields { writeln!(out, "{}", kotlin_patch_put(field)).unwrap(); }
         out.push_str("        }\n");
         if !update_args.is_empty() {
@@ -531,7 +528,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             for (name, _) in &update_args { writeln!(out, "            {printed}?.let {{ this.put(\"{name}\", jsonValue(it)) }}", printed = identifier(name, false)).unwrap(); }
             out.push_str("        }\n");
         }
-        writeln!(out, "        MutationReceipt(database_, {class}, database_.update(epoch_, this.{MODEL_NAME}, this.id, {values}.jsonText(), {}))\n    }}", if update_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
+        writeln!(out, "        MutationReceipt(database_, {class}, ordered_.update(epoch_, this.{MODEL_NAME}, this.id, {values}.jsonText(), {}))\n    }}", if update_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
         writeln!(out, "    suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<{class}> = {class}.retry(id, action, source, account)").unwrap();
         writeln!(out, "    suspend fun destroy(account: AccountScope? = null): MutationReceipt<{class}> = {class}.destroy(id, account)").unwrap();
         if !model.ephemeral.is_empty() {
