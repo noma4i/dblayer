@@ -183,7 +183,7 @@ pub enum LocalWriteKind {
     /// The row is not in the base yet: the value sits on the row when it lands.
     SetLocalPending,
     SetEphemeral { expire_after: Option<u64> },
-    /// `source` is a file outside the directory of the files: it is copied first.
+    /// The file of a field leaves the row.
     Detach,
     /// A source file of the platform the library already copied (`row` is the row, `values` the field).
     AttachCopy { copy: crate::store::files::CopiedFile, name: String, mime: String },
