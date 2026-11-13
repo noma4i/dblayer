@@ -82,10 +82,11 @@ class ForegroundEventsTest {
 
         DBlayer.close()
         val before = transport.calls.size
+        val atClose = transport.calls.map { it.operationName }
         owner.lifecycle.currentState = Lifecycle.State.STARTED
         os.runMain()
         sink.enterForeground(registration)
-        assertEquals(before, transport.calls.size)
+        assertEquals("calls at the close: $atClose, calls now: ${transport.calls.map { "${it.operationName} ${it.variablesJson}" }}", before, transport.calls.size)
     }
 
     /** boundary_observer_stop_orders (P-BND-09, D-177): a registration queued on the main thread and stopped before it ran never delivers, and the stop needs no main thread. */
