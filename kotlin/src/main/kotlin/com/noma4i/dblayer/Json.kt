@@ -17,6 +17,17 @@ inline fun <reified Value> jsonValue(value: Value): JsonElement = dbJson.encodeT
 
 suspend fun <Result> offCaller(block: suspend () -> Result): Result = withContext(Dispatchers.Default) { block() }
 
+/** Takes the place of the call in the order of its database on the thread of the caller, runs the call off the caller with the database of that place and gives the place back. A receipt holds the database of the caller, never the database of the place. */
+@PublishedApi
+internal suspend fun <Result> offCallerInOrder(database: Database, call: suspend (Database) -> Result): Result {
+    val ordered = database.inOrder()
+    try {
+        return offCaller { call(ordered) }
+    } finally {
+        ordered.close()
+    }
+}
+
 fun JsonElement.jsonText(): String = dbJson.encodeToString(JsonElement.serializer(), this)
 
 fun parseJson(text: String): JsonElement = dbJson.parseToJsonElement(text)

@@ -85,16 +85,16 @@ class Query<Model : DBModel>(
     }
 
     /** The rows of this query read from storage once. It sends no request and keeps no stream. */
-    suspend fun read(account: AccountScope? = null): List<Model> = onAccount(account) { database, epoch -> database.readQuery(epoch, spec()).map(decoder::read) }
+    suspend fun read(account: AccountScope? = null): List<Model> = onAccountRead(account) { database, epoch -> database.readQuery(epoch, spec()).map(decoder::read) }
 
     /** One row read from storage, or null when the row does not exist. */
-    suspend fun readRow(id: String, account: AccountScope? = null): Model? = onAccount(account) { database, epoch -> database.readRow(epoch, modelName, id)?.let(decoder::read) }
+    suspend fun readRow(id: String, account: AccountScope? = null): Model? = onAccountRead(account) { database, epoch -> database.readRow(epoch, modelName, id)?.let(decoder::read) }
 
     suspend fun cachedRow(id: String, account: AccountScope? = null): Model? =
-        onAccount(account) { database, epoch -> database.peekRow(epoch, modelName, id)?.let(decoder::read) }
+        onAccountRead(account) { database, epoch -> database.peekRow(epoch, modelName, id)?.let(decoder::read) }
 
     suspend fun edgeValues(id: String, account: AccountScope? = null): JsonObject? =
-        onAccount(account) { database, epoch -> database.edgeValues(epoch, modelName, relation, params.jsonText(), listOf(id)).firstOrNull()?.let { Cell.Keyed(it.values).asJson() as JsonObject } }
+        onAccountRead(account) { database, epoch -> database.edgeValues(epoch, modelName, relation, params.jsonText(), listOf(id)).firstOrNull()?.let { Cell.Keyed(it.values).asJson() as JsonObject } }
 
     /** Starts loading the relation and returns this caller's interest at once. Callers of the same scope share one request, and the request stops when every caller cancelled its interest. */
     fun beginLoad(account: AccountScope? = null): LoadRequest = admit(account).let { admission -> admission.database.beginLoad(admission.epoch, modelName, relation, params.jsonText()) }

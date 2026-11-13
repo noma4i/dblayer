@@ -276,20 +276,20 @@ class AccountScope private constructor(val epoch: ULong, internal val database: 
 
     /** Sends a refused operation again, by the fields of its [OperationInfo]. Throws `NotFound` when the operation is gone. */
     suspend fun retry(model: String, id: String, action: String?) {
-        offCaller { database.retry(epoch, model, id, action, null) }
+        offCallerInOrder(database) { it.retry(epoch, model, id, action, null) }
     }
 
     /** Drops an operation that is not on its way, by the fields of its [OperationInfo]. */
-    suspend fun discard(model: String, id: String, action: String?) = offCaller { database.discard(epoch, model, id, action) }
+    suspend fun discard(model: String, id: String, action: String?) = offCallerInOrder(database) { it.discard(epoch, model, id, action) }
 
     /** Writes the model locally and queues it for the server. It works without a network and after the app closed. A model with a `create` operation and a declared upload action work this way; another model is refused. Throws `NoSession` when the session of this scope ended. */
     suspend fun <Model : DBModel> send(decoder: ModelDecoder<Model>, values: JsonObject, args: JsonObject = JsonObject(emptyMap()), upload: UploadCommand? = null): MutationReceipt<Model> {
-        return offCaller { MutationReceipt(database, decoder, database.send(CommandRequest(epoch, decoder.modelName, values.jsonText(), args.jsonText(), upload?.let { CommandUpload(it.action, it.request.wire()) }))) }
+        return offCallerInOrder(database) { ordered -> MutationReceipt(database, decoder, ordered.send(CommandRequest(epoch, decoder.modelName, values.jsonText(), args.jsonText(), upload?.let { CommandUpload(it.action, it.request.wire()) }))) }
     }
 
     /** Sends the file of a record through its declared upload action. The row does not need to exist. */
     suspend fun <Model : DBModel> upload(decoder: ModelDecoder<Model>, id: String, action: String, request: UploadRequest): MutationReceipt<Model> {
-        return offCaller { MutationReceipt(database, decoder, database.upload(epoch, decoder.modelName, id, action, request.wire())) }
+        return offCallerInOrder(database) { ordered -> MutationReceipt(database, decoder, ordered.upload(epoch, decoder.modelName, id, action, request.wire())) }
     }
 
     /** Sends the file of an existing record through its declared upload action. */
@@ -297,12 +297,12 @@ class AccountScope private constructor(val epoch: ULong, internal val database: 
 
     /** Sends the file before its row exists. [StagedUpload.commit] creates the row and sends the final mutation, [StagedUpload.discard] removes the transfer. */
     suspend fun <Model : DBModel> stage(decoder: ModelDecoder<Model>, action: String, request: UploadRequest): StagedUpload<Model> {
-        val staged = offCaller { database.stage(epoch, decoder.modelName, action, request.wire()) }
+        val staged = offCallerInOrder(database) { it.stage(epoch, decoder.modelName, action, request.wire()) }
         return StagedUpload(database, epoch, decoder, staged.rowId, action)
     }
 
     suspend fun <Model : DBModel> uploadBatch(decoder: ModelDecoder<Model>, items: List<UploadItem>, request: UploadBatchRequest): OperationReceipt<Model> =
-        offCaller { OperationReceipt(database, decoder, database.uploadCreateBatch(epoch, decoder.modelName, items.map { it.wire() }, request.wire())) }
+        offCallerInOrder(database) { ordered -> OperationReceipt(database, decoder, ordered.uploadCreateBatch(epoch, decoder.modelName, items.map { it.wire() }, request.wire())) }
 
     companion object {
         fun current(): AccountScope {

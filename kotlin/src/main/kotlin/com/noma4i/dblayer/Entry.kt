@@ -12,15 +12,15 @@ object DBlayer {
     internal fun openedDatabase(): Database? = try { opener.opened() } catch (_: DbException.NotOpen) { null }
 
     suspend inline fun <reified Body, reified Answer> sessionCall(operation: String, body: Body): Answer =
-        offCaller { dbJson.decodeFromString<Answer>(database.sessionCall(operation, dbJson.encodeToString(body))) }
+        offCallerInOrder(database) { dbJson.decodeFromString<Answer>(it.sessionCall(operation, dbJson.encodeToString(body))) }
 
     /** The answer of the session call that the killed process left running, taken once: `null` when there is none. */
     suspend fun interruptedSessionAnswer(): JsonObject? =
-        offCaller { database.interruptedSessionAnswer()?.let { dbJson.parseToJsonElement(it) as JsonObject } }
+        offCallerInOrder(database) { it.interruptedSessionAnswer()?.let { dbJson.parseToJsonElement(it) as JsonObject } }
 
     /** Ends the session: work of the old session ends, the credential and the data of the account go. Call it for every sign-out; the library clears the data itself. */
     suspend fun sessionReset() {
-        offCaller { database.sessionReset() }
+        offCallerInOrder(database) { it.sessionReset() }
     }
 
     /** The session now: epoch, identity of its credential and phase. Read it again after a stream ends with the session or after `sessionCall` and `sessionReset`. */

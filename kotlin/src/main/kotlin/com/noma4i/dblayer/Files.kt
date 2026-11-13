@@ -21,11 +21,11 @@ suspend fun <Model : DBModel> Model.attach(field: FileField<Model>, source: File
 }
 
 suspend fun <Model : DBModel> Model.file(field: FileField<Model>, account: AccountScope? = null): FileInfo? {
-    return onAccount(account) { database, epoch -> database.file(epoch, modelName, id, field.name)?.let(FileInfo::of) }
+    return onAccountRead(account) { database, epoch -> database.file(epoch, modelName, id, field.name)?.let(FileInfo::of) }
 }
 
 suspend fun <Model : DBModel> Model.url(field: FileField<Model>, account: AccountScope? = null): URI? {
-    return onAccount(account) { database, epoch -> database.url(epoch, modelName, id, field.name)?.let { File(it).toURI() } }
+    return onAccountRead(account) { database, epoch -> database.url(epoch, modelName, id, field.name)?.let { File(it).toURI() } }
 }
 
 suspend fun <Model : DBModel> Model.detach(field: FileField<Model>, account: AccountScope? = null): Boolean {
