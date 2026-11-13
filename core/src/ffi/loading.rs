@@ -46,11 +46,16 @@ fn load_cancelled() -> DbError { super::cause_error(&super::EndCause::Cancelled)
 impl LoadRequest {
     /// Waits for the end of the load. A request cancelled before its end fails with `Interrupted`.
     pub async fn result(&self) -> Result<(), DbError> {
-        let mut outcome = self.outcome.clone();
-        let seen = match outcome.wait_for(Option::is_some).await {
-            Ok(seen) => seen.clone(),
-            Err(_) => return Err(DbError::Internal { detail: "the load ended without an outcome".into() }),
-        };
+        let outcome = self.outcome.clone();
+        let waiting = self.outcome.clone();
+        let seen = super::reading::poll_then_wait(|| match &*outcome.borrow() {
+            Some(seen) => std::task::Poll::Ready(Some(seen.clone())),
+            None if outcome.has_changed().is_err() => std::task::Poll::Ready(Some(Err(DbError::Internal { detail: "the load ended without an outcome".into() }))),
+            None => std::task::Poll::Pending,
+        }, || {
+            let mut waiting = waiting.clone();
+            Box::pin(super::database::on_core(super::database::Scope::root(), async move { let _ = waiting.wait_for(Option::is_some).await; }))
+        }).await;
         seen.unwrap_or_else(|| Err(load_cancelled()))
     }
 
