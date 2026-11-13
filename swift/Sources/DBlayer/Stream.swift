@@ -136,7 +136,7 @@ public struct ListProjection<Model: DBModel>: Sendable {
   }
 }
 
-/// The screen model of a stream of rows: Swift Observation over a projection. It reads the stream until it is released, and releasing it ends the stream in the core. Rows are decoded off the main actor, the main actor only publishes them.
+/// The screen model of a stream of rows: Swift Observation over a projection. It reads the stream until it is released, and releasing it ends the stream in the core. Rows are decoded and applied off the main actor, the main actor only assigns the finished projection.
 @MainActor @Observable
 public final class Projected<Model: DBModel> {
   public private(set) var projection = ListProjection<Model>()
@@ -154,6 +154,7 @@ public final class Projected<Model: DBModel> {
   public init(_ stream: ValueStream) {
     self.stream = stream
     reading = Task.detached { [weak self] in
+      var building = ListProjection<Model>()
       for await value in stream {
         let delivery: ListDelivery<Model>?
         do { delivery = try ListDelivery(value) } catch {
@@ -161,12 +162,13 @@ public final class Projected<Model: DBModel> {
           continue
         }
         guard let delivery, let self else { continue }
-        await self.receive(delivery)
+        building.apply(delivery)
+        await self.receive(building)
       }
     }
   }
 
-  private func receive(_ delivery: ListDelivery<Model>) { projection.apply(delivery) }
+  private func receive(_ built: ListProjection<Model>) { projection = built }
 
   public func refresh() async throws { try await stream.refresh() }
   public func loadMore() async throws -> LoadMoreResult { try await stream.loadMore() }
