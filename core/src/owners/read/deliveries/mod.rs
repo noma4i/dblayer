@@ -577,9 +577,8 @@ fn lower(peers: DeliveryPeers, revision: i64, stream: StreamId, machine: &Delive
             Emit::Load { force } => Effect::Send(Outbound::new(peers.windows, WindowsInput::Load { key: machine.view.window.clone(), id: stream, goal: Goal::First, force, store_revision: revision })),
             Emit::InterestMinus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestMinus { key: machine.view.window.clone(), id: stream })),
             Emit::DebtPlus(row) | Emit::DebtMinus(row) => {
-                let Some(relation) = machine.view.node.as_ref() else { continue };
-                let params = serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(row))]);
-                let (key, id) = (WindowKey::relation(&machine.view.model, relation, &params), stream | (1 << 61));
+                let Some(key) = machine.debt_window(&row) else { continue };
+                let id = stream;
                 Effect::Send(Outbound::new(peers.windows, if plus { WindowsInput::InterestPlus { key, id } } else { WindowsInput::InterestMinus { key, id } }))
             }
             Emit::WantPlus => Effect::Run(DeliveryEffect::WantPlus { model: machine.view.model.clone(), id: stream, stream: machine.view.kind == Kind::Events, scoped: machine.view.scoped.to_vec() }),

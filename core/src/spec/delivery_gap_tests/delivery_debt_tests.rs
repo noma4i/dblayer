@@ -75,3 +75,18 @@ fn dlv_owed_row_interest_count_and_local_table() {
     let sends: Vec<String> = take(&local.log).into_iter().filter_map(|entry| match entry { Emitted::Send { to: WINDOWS, input } => Some(input), _ => None }).collect();
     assert_eq!(sends.iter().filter(|send| send.starts_with("InterestPlus") && send.contains("r9")).count(), 1, "{sends:?}");
 }
+
+/// dlv_owed_row_of_the_own_window_keeps_the_interest: the stream of the `node` window of a row in debt holds no second interest for the debt, so the payment leaves its own interest.
+#[test]
+fn dlv_owed_row_of_the_own_window_keeps_the_interest() {
+    let mut twin = Twin::new();
+    let mut shown = view(Kind::Entity(Fetch::Never));
+    shown.node = Some("node".into());
+    shown.window = WindowKey::relation("Moment", "node", &[(crate::schema::NODE_PARAM.to_string(), serde_json::json!("r1"))].into_iter().collect());
+    twin.post(d::DeliveryInput::Open { stream: STREAM, view: shown, epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: None });
+    twin.step(Input::WindowState(Ws::loaded_at(1)));
+    let owing = read(&mut twin, 1, &["r1"]);
+    assert!(!owing.iter().any(|send| send.starts_with("InterestPlus")), "the debt adds no interest to the own window: {owing:?}");
+    let paid = read(&mut twin, 2, &[]);
+    assert!(!paid.iter().any(|send| send.starts_with("InterestMinus")), "the payment keeps the own interest: {paid:?}");
+}
