@@ -93,3 +93,91 @@ async fn boundary_node_read_epoch() {
     assert!(matches!(result, Err(DbError::Interrupted { .. } | DbError::NoSession { .. })), "{result:?}");
     rig.database.close_now();
 }
+
+fn group_names(rig: &Rig) -> Vec<String> {
+    rig.world.log().iter().filter(|entry| entry.operation == "CreateGroup").map(|entry| {
+        let body: Value = serde_json::from_str(&entry.body).unwrap();
+        body.pointer("/variables/name").or_else(|| body.pointer("/variables/input/name")).and_then(Value::as_str).unwrap_or_else(|| panic!("no group name in {body}")).to_string()
+    }).collect()
+}
+
+fn permutation(seed: u64, count: usize) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..count).collect();
+    match seed {
+        0 => order.reverse(),
+        _ => {
+            let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+            for index in (1..count).rev() {
+                state ^= state << 13; state ^= state >> 7; state ^= state << 17;
+                order.swap(index, (state % (index as u64 + 1)) as usize);
+            }
+        }
+    }
+    order
+}
+
+/// Requirement P-BR-10: calls that started in an order enter the owners in that order, whatever the order of their tasks.
+/// Observable: the mutation requests at the transport carry the names of the calls in the order of their places.
+/// Defect caught: the body enters the owner in the order the tasks run, not in the order of the places (D-419).
+#[test]
+fn bridge_prop_calls_enter_in_the_order_they_started() {
+    let seeds: Vec<_> = (0..6u64).map(|seed| std::thread::spawn(move || {
+        tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap().block_on(async move {
+            let rig = Rig::encrypted().await;
+            rig.login_ios("A").await;
+            let epoch = rig.database.session_epoch();
+            let places: Vec<_> = (0..12).map(|_| rig.database.in_order()).collect();
+            let mut tasks = Vec::new();
+            for index in permutation(seed, 12) {
+                let place = places[index].clone();
+                let (values, args) = super::bridge_support_tests::group(&format!("call-{index:02}"));
+                tasks.push(tokio::spawn(async move { place.create(epoch, "Group".into(), values, args).await }));
+            }
+            for task in tasks { bound(task).await.unwrap().unwrap(); }
+            rig.settle().await;
+            let expected: Vec<String> = (0..12).map(|index| format!("call-{index:02}")).collect();
+            assert_eq!(group_names(&rig), expected, "seed {seed}: the requests left in the order of the tasks");
+            rig.database.close_now();
+        });
+    })).collect();
+    for seed in seeds { seed.join().unwrap(); }
+}
+
+/// Requirement P-BR-10: a place that never reaches an owner does not hold the next one.
+/// Observable: the call of the next place ends and its request leaves in all 3 cases.
+/// Defect caught: a place without a pass stops the queue.
+#[tokio::test(flavor = "multi_thread")]
+async fn bridge_call_place_never_holds_the_next() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let create = |name: &str| super::bridge_support_tests::group(name);
+    let (first, second) = (rig.database.in_order(), rig.database.in_order());
+    drop(first);
+    let (values, args) = create("after-dropped-descriptor");
+    bound(second.create(epoch, "Group".into(), values, args)).await.unwrap();
+    let (first, second) = (rig.database.in_order(), rig.database.in_order());
+    let (values, args) = create("never-polled");
+    let never_polled = async move { first.create(epoch, "Group".into(), values, args).await };
+    drop(never_polled);
+    let (values, args) = create("after-dropped-future");
+    bound(second.create(epoch, "Group".into(), values, args)).await.unwrap();
+    let held = rig.world.hold_next("CreateGroup");
+    let (holder, waiting, next) = (rig.database.in_order(), rig.database.in_order(), rig.database.in_order());
+    let (values, args) = create("holder");
+    let holder = bound(holder.create(epoch, "Group".into(), values, args)).await.unwrap();
+    held.entered().await;
+    let temp = holder.optimistic_value.unwrap().id;
+    let waiting = tokio::spawn(async move { waiting.act(epoch, "Group".into(), temp, "add_member".into(), "{}".into(), json!({"userIds":["u1"]}).to_string()).await });
+    let (values, args) = create("after-waiting-call");
+    bound(next.create(epoch, "Group".into(), values, args)).await.unwrap();
+    held.release();
+    bound(waiting).await.unwrap().unwrap();
+    rig.settle().await;
+    let names = group_names(&rig);
+    for sent in ["after-dropped-descriptor", "after-dropped-future", "holder", "after-waiting-call"] {
+        assert!(names.iter().any(|name| name == sent), "the request of {sent} did not leave: {names:?}");
+    }
+    assert!(!names.iter().any(|name| name == "never-polled"), "a dropped call sent a request: {names:?}");
+    rig.database.close_now();
+}
