@@ -36,7 +36,7 @@ private func source(_ text: String) throws -> URL {
 extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
-  func theStandPreparesASourceWithoutAPreparerOfTheTest() async throws {
+  func anImageSourceWithoutEditsIsSentAsIs() async throws {
     let transport = RecordingPutTransport()
     enqueueUpload(transport)
     _ = try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: uploadOperations)

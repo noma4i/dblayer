@@ -351,6 +351,7 @@ struct SystemPreparerTests {
         print("MATRIX | \(row.name) | Done | \(try await row.check(destination))")
       case let .failed(message), let .cannotDecode(message):
         #expect(row.mayFail, "\(row.name): \(message)")
+        #expect(!message.isEmpty, "\(row.name): the failure names its reason")
         #expect(!FileManager.default.fileExists(atPath: destination.path), "\(row.name) leaves no partial file")
         print("MATRIX | \(row.name) | Failed | \(message)")
       }

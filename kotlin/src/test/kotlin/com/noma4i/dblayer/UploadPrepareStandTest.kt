@@ -31,7 +31,7 @@ private fun enqueueUpload(transport: RecordingPutTransport) {
 
 class UploadPrepareStandTest {
     @Test
-    fun theStandPreparesASourceWithoutAPreparerOfTheTest() = bounded {
+    fun anImageSourceWithoutEditsIsSentAsIs() = bounded {
         val file = Files.createTempFile("clip", ".bin").toFile().apply { writeText("abcdef") }
         val transport = RecordingPutTransport()
         try {

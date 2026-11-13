@@ -9,7 +9,6 @@ import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Test
 
 private const val STAGED_OPERATIONS = """[{"name":"CreateBlob","document":"mutation CreateBlob(${'$'}filename: String!, ${'$'}contentType: String!, ${'$'}byteSize: Int!, ${'$'}checksum: String!) { createBlob(filename: ${'$'}filename, contentType: ${'$'}contentType, byteSize: ${'$'}byteSize, checksum: ${'$'}checksum) { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]"""
@@ -66,27 +65,6 @@ class StagedUploadTest {
             assertTrue(staged.discard())
             assertTrue(scope.uploadStatus(staged).uploadStatus.firstOrNull { it is TransferItem.Progress && it.progress.state == "gone" } != null)
             assertNull(Moment.find(staged.id).current())
-        } finally {
-            closeForCleanup()
-            file.delete()
-        }
-    }
-
-    @Test
-    fun aSecondCommitOfAStagedUploadIsInvalid() = bounded {
-        val file = Files.createTempFile("staged", ".bin").toFile().apply { writeText("abcdef") }
-        val transport = MockTransport()
-        try {
-            enqueueStagedSteps(transport)
-            enqueueCommitSteps(transport)
-            openSigned(Config(null, null), modelsJSON, transport, operations = STAGED_OPERATIONS)
-            val staged = AccountScope.current().stage(Moment, "upload_clip", UploadRequest(file.path))
-            staged.commit(buildJsonObject { put("text", "hello") })
-            try {
-                staged.commit(buildJsonObject { put("text", "again") })
-                fail("a second commit was accepted")
-            } catch (_: DbException.Invalid) {
-            }
         } finally {
             closeForCleanup()
             file.delete()

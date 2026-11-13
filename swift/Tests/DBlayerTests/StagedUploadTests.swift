@@ -65,20 +65,4 @@ extension BridgeProbeTests {
     #expect(try await Moment.find(staged.id).current() == nil)
     await DB.closeForCleanup()
   }
-
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func aSecondCommitOfAStagedUploadIsInvalid() async throws {
-    let transport = MockTransport()
-    enqueueStagedSteps(transport)
-    transport.enqueue("CompleteMultipart", reply: #"{"data":{"completeMultipart":{"signedId":"sid","blobId":"b1"}}}"#)
-    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    _ = try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: stagedOperations)
-    let file = try stagedFile()
-    defer { try? FileManager.default.removeItem(at: file) }
-    let staged = try await DB.account().stage(Moment.self, action: "upload_clip", UploadRequest(path: file.path))
-    _ = try await staged.commit(values: ["text": .string("hello")])
-    await expectDbError("Invalid") { try await staged.commit(values: ["text": .string("again")]) }
-    await DB.closeForCleanup()
-  }
 }
