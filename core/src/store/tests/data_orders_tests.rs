@@ -90,7 +90,7 @@ fn data_orders_real_row_around_the_create_answer_and_the_file() {
         assert!(db.read(&["moments"], |reader| reader.point("moments", &temp)).unwrap().is_none(), "{order:?}: the temp row is gone");
         assert_eq!(db.count(&Query::new("moments")).unwrap(), 1, "{order:?}: one row stays");
         assert_eq!(db.url("moments", &id("m9"), "media").unwrap().map(|path| std::fs::read(path).unwrap()), Some(vec![7; 40]), "{order:?}: the real row owns the bytes");
-        assert_eq!(db.url("moments", &id(&temp), "media").unwrap(), None, "{order:?}: the temporary row owns none");
+        assert!(db.read(&["moments"], |reader| Ok(crate::store::files::find(reader.connection(), "moments", &temp, "media")?)).unwrap().is_none(), "{order:?}: the temporary row owns none");
     }
 }
 

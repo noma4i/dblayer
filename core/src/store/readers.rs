@@ -8,9 +8,15 @@ use super::StoreError;
 impl super::Store {
     pub(crate) fn resolve(&self, model: &str, row: &crate::identity::RowId) -> Result<crate::identity::RowId, StoreError> {
         if !row.is_temp() { return Ok(row.clone()); }
-        let real: Option<String> = self.read(&[model], |reader| Ok(reader.connection().query_row(include_str!("sql/ddl/read_row_alias.sql"), rusqlite::params![model, row.as_str()], |entry| entry.get(0)).optional()?))?;
-        real.map(|real| crate::identity::RowId::new(&real).map_err(|error| StoreError::Constraint(error.to_string()))).unwrap_or_else(|| Ok(row.clone()))
+        self.read(&[model], |reader| resolve_in(reader, model, row))
     }
+}
+
+/// The id a row has in the snapshot of `reader`: a temporary id whose `create` landed gives the real one.
+pub(crate) fn resolve_in(reader: &super::Reader<'_>, model: &str, row: &crate::identity::RowId) -> Result<crate::identity::RowId, StoreError> {
+    if !row.is_temp() { return Ok(row.clone()); }
+    let real: Option<String> = reader.connection().query_row(include_str!("sql/ddl/read_row_alias.sql"), rusqlite::params![model, row.as_str()], |entry| entry.get(0)).optional()?;
+    real.map(|real| crate::identity::RowId::new(&real).map_err(|error| StoreError::Constraint(error.to_string()))).unwrap_or_else(|| Ok(row.clone()))
 }
 
 #[cfg(test)]

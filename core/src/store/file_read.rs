@@ -22,6 +22,7 @@ impl Store {
     fn stored_file(&self, model: &str, id: &RowId, field: &str) -> Result<Option<FileRecord>, CoreError> {
         self.file_field(model, field)?;
         self.read_models(&[model], |reader| {
+            let id = super::readers::resolve_in(reader, model, id)?;
             if reader.point(model, id.as_str())?.is_none() {
                 return Ok(None);
             }

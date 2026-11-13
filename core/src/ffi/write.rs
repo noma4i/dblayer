@@ -192,7 +192,7 @@ impl Database {
             db.validate_update(&name, &patch)?;
             Ok((patch, args))
         }).await?;
-        let row = this_db.resolved(epoch, &model, id(&row_id)?).await?;
+        let row = id(&row_id)?;
         let (db, name) = (this_db.db.clone(), model.clone());
         let planned = this_db.offload(move || Ok(db.plan_update(&name, &row, patch, args)?)).await?;
         this_db.write_planned(epoch, "update", planned).await
@@ -209,7 +209,7 @@ impl Database {
             db.validate_act(&name, patch.clone(), &args)?;
             Ok((patch, args))
         }).await?;
-        let row = this_db.resolved(epoch, &model, id(&row_id)?).await?;
+        let row = id(&row_id)?;
         let (db, name, verb) = (this_db.db.clone(), model.clone(), action.clone());
         let planned = this_db.offload(move || Ok(db.plan_act(&name, &verb, &row, patch, args)?)).await?;
         this_db.write_planned(epoch, &action, planned).await
@@ -218,7 +218,7 @@ impl Database {
     pub async fn destroy(&self, epoch: u64, model: String, row_id: String) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
         this_db.mutation_needs_transport(&model, "destroy")?;
-        let row = this_db.resolved(epoch, &model, id(&row_id)?).await?;
+        let row = id(&row_id)?;
         let (db, name) = (this_db.db.clone(), model.clone());
         let planned = this_db.offload(move || Ok(db.plan_destroy(&name, &row)?)).await?;
         this_db.write_planned(epoch, "destroy", planned).await
@@ -232,7 +232,7 @@ impl Database {
             db.local_value(&name, &field, value.clone())?;
             Ok(value)
         }).await?;
-        let row = this_db.resolved(epoch, &model, id(&row_id)?).await?;
+        let row = id(&row_id)?;
         let (db, name, field) = (this_db.db.clone(), model.clone(), path.clone());
         let plan = this_db.offload(move || Ok(db.plan_set_local(&name, &row, &field, value)?)).await?;
         let (kind, row, values) = match plan {

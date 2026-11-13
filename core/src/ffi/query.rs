@@ -18,7 +18,7 @@ impl Database {
     pub async fn read_row(&self, epoch: u64, model: String, row_id: String) -> Result<Option<WireRow>, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
         this_db.wire(&model)?;
-        let row_id = this_db.resolved(epoch, &model, super::database::id(&row_id)?).await?;
+        let row_id = super::database::id(&row_id)?;
         this_db.read_in_epoch(epoch, "read row", move |this| {
             let wire = this.wire(&model)?;
             Ok(this.db.find(&model, &row_id)?.map(|row| wire.row(&row)))

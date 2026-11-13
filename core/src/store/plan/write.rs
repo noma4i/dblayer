@@ -105,19 +105,21 @@ impl Store {
         let mut patch = spec.patch(&patch);
         self.decode_values(model, &mut patch, |source, key| source.get(key))?;
         patch.remove("id");
-        let mut input = patch.clone();
-        input.insert("id".to_string(), Value::String(id.to_string()));
         let sends_args = !args.is_empty();
-        input.extend(args);
-        let effects = self.read_models(&[model], |reader| {
+        let (id, effects) = self.read_models(&[model], |reader| {
+            let id = crate::store::readers::resolve_in(reader, model, id)?;
             let current = reader.point(model, id.as_str())?.ok_or_else(|| CoreError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
             merged.extend(patch.clone());
             if same_fields(&merged, &current) && !sends_args {
-                return Ok(None);
+                return Ok((id, None));
             }
-            Ok(Some(IntentEffects { rows: vec![row_effect(model, id.as_str(), Some(&current), &merged)], ..Default::default() }))
+            let effects = IntentEffects { rows: vec![row_effect(model, id.as_str(), Some(&current), &merged)], ..Default::default() };
+            Ok((id, Some(effects)))
         })?;
+        let mut input = patch;
+        input.insert("id".to_string(), Value::String(id.to_string()));
+        input.extend(args);
         Ok(match effects {
             Some(effects) => Planned { model: model.to_string(), row_id: id.clone(), shown: id.clone(), input: Value::Object(input), effects, noop: false },
             None => Planned { model: model.to_string(), row_id: id.clone(), shown: id.clone(), input: Value::Object(input), effects: IntentEffects::default(), noop: true },
@@ -142,15 +144,14 @@ impl Store {
         let flagged = crate::schema::keyed::take_flags(&mut patch);
         let mut patch = spec.patch(&patch);
         self.decode_values(model, &mut patch, |source, key| source.get(key))?;
-        let own = RowRef::new(ModelKey::new(model), id.clone());
-        let mut input = args.clone();
-        input.insert("id".to_string(), Value::String(id.to_string()));
         let declared = spec.actions.iter().find(|declared| declared.name == action).cloned();
         let now_ms = self.lock().now_ms();
         let mut shown = None;
         let mut read_models = vec![model];
         if let Some(copy) = declared.as_ref().and_then(|declared| declared.copies_receiver_to.as_ref()) { read_models.extend(Self::copy_source_models(copy)); }
-        let effects = self.read_models(&read_models, |reader| {
+        let (id, effects) = self.read_models(&read_models, |reader| {
+            let id = &crate::store::readers::resolve_in(reader, model, id)?;
+            let own = RowRef::new(ModelKey::new(model), id.clone());
             let current = reader.point(model, id.as_str())?.ok_or_else(|| CoreError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let view = super::view::ReaderView { reader, specs: &|name| self.spec(name).ok(), db: Some(self) };
             let merged = crate::owners::write::outbox_plan::optimistic_row(spec, &view, (&current, &patch), crate::owners::write::outbox_plan::Fields { keyed: &keyed, flagged: &flagged }, &args, (model, id.as_str())).map_err(|error| CoreError::Internal(error.0))?;
@@ -169,23 +170,28 @@ impl Store {
                     shown = Some(copy_id);
                 }
             }
-            Ok(effects)
+            Ok((id.clone(), effects))
         })?;
+        let mut input = args;
+        input.insert("id".to_string(), Value::String(id.to_string()));
         Ok(Planned { model: model.to_string(), row_id: id.clone(), shown: shown.unwrap_or_else(|| id.clone()), input: Value::Object(input), effects, noop: false })
     }
 
     /// The row and every row that depends on it.
     pub(crate) fn plan_destroy(&self, model: &str, id: &RowId) -> Result<Planned, CoreError> {
-        let own = RowRef::new(ModelKey::new(model), id.clone());
         let spec = self.spec(model)?;
         let local_only = spec.is_memory() || spec.is_local();
-        let Some(effects) = self.read_models(&[model], |reader| {
+        let (id, effects) = self.read_models(&[model], |reader| {
+            let id = crate::store::readers::resolve_in(reader, model, id)?;
             if reader.point(model, id.as_str())?.is_none() {
-                return if local_only { Ok(None) } else { Err(CoreError::NotFound { model: model.to_string(), id: id.to_string() }) };
+                return if local_only { Ok((id, None)) } else { Err(CoreError::NotFound { model: model.to_string(), id: id.to_string() }) };
             }
+            let own = RowRef::new(ModelKey::new(model), id.clone());
             let tombstones = self.destroy_targets(reader, &own)?.into_iter().map(|target| EffectTombstone { model: target.model.to_string(), row_id: target.id.to_string() }).collect();
-            Ok(Some(IntentEffects { tombstones, ..Default::default() }))
-        })? else {
+            Ok((id, Some(IntentEffects { tombstones, ..Default::default() })))
+        })?;
+        let id = &id;
+        let Some(effects) = effects else {
             return Ok(Planned { model: model.to_string(), row_id: id.clone(), shown: id.clone(), input: json!({ "id": id.as_str() }), effects: IntentEffects::default(), noop: true });
         };
         Ok(Planned { model: model.to_string(), row_id: id.clone(), shown: id.clone(), input: json!({ "id": id.as_str() }), effects, noop: false })
@@ -303,7 +309,11 @@ impl Store {
     pub(crate) fn plan_set_local(&self, model: &str, id: &RowId, path: &str, value: Value) -> Result<LocalPlan, CoreError> {
         let value = self.local_value(model, path, value)?;
         let slot = self.spec(model)?.local_slot(path).ok_or_else(|| CoreError::NotLocalField { model: model.to_string(), path: path.to_string() })?;
-        let row = self.read_models(&[model], |reader| Ok(reader.point(model, id.as_str())?))?;
+        let (id, row) = self.read_models(&[model], |reader| {
+            let id = crate::store::readers::resolve_in(reader, model, id)?;
+            let row = reader.point(model, id.as_str())?;
+            Ok((id, row))
+        })?;
         Ok(match row {
             Some(mut row) => {
                 let before = row.clone();

@@ -117,9 +117,10 @@ impl Store {
 
     pub fn find(&self, model: &str, id: &RowId) -> Result<Option<Row>, CoreError> {
         self.spec(model)?;
-        let ids = [id.to_string()];
-        let mut loaded = self.read_models(&[model], |reader| self.load(reader, model, &ids))?;
-        Ok(loaded.remove(id.as_str()))
+        self.read_models(&[model], |reader| {
+            let id = super::readers::resolve_in(reader, model, id)?;
+            Ok(self.load(reader, model, &[id.to_string()])?.remove(id.as_str()))
+        })
     }
 
     pub fn query(&self, query: &Query) -> Result<Vec<Row>, CoreError> {
