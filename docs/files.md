@@ -70,16 +70,24 @@ let edit = PhotoEdit(maxSize: PixelSize(width: 1080, height: 1920), enlarge: fal
 let photo = UploadRequest(path: path, prepare: .image(edit: edit, quality: 0.8))
 ```
 
+```swift
+let capped = UploadRequest(path: path, maxBytes: 5_000_000)
+```
+
 ```kotlin
 val clip = UploadRequest(path, prepare = Prepare.video())
 val edit = PhotoEdit(PixelSize(1080u, 1920u), enlarge = false, crop = null, outputSize = null, mirror = false, rotationDegrees = 0u)
 val photo = UploadRequest(path, prepare = Prepare.image(edit, quality = 0.8))
 ```
 
-- `Prepare.video(limits, mirror, onCannotDecode, maxBytes)`: without `limits` the library uses its default limits. A video above the limits, or with `mirror`, is encoded again. A video inside the limits that carries private metadata of the source is written again without it and without a new encode. Any other video goes as it is.
-- `Prepare.image(edit, quality, format, maxBytes)`: the image is always written again, upright and without the metadata of the source. `format` is JPEG or PNG.
-- `maxBytes` is the largest file that may go to the network. It applies to the prepared file, or to the source when it goes as it is. A larger file fails the upload before any request with the reason `too_large`. `maxBytes` of 0 is refused with `Invalid`. A source without `prepare` has no limit: the app checks that file before the call.
-- A failed preparation gives the error kind `prepare_failed`. The `reason` field of the error names the cause: `device_cannot_decode` for a video the device cannot decode, `too_large` for a file above `maxBytes`, `failed` for any other failure. With `onCannotDecode` set to `uploadSource` a video the device cannot decode goes as it is. `retry(action)` prepares the source again.
+```kotlin
+val capped = UploadRequest(path, maxBytes = 5_000_000uL)
+```
+
+- `Prepare.video(limits, mirror, onCannotDecode)`: without `limits` the library uses its default limits. A video above the limits, or with `mirror`, is encoded again. A video inside the limits that carries private metadata of the source is written again without it and without a new encode. Any other video goes as it is.
+- `Prepare.image(edit, quality, format)`: the image is always written again, upright and without the metadata of the source. `format` is JPEG or PNG.
+- `maxBytes` stands on `UploadRequest`, `UploadItem` and `UploadSource`, not on `Prepare`. It is the largest file that may go to the network: the prepared file, or the source when it goes as it is. A larger file ends the upload as `failed` with the kind `too_large` and no transfer request leaves the device. `retry(action)` gives the same outcome. `maxBytes` of 0 is refused with `Invalid`. A request without `maxBytes` has no limit.
+- A failed preparation gives the error kind `prepare_failed`. The `reason` field of the error names the cause: `device_cannot_decode` for a video the device cannot decode, `failed` for any other failure. With `onCannotDecode` set to `uploadSource` a video the device cannot decode goes as it is. `retry(action)` prepares the source again.
 - One preparation runs at a time, in the order of the operations. It does not need the network.
 - A restart during the preparation starts the step again from the copy of the source. The files of the earlier attempt never remove the new result, and the upload does not fail for them.
 - `cancelUpload(action)` stops a running preparation and removes its file.

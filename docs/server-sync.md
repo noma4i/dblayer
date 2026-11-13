@@ -844,7 +844,7 @@ end
 - Events preserve fields owned by unconfirmed local edits. Loaded windows with `insert_on: [:event, :response]` accept matching rows.
 - If the first connection fails, the library retries it with the same growing delay and the same offline rule as a reconnect. `subscribe` does not throw for a refused connection.
 - The subscription starts when the first reader connects, is shared by all readers and closes after the last reader leaves.
-- After a dropped connection, the library reconnects and rereads once the watched relations of the models that lost events, fresh or not. Offline, it waits without attempts. Returning online reconnects at once. The reconnect delay runs on the database clock: a test clock that does not move never reconnects an online subscription, so a test advances it.
+- After a dropped connection, the library reconnects and rereads once the watched relations of the models that lost events, fresh or not. Offline, it waits without attempts. Returning online reconnects at once. The reconnect delay runs on the database clock: a test clock that does not move never reconnects an online subscription, so a test advances it. A scope declared with `keep_on_gap: true` is not reread after the break, see [models](models.md#scopes).
 - A WebSocket close frame ends the current subscription even without a GraphQL `complete` message.
 - Bursts of events are merged into one commit.
 - The debounce of a model is the longest `debounce:` of its subscriptions: events of the model wait for it and land in one commit. Each declaration keeps its own row effects, regardless of which reader opened first.

@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- keep_on_gap on a scope keeps its window unchanged after a connection gap.
+- maxBytes on the upload request, item and source: a larger file fails with too_large.
+
+### Fixed
+
+- Send operations of different rows in the order of their calls when a store write repeats.
+
+### Removed
+
+- maxBytes of the prepare settings and the too_large reason of prepare_failed.
+
 ## 6.33.1 - 2026-11-13
 
 ### Changed
