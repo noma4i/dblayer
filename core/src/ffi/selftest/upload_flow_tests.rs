@@ -358,3 +358,36 @@ async fn xfer_rowless_processing() {
     status_until(&stream, "the terminal value drops the processing", |value| matches!(value, ReadValue::Status { processing: None, .. })).await;
     rig.database.close_now();
 }
+
+/// P-DLV-24, P-XFER-26 (D-436): while a failed transfer waits in the queue, a row of the server that says its file is being processed gives the `Operations` stream the processing `uploads[action]` of the row shows.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_operations_stream_shows_the_processing_a_row_of_the_server_brings() {
+    use crate::ffi::ReadValue;
+    let rig = Rig::signed_as(World::new("server", "A", true), false, events(|models| {
+        add_chat(models);
+        add_uploads(models);
+        let chat = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Chat").unwrap();
+        let fields = chat["fields"].as_array_mut().unwrap();
+        fields.push(serde_json::to_value(crate::schema::FieldSpec::scalar("photoState", crate::value::ScalarKind::Str).nullable().optional()).unwrap());
+        fields.push(serde_json::to_value(crate::schema::FieldSpec::scalar("photoProgress", crate::value::ScalarKind::Num).nullable().optional()).unwrap());
+        let action = chat["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "update_photo").unwrap();
+        action["processing"] = json!({"field": "photoState", "done": ["ready"], "progress": "photoProgress"});
+    })).await;
+    rig.land("Chat", chat_row("c1", 0)).await;
+    let epoch = rig.database.session_epoch();
+    let stream = rig.database.subscribe_values(epoch, ReadRequest::Operations);
+    let (_directory, path) = source("logo.jpg", b"jpeg");
+    rig.world.fail_next("PUT", Fault::Http(400));
+    bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
+    let processing = |value: &ReadValue| match value {
+        ReadValue::Operations { items, .. } => items.iter().find_map(|item| item.upload.as_ref()).map(|upload| upload.processing.as_ref().and_then(|processing| processing.progress)),
+        _ => None,
+    };
+    status_until(&stream, "the queue shows the transfer", |value| processing(value) == Some(None)).await;
+    let mut working = chat_row("c1", 0);
+    working["photoState"] = json!("working");
+    working["photoProgress"] = json!(0.5);
+    rig.land("Chat", working).await;
+    status_until(&stream, "the queue shows the processing of the row", |value| processing(value) == Some(Some(0.5))).await;
+    rig.database.close_now();
+}

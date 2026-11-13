@@ -10,6 +10,7 @@
 - Find a row by its temporary id while the answer of its create lands.
 - Find a row by its temporary id after an event row with its key replaced it.
 - Wait up to 1 second for a locked database file before a write is refused.
+- Show in the operations queue the processing a server row reports for its upload.
 
 ### Removed
 

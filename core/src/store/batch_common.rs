@@ -74,7 +74,12 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             }
         }
         StoreOp::Planned { effects } => results.push(super::intent_write::planned(writer, effects)?),
-        StoreOp::IntentOrigin { op_id, origin } => super::upload_ops::put_intent_origin(writer.connection, *op_id, origin)?,
+        StoreOp::IntentOrigin { op_id, origin } => {
+            super::upload_ops::put_intent_origin(writer.connection, *op_id, origin)?;
+            let mut result = crate::store::CommitResult::noop(uuid::Uuid::new_v4());
+            result.operations.insert(i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?);
+            results.push(result);
+        }
         StoreOp::Show { .. } => {}
         StoreOp::Intent { op_id, model, row_id, action, payload, effects, origin, attempts, cycle_id, created_at } => {
             results.push(super::intent_write::intent(writer, *op_id, (model, row_id, action), payload, effects, (false, *created_at))?);
