@@ -16,10 +16,11 @@ struct Observed {
     steps: Vec<String>,
     puts: Vec<(u64, u64)>,
     executor_starts: usize,
+    presigns: usize,
     never_back: bool,
 }
 
-async fn upload(length: u64, executor: Option<Arc<Detached>>, cut_part_two: bool) -> Observed {
+async fn upload(length: u64, executor: Option<Arc<Detached>>, cut_part_two: bool, expire_part_two: bool) -> Observed {
     let (stand, clock) = timed_stand();
     let stand = match &executor { Some(executor) => stand.detached_through(executor.clone()), None => stand };
     stand.script.data("InitMultipart", INIT);
@@ -28,6 +29,7 @@ async fn upload(length: u64, executor: Option<Arc<Detached>>, cut_part_two: bool
     stand.script.data("CompleteMultipart", COMPLETE);
     let create = stand.script.hold("CreateMoment", LANDED);
     if cut_part_two { stand.puts.fail_once_at(5 * MEBIBYTE); }
+    if expire_part_two { stand.puts.expire_once_at(5 * MEBIBYTE); }
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("video");
     std::fs::File::create(&source).unwrap().set_len(length).unwrap();
@@ -56,6 +58,7 @@ async fn upload(length: u64, executor: Option<Arc<Detached>>, cut_part_two: bool
         steps,
         puts,
         executor_starts: executor.map_or(0, |executor| executor.started().len()),
+        presigns: stand.script.count("PresignParts"),
         never_back: frames.windows(2).all(|pair| pair[0] <= pair[1]),
     }
 }
@@ -69,11 +72,20 @@ async fn xfer_parts_do_not_depend_on_the_put_executor() {
         ("below the threshold", MEBIBYTE, false, vec!["CreateBlob", "CreateMoment"], vec![(0, MEBIBYTE)]),
     ];
     for (name, length, cut, steps, puts) in cases {
-        let without = upload(length, None, cut).await;
-        let with = upload(length, Some(Arc::new(Detached::default())), cut).await;
+        let without = upload(length, None, cut, false).await;
+        let with = upload(length, Some(Arc::new(Detached::default())), cut, false).await;
         assert_eq!(without, with, "{name}: the same upload with and without the executor");
         assert_eq!((without.executor_starts, without.never_back), (0, true), "{name}");
         assert_eq!(without.puts, puts, "{name}: sizes of the PUTs, part one is not sent again");
         assert_eq!(without.steps.iter().filter(|step| steps.contains(&step.as_str())).cloned().collect::<Vec<_>>(), steps, "{name}: the order of steps");
     }
+}
+
+/// P-XFER-22: the storage answers 403 to the PUT of part two, the step goes again with a new presign, part one is not sent again.
+/// Observable: the PUTs of the transport, the `PresignParts` calls. Catches: a retry that reuses the expired url, or one that sends the confirmed part again.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_expired_presign_is_asked_again() {
+    let expired = upload(11 * MEBIBYTE, None, false, true).await;
+    assert_eq!(expired.puts, vec![(0, 5 * MEBIBYTE), (5 * MEBIBYTE, 5 * MEBIBYTE), (5 * MEBIBYTE, 5 * MEBIBYTE), (10 * MEBIBYTE, MEBIBYTE)], "part one is not sent again");
+    assert_eq!(expired.presigns, 4, "each PUT, the repeated one too, has its own presign");
 }

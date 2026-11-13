@@ -195,6 +195,7 @@ pub(super) struct Puts {
     pub(super) bodies: Mutex<Vec<Vec<u8>>>,
     reports: AtomicBool,
     failing: Mutex<VecDeque<u64>>,
+    expiring: Mutex<VecDeque<u64>>,
 }
 
 impl Puts {
@@ -205,6 +206,8 @@ impl Puts {
     }
 
     pub(super) fn fail_once_at(&self, offset: u64) { self.failing.lock().unwrap().push_back(offset) }
+
+    pub(super) fn expire_once_at(&self, offset: u64) { self.expiring.lock().unwrap().push_back(offset) }
 }
 
 #[async_trait]
@@ -229,6 +232,8 @@ impl FakeTransport for Puts {
         }
         let failed = { let mut failing = self.failing.lock().unwrap(); failing.iter().position(|offset| *offset == file.offset).map(|index| failing.remove(index)) };
         if failed.is_some() { return Err(DbError::Network { detail: "the part was cut".into() }) }
+        let expired = { let mut expiring = self.expiring.lock().unwrap(); expiring.iter().position(|offset| *offset == file.offset).map(|index| expiring.remove(index)) };
+        if expired.is_some() { return Ok(PutReply { status: 403, etag: None }) }
         Ok(PutReply { status: 200, etag: Some("etag".into()) })
     }
 }
