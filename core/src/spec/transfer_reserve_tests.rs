@@ -110,6 +110,15 @@ fn xfer_reserving_signals() {
     assert!(twin.state().online == Some(true) && !twin.state().saving, "the fields follow the signals");
 }
 
+/// `AcceptBatch` without a transfer: a key twice in one call is a wrong call, `Invalid` with a text, no element is accepted (D-398).
+#[test]
+fn xfer_accept_batch_key_twice() {
+    let mut twin = Twin::new();
+    let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(KEY, 2)], reply: 91 });
+    assert!(matches!(Twin::fault(&out, 91), Some(Fault::Rejected(RejectReason::Invalid(text))) if text.contains(KEY)), "{:?}", out.replies(91));
+    assert_eq!((twin.state().transfers.len(), out.outbox.len()), (0, 0));
+}
+
 #[test]
 fn xfer_accept_key_open() {
     for stage in [TransferStage::Reserving, TransferStage::Accepting, TransferStage::Copying, TransferStage::CopyReady, TransferStage::PersistingCopy, TransferStage::Ready, TransferStage::PersistingAttempt, TransferStage::Uploading, TransferStage::Completing, TransferStage::Mutating, TransferStage::Removing, TransferStage::AwaitingSource] {
@@ -301,20 +310,30 @@ fn replacing_failed() -> (Twin, TransferId, TransferId) {
     (twin, old, new)
 }
 
+/// Failed (replaceable) x Cancel, Discard: the command waits for the end of the interval and runs by the row of the stage the key leaves to. The batch confirmed removes the new transfer, the batch refused removes the restored failed one. `Retry` is refused.
 #[test]
 fn xfer_replace_interval_refuses() {
-    let (mut twin, _, new) = replacing_failed();
+    let (mut twin, old, new) = replacing_failed();
     let (reply, out) = twin.retry(KEY, None);
     assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "retry before reservation");
-    for (name, (reply, out)) in [("cancel", twin.cancel(KEY)), ("discard", twin.discard(KEY))] {
-        assert!(out.replies(reply).is_empty(), "{name} waits before reservation");
-    }
-    twin.post(TransferInput::ReplacementReserved { target: ReserveTarget::Transfer(new), result: Ok((8, None)) });
+    let (cancel, out) = twin.cancel(KEY);
+    assert!(out.replies(cancel).is_empty(), "cancel waits before reservation");
+    let (discard, out) = twin.discard(KEY);
+    assert!(out.replies(discard).is_empty(), "discard waits before reservation");
+    let reserved = twin.post(TransferInput::ReplacementReserved { target: ReserveTarget::Transfer(new), result: Ok((8, None)) });
     let (reply, out) = twin.retry(KEY, None);
     assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "retry before Store answers");
-    for (name, (reply, out)) in [("cancel", twin.cancel(KEY)), ("discard", twin.discard(KEY))] {
-        assert!(out.replies(reply).is_empty(), "{name} waits before Store answers");
+    for (name, command) in [("cancel", cancel), ("discard", discard)] {
+        assert!(reserved.replies(command).is_empty() && out.replies(command).is_empty(), "{name} waits before Store answers");
     }
+    let out = twin.commit();
+    assert!(!twin.state().transfers.contains_key(&old), "the batch confirmed removes the replaced transfer: {out:?}");
+    let mut answers = out.replies(cancel);
+    answers.extend(out.replies(discard));
+    while answers.len() < 2 && twin.has_pending() { let out = twin.commit(); answers.extend(out.replies(cancel)); answers.extend(out.replies(discard)); }
+    assert_eq!(twin.state().open_id(KEY), None, "the new transfer of the key is removed");
+    assert!(answers.contains(&TransferAnswer::Cancelled(true)) && answers.contains(&TransferAnswer::Ok), "each command is answered once: {answers:?}");
+    assert_eq!(answers.len(), 2);
 }
 
 #[test]
@@ -392,5 +411,64 @@ impl Twin {
         let out = self.commit();
         assert_eq!(self.stage(id), TransferStage::Mutating);
         assert!(matches!(out.outbox.as_slice(), [OutboxInput::SubmitReserved { op_id: OP_ID, op, .. }] if op.effects.is_empty()), "{:?}", out.outbox);
+    }
+}
+
+/// Failed upload x new upload of the key x `discard` without an action (Outbox input), `discard` with an action and `cancelUpload` (Transfer inputs) in the replace interval, with the real Outbox and Transfer on one scheduler. Both outcomes of the batch: each call is answered once, no transfer and no operation of the key is left.
+/// Observable: the answers by call, the open transfer of the key, the open operations of Outbox. Catches: a command lost or answered twice, `Err(InFlight)` in the interval, a command that circles between the owners.
+#[test]
+fn xfer_replace_interval_two_owners() {
+    for (mutated, refused) in [(false, None), (false, Some(RejectReason::Storage("disk".into()))), (true, None), (true, Some(RejectReason::Storage("disk".into())))] {
+        let mut twin = Twin::with_outbox();
+        twin.post(accept_input(KEY, 90));
+        let old = twin.state().open_id(KEY).expect("the accepting transfer");
+        twin.answer_both(None);
+        twin.copy_done(old);
+        twin.answer_both(None);
+        twin.answer_both(None);
+        if mutated {
+            twin.step_ok(old, 1, Some("u"));
+            twin.answer_both(None);
+            twin.answer_both(None);
+            twin.step_ok(old, 2, None);
+            twin.answer_both(None);
+            twin.answer_both(None);
+            twin.completed(old);
+            twin.answer_both(None);
+            assert_eq!(twin.stage(old), TransferStage::Mutating);
+            twin.post_outbox(OutboxInput::TransportError { op_id: old, temporary: false });
+            while twin.has_pending() { twin.answer_both(None); }
+            assert_eq!(twin.open_operations(), 1, "the failed mutation is an open operation of Outbox");
+        } else {
+            twin.step_error(old, false);
+            twin.answer_both(None);
+        }
+        assert_eq!(twin.stage(old), TransferStage::Failed);
+        twin.post(accept_input(KEY, 91));
+        assert!(twin.has_pending(), "the batch of the replacement waits in the Store");
+        let row = twin.reply();
+        let mut outs = vec![twin.post_outbox(OutboxInput::Discard { model: "Message".into(), row_id: "m1".into(), action: None, reply: row })];
+        let (with_action, out) = twin.discard(KEY);
+        outs.push(out);
+        let (cancel, out) = twin.cancel(KEY);
+        outs.push(out);
+        let refused_batch = refused.is_some();
+        for (name, reply) in [("discard without action", row), ("discard", with_action), ("cancelUpload", cancel)] {
+            assert!(outs.iter().all(|out| out.replies(reply).is_empty()) && twin.outbox_replies().iter().all(|(found, _)| *found != reply), "{name} waits in the interval");
+        }
+        outs.push(twin.answer_both(refused));
+        while twin.has_pending() { outs.push(twin.answer_both(None)); }
+        let outbox_replies = twin.outbox_replies();
+        for (name, reply) in [("discard without action", row), ("discard", with_action), ("cancelUpload", cancel)] {
+            let answers: Vec<_> = outs.iter().flat_map(|out| out.replies(reply)).collect();
+            let from_outbox: Vec<_> = outbox_replies.iter().filter(|(found, _)| *found == reply).collect();
+            assert!(from_outbox.is_empty(), "{name}, mutated {mutated}: Transfer executes the command, Outbox does not answer it: {from_outbox:?}");
+            assert_eq!(answers.len(), 1, "{name}, mutated {mutated}, batch refused {refused_batch}: {answers:?}");
+            let expected = if reply == cancel { TransferAnswer::Cancelled(true) } else { TransferAnswer::Ok };
+            assert_eq!(answers, vec![expected], "{name}: answered once, not InFlight");
+        }
+        assert_eq!(twin.state().open_id(KEY), None, "batch refused {refused_batch}");
+        assert!(twin.state().transfers.values().filter(|transfer| transfer.key == KEY).all(|transfer| transfer.stage == TransferStage::Done), "no open transfer of the key");
+        assert_eq!(twin.open_operations(), 0, "no operation of the key");
     }
 }

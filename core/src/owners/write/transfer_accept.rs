@@ -165,7 +165,9 @@ impl TransferState {
             self.next_group - 1
         });
         let mut keys = BTreeSet::new();
-        if items.iter().any(|item| !keys.insert(&item.key)) { return reply(fx, rep, TransferAnswer::Err(Fault::InFlight)); }
+        if let Some(item) = items.iter().find(|item| !keys.insert(&item.key)) {
+            return reply(fx, rep, TransferAnswer::Err(Fault::Rejected(crate::owners::contract::RejectReason::Invalid(format!("the key {} is twice in the call", item.key)))));
+        }
         let old: Vec<_> = items.iter().map(|item| self.open_id(&item.key)).collect();
         if old.iter().flatten().any(|id| self.transfers.get(id).is_none_or(|transfer| transfer.stage != TransferStage::Failed || transfer.batch_id.is_some())) {
             return reply(fx, rep, TransferAnswer::Err(Fault::InFlight));

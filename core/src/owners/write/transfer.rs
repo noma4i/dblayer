@@ -194,7 +194,16 @@ impl TransferState {
     /// The replacement of `new` does not happen: the replaced transfer is `Failed` again and Outbox ends the replacement.
     pub(super) fn restore_replaced(&mut self, new: TransferId, fx: &mut Fx) -> Option<TransferId> {
         let (old, _) = self.replacements.remove(&new)?;
-        if let Some(transfer) = self.transfers.get_mut(&old) { transfer.stage = TransferStage::Failed; transfer.removal = None; transfer.prior = None; }
+        let waiting = self.transfers.get_mut(&new).map(|transfer| std::mem::take(&mut transfer.removal_waiting)).unwrap_or_default();
+        if let Some(transfer) = self.transfers.get_mut(&old) {
+            transfer.stage = TransferStage::Failed;
+            transfer.removal = None;
+            transfer.prior = None;
+            if !waiting.is_empty() {
+                transfer.removal_waiting.extend(waiting);
+                self.removal_pending.insert(old);
+            }
+        }
         fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::FinishReplacement { target: ReserveTarget::Transfer(new), committed: false })));
         Some(old)
     }

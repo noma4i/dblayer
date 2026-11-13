@@ -789,7 +789,7 @@ impl TransferState {
     pub fn stage_of(&self, id: TransferId) -> Option<TransferStage> { self.transfers.get(&id).map(|transfer| transfer.stage) }
 
     /// The open transfer of `key`: a `Done` transfer keeps only its outcomes.
-    pub fn open_id(&self, key: &str) -> Option<TransferId> { self.scan().filter(|transfer| transfer.key == key && transfer.stage != TransferStage::Done).min_by_key(|transfer| transfer.stage == TransferStage::Failed).map(|transfer| transfer.transfer_id) }
+    pub fn open_id(&self, key: &str) -> Option<TransferId> { self.scan().filter(|transfer| transfer.key == key && transfer.stage != TransferStage::Done && !self.replacements.values().any(|(old, _)| *old == transfer.transfer_id)).min_by_key(|transfer| transfer.stage == TransferStage::Failed).map(|transfer| transfer.transfer_id) }
 
     pub(super) fn attempt(&mut self) -> AttemptId {
         self.next_attempt += 1;

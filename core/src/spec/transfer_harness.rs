@@ -7,7 +7,7 @@ use crate::store::files::Location;
 use crate::owners::contract::{BatchId, Committed, Online, RejectReason, Rejected, ReplyId};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter, UploadKind, UploadRow};
 use crate::spec::support::{new_log, take, Discard, Emitted, Log, NoEffect, Silent, Spy, SpyState};
-use crate::owners::write::outbox::{Fault, NewOp, Outbox, OutboxInput, OutboxOutcome, OpSource, Receipt, ReserveTarget};
+use crate::owners::write::outbox::{Fault, NewOp, Outbox, OutboxEffect, OutboxInput, OutboxOutcome, OutboxPeers, OutboxState, OpSource, Receipt, ReserveTarget};
 use crate::owners::write::rounds::{Rounds, RoundsInput};
 use crate::owners::write::transfer::{BatchItem, Joint, NextStep, Shown, Source, Steps, StoredTransfer, Transfer, TransferAnswer, TransferEffect as Run, TransferId, TransferInput, TransferPeers, TransferStage, TransferState, TransferTick, Transfers};
 use crate::runtime::{Address, Cause, DetScheduler, Effects, Epoch, EpochStamp, StateOwner, Time};
@@ -215,21 +215,82 @@ pub(super) struct Twin {
     followed: std::collections::BTreeSet<String>,
     /// The batches of shown values wait for the test to answer them.
     pub hold_shown: bool,
+    /// What the real Outbox of `with_outbox` gave out; empty when Outbox is a peer that keeps its inputs.
+    outbox_fx: Log<Emitted<OutboxEffect>>,
 }
 
 impl Twin {
     /// The owner in the phase `Restoring`: nothing restored, no network signal.
-    pub fn bare(slots: u32) -> Self {
+    pub fn bare(slots: u32) -> Self { Self::build(slots, false) }
+
+    /// Transfer and the real Outbox on one scheduler: the messages between them run in their real order, the Store keeps the batches of both.
+    pub fn bare_with_outbox() -> Self { Self::build(1, true) }
+
+    fn build(slots: u32, real_outbox: bool) -> Self {
         let mut det = DetScheduler::new(7);
         let (store, outbox, rounds) = (new_log(), new_log(), new_log());
+        let outbox_fx = new_log();
         assert_eq!(det.add::<Tap<StoreWriter>>("store", store.clone(), Silent).index(), STORE_AT);
-        assert_eq!(det.add::<Tap<Outbox>>("outbox", outbox.clone(), Silent).index(), OUTBOX_AT);
+        if real_outbox {
+            let peers = OutboxPeers { store: Address::new(STORE_AT), session: None, transfer: Some(Address::new(TRANSFER_AT)) };
+            assert_eq!(det.add::<Spy<Outbox>>("outbox", SpyState::new(OutboxState::new(EPOCH, peers), &outbox_fx), Discard).index(), OUTBOX_AT);
+        } else {
+            assert_eq!(det.add::<Tap<Outbox>>("outbox", outbox.clone(), Silent).index(), OUTBOX_AT);
+        }
         let log = new_log();
         let peers = TransferPeers { store: Address::new(STORE_AT), outbox: Address::new(OUTBOX_AT), rounds: Some(Address::new(ROUNDS_AT)) };
         assert_eq!(det.add::<Spy<Transfers>>("transfer", SpyState::new(TransferState::new(EPOCH, slots, peers), &log), Discard).index(), TRANSFER_AT);
         assert_eq!(det.add::<Tap<Rounds>>("rounds", rounds.clone(), Silent).index(), ROUNDS_AT);
         det.start_epoch(EPOCH);
-        Self { det, log, store, outbox, rounds, reply: 100, unanswered: Vec::new(), ended: false, seen_ids: Default::default(), followed: Default::default(), hold_shown: false }
+        Self { det, log, store, outbox, rounds, reply: 100, unanswered: Vec::new(), ended: false, seen_ids: Default::default(), followed: Default::default(), hold_shown: false, outbox_fx }
+    }
+
+    /// Both owners after their restore, the network up, the operations `Message:send` and `Moment:upload` declared.
+    pub fn with_outbox() -> Self {
+        let mut twin = Self::bare_with_outbox();
+        twin.post_outbox(OutboxInput::RegisterOperations { declarations: vec![("Message".into(), "send".into()), ("Moment".into(), "upload".into())], complete: false });
+        twin.post_outbox(OutboxInput::Restored { ops: Vec::new(), pending_lost: false });
+        twin.post_outbox(OutboxInput::RestoreReady { epoch: EPOCH });
+        twin.post_outbox(OutboxInput::Online(Online(true)));
+        twin.post(TransferInput::RegisterOperations { declarations: vec![("Message".into(), "send".into()), ("Moment".into(), "upload".into())], complete: false });
+        twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
+        twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+        twin.post(TransferInput::Online(Online(true)));
+        twin
+    }
+
+    pub fn post_outbox(&mut self, input: OutboxInput) -> Out {
+        self.det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), input);
+        self.det.run_until_quiet(10_000).expect("the owners are quiet");
+        self.collect()
+    }
+
+    /// The answer of the Store for the oldest batch of either owner: both owners get it, the author takes it.
+    pub fn answer_both(&mut self, refused: Option<RejectReason>) -> Out {
+        let (batch, _) = self.unanswered.remove(0);
+        let (to_outbox, to_transfer) = match refused {
+            None => (
+                OutboxInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }),
+                TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }),
+            ),
+            Some(reason) => (OutboxInput::Rejected(Rejected { batch, reason: reason.clone() }), TransferInput::Rejected(Rejected { batch, reason })),
+        };
+        let mut out = self.post_outbox(to_outbox);
+        let next = self.post(to_transfer);
+        out.runs.extend(next.runs);
+        out.batches.extend(next.batches);
+        out.outbox.extend(next.outbox);
+        out
+    }
+
+    /// The answers the real Outbox gave to callers since the last call.
+    pub fn outbox_replies(&mut self) -> Vec<(ReplyId, crate::owners::write::outbox::OutboxAnswer)> {
+        take(&self.outbox_fx).into_iter().filter_map(|emitted| match emitted { Emitted::Run(OutboxEffect::Reply { reply, answer }) => Some((reply, answer)), _ => None }).collect()
+    }
+
+    /// The operations of the real Outbox that are not `Done`.
+    pub fn open_operations(&self) -> usize {
+        self.det.state(Address::<Spy<Outbox>>::new(OUTBOX_AT)).map_or(0, |spy: &SpyState<Outbox>| spy.inner.ops.values().filter(|operation| operation.stage != crate::owners::write::outbox_types::Stage::Done).count())
     }
 
     /// The owner after `Restored` of `rows`: the operations of the rows are declared, the network has not spoken yet.
