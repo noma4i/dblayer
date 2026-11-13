@@ -8,7 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @org.junit.runner.RunWith(org.robolectric.RobolectricTestRunner::class)
-@org.robolectric.annotation.Config(sdk = [35])
+@org.robolectric.annotation.Config(sdk = [35], shadows = [PulsingConnectivityManager::class])
 class OpenHeadersTest {
     @Test
     fun openReadsTheHeadersAgainForEveryRequest() = bounded {
@@ -27,11 +27,7 @@ class OpenHeadersTest {
             }
             DBlayer.open(org.robolectric.RuntimeEnvironment.getApplication(), headers = { mapOf("X-Token" to token.get()) }, encrypted = encrypted, credentials = credential, modelsJson = EMPTY_SPECS, uploadNotification = UploadNotification("Uploading", "Files are on their way", 1))
 
-            val context = org.robolectric.RuntimeEnvironment.getApplication()
-            val manager = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-            val validated = org.robolectric.shadows.ShadowNetworkCapabilities.newInstance()
-            org.robolectric.Shadows.shadowOf(validated).addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-            org.robolectric.Shadows.shadowOf(manager).networkCallbacks.single().onCapabilitiesChanged(manager.activeNetwork!!, validated)
+            osNetwork(online = true)
 
             val refused = ArrayList<Throwable>()
             suspend fun call() { try { DBlayer.database.sessionCall("login_link", """{"account":"A"}""") } catch (error: DbException) { refused.add(error) } }
