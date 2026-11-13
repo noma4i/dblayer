@@ -203,7 +203,6 @@ pub struct BatchPlan {
     pub pending_locals: Vec<PendingLocal>,
     pub network: Option<NetworkAdmission>,
     pub parents: BTreeSet<RowRef>,
-    /// The revision a load request was issued at: a landing pays the debt of a row only when the request is not older than the debt (D-393).
     pub request_base: Option<i64>,
 }
 

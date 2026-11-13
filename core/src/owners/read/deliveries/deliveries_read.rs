@@ -162,7 +162,6 @@ impl Delivery {
         self.window.clone()
     }
 
-    /// The stream leaves its window and gives back the interests it holds in the windows of rows in debt.
     pub(super) fn leave_all(&mut self, fx: &mut Vec<Emit>) {
         fx.extend(self.leave());
         fx.extend(std::mem::take(&mut self.debts).into_iter().map(Emit::DebtMinus));
@@ -174,7 +173,6 @@ impl Delivery {
         Some(WindowKey::relation(&self.view.model, relation, &params))
     }
 
-    /// D-393: a live stream holds one interest in the `node` window of each shown row that owes a reread, and gives it back when the row left the value or paid.
     pub(super) fn settle_debts(&mut self, fx: &mut Vec<Emit>) {
         let owing: BTreeSet<String> = match &self.owed_deps {
             _ if self.stage != DeliveryStage::Live || self.view.node.is_none() => BTreeSet::new(),

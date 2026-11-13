@@ -26,7 +26,6 @@ pub struct SavedWindow {
     pub landed_at: i64,
     pub fresh_until: i64,
     pub stale: bool,
-    /// The row of a `node` window owes a reread (D-393): the load is marked as the reread of an event.
     pub owed: bool,
     pub cursor: Option<String>,
     pub pages: u32,
@@ -78,7 +77,6 @@ pub(crate) fn window_identity(spec: &crate::schema::ModelSpec, model: &str, rela
     Ok((crate::store::ScopeRef::new(crate::identity::ModelKey::new(model), scope_key), key))
 }
 
-/// The `query_window.key` of each saved window the names stand for: the identity of the page landing, windows that are not saved (`nodes`, no remote) have none.
 pub(super) fn query_window_keys(models: &BTreeMap<String, super::ModelInfo>, names: &[(String, String)]) -> Result<Vec<String>, StoreError> {
     let mut keys = Vec::new();
     for (model, name) in names {

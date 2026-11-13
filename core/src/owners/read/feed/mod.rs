@@ -373,7 +373,6 @@ impl Feed {
         }
     }
 
-    /// The debt the events write in the transaction of their batch (D-393, D-316): the row of a `node` read, the saved windows the event names.
     fn event_debt(events: &[FeedEvent]) -> Vec<crate::owners::store::StoreOp> {
         use crate::owners::read::windows::WindowKind;
         use crate::owners::store::StoreOp;

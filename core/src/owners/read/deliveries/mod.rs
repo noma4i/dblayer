@@ -59,7 +59,6 @@ pub enum ReadData {
     /// The membership in order with the stamp of each member, and the rows that changed after the version the owner holds: the others are the rows the owner holds.
     Changes { keys: Vec<(String, i64)>, rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64> },
     Count(u64),
-    /// The read and the rows in debt its value depends on, for a read whose value rows do not tell them (a count, a read of a local table).
     Owed(Box<ReadData>, BTreeSet<String>),
     Operations(Vec<crate::ffi::OperationInfo>),
     /// The copy URL and the processing that the row of a transfer shows.
@@ -104,7 +103,6 @@ pub struct View {
     /// The stream loads its window again each time the network returns.
     pub reload: bool,
     pub window: WindowKey,
-    /// The relation of the model that reads one row by its id: a shown row in debt is read through it (D-393).
     pub node: Option<String>,
     pub subject: String,
     /// What a list or count reads, already resolved against its relation.
@@ -136,7 +134,6 @@ pub struct StreamRow {
     pub id: String,
     pub stamp: i64,
     pub row: Option<WireRow>,
-    /// The row owes a reread (store.md, D-393): internal, never in the value of the reader.
     pub owes: bool,
 }
 
@@ -262,7 +259,6 @@ enum Emit {
     InterestPassive,
     ReloadOnConnect,
     InterestMinus,
-    /// The stream shows the row in debt: it holds the interest of the `node` window of the row.
     DebtPlus(String),
     DebtMinus(String),
     WantPlus,
@@ -355,9 +351,7 @@ struct Delivery {
     read_error: Option<String>,
     rows: Vec<StreamRow>,
     acked_rows: Vec<StreamRow>,
-    /// The ids of the shown rows in debt that hold an interest of this stream.
     debts: BTreeSet<String>,
-    /// The rows in debt the last read named, when the value rows do not tell them.
     owed_deps: Option<BTreeSet<String>>,
     /// Server id to the temporary id of the rows the reader took.
     temporary: BTreeMap<String, String>,
@@ -424,7 +418,6 @@ fn shown_hash(row: &WireRow) -> u64 {
     hasher.finish()
 }
 
-/// What the reader sees of the rows: the debt of a row is no part of it.
 fn same_shown(left: &[StreamRow], right: &[StreamRow]) -> bool {
     left.len() == right.len() && left.iter().zip(right).all(|(left, right)| left.id == right.id && left.stamp == right.stamp && left.row == right.row)
 }
