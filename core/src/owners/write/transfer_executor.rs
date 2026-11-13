@@ -274,12 +274,19 @@ impl TransferExecutor {
         let (files, prepares, back, cancelled) = (self.files.clone(), self.prepares.clone(), back.clone(), Arc::new(AtomicBool::new(false)));
         let flag = cancelled.clone();
         let _ = self.wire.tasks.start(Box::pin(async move {
-            let _ = files.discard(&[prepared.clone(), staged_file_id(transfer_id)]);
             let outcome = preparer.run(job, progress).await;
             prepares.done(&transfer_id);
             if flag.load(Ordering::SeqCst) { let _ = files.discard(&[prepared]); } else { back.reply(stamp, TransferInput::Prepared { transfer_id, attempt_id, outcome }); }
         }));
         self.prepares.put(transfer_id, Running::new(move || cancelled.store(true, Ordering::SeqCst)));
+    }
+
+    fn clear_prepare(&self, stamp: EpochStamp, back: &Back<Transfers>, transfer_id: TransferId, clear_id: u64) {
+        let (files, back) = (self.files.clone(), back.clone());
+        let _ = self.wire.tasks.start_blocking(Box::new(move || {
+            let _ = files.discard(&[prepared_file_id(transfer_id), staged_file_id(transfer_id)]);
+            back.reply(stamp, TransferInput::PrepareCleared { transfer_id, clear_id });
+        }));
     }
 
     fn prepare_cancel(&self, transfer_id: TransferId, attempt_id: u64) {
@@ -462,6 +469,7 @@ impl EffectRunner<Transfers> for TransferExecutor {
             TransferEffect::CancelStep { transfer_id } => self.steps.cancel(&transfer_id),
             TransferEffect::ReleaseStep { request_id } => (self.signal)(LifeSignal::ReleaseStep(request_id)),
             TransferEffect::DeleteFile { path } => self.doomed.push(path),
+            TransferEffect::ClearPrepare { transfer_id, clear_id } => self.clear_prepare(stamp, back, transfer_id, clear_id),
             TransferEffect::Reply { reply, answer } => self.answers.push((reply, answer)),
             TransferEffect::Status { stream_id, shown, revision, .. } => (self.status)(stream_id, shown, revision),
             TransferEffect::Started { epoch } => (self.signal)(LifeSignal::Started(epoch)),

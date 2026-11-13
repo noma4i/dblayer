@@ -103,6 +103,7 @@ impl TransferState {
             pending_step: None,
             answer_saved: None,
             staged_failed: None,
+            clearing: None,
             urgent,
             op_id: None,
             submitted: false,

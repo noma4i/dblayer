@@ -308,6 +308,7 @@ pub enum TransferInput {
     SlotFreed,
     /// The prepare slot is free: the waiting transfer with the smallest `(seq, position)` starts.
     PrepareSlotFreed,
+    PrepareCleared { transfer_id: TransferId, clear_id: AttemptId },
     /// The platform read the source of the attempt.
     Probed { transfer_id: TransferId, attempt_id: AttemptId, outcome: crate::ffi::ProbeOutcome },
     /// The whole percent of the run of the attempt.
@@ -420,6 +421,7 @@ pub enum TransferEffect {
     CancelStep { transfer_id: TransferId },
     ReleaseStep { request_id: u64 },
     DeleteFile { path: String },
+    ClearPrepare { transfer_id: TransferId, clear_id: AttemptId },
     Reply { reply: ReplyId, answer: TransferAnswer },
     /// `uploads[action]`.
     /// Deliveries `TransferStatus` for the stream `stream_id`.
@@ -592,6 +594,7 @@ pub struct Transfer {
     pub answer_saved: Option<u64>,
     /// The call a failed swap answers and the fault it gets, after the old row is committed.
     pub staged_failed: Option<(Option<ReplyId>, Fault)>,
+    pub clearing: Option<AttemptId>,
     pub closing: bool,
 }
 

@@ -93,7 +93,7 @@ impl TransferState {
         if row.held {
             let id = self.insert_restored(&row, TransferStage::Ready);
             if row.copying { return self.restore_copy(id, fx); }
-            self.delete_prepare_files(id, fx);
+            self.clear_prepare(id, fx);
             return self.discard_held(id, fx);
         }
         if !self.declarations.contains(&(row.mutation.model.clone(), row.mutation.action.clone())) {
@@ -118,7 +118,7 @@ impl TransferState {
 
     fn classify_declared(&mut self, now: crate::runtime::Time, row: StoredTransfer, outcomes: &TransferOutcomes, fx: &mut Fx) {
         let id = self.insert_restored(&row, TransferStage::Ready);
-        if row.staged { run(fx, TransferEffect::PromoteStaged { transfer_id: id }); }
+        if row.staged { run(fx, TransferEffect::PromoteStaged { transfer_id: id }); if let Some(transfer) = self.transfers.get_mut(&id) { transfer.prepare = None; } }
         if let Some(saved) = outcomes.get(&id) {
             if let Some(transfer) = self.transfers.get_mut(&id) { transfer.outcomes = saved.clone(); }
         }
@@ -156,7 +156,7 @@ impl TransferState {
             }
             return self.begin_failure(now, id, "missing_file".into(), false, fx);
         }
-        if row.prepare.is_some() { return self.restore_prepare(id, fx); }
+        if row.prepare.is_some() && !row.staged { return self.restore_prepare(id, fx); }
         if row.source.as_ref().is_some_and(|source| row.confirmed_parts >= source.parts) { self.show(id, Shown::Uploading { progress: row.floor.max(99) }, fx); } else { self.show_queued(id, fx); }
         self.rounds_needed(vec![id], fx);
         self.schedule_expire(fx);

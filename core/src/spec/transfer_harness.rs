@@ -729,7 +729,6 @@ pub(super) struct PrepareFiles {
 impl PrepareFiles {
     /// The answers and tasks an effect leaves behind.
     pub fn effect(&mut self, run: &Run, pending: &mut Vec<Pending>) {
-        use crate::owners::write::transfer::{prepared_file_id, staged_file_id};
         match run {
             Run::DeleteFile { path } => pending.push(Pending::Delete(path.clone())),
             Run::Probe { transfer_id, attempt_id, .. } => pending.push(Pending::Input(TransferInput::Probed { transfer_id: *transfer_id, attempt_id: *attempt_id, outcome: crate::ffi::ProbeOutcome::Image { width: 1000, height: 1000, exif_orientation: 1, format: crate::prepare::ImageFormat::Jpeg } })),

@@ -63,15 +63,24 @@ impl TransferState {
 
     /// A restored transfer whose copy is on disk starts the step again: the result of the older attempt goes.
     pub(super) fn restore_prepare(&mut self, id: TransferId, fx: &mut Fx) {
-        self.delete_prepare_files(id, fx);
+        self.clear_prepare(id, fx);
         self.queue_prepare(id, fx);
         self.rounds_needed(vec![id], fx);
         self.schedule_expire(fx);
     }
 
-    pub(super) fn delete_prepare_files(&self, id: TransferId, fx: &mut Fx) {
-        run(fx, TransferEffect::DeleteFile { path: prepared_file_id(id) });
-        run(fx, TransferEffect::DeleteFile { path: staged_file_id(id) });
+    pub(super) fn clear_prepare(&mut self, id: TransferId, fx: &mut Fx) {
+        if self.transfers.get(&id).is_none_or(|transfer| transfer.clearing.is_some()) { return; }
+        let clear_id = self.attempt();
+        if let Some(transfer) = self.transfers.get_mut(&id) { transfer.clearing = Some(clear_id); }
+        run(fx, TransferEffect::ClearPrepare { transfer_id: id, clear_id });
+    }
+
+    pub(super) fn prepare_cleared(&mut self, id: TransferId, clear_id: AttemptId, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        if transfer.clearing != Some(clear_id) { return; }
+        transfer.clearing = None;
+        if transfer.stage == TransferStage::Preparing && transfer.prep.as_ref().is_some_and(|prep| prep.phase == PreparePhase::Queued) { self.free_prepare_slot(fx); }
     }
 
     /// The step stops: the platform and the measure of the attempt are cancelled, the files of the attempt go.
@@ -83,13 +92,13 @@ impl TransferState {
             (TransferStage::Preparing, _) => {}
             _ => return,
         }
-        self.delete_prepare_files(id, fx);
+        self.clear_prepare(id, fx);
     }
 
     /// `PrepareSlotFreed`: the waiting transfer with the smallest `(seq, position)` starts when the slot is free.
     pub(super) fn start_prepares(&mut self, fx: &mut Fx) {
         if self.ended || self.prepare_busy() { return; }
-        let next = self.scan().filter(|transfer| transfer.stage == TransferStage::Preparing && transfer.prep.as_ref().is_some_and(|prep| prep.phase == PreparePhase::Queued) && (!transfer.restored || self.phase == Phase::Ready)).min_by_key(|transfer| transfer.seq).map(|transfer| transfer.transfer_id);
+        let next = self.scan().filter(|transfer| transfer.stage == TransferStage::Preparing && transfer.prep.as_ref().is_some_and(|prep| prep.phase == PreparePhase::Queued) && transfer.clearing.is_none() && (!transfer.restored || self.phase == Phase::Ready)).min_by_key(|transfer| transfer.seq).map(|transfer| transfer.transfer_id);
         let Some(id) = next else { return };
         let attempt_id = self.attempt();
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
@@ -176,7 +185,7 @@ impl TransferState {
         if *on_cannot_decode == CannotDecode::Fail || repacking { return self.fail_prepare(now, id, PrepareReason::DeviceCannotDecode, message, fx); }
         let repack = prep.plan.as_ref().and_then(|plan| repack_of(plan, &prep.metadata_keys));
         let Some(plan) = repack else {
-            self.delete_prepare_files(id, fx);
+            self.clear_prepare(id, fx);
             return self.pass_through(now, id, fx);
         };
         let attempt_id = self.attempt();
@@ -254,7 +263,7 @@ impl TransferState {
             transfer.cache_stale = before.cache_stale;
         }
         transfer.prep = None;
-        self.delete_prepare_files(id, fx);
+        self.clear_prepare(id, fx);
         self.free_prepare_slot(fx);
         self.schedule_expire(fx);
         self.begin_failure(now, id, failure::of_prepare(reason, message), false, fx);
