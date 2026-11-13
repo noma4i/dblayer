@@ -715,6 +715,7 @@ pub fn refusal() -> String { crate::owners::write::failure::of_graphql("refused"
 pub(super) enum Pending {
     Input(TransferInput),
     Delete(String),
+    Clear { transfer_id: TransferId, clear_id: u64 },
     Measure { transfer_id: TransferId, attempt_id: u64 },
     Promote { transfer_id: TransferId },
     Written { transfer_id: TransferId, attempt_id: u64 },
@@ -731,12 +732,9 @@ impl PrepareFiles {
     pub fn effect(&mut self, run: &Run, pending: &mut Vec<Pending>) {
         match run {
             Run::DeleteFile { path } => pending.push(Pending::Delete(path.clone())),
+            Run::ClearPrepare { transfer_id, clear_id } => pending.push(Pending::Clear { transfer_id: *transfer_id, clear_id: *clear_id }),
             Run::Probe { transfer_id, attempt_id, .. } => pending.push(Pending::Input(TransferInput::Probed { transfer_id: *transfer_id, attempt_id: *attempt_id, outcome: crate::ffi::ProbeOutcome::Image { width: 1000, height: 1000, exif_orientation: 1, format: crate::prepare::ImageFormat::Jpeg } })),
-            Run::Prepare { transfer_id, attempt_id, .. } => {
-                self.files.remove(&prepared_file_id(*transfer_id));
-                self.files.remove(&staged_file_id(*transfer_id));
-                pending.push(Pending::Written { transfer_id: *transfer_id, attempt_id: *attempt_id });
-            }
+            Run::Prepare { transfer_id, attempt_id, .. } => pending.push(Pending::Written { transfer_id: *transfer_id, attempt_id: *attempt_id }),
             Run::Measure { transfer_id, attempt_id } => pending.push(Pending::Measure { transfer_id: *transfer_id, attempt_id: *attempt_id }),
             Run::PromoteStaged { transfer_id } => pending.push(Pending::Promote { transfer_id: *transfer_id }),
             Run::Step { transfer_id, attempt_id, part, .. } => pending.push(Pending::Input(TransferInput::StepOk { transfer_id: *transfer_id, attempt_id: *attempt_id, part: *part, upload_id: None, etag: part.map(|part| format!("e{part}")) })),
@@ -751,6 +749,11 @@ impl PrepareFiles {
         match pending {
             Pending::Input(input) => Some(input),
             Pending::Delete(path) => { self.files.remove(&path); None }
+            Pending::Clear { transfer_id, clear_id } => {
+                self.files.remove(&prepared_file_id(transfer_id));
+                self.files.remove(&staged_file_id(transfer_id));
+                Some(TransferInput::PrepareCleared { transfer_id, clear_id })
+            }
             Pending::Written { transfer_id, attempt_id } => {
                 self.files.insert(prepared_file_id(transfer_id));
                 Some(TransferInput::Prepared { transfer_id, attempt_id, outcome: crate::ffi::PrepareOutcome::Done { name: None, mime: None } })
