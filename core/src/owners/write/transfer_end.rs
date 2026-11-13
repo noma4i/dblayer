@@ -225,6 +225,7 @@ impl TransferState {
             self.show(id, Shown::Uploading { progress: 99 }, fx);
             return self.rounds_idle(id, fx);
         }
+        if !preparing && self.transfers.get(&id).is_some_and(|transfer| transfer.over_limit(transfer.size)) { return self.fail_too_large(now, id, fx); }
         if preparing { self.queue_prepare(id, fx); } else { self.show_queued(id, fx); }
         self.rounds_needed(vec![id], fx);
         self.start_in_order(now, fx);

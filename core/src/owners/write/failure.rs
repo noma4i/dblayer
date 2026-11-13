@@ -41,6 +41,9 @@ pub fn of_session(error: &SessionError, class: ErrorClass) -> String {
 /// The prepare step failed: the reason is typed, the message is the text of the platform.
 pub fn of_prepare(reason: crate::value::sync::PrepareReason, message: String) -> String { text(&OperationFailure::new(FailureKind::PrepareFailed { reason }, message)) }
 
+/// The file that goes to the network is larger than the `max_bytes` of its source.
+pub fn of_too_large(message: String) -> String { text(&OperationFailure::new(FailureKind::TooLarge, message)) }
+
 /// The server refused with GraphQL errors.
 pub fn of_graphql(message: String, extensions: Option<GraphqlExtensions>) -> String {
     text(&OperationFailure { kind: FailureKind::Rejected, message, extensions })

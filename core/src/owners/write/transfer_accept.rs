@@ -29,6 +29,7 @@ impl TransferState {
         let (file, staged) = (source.source.clone(), transfer.previous.is_some());
         transfer.source = Some(file.clone());
         transfer.prepare.clone_from(&source.prepare);
+        transfer.max_bytes = source.max_bytes;
         transfer.steps = Some(source.steps.clone());
         transfer.supply_values = source.values.clone();
         transfer.supply_local = source.local.clone();
@@ -57,7 +58,7 @@ impl TransferState {
         let (transfer_id, seq) = (self.next_id, self.next_seq);
         self.next_id += 1;
         self.next_seq += 1;
-        let BatchItem { key, held, fields, urgent, source, prepare, mutation, steps } = item;
+        let BatchItem { key, held, fields, urgent, source, prepare, max_bytes, mutation, steps } = item;
         let transfer = Transfer {
             held,
             multipart_forced: held,
@@ -71,6 +72,7 @@ impl TransferState {
             seq,
             source,
             prepare,
+            max_bytes,
             batch_id,
             epoch: self.epoch,
             stage,
@@ -303,7 +305,7 @@ impl TransferState {
         if transfer.stage != TransferStage::Copying || transfer.attempt_id != attempt_id {
             return;
         }
-        let cached = if transfer.prepare.is_some() || transfer.held { CachedBlob::Miss } else { cached };
+        let cached = if transfer.prepare.is_some() || transfer.held || transfer.over_limit(size) { CachedBlob::Miss } else { cached };
         transfer.size = size;
         transfer.sha256 = sha256;
         transfer.place = Some(place);
@@ -488,12 +490,12 @@ impl TransferState {
             transfer.error = None;
             transfer.failed_at = None;
             transfer.etags.clear();
-            let preparing = transfer.prepare.is_some();
+            let (preparing, limited) = (transfer.prepare.is_some(), transfer.over_limit(transfer.size));
             receipts.push(self.receipt(id));
             if let (Some(back), Some(rep)) = (supplied, supply_reply) {
                 reply(fx, rep, if back == TransferStage::Failed { TransferAnswer::Receipt(self.receipt(id)) } else { TransferAnswer::Ok });
             }
-            if preparing { self.queue_prepare(id, fx); } else { self.enter_upload(id, fx); }
+            if preparing { self.queue_prepare(id, fx); } else if limited { self.fail_too_large(now, id, fx); } else { self.enter_upload(id, fx); }
         }
         for (position, &id) in ids.iter().enumerate() {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };

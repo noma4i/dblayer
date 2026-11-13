@@ -143,7 +143,7 @@ impl TransferState {
     /// The source goes as it is: its copy is the file of the transfer.
     fn pass_through(&mut self, now: Time, id: TransferId, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        if transfer.prepare.as_ref().and_then(WirePrepare::max_bytes).is_some_and(|limit| transfer.size > limit) { return self.fail_prepare(now, id, PrepareReason::TooLarge, "the file is larger than the size limit of the prepare step".into(), fx); }
+        if transfer.over_limit(transfer.size) { return self.fail_too_large(now, id, fx); }
         let key = transfer.key.clone();
         transfer.prepare = None;
         transfer.prep = None;
@@ -199,7 +199,7 @@ impl TransferState {
     pub(super) fn measured(&mut self, now: Time, id: TransferId, attempt_id: AttemptId, copy: CopiedBlob, fx: &mut Fx) {
         if !self.current(id, attempt_id, &[TransferStage::Measuring], fx) { return; }
         let sizing = self.sizing;
-        if self.transfers.get(&id).and_then(|transfer| transfer.prepare.as_ref()).and_then(WirePrepare::max_bytes).is_some_and(|limit| copy.size > limit) { return self.fail_prepare(now, id, PrepareReason::TooLarge, "the prepared file is larger than the size limit of the prepare step".into(), fx); }
+        if self.transfers.get(&id).is_some_and(|transfer| transfer.over_limit(copy.size)) { return self.fail_too_large(now, id, fx); }
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let mut before = transfer.clone();
         before.previous = None;
@@ -251,6 +251,16 @@ impl TransferState {
 
     /// The write of the result was refused, or the swap of the files failed: the copy of the source and the settings stay for `retry`.
     pub(super) fn fail_prepare(&mut self, now: Time, id: TransferId, reason: PrepareReason, message: String, fx: &mut Fx) {
+        self.fail_step(now, id, failure::of_prepare(reason, message), fx);
+    }
+
+    /// The file that goes to the network is larger than the limit of its source: nothing is sent.
+    pub(super) fn fail_too_large(&mut self, now: Time, id: TransferId, fx: &mut Fx) {
+        let error = failure::of_too_large("the file is larger than the size limit of its source".into());
+        if self.transfers.get(&id).is_some_and(|transfer| transfer.prep.is_some()) { self.fail_step(now, id, error, fx); } else { self.begin_failure(now, id, error, false, fx); }
+    }
+
+    fn fail_step(&mut self, now: Time, id: TransferId, error: String, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if let Some(before) = transfer.previous.take() {
             transfer.size = before.size;
@@ -266,6 +276,6 @@ impl TransferState {
         self.clear_prepare(id, fx);
         self.free_prepare_slot(fx);
         self.schedule_expire(fx);
-        self.begin_failure(now, id, failure::of_prepare(reason, message), false, fx);
+        self.begin_failure(now, id, error, false, fx);
     }
 }

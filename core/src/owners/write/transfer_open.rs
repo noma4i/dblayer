@@ -157,6 +157,7 @@ impl TransferState {
             return self.begin_failure(now, id, "missing_file".into(), false, fx);
         }
         if row.prepare.is_some() && !row.staged { return self.restore_prepare(id, fx); }
+        if row.prepare.is_none() && self.transfers.get(&id).is_some_and(|transfer| transfer.over_limit(transfer.size)) { return self.fail_too_large(now, id, fx); }
         if row.source.as_ref().is_some_and(|source| row.confirmed_parts >= source.parts) { self.show(id, Shown::Uploading { progress: row.floor.max(99) }, fx); } else { self.show_queued(id, fx); }
         self.rounds_needed(vec![id], fx);
         self.schedule_expire(fx);
