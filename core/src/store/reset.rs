@@ -148,7 +148,6 @@ pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool) -> Resu
         }
     }
     connection.execute_batch(include_str!("sql/reset/wipe_all_cache_delete_scope_member.sql"))?;
-    connection.execute_batch(include_str!("sql/reset/clear_row_alias.sql"))?;
     clear_sync(connection, None)?;
     clear_all(connection)?;
     Ok(())
@@ -257,6 +256,7 @@ pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreE
     }
     let transaction = inner.connection.unchecked_transaction()?;
     wipe_all_cache(&transaction, true)?;
+    transaction.execute_batch(include_str!("sql/reset/clear_row_alias.sql"))?;
     retire_operations(&transaction, None, None)?;
     if mode == "session_end" { transaction.execute_batch(include_str!("sql/reset/erase_account.sql"))?; }
     session_state::remove_resume_answer(&transaction)?;
@@ -316,6 +316,7 @@ impl Store {
         write_intent(&inner.connection, if erase_encrypted { "session_end" } else { "account" }, now)?;
         let transaction = inner.connection.unchecked_transaction()?;
         wipe_all_cache(&transaction, false)?;
+        transaction.execute_batch(include_str!("sql/reset/clear_row_alias.sql"))?;
         retire_operations(&transaction, None, None)?;
         session_state::remove_resume_answer(&transaction)?;
         if erase_encrypted {

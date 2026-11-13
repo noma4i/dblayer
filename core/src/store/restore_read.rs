@@ -74,6 +74,7 @@ pub(crate) struct Restore {
     pub transfer_id_floor: u64,
     pub orphan_transfer_ops: Vec<u64>,
     pub aliases: std::collections::BTreeMap<(String, String), String>,
+    pub ended_temps: std::collections::BTreeSet<String>,
     pub ops: Result<Vec<StoredOp>, CoreError>,
     pub transfers: Result<Vec<crate::owners::write::transfer::StoredTransfer>, CoreError>,
     pub transfer_outcomes: std::collections::BTreeMap<u64, std::collections::BTreeMap<u64, crate::owners::write::outbox::OutboxOutcome>>,
@@ -118,12 +119,13 @@ fn transfer_asking_again<'a>(rows: &'a [crate::owners::write::transfer::StoredTr
 
 impl Store {
     pub(crate) fn read_restore(&self) -> Result<Restore, CoreError> {
-        let (entries, origins, cycles, causes, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, (aliases, answers_by_id), transfer_id_floor, orphan_transfer_ops, removed_rows, failed_uploads) = self.read_models(&[], |reader| {
+        let (entries, origins, cycles, causes, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, (aliases, ended_temps, answers_by_id), transfer_id_floor, orphan_transfer_ops, removed_rows, failed_uploads) = self.read_models(&[], |reader| {
             let connection = reader.connection();
             let failed_uploads = super::restore::read_failed(connection)?;
             let transfer_id_floor: Option<i64> = connection.query_row(include_str!("sql/restore_read/transfer_id_floor.sql"), [crate::store::ddl::TRANSFER_ID_KEY], |row| row.get(0))?;
             let orphan_transfer_ops = connection.prepare(include_str!("sql/restore_read/orphan_transfer_ops.sql"))?.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
             let aliases = connection.prepare(include_str!("sql/restore_read/read_aliases.sql"))?.query_map([], |row| Ok(((row.get::<_, String>(0)?, row.get::<_, String>(1)?), row.get::<_, String>(2)?)))?.collect::<rusqlite::Result<std::collections::BTreeMap<_, _>>>()?;
+            let ended_temps = connection.prepare(include_str!("sql/restore_read/read_ended_temps.sql"))?.query_map([], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<std::collections::BTreeSet<_>>>()?;
             let pending = crate::store::session_state::pending(connection).map_err(crate::store::StoreError::from)?;
             let answers = crate::store::session_state::answers_of_operations(connection).map_err(crate::store::StoreError::from)?;
             let answers_by_id = crate::store::session_state::answers(connection).map_err(crate::store::StoreError::from)?;
@@ -137,7 +139,7 @@ impl Store {
             let orphans = connection.prepare(include_str!("sql/restore_read/read_restore_select_upload_orphan.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let batches = connection.prepare(include_str!("sql/restore_read/read_restore_select_sync_upload_batch.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<i64>>(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let orphan_answers = connection.prepare(include_str!("sql/restore_read/read_restore_select_encrypted_answer.sql")).and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
-            Ok((read_outbox(reader)?, origins, cycles, causes, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, (aliases, answers_by_id), transfer_id_floor, orphan_transfer_ops, removed_rows, failed_uploads))
+            Ok((read_outbox(reader)?, origins, cycles, causes, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, (aliases, ended_temps, answers_by_id), transfer_id_floor, orphan_transfer_ops, removed_rows, failed_uploads))
         })?;
         let owned: Vec<i64> = uploads.iter().filter_map(UploadRaw::owned_op).collect();
         let reserved = uploads.iter().filter_map(UploadRaw::reserved_op).chain(batches.iter().filter_map(|(_, _, op)| *op)).max().and_then(|op| u64::try_from(op).ok());
@@ -241,7 +243,7 @@ impl Store {
         orphan_answers.retain(|id| !claimed.contains(id));
         let held_orphan = pending.as_ref().and_then(|held| match &held.owner { Some(crate::transport::RequestOwner::Orphan { upload_id }) => Some(upload_id.clone()), _ => None });
         let orphan_transfer_ops = orphan_transfer_ops.into_iter().map(|id| u64::try_from(id).map_err(|_| CoreError::Internal("invalid orphan operation id".into()))).collect::<Result<Vec<_>, _>>()?;
-        Ok(Restore { transfer_id_floor, orphan_transfer_ops, aliases, ops, transfers, transfer_outcomes, orphans, batches, reserved, orphan_answers, transfer_pending_orphan, held_orphan })
+        Ok(Restore { transfer_id_floor, orphan_transfer_ops, aliases, ended_temps, ops, transfers, transfer_outcomes, orphans, batches, reserved, orphan_answers, transfer_pending_orphan, held_orphan })
     }
 
     fn stored_intents(&self, entries: Vec<super::plan::OutboxOperation>, pending: Option<crate::store::session_state::Pending>, mut answers: std::collections::BTreeMap<i64, (u64, crate::store::session_state::StoredAnswer)>, origins: &std::collections::BTreeMap<i64, OpSource>, invalid: &std::collections::BTreeSet<i64>, (cycles, causes): (&std::collections::BTreeMap<i64, i64>, &std::collections::BTreeMap<i64, crate::value::sync::FailureKind>), failed: &[super::restore::RestoreFailedRow]) -> Result<Vec<StoredOp>, CoreError> {

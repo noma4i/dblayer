@@ -170,6 +170,8 @@ pub enum StoreOp {
     Requeue { op_id: u64 },
     /// A `create` with a temporary id landed: the row `temp` becomes `real` with its references and membership.
     Swap { model: String, temp: String, real: String },
+    /// A `create` with a temporary id ended without a real id: `row_alias` keeps the fate of `temp`.
+    EndTemp { model: String, temp: String },
     /// The row the batch answers with: the Store reads it in the transaction of the batch and replies with it.
     Show { model: String, row_id: String },
     /// The rows, membership and tombstones of a call that has no operation (a local model, an action without a mutation): final at once.

@@ -206,7 +206,7 @@ pub enum OutboxInput {
     SubmitReserved { epoch: Epoch, op_id: OpId, op: NewOp, created_at: u64 },
     /// The highest `op_id` a restored transfer holds: `ReserveOp` gives only higher ones.
     ReservedFloor { op_id: OpId },
-    AliasesRestored { aliases: BTreeMap<(String, String), String> },
+    AliasesRestored { aliases: BTreeMap<(String, String), String>, ended: std::collections::BTreeSet<String> },
     Restored { ops: Vec<StoredOp>, pending_lost: bool },
     RestoreFailed { error: String },
     /// The saved answers of the open that no stored operation owns: the owner removes them (`out_open_orphan_answer`).

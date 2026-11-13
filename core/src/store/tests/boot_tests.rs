@@ -513,3 +513,19 @@ fn a_format_change_keeps_the_data_of_the_app() {
     let kept = (count(&store, &format!("SELECT COUNT(*) FROM {notes} WHERE id = 'n1' AND text = 'keep'")), count(&store, "SELECT COUNT(*) FROM local_pending WHERE model = 'messages' AND row_id = 'm1' AND path = 'draft'"), count(&store, &format!("SELECT COUNT(*) FROM {messages}")));
     assert_eq!(kept, (1, 1, 0), "the local row and the local value stay, the server row goes");
 }
+
+/// D-439, P-STORE-07: the fate of a temporary id (a real id, or an ended `create`) stays after a format change.
+#[test]
+fn a_format_change_keeps_the_fate_of_the_temporary_ids() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    {
+        let (store, _) = reopen(&path, &[messages_spec()]);
+        exec(&store, "INSERT INTO row_alias (model, temp, real) VALUES ('messages', 'temp-landed', 'm7'), ('messages', 'temp-ended', NULL); UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
+    }
+    let (store, report) = reopen(&path, &[messages_spec()]);
+    assert_eq!(report.recreated, Some(crate::store::ddl::RecreateReason::CoreFormat));
+    let resolved: Vec<String> = ["temp-landed", "temp-ended"].iter().map(|id| store.resolve("messages", &crate::identity::RowId::new(id).unwrap()).unwrap().as_str().to_string()).collect();
+    let restore = store.read_restore().unwrap();
+    assert_eq!((resolved, restore.aliases.into_iter().collect::<Vec<_>>(), restore.ended_temps.into_iter().collect::<Vec<_>>()), (vec!["m7".to_string(), "temp-ended".to_string()], vec![(("messages".to_string(), "temp-landed".to_string()), "m7".to_string())], vec!["temp-ended".to_string()]));
+}

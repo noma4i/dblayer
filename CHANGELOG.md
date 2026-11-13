@@ -11,6 +11,8 @@
 - Find a row by its temporary id after an event row with its key replaced it.
 - Wait up to 1 second for a locked database file before a write is refused.
 - Show in the operations queue the processing a server row reports for its upload.
+- Never send a temporary id after a restart once its create ended without a server id.
+- Keep the server ids of created rows across a database format change.
 
 ### Removed
 

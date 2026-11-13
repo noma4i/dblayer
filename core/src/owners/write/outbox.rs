@@ -459,6 +459,9 @@ impl OutboxState {
             earlier.append(&mut ops);
             ops = earlier;
         }
+        if kind == CommitKind::Rollback {
+            ops.extend(Self::created_temps(operation).into_iter().map(|temp| StoreOp::EndTemp { model: operation.op.model.clone(), temp }));
+        }
         let intents = u64::from(kind == CommitKind::Intent);
         for id in &dependents {
             if let Some(other) = self.ops.get_mut(id) {

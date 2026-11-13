@@ -102,6 +102,7 @@ mod crash_image_session_tests;
 mod crash_image_row_tests;
 mod crash_image_update_tests;
 mod crash_image_call_tests;
+mod crash_image_refused_create_tests;
 mod crash_image_upload_tests;
 mod store_temp_row_tests;
 mod source_ownership_tests;

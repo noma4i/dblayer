@@ -105,6 +105,7 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             if writer.connection.execute(include_str!("sql/upload_ops/retire_transfer_outcome.sql"), rusqlite::params![id, cycle])? > 0 { touch_transfer(writer, (*transfer_id, *cycle_id), results)?; }
         }
         StoreOp::RollBack { op_id } => results.push(super::rollback::apply(writer, *op_id)?),
+        StoreOp::EndTemp { model, temp } => { writer.connection.execute(include_str!("sql/ddl/end_temp_row_alias.sql"), rusqlite::params![model, temp])?; }
         StoreOp::Window { landed_at, key, model, page, replace_all, cursor, roots, related, total, base_revision, source } => {
             let key = crate::owners::read::windows::WindowKey { model: model.clone(), name: key.clone() };
             let page = super::window_values::WindowPage { key: &key, page: *page, replace_all: *replace_all, cursor: cursor.as_deref(), roots, related, total: *total, base_revision: *base_revision, landed_at: *landed_at, source: *source };
