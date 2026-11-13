@@ -11,9 +11,9 @@ use crate::ffi::{Database, DbError, ReadFetch, ReadRequest, ReadStream, ReadValu
 use crate::ffi::wire::Cell;
 
 pub(super) struct FeedTransport {
-    cable: crate::transport::encrypted::cable::tests::peer_tests::CablePeer,
+    pub(super) cable: crate::transport::encrypted::cable::tests::peer_tests::CablePeer,
     pub(super) token: Arc<Mutex<Option<String>>>,
-    opened: Arc<tokio::sync::Notify>,
+    pub(super) opened: Arc<tokio::sync::Notify>,
 }
 
 #[async_trait::async_trait]
@@ -84,6 +84,15 @@ pub(super) async fn feed_database_at(path: Option<String>, held: Arc<crate::ffi:
         if room_payload != "chat" { room.server_revision = None; }
         vec![chat, room]
     } else { vec![chat] };
+    feed_database_over(path, held, world, serde_json::to_string(&models).unwrap(), json!([
+        {"name":"ChatList","document":"query ChatList($list: String) { chats(list: $list) { id title revision lists } }"},
+        {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},
+        {"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } } } }"}
+    ])).await
+}
+
+/// The database over the models `models` (JSON) and the operations `operations` with the cable of the change feed and the session of account A.
+pub(super) async fn feed_database_over(path: Option<String>, held: Arc<crate::ffi::tests::session_guards_tests::WatchedHeld>, world: Arc<World>, models: String, operations: serde_json::Value) -> (Arc<Database>, Arc<FeedTransport>) {
     let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::ffi::EncryptedOperationClass::Authenticated });
     let (token, opened) = (Arc::new(Mutex::new(None)), Arc::new(tokio::sync::Notify::new()));
@@ -92,12 +101,8 @@ pub(super) async fn feed_database_at(path: Option<String>, held: Arc<crate::ffi:
         if let crate::transport::encrypted::cable::tests::peer_tests::PeerEvent::Subscribed(subscribed) = event { *observed.0.lock().unwrap() = Some(subscribed); observed.1.notify_one(); }
     });
     let transport = Arc::new(FeedTransport { cable, token, opened });
-    let database = bound(Database::open_with_clock(crate::ffi::Config { path, data_version: None }, crate::ffi::specs(serde_json::to_string(&models).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(held.clone()), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
-    database.register_operations(json!([
-        {"name":"ChatList","document":"query ChatList($list: String) { chats(list: $list) { id title revision lists } }"},
-        {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},
-        {"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } } } }"}
-    ]).to_string()).await.unwrap();
+    let database = bound(Database::open_with_clock(crate::ffi::Config { path, data_version: None }, crate::ffi::specs(models), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(held.clone()), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
+    database.register_operations(operations.to_string()).await.unwrap();
     database.set_online(true).unwrap();
     if crate::transport::CredentialSlot::get(&held.inner).unwrap().is_none() { bound(database.session_call("login_link".into(), json!({"account":"A"}).to_string())).await.unwrap(); }
     (database, transport)

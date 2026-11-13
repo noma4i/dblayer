@@ -25,6 +25,7 @@ mod files_tests;
 mod store_wait_tests;
 mod recovery_tests;
 mod delivery_reactivity_tests;
+mod row_debt_deps_tests;
 mod refetch_tests;
 mod upload_tests;
 mod sequenced_paths_tests;
