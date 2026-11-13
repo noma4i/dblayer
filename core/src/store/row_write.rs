@@ -160,6 +160,7 @@ impl RowWrite<'_> {
         let Some(row) = self.admit(model, patch, kind, Admission { base: None, closing: self.closing })? else { return Ok(None) };
         let mut envelope = BatchPlan::from_source(self.generation, source);
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
+        if matches!(source, crate::schema::RowSource::Page | crate::schema::RowSource::NodeReread | crate::schema::RowSource::Event | crate::schema::RowSource::Response) { super::correlate::replace_temp_rows(self, &mut envelope)?; }
         self.apply(&envelope).map(Some)
     }
 

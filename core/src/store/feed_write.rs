@@ -41,9 +41,7 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         }
     } else if op == "upsert" {
         let patch = payload.get("row").and_then(Value::as_object).ok_or_else(|| StoreError::Constraint("event has no row".into()))?;
-        let key = (model.to_string(), id.to_string());
         let Some(row) = writer.admit(model, patch, RowKind::Server, Admission { base: Some(writer.revision), closing: None })? else { return Ok(None) };
-        let old = writer.current.get(&key).and_then(|row| row.as_ref()).map(|row| row.row.clone());
         for related in payload.get("related").and_then(Value::as_array).into_iter().flatten() {
             let Some(related_model) = related.get("model").and_then(Value::as_str) else { continue };
             let Some(patch) = related.get("row").and_then(Value::as_object) else { continue };
@@ -53,15 +51,8 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
             let Some(row) = writer.admit(related_model, patch, RowKind::Server, Admission { base: Some(writer.revision), closing: None })? else { continue };
             if let Some(id) = row.get("id").and_then(read_id) { envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(related_model), id, row }); }
         }
-        let arrives_new = old.is_none();
-        let (correlated, looked_at) = if arrives_new { super::correlate::correlated_temp(writer, model, &row)? } else { (None, 0) };
-        writer.candidates += looked_at;
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id: id.clone(), row });
-        if let Some(found) = correlated {
-            let held = writer.stored(model, found.temp.as_str())?.map(|stored| stored.row);
-            let outbox = crate::store::plan::read_outbox(&reader)?;
-            super::swap::plan(writer, &mut envelope, &outbox, super::swap::TempReplacement { model, temp: &found.temp, real: &id }, found.operation, held)?;
-        }
+        super::correlate::replace_temp_rows(writer, &mut envelope)?;
         if let Some(values) = payload.get("set").and_then(Value::as_object).filter(|values| !values.is_empty()) { overlay.push((model.to_string(), id.to_string(), values.clone())); }
     } else {
         return Err(StoreError::Constraint(format!("unknown event operation: {op}")));

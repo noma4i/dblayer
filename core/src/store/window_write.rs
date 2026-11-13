@@ -63,6 +63,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
             if let Some(id) = row.get("id").and_then(read_id) { envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row }); }
         }
         envelope.scope_ops = answered_scope_ops(writer, page.key, &roots)?;
+        super::correlate::replace_temp_rows(writer, &mut envelope)?;
         return writer.apply(&envelope);
     };
     let spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
@@ -127,6 +128,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
         pages: i64::from(pages),
         anchor: if keep_tail { stored.as_ref().and_then(|window| window.anchor.clone()) } else { incoming_ids(&accepted).last().map(ToString::to_string).or_else(|| stored.as_ref().filter(|_| !first).and_then(|window| window.anchor.clone())) }, issued, applied, cleared_at: first.then_some(page.landed_at),
     });
+    super::correlate::replace_temp_rows(writer, &mut envelope)?;
     let mut result = writer.apply(&envelope)?;
     if let Some(id) = paid { super::reread_owed::announce(&mut result, model, &id)?; }
     Ok(result)
