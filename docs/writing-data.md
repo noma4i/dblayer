@@ -91,7 +91,7 @@ Every record carries its sync state (`pending`, `sending`, `synced`, `failed`), 
 
 ### Order of calls
 
-A call runs its body on library threads. The order of two writes is the order of their calls only when the second call starts after the first returned its receipt. Two calls started without waiting for each other have no order. Await the first call, or send the writes that need an order as one batch call (`uploadBatch`, a list of operations).
+A call runs its body on library threads. Calls of one database enter the library in the order the caller started them, without awaiting the previous call: a Swift call takes its place on the actor of the caller, a Kotlin call on the thread of the caller, before the work leaves it. Calls started at the same time from different threads have no order between them.
 
 ```swift
 let first = try await Moment.create(text: "one", media: nil, in: scope)

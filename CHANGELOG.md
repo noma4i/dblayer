@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Keep the order of calls started without awaiting the previous call.
+
 ## 6.33.0 - 2026-11-13
 
 ### Changed
