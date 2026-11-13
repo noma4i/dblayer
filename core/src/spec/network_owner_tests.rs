@@ -44,9 +44,26 @@ fn broadcast(online: bool, online_seq: u64) -> NetworkEffect { NetworkEffect::Br
 #[test]
 fn net_online_broadcasts_only_a_change() {
     let mut twin = Twin::new();
-    assert!(twin.feed(online(false)).is_empty(), "the initial value is not a change");
+    assert_eq!(twin.feed(online(false)), vec![broadcast(false, 0)], "the first value is a value");
     assert_eq!(twin.feed(online(true)), vec![broadcast(true, 1)]);
     assert!(twin.feed(online(true)).is_empty(), "the same value gives no broadcast");
+}
+
+#[test]
+fn net_open_before_first_value() {
+    for first in [true, false] {
+        let mut twin = Twin::new();
+        assert!(twin.feed(snapshot(Peer::Calls, 1)).is_empty());
+        assert!(twin.feed(snapshot(Peer::Session, 1)).is_empty());
+        let seq = u64::from(first);
+        let answered = twin.feed(online(first));
+        assert_eq!(answered, vec![
+            broadcast(first, seq),
+            NetworkEffect::Snapshot { owner: Peer::Calls, epoch: 1, online: first, online_seq: seq, saving: None },
+            NetworkEffect::Snapshot { owner: Peer::Session, epoch: 1, online: first, online_seq: seq, saving: None },
+        ]);
+        assert!(twin.feed(online(first)).is_empty(), "each waiting request is answered once");
+    }
 }
 
 #[test]
@@ -67,8 +84,8 @@ fn net_power_saving_broadcasts_only_a_change() {
 #[test]
 fn net_snapshot_request_carries_the_values_at_the_request() {
     let mut twin = Twin::new();
-    assert_eq!(twin.feed(snapshot(Peer::Outbox, 1)), vec![NetworkEffect::Snapshot { owner: Peer::Outbox, epoch: 1, online: false, online_seq: 0, saving: None }]);
-    twin.feed(online(true));
+    assert!(twin.feed(snapshot(Peer::Outbox, 1)).is_empty(), "no value yet: the request waits");
+    assert_eq!(twin.feed(online(true)), vec![broadcast(true, 1), NetworkEffect::Snapshot { owner: Peer::Outbox, epoch: 1, online: true, online_seq: 1, saving: None }]);
     twin.feed(saving(true));
     assert_eq!(twin.feed(snapshot(Peer::Transfer, 2)), vec![NetworkEffect::Snapshot { owner: Peer::Transfer, epoch: 2, online: true, online_seq: 1, saving: Some(true) }]);
     assert_eq!(twin.feed(snapshot(Peer::Windows, 2)), vec![NetworkEffect::Snapshot { owner: Peer::Windows, epoch: 2, online: true, online_seq: 1, saving: Some(true) }]);
@@ -117,18 +134,18 @@ fn random_inputs(seed: u64, len: usize) -> Vec<NetworkInput> {
 fn net_prop_broadcast_per_change() {
     for seed in 1..=40 {
         let mut twin = Twin::new();
-        let (mut value, mut changes, mut epochs) = (false, 0, 0);
+        let (mut value, mut changes, mut epochs, mut waiting) = (None, 0, 0, 0);
         for input in random_inputs(seed, 30) {
             match input {
-                NetworkInput::SetOnline { online, .. } => { if online != value { changes += 1; value = online; } }
-                NetworkInput::SnapshotRequest { .. } => epochs += 1,
+                NetworkInput::SetOnline { online, .. } => { if Some(online) != value { changes += 1; epochs += std::mem::take(&mut waiting); value = Some(online); } }
+                NetworkInput::SnapshotRequest { .. } => if value.is_some() { epochs += 1 } else { waiting += 1 },
                 NetworkInput::Closing => { twin.feed(input); break; }
                 _ => {}
             }
             twin.feed(input);
         }
         let broadcasts = twin.history.iter().filter(|effect| matches!(effect, NetworkEffect::Broadcast { .. } | NetworkEffect::Snapshot { .. })).count();
-        assert_eq!(broadcasts, changes + epochs, "one Online per change and per EpochStarted");
+        assert_eq!(broadcasts, changes + epochs, "one Online per change and per EpochStarted answered after the first value");
     }
 }
 
@@ -146,11 +163,11 @@ fn net_prop_snapshot_after_create() {
     let inputs = [online(true), snapshot(Peer::Calls, 1), snapshot(Peer::Outbox, 1), online(false), snapshot(Peer::Feed, 2)];
     for order in orders(&inputs) {
         let mut twin = Twin::new();
-        let (mut value, mut applied, mut answered) = (false, 0, Vec::new());
+        let (mut value, mut applied, mut answered, mut waiting) = (None, 0, Vec::new(), Vec::new());
         for input in order {
             match input {
-                NetworkInput::SetOnline { online, stamp, .. } => { if stamp > applied { value = online; applied = stamp; } }
-                NetworkInput::SnapshotRequest { owner, epoch } => answered.push((owner, epoch, value)),
+                NetworkInput::SetOnline { online, stamp, .. } => { if stamp > applied { if value.is_none() { answered.extend(waiting.drain(..).map(|(owner, epoch)| (owner, epoch, online))); } value = Some(online); applied = stamp; } }
+                NetworkInput::SnapshotRequest { owner, epoch } => match value { Some(known) => answered.push((owner, epoch, known)), None => waiting.push((owner, epoch)) },
                 _ => {}
             }
             twin.feed(input);
@@ -159,7 +176,7 @@ fn net_prop_snapshot_after_create() {
             NetworkEffect::Snapshot { owner, epoch, online, .. } => Some((*owner, *epoch, *online)),
             _ => None,
         }).collect();
-        assert_eq!(got, answered, "each owner of each epoch gets exactly one first snapshot carrying the value at the request, in any delivery order");
+        assert_eq!(got, answered, "each owner of each epoch gets exactly one first snapshot carrying the value known at its answer, a request before the first value is answered by it, in any delivery order");
     }
 }
 

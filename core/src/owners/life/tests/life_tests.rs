@@ -320,6 +320,7 @@ async fn net_open_power_saving() {
     life.on_network(Peer::Windows, move |event| sink.lock().unwrap().push(event));
     let epoch = life.published().epoch;
     life.wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Windows, epoch });
+    database.set_online(true).unwrap();
     crate::test_wait::settled(&database, "the snapshot contains power saving", || heard.lock().unwrap().contains(&NetworkEvent::PowerSaving { saving: true, epoch: Some(epoch) })).await;
     database.close_database().await.unwrap();
 }
@@ -346,7 +347,9 @@ async fn net_prop_no_request_before_snapshot() {
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new(), false);
-    assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)));
+    let waiting = life.run(1, "Op".into(), "{}".into());
+    assert_eq!(answer(life.set_online(false, crate::ffi::next_stamp())).await, Reply::Online { closed: false });
+    assert_eq!(answer(waiting).await, Reply::Call(Err(CallError::Offline)), "the call waited for the first value and the value was false");
     assert!(transport.calls().is_empty(), "no request left before the network said it is online");
     assert_eq!(answer(life.set_online(true, crate::ffi::next_stamp())).await, Reply::Online { closed: false });
     transport.enqueue("Op", MockReply::data(json!({ "feed": [1] })));
@@ -364,6 +367,7 @@ async fn network_events_reach_the_listeners_with_the_snapshot_of_the_epoch() {
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     life.barrier();
+    assert_eq!(answer(life.set_online(false, crate::ffi::next_stamp())).await, Reply::Online { closed: false });
     let heard: Arc<Mutex<Vec<(Peer, NetworkEvent)>>> = Arc::default();
     for owner in [Peer::Rounds, Peer::Session, Peer::Transfer, Peer::Windows, Peer::Calls] {
         let heard = heard.clone();
@@ -413,6 +417,7 @@ async fn a_snapshot_of_a_past_epoch_reaches_no_receiver() {
     let epoch = life.published().epoch;
     life.wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Transfer, epoch: epoch - 1 });
     life.wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Transfer, epoch });
+    assert_eq!(answer(life.set_online(true, crate::ffi::next_stamp())).await, Reply::Online { closed: false });
     crate::test_wait::settled(&life, "the snapshot of the current epoch arrived", || heard.lock().unwrap().iter().any(|event| matches!(event, NetworkEvent::Online { epoch: Some(heard), .. } if *heard == epoch))).await;
     assert!(!heard.lock().unwrap().iter().any(|event| matches!(event, NetworkEvent::Online { epoch: Some(heard), .. } if *heard != epoch)), "the snapshot of the past epoch was dropped");
     closed(&life).await;

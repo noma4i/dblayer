@@ -12,7 +12,7 @@ fn not_open() -> Vec<Observation> {
 
 /// library.md section 7 and the stand inputs of the environment.
 impl LibraryRef {
-    /// The symbolic stand opens with the network off until the first platform message (network.md), the clock goes back by the `clock_back` total, the saved windows and the identity stay (library.md section 7 `close` + `open`).
+    /// The symbolic stand opens with the network unknown until the first platform message (network.md, D-402), the clock goes back by the `clock_back` total, the saved windows and the identity stay (library.md section 7 `close` + `open`).
     pub(super) fn open(&mut self) -> Vec<Observation> {
         if self.live {
             return vec![shapes::error("already_open")];
@@ -20,7 +20,8 @@ impl LibraryRef {
         self.now -= self.back;
         self.back = 0;
         self.live = true;
-        self.online = Some(false);
+        self.online = None;
+        self.awaiting.clear();
         vec![Observation::bare("opened")]
     }
 
@@ -123,6 +124,7 @@ impl LibraryRef {
         }
         self.end_streams("closed");
         self.end_calls("closed");
+        self.awaiting.clear();
         for window in self.windows.values_mut() {
             window.load = None;
             window.unfresh = false;
@@ -146,6 +148,7 @@ impl LibraryRef {
         }
         self.end_streams("session_ended");
         self.end_calls("no_session");
+        self.awaiting.clear();
         self.windows.clear();
         self.row = false;
         self.stale_models.clear();
@@ -183,6 +186,7 @@ impl LibraryRef {
             return not_open();
         }
         let was_on = self.on();
+        let first = self.online.is_none();
         self.online = Some(online);
         if was_on && !online {
             if let Some(login) = &mut self.login_call {
@@ -214,7 +218,14 @@ impl LibraryRef {
                 self.mark("H16_order_of_loads_that_start_together");
             }
         }
-        vec![Observation::new("online", json!(online))]
+        let mut shown = vec![Observation::new("online", json!(online))];
+        if first {
+            for (id, form, name, force) in std::mem::take(&mut self.awaiting) {
+                self.calls.retain(|call| call.id != id);
+                shown.extend(self.load_call(form, name, force));
+            }
+        }
+        shown
     }
 
     /// The clock moves. A retry pause that reached its ceiling sends the request again.

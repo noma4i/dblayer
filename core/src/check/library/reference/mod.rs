@@ -116,6 +116,8 @@ struct Sent {
 pub struct LibraryRef {
     live: bool,
     online: Option<bool>,
+    /// The forced reads and `load_more` that met the unknown network (library.md section 4): they wait for the first value and are decided again by it.
+    awaiting: Vec<(u64, Form, String, bool)>,
     identity: bool,
     login_call: Option<Login>,
     now: i64,
@@ -141,6 +143,7 @@ impl Default for LibraryRef {
         Self {
             live: false,
             online: None,
+            awaiting: Vec::new(),
             identity: false,
             login_call: None,
             now: 0,

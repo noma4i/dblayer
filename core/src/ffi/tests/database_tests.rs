@@ -42,6 +42,26 @@ async fn life_register_ok() {
     database.session_reset().await.unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn net_open_before_first_value_run_waits() {
+    for first in [true, false] {
+        let database = Database::open(config(), crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+        database.register_operations(r#"[{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}]"#.into()).await.unwrap();
+        let waiting = Arc::clone(&database);
+        let call = tokio::spawn(async move { waiting.run(waiting.session_epoch(), "Greeting".into(), r#"{"name":"Ada"}"#.into()).await });
+        crate::test_wait::within(crate::ffi::settled(&database)).await.unwrap();
+        assert!(!call.is_finished(), "no value yet: the call waits");
+        database.set_online(first).unwrap();
+        let answer = crate::test_wait::within(call).await.unwrap();
+        if first {
+            assert_eq!(answer.unwrap(), r#""Hello Ada""#);
+        } else {
+            assert!(matches!(answer, Err(DbError::Offline { .. })), "{answer:?}");
+        }
+        database.session_reset().await.unwrap();
+    }
+}
+
 /// net_prop_set_online_no_wall_clock: `set_online` returns the outcome of the owner under a clock that never advances, and `Err(Closed)` once the database closed.
 #[tokio::test]
 async fn net_prop_set_online_no_wall_clock() {
