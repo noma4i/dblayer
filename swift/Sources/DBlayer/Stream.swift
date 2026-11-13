@@ -404,41 +404,53 @@ public struct AccountScope: Sendable {
   }
 
   /// Sends a refused operation again, by the fields of its `OperationInfo`. Throws `NotFound` when the operation is gone.
-  @concurrent public func retry(model: String, id: String, action: String?) async throws {
-    _ = try await database.retry(epoch: epoch, model: model, rowId: id, action: action, source: nil)
+  nonisolated(nonsending) public func retry(model: String, id: String, action: String?) async throws {
+    try await DB.ordered(database, epoch: epoch) { root, database, epoch in
+      _ = try await database.retry(epoch: epoch, model: model, rowId: id, action: action, source: nil)
+    }
   }
 
   /// Drops an operation that is not on its way, by the fields of its `OperationInfo`.
-  @concurrent public func discard(model: String, id: String, action: String?) async throws {
-    try await database.discard(epoch: epoch, model: model, rowId: id, action: action)
+  nonisolated(nonsending) public func discard(model: String, id: String, action: String?) async throws {
+    try await DB.ordered(database, epoch: epoch) { root, database, epoch in
+      try await database.discard(epoch: epoch, model: model, rowId: id, action: action)
+    }
   }
 
   /// Writes the model locally and queues it for the server. It works without a network and after the app closed. A model with a `create` operation and a declared upload action work this way; another model is refused. Throws `NoSession` when the session of this scope ended.
-  @concurrent public func send<Model: DBModel>(_: Model.Type, values: [String: JSONValue], args: [String: JSONValue] = [:], upload: UploadCommand? = nil) async throws -> MutationReceipt<Model> {
-    let receipt = try await database.send(request: CommandRequest(epoch: epoch, model: Model.modelName, valuesJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text, upload: try upload.map { CommandUpload(action: $0.action, request: try $0.request.wire) }))
-    return try MutationReceipt(database: database, wire: receipt)
+  nonisolated(nonsending) public func send<Model: DBModel>(_: Model.Type, values: [String: JSONValue], args: [String: JSONValue] = [:], upload: UploadCommand? = nil) async throws -> MutationReceipt<Model> {
+    try await DB.ordered(database, epoch: epoch) { root, database, epoch in
+      let receipt = try await database.send(request: CommandRequest(epoch: epoch, model: Model.modelName, valuesJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text, upload: try upload.map { CommandUpload(action: $0.action, request: try $0.request.wire) }))
+      return try MutationReceipt(database: root, wire: receipt)
+    }
   }
 
   /// Sends the file of a record through its declared upload action. The row does not need to exist.
-  @concurrent public func upload<Model: DBModel>(_: Model.Type, id: String, action: String, _ request: UploadRequest) async throws -> MutationReceipt<Model> {
-    let receipt = try await database.upload(epoch: epoch, model: Model.modelName, rowId: id, action: action, request: request.wire)
-    return try MutationReceipt(database: database, wire: receipt)
+  nonisolated(nonsending) public func upload<Model: DBModel>(_: Model.Type, id: String, action: String, _ request: UploadRequest) async throws -> MutationReceipt<Model> {
+    try await DB.ordered(database, epoch: epoch) { root, database, epoch in
+      let receipt = try await database.upload(epoch: epoch, model: Model.modelName, rowId: id, action: action, request: request.wire)
+      return try MutationReceipt(database: root, wire: receipt)
+    }
   }
 
   /// Sends the file of an existing record through its declared upload action.
-  @concurrent public func upload<Model: DBModel>(_ row: Model, action: String, _ request: UploadRequest) async throws -> MutationReceipt<Model> {
+  nonisolated(nonsending) public func upload<Model: DBModel>(_ row: Model, action: String, _ request: UploadRequest) async throws -> MutationReceipt<Model> {
     try await upload(Model.self, id: row.id, action: action, request)
   }
 
   /// Sends the file before its row exists. `StagedUpload.commit` creates the row and sends the final mutation, `discard` removes the transfer.
-  @concurrent public func stage<Model: DBModel>(_: Model.Type, action: String, _ request: UploadRequest) async throws -> StagedUpload<Model> {
-    let staged = try await database.stage(epoch: epoch, model: Model.modelName, action: action, request: request.wire)
-    return StagedUpload(id: staged.rowId, action: action, database: database, epoch: epoch)
+  nonisolated(nonsending) public func stage<Model: DBModel>(_: Model.Type, action: String, _ request: UploadRequest) async throws -> StagedUpload<Model> {
+    try await DB.ordered(database, epoch: epoch) { root, database, epoch in
+      let staged = try await database.stage(epoch: epoch, model: Model.modelName, action: action, request: request.wire)
+      return StagedUpload(id: staged.rowId, action: action, database: root, epoch: epoch)
+    }
   }
 
-  @concurrent public func uploadBatch<Model: DBModel>(_: Model.Type, items: [UploadItem], request: UploadBatchRequest) async throws -> OperationReceipt<Model> {
-    let receipt = try await database.uploadCreateBatch(epoch: epoch, model: Model.modelName, items: items.map { try $0.wire }, request: request.wire)
-    return try OperationReceipt(database: database, wire: receipt)
+  nonisolated(nonsending) public func uploadBatch<Model: DBModel>(_: Model.Type, items: [UploadItem], request: UploadBatchRequest) async throws -> OperationReceipt<Model> {
+    try await DB.ordered(database, epoch: epoch) { root, database, epoch in
+      let receipt = try await database.uploadCreateBatch(epoch: epoch, model: Model.modelName, items: items.map { try $0.wire }, request: request.wire)
+      return try OperationReceipt(database: root, wire: receipt)
+    }
   }
 }
 

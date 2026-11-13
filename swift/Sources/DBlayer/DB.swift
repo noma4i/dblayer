@@ -13,6 +13,20 @@ public enum DB {
     return (target, try target.admit(accountEpoch: scope?.epoch))
   }
 
+  /// Takes the place of the call in the order of the database on the actor of the caller, then runs the call off it.
+  nonisolated(nonsending) static func ordered<Result: Sendable>(_ scope: AccountScope?, _ run: @Sendable (Database, Database, UInt64) async throws -> Result) async throws -> Result {
+    let (target, epoch) = try admitted(scope)
+    return try await offCaller(target, target.inOrder(), epoch, run)
+  }
+
+  nonisolated(nonsending) static func ordered<Result: Sendable>(_ target: Database, epoch: UInt64, _ run: @Sendable (Database, Database, UInt64) async throws -> Result) async throws -> Result {
+    try await offCaller(target, target.inOrder(), epoch, run)
+  }
+
+  @concurrent private static func offCaller<Result: Sendable>(_ target: Database, _ ordered: Database, _ epoch: UInt64, _ run: @Sendable (Database, Database, UInt64) async throws -> Result) async throws -> Result {
+    try await run(target, ordered, epoch)
+  }
+
   /// Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources. A call on the closed database, a second close included, gets the closed error of the core.
   public static func close() async throws {
     try await database.closeDatabase()
@@ -22,33 +36,42 @@ public enum DB {
 
   public static func openReport() throws -> OpenReport { try database.openReport() }
 
-  @concurrent public static func call<Answer: Decodable & Sendable>(_ operation: String, variables: [String: JSONValue], as _: Answer.Type, in scope: AccountScope? = nil) async throws -> Answer {
-    let (database, epoch) = try admitted(scope)
-    return try JSONDecoder().decode(Answer.self, from: Data(try await database.call(epoch: epoch, operation: operation, variablesJson: JSONValue.object(variables).text).utf8))
+  nonisolated(nonsending) public static func call<Answer: Decodable & Sendable>(_ operation: String, variables: [String: JSONValue], as _: Answer.Type, in scope: AccountScope? = nil) async throws -> Answer {
+    try await DB.ordered(scope) { root, database, epoch in
+      return try JSONDecoder().decode(Answer.self, from: Data(try await database.call(epoch: epoch, operation: operation, variablesJson: JSONValue.object(variables).text).utf8))
+    }
   }
 
-  @concurrent public static func call(_ operation: String, variables: [String: JSONValue], in scope: AccountScope? = nil) async throws {
-    let (database, epoch) = try admitted(scope)
-    _ = try await database.call(epoch: epoch, operation: operation, variablesJson: JSONValue.object(variables).text)
+  nonisolated(nonsending) public static func call(_ operation: String, variables: [String: JSONValue], in scope: AccountScope? = nil) async throws {
+    try await DB.ordered(scope) { root, database, epoch in
+      _ = try await database.call(epoch: epoch, operation: operation, variablesJson: JSONValue.object(variables).text)
+    }
   }
 
-  @concurrent public static func sessionCall<Body: Encodable & Sendable, Answer: Decodable & Sendable>(_ operation: String, body: Body, as _: Answer.Type) async throws -> Answer {
-    let answer = try JSONDecoder().decode(Answer.self, from: Data(try await database.sessionCall(operation: operation, bodyJson: sessionBodyText(body)).utf8))
-    return answer
+  nonisolated(nonsending) public static func sessionCall<Body: Encodable & Sendable, Answer: Decodable & Sendable>(_ operation: String, body: Body, as _: Answer.Type) async throws -> Answer {
+    try await ordered(database, epoch: 0) { _, database, _ in
+      try JSONDecoder().decode(Answer.self, from: Data(try await database.sessionCall(operation: operation, bodyJson: sessionBodyText(body)).utf8))
+    }
   }
 
-  @concurrent public static func sessionCall<Body: Encodable & Sendable>(_ operation: String, body: Body) async throws {
-    _ = try await database.sessionCall(operation: operation, bodyJson: sessionBodyText(body))
+  nonisolated(nonsending) public static func sessionCall<Body: Encodable & Sendable>(_ operation: String, body: Body) async throws {
+    try await ordered(database, epoch: 0) { _, database, _ in
+      _ = try await database.sessionCall(operation: operation, bodyJson: sessionBodyText(body))
+    }
   }
 
   /// The answer of the session call that the killed process left running, taken once: `nil` when there is none.
-  @concurrent public static func interruptedSessionAnswer<Answer: Decodable & Sendable>(as _: Answer.Type) async throws -> Answer? {
-    try await database.interruptedSessionAnswer().map { try JSONDecoder().decode(Answer.self, from: Data($0.utf8)) }
+  nonisolated(nonsending) public static func interruptedSessionAnswer<Answer: Decodable & Sendable>(as _: Answer.Type) async throws -> Answer? {
+    try await ordered(database, epoch: 0) { _, database, _ in
+      try await database.interruptedSessionAnswer().map { try JSONDecoder().decode(Answer.self, from: Data($0.utf8)) }
+    }
   }
 
   /// Ends the session: work of the old session ends, the credential and the data of the account go. Call it for every sign-out; the library clears the data itself.
-  public static func sessionReset() async throws {
-    try await database.sessionReset()
+  nonisolated(nonsending) public static func sessionReset() async throws {
+    try await ordered(database, epoch: 0) { _, database, _ in
+      try await database.sessionReset()
+    }
   }
 
   /// The session now: epoch, identity of its credential and phase. Read it again after a stream ends with the session or after `sessionCall` and `sessionReset`.

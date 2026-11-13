@@ -23,33 +23,40 @@ extension DBModel {
 
   public static func ids(_ ids: [String]) -> Query<Self> { Query<Self>().where(.inList("id", ids.map(JSONValue.string))) }
 
-  @concurrent public static func create(values: [String: JSONValue], args: [String: JSONValue] = [:], in scope: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-    let (database, epoch) = try DB.admitted(scope)
-    return try MutationReceipt(database: database, wire: await database.create(epoch: epoch, model: modelName, valuesJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text))
+  nonisolated(nonsending) public static func create(values: [String: JSONValue], args: [String: JSONValue] = [:], in scope: AccountScope? = nil) async throws -> MutationReceipt<Self> {
+    try await DB.ordered(scope) { root, database, epoch in
+      return try MutationReceipt(database: root, wire: await database.create(epoch: epoch, model: modelName, valuesJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text))
+    }
   }
-  @concurrent public func update(values: [String: JSONValue], args: [String: JSONValue] = [:], in scope: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-    let (database, epoch) = try DB.admitted(scope)
-    return try MutationReceipt(database: database, wire: await database.update(epoch: epoch, model: Self.modelName, rowId: id, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text))
+  nonisolated(nonsending) public func update(values: [String: JSONValue], args: [String: JSONValue] = [:], in scope: AccountScope? = nil) async throws -> MutationReceipt<Self> {
+    try await DB.ordered(scope) { root, database, epoch in
+      return try MutationReceipt(database: root, wire: await database.update(epoch: epoch, model: Self.modelName, rowId: id, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text))
+    }
   }
-  @concurrent public func setLocal(_ path: String, _ value: JSONValue, in scope: AccountScope? = nil) async throws {
-    let (database, epoch) = try DB.admitted(scope)
-    try await database.setLocal(epoch: epoch, model: Self.modelName, rowId: id, path: path, valueJson: value.text)
+  nonisolated(nonsending) public func setLocal(_ path: String, _ value: JSONValue, in scope: AccountScope? = nil) async throws {
+    try await DB.ordered(scope) { root, database, epoch in
+      try await database.setLocal(epoch: epoch, model: Self.modelName, rowId: id, path: path, valueJson: value.text)
+    }
   }
-  @concurrent public func act(_ action: String, values: [String: JSONValue], args: [String: JSONValue], in scope: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-    let (database, epoch) = try DB.admitted(scope)
-    return try MutationReceipt(database: database, wire: await database.act(epoch: epoch, model: Self.modelName, rowId: id, action: action, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text))
+  nonisolated(nonsending) public func act(_ action: String, values: [String: JSONValue], args: [String: JSONValue], in scope: AccountScope? = nil) async throws -> MutationReceipt<Self> {
+    try await DB.ordered(scope) { root, database, epoch in
+      return try MutationReceipt(database: root, wire: await database.act(epoch: epoch, model: Self.modelName, rowId: id, action: action, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text))
+    }
   }
-  @concurrent public func set(values: [String: JSONValue], in scope: AccountScope? = nil) async throws {
-    let (database, epoch) = try DB.admitted(scope)
-    try await database.setEphemeral(epoch: epoch, model: Self.modelName, rowId: id, valuesJson: JSONValue.object(values).text)
+  nonisolated(nonsending) public func set(values: [String: JSONValue], in scope: AccountScope? = nil) async throws {
+    try await DB.ordered(scope) { root, database, epoch in
+      try await database.setEphemeral(epoch: epoch, model: Self.modelName, rowId: id, valuesJson: JSONValue.object(values).text)
+    }
   }
-  @discardableResult @concurrent public func destroy(in scope: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-    let (database, epoch) = try DB.admitted(scope)
-    return try MutationReceipt(database: database, wire: await database.destroy(epoch: epoch, model: Self.modelName, rowId: id))
+  @discardableResult nonisolated(nonsending) public func destroy(in scope: AccountScope? = nil) async throws -> MutationReceipt<Self> {
+    try await DB.ordered(scope) { root, database, epoch in
+      return try MutationReceipt(database: root, wire: await database.destroy(epoch: epoch, model: Self.modelName, rowId: id))
+    }
   }
-  @concurrent public func attach(_ field: Files, source: URL, name: String, mime: String, in scope: AccountScope? = nil) async throws -> FileInfo {
-    let (database, epoch) = try DB.admitted(scope)
-    return FileInfo(wire: try await database.attachFile(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue, sourcePath: source.absoluteString, name: name, mime: mime))
+  nonisolated(nonsending) public func attach(_ field: Files, source: URL, name: String, mime: String, in scope: AccountScope? = nil) async throws -> FileInfo {
+    try await DB.ordered(scope) { root, database, epoch in
+      return FileInfo(wire: try await database.attachFile(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue, sourcePath: source.absoluteString, name: name, mime: mime))
+    }
   }
   @concurrent public func file(_ field: Files, in scope: AccountScope? = nil) async throws -> FileInfo? {
     let (database, epoch) = try DB.admitted(scope)
@@ -59,27 +66,32 @@ extension DBModel {
     let (database, epoch) = try DB.admitted(scope)
     return try await database.url(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue).map { URL(fileURLWithPath: $0) }
   }
-  @discardableResult @concurrent public func detach(_ field: Files, in scope: AccountScope? = nil) async throws -> Bool {
-    let (database, epoch) = try DB.admitted(scope)
-    return try await database.detach(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue)
+  @discardableResult nonisolated(nonsending) public func detach(_ field: Files, in scope: AccountScope? = nil) async throws -> Bool {
+    try await DB.ordered(scope) { root, database, epoch in
+      return try await database.detach(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue)
+    }
   }
-  @discardableResult @concurrent public func retry(action: String?, source: UploadSource? = nil, in scope: AccountScope? = nil) async throws -> MutationReceipt<Self> { try await Self.retry(id: id, action: action, source: source, in: scope) }
-  @discardableResult @concurrent public static func retry(id: String, action: String?, source: UploadSource? = nil, in scope: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-    let (database, epoch) = try DB.admitted(scope)
-    return try MutationReceipt(database: database, wire: await database.retry(epoch: epoch, model: modelName, rowId: id, action: action, source: source?.wire))
+  @discardableResult nonisolated(nonsending) public func retry(action: String?, source: UploadSource? = nil, in scope: AccountScope? = nil) async throws -> MutationReceipt<Self> { try await Self.retry(id: id, action: action, source: source, in: scope) }
+  @discardableResult nonisolated(nonsending) public static func retry(id: String, action: String?, source: UploadSource? = nil, in scope: AccountScope? = nil) async throws -> MutationReceipt<Self> {
+    try await DB.ordered(scope) { root, database, epoch in
+      return try MutationReceipt(database: root, wire: await database.retry(epoch: epoch, model: modelName, rowId: id, action: action, source: source?.wire))
+    }
   }
-  @concurrent public func discard(action: String?, in scope: AccountScope? = nil) async throws {
-    let (database, epoch) = try DB.admitted(scope)
-    try await database.discard(epoch: epoch, model: Self.modelName, rowId: id, action: action)
+  nonisolated(nonsending) public func discard(action: String?, in scope: AccountScope? = nil) async throws {
+    try await DB.ordered(scope) { root, database, epoch in
+      try await database.discard(epoch: epoch, model: Self.modelName, rowId: id, action: action)
+    }
   }
 
-  @concurrent public static func readNode(relation: String, id: String, force: Bool, in scope: AccountScope? = nil) async throws -> Self? {
-    let (database, epoch) = try DB.admitted(scope)
-    return try await database.node(epoch: epoch, model: modelName, relation: relation, rowId: id, force: force).map(decode)
+  nonisolated(nonsending) public static func readNode(relation: String, id: String, force: Bool, in scope: AccountScope? = nil) async throws -> Self? {
+    try await DB.ordered(scope) { root, database, epoch in
+      return try await database.node(epoch: epoch, model: modelName, relation: relation, rowId: id, force: force).map(decode)
+    }
   }
-  @concurrent public static func readNodes(relation: String, ids: [String], in scope: AccountScope? = nil) async throws -> [Self] {
-    let (database, epoch) = try DB.admitted(scope)
-    return try await database.nodes(epoch: epoch, model: modelName, relation: relation, rowIds: ids).map(decode)
+  nonisolated(nonsending) public static func readNodes(relation: String, ids: [String], in scope: AccountScope? = nil) async throws -> [Self] {
+    try await DB.ordered(scope) { root, database, epoch in
+      return try await database.nodes(epoch: epoch, model: modelName, relation: relation, rowIds: ids).map(decode)
+    }
   }
 
   static func decode(_ row: WireRow) throws -> Self {

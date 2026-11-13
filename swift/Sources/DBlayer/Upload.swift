@@ -37,14 +37,18 @@ public struct StagedUpload<Model: DBModel>: Sendable {
   let epoch: UInt64
 
   /// Creates the row with `values` and sends the final mutation with `variables`. A second call throws `Invalid`.
-  @concurrent public func commit(values: [String: JSONValue], variables: [String: JSONValue] = [:]) async throws -> MutationReceipt<Model> {
-    let receipt = try await database.commitStaged(epoch: epoch, model: Model.modelName, rowId: id, action: action, valuesJson: JSONValue.object(values).text, variablesJson: JSONValue.object(variables).text)
-    return try MutationReceipt(database: database, wire: receipt)
+  nonisolated(nonsending) public func commit(values: [String: JSONValue], variables: [String: JSONValue] = [:]) async throws -> MutationReceipt<Model> {
+    try await DB.ordered(database, epoch: epoch) { root, database, epoch in
+      let receipt = try await database.commitStaged(epoch: epoch, model: Model.modelName, rowId: id, action: action, valuesJson: JSONValue.object(values).text, variablesJson: JSONValue.object(variables).text)
+      return try MutationReceipt(database: root, wire: receipt)
+    }
   }
 
   /// Removes the transfer and its files. Returns the value of the core.
-  @concurrent public func discard() async throws -> Bool {
-    try await database.cancelUpload(epoch: epoch, model: Model.modelName, rowId: id, action: action)
+  nonisolated(nonsending) public func discard() async throws -> Bool {
+    try await DB.ordered(database, epoch: epoch) { root, database, epoch in
+      try await database.cancelUpload(epoch: epoch, model: Model.modelName, rowId: id, action: action)
+    }
   }
 }
 
@@ -100,18 +104,21 @@ public struct UploadBatchRequest: Sendable {
 }
 
 extension DBModel {
-  @concurrent public func supplySource(action: String, source: UploadSource, in scope: AccountScope? = nil) async throws { try await Self.supplySource(id: id, action: action, source: source, in: scope) }
-  @concurrent public static func supplySource(id: String, action: String, source: UploadSource, in scope: AccountScope? = nil) async throws {
-    let (database, epoch) = try DB.admitted(scope)
-    try await database.supplySource(epoch: epoch, model: modelName, rowId: id, action: action, source: source.wire)
+  nonisolated(nonsending) public func supplySource(action: String, source: UploadSource, in scope: AccountScope? = nil) async throws { try await Self.supplySource(id: id, action: action, source: source, in: scope) }
+  nonisolated(nonsending) public static func supplySource(id: String, action: String, source: UploadSource, in scope: AccountScope? = nil) async throws {
+    try await DB.ordered(scope) { root, database, epoch in
+      try await database.supplySource(epoch: epoch, model: modelName, rowId: id, action: action, source: source.wire)
+    }
   }
-  @concurrent public func failSource(action: String, message: String, in scope: AccountScope? = nil) async throws { try await Self.failSource(id: id, action: action, message: message, in: scope) }
-  @concurrent public static func failSource(id: String, action: String, message: String, in scope: AccountScope? = nil) async throws {
-    let (database, epoch) = try DB.admitted(scope)
-    try await database.failSource(epoch: epoch, model: modelName, rowId: id, action: action, message: message)
+  nonisolated(nonsending) public func failSource(action: String, message: String, in scope: AccountScope? = nil) async throws { try await Self.failSource(id: id, action: action, message: message, in: scope) }
+  nonisolated(nonsending) public static func failSource(id: String, action: String, message: String, in scope: AccountScope? = nil) async throws {
+    try await DB.ordered(scope) { root, database, epoch in
+      try await database.failSource(epoch: epoch, model: modelName, rowId: id, action: action, message: message)
+    }
   }
-  @concurrent public func cancelUpload(action: String, in scope: AccountScope? = nil) async throws -> Bool {
-    let (database, epoch) = try DB.admitted(scope)
-    return try await database.cancelUpload(epoch: epoch, model: Self.modelName, rowId: id, action: action)
+  nonisolated(nonsending) public func cancelUpload(action: String, in scope: AccountScope? = nil) async throws -> Bool {
+    try await DB.ordered(scope) { root, database, epoch in
+      return try await database.cancelUpload(epoch: epoch, model: Self.modelName, rowId: id, action: action)
+    }
   }
 }
