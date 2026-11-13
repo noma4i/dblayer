@@ -6,7 +6,7 @@ use crate::operation::OperationCall;
 use crate::schema_check::SchemaTypes;
 
 /// Kotlin `read`, `put` and `act` are not listed: the templates call them as `Model.read`, `this.put`, `this.act`.
-const BARE_CALLS: &[&str] = &["self", "this", "jsonValue", "mapOf", "mutableMapOf", "buildJsonObject", "parseJsonObject", "requireNotNull", "onAccount", "listOf", "emptyMap"];
+const BARE_CALLS: &[&str] = &["self", "this", "jsonValue", "mapOf", "mutableMapOf", "buildJsonObject", "parseJsonObject", "requireNotNull", "onAccountOf", "listOf", "emptyMap"];
 
 const IMPORTED_TYPES: &[&str] = &[
     "Query", "Condition", "Order", "SortDirection", "Column", "Association", "FileField", "FileInfo", "JSONValue", "JsonElement", "JsonObject", "JsonArray", "JsonPrimitive", "JsonNull", "JsonEncoder", "DB", "DBlayer", "DBModel", "DBSingleton",

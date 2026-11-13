@@ -265,7 +265,11 @@ pub fn emit_swift_with(models: &[ModelSpec], operations: &[OperationCall], schem
     source.lines().map(|line| {
         let indent = line.len() - line.trim_start().len();
         let trimmed = line.trim_start();
-        let (attribute, declaration) = ["@concurrent ", "nonisolated(nonsending) "].into_iter().find_map(|attribute| trimmed.strip_prefix(attribute).map(|rest| (attribute, rest))).unwrap_or(("", trimmed));
+        let found = ["@concurrent ", "nonisolated(nonsending) "].into_iter().find_map(|attribute| trimmed.strip_prefix(attribute).map(|rest| (attribute, rest)));
+        let (attribute, declaration) = match found {
+            Some(split) => split,
+            None => ("", trimmed),
+        };
         match declaration.strip_prefix("public ") {
             Some(rest) => format!("{}{}{}", &line[..indent], attribute, rest),
             None => line.to_string(),
@@ -534,7 +538,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         if !model.ephemeral.is_empty() {
             let params = model.ephemeral.iter().map(|field| kotlin_patch_param(&field.field)).collect::<Vec<_>>().join(", ");
             let params = kotlin_scope(&params, &account);
-            writeln!(out, "    suspend fun set({params}) {{\n        onAccount({account}) {{ database_, epoch_ -> database_.setEphemeral(epoch_, this.{MODEL_NAME}, this.id, buildJsonObject {{").unwrap();
+            writeln!(out, "    suspend fun set({params}) {{\n        onAccountOf({account}) {{ _, ordered_, epoch_ -> ordered_.setEphemeral(epoch_, this.{MODEL_NAME}, this.id, buildJsonObject {{").unwrap();
             for field in &model.ephemeral { writeln!(out, "{}", kotlin_patch_put(&field.field)).unwrap(); }
             out.push_str("        }.jsonText()) }\n    }\n");
         }

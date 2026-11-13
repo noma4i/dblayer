@@ -798,7 +798,7 @@ for path in sorted(tracked_rglob(root / "kotlin" / "src" / "main", "*.kt")):
     for number, line in enumerate(lines, 1):
         near = " ".join(lines[max(0, number - 3):number])
         if re.search(rf"\bdatabase\.{ordered_entries}\(", line) and "offCaller {" in near and "offCallerInOrder" not in near:
-            findings.append(f"Z61 a wrapper function that reaches an owner takes the place of the call before offCaller: use offCallerInOrder or onAccount (bridge.md P-BR-10): {path.relative_to(root)}:{number}")
+            findings.append(f"Z61 a wrapper function that reaches an owner takes the place of the call before offCaller: use offCallerInOrder or onAccountOf (bridge.md P-BR-10): {path.relative_to(root)}:{number}")
 
 if findings:
     print("zoo check found", len(findings), "problem(s):")

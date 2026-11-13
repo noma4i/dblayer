@@ -315,7 +315,7 @@ fn generated_locals_end_with_an_underscore_and_never_meet_a_dbl_parameter() {
     assert!(swift.contains("entriesEdge(_ scope: String, of id: String, in scope_: AccountScope? = nil)") && swift.contains("Self.entries(scope).edgeValues(of: id, in: scope_)"), "{swift}");
     assert!(swift.contains("func move(scope: String, in scope_: AccountScope? = nil)") && swift.contains("func update(scope: String? = nil, in scope_: AccountScope? = nil)"), "{swift}");
     assert!(kotlin.contains("suspend fun entriesEdge(scope: String, id: String, account: AccountScope? = null)") && kotlin.contains("LedgerFeed.entries(scope).edgeValues(id, account)"), "{kotlin}");
-    assert!(kotlin.contains("suspend fun move(scope: String, account: AccountScope? = null)") && kotlin.contains("onAccount(account) { database_, epoch_ ->"), "{kotlin}");
+    assert!(kotlin.contains("suspend fun move(scope: String, account: AccountScope? = null)") && kotlin.contains("onAccountOf(account) { database_, ordered_, epoch_ ->"), "{kotlin}");
 }
 
 #[test]

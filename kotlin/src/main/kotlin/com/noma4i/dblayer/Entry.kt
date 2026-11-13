@@ -37,10 +37,10 @@ object DBlayer {
     fun openReport(): OpenReport = database.openReport()
 
     suspend fun <Answer> call(operation: String, variables: JsonObject, serializer: KSerializer<Answer>, account: AccountScope? = null): Answer =
-        onAccount(account) { database, epoch -> dbJson.decodeFromString(serializer, database.call(epoch, operation, variables.jsonText())) }
+        onAccountOf(account) { _, database, epoch -> dbJson.decodeFromString(serializer, database.call(epoch, operation, variables.jsonText())) }
 
     suspend fun call(operation: String, variables: JsonObject, account: AccountScope? = null) {
-        onAccount(account) { database, epoch -> database.call(epoch, operation, variables.jsonText()) }
+        onAccountOf(account) { _, database, epoch -> database.call(epoch, operation, variables.jsonText()) }
     }
 
     @PublishedApi internal val database: Database

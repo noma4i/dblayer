@@ -531,8 +531,8 @@ data class Container(
         val shelves = Column<Container, List<ContainerShelf>?>("shelves")
         fun where(condition: Condition) = Query("Container", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Container", this, ids)
-        suspend fun node(id: String, force: Boolean = false, account: AccountScope? = null): Container? = onAccount(account) { database, epoch -> database.node(epoch, "Container", "node", id, force)?.let { Container.read(it) } }
-        suspend fun nodes(ids: List<String>, account: AccountScope? = null): List<Container> = onAccount(account) { database, epoch -> database.nodes(epoch, "Container", "nodes", ids).map { Container.read(it) } }
+        suspend fun node(id: String, force: Boolean = false, account: AccountScope? = null): Container? = onAccountOf(account) { _, ordered_, epoch_ -> ordered_.node(epoch_, "Container", "node", id, force)?.let { Container.read(it) } }
+        suspend fun nodes(ids: List<String>, account: AccountScope? = null): List<Container> = onAccountOf(account) { _, ordered_, epoch_ -> ordered_.nodes(epoch_, "Container", "nodes", ids).map { Container.read(it) } }
         val recent: Query<Container> get() {
             var built_ = Query("Container", this, relation = "recent", params = buildJsonObject {  })
             built_ = built_.order(Order("lastRecordAt", SortDirection.DESC))
@@ -735,7 +735,7 @@ data class Chat(
         val lists = Column<Chat, List<String>>("lists")
         fun where(condition: Condition) = Query("Chat", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Chat", this, ids)
-        suspend fun node(id: String, force: Boolean = false, account: AccountScope? = null): Chat? = onAccount(account) { database, epoch -> database.node(epoch, "Chat", "node", id, force)?.let { Chat.read(it) } }
+        suspend fun node(id: String, force: Boolean = false, account: AccountScope? = null): Chat? = onAccountOf(account) { _, ordered_, epoch_ -> ordered_.node(epoch_, "Chat", "node", id, force)?.let { Chat.read(it) } }
         fun list(list: String): Query<Chat> {
             var built_ = Query("Chat", this, relation = "list", params = buildJsonObject { this.put("list", jsonValue(list)) })
             return built_
@@ -792,7 +792,7 @@ data class Message(
         val chatId = Column<Message, String>("chatId")
         fun where(condition: Condition) = Query("Message", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Message", this, ids)
-        suspend fun node(id: String, force: Boolean = false, account: AccountScope? = null): Message? = onAccount(account) { database, epoch -> database.node(epoch, "Message", "node", id, force)?.let { Message.read(it) } }
+        suspend fun node(id: String, force: Boolean = false, account: AccountScope? = null): Message? = onAccountOf(account) { _, ordered_, epoch_ -> ordered_.node(epoch_, "Message", "node", id, force)?.let { Message.read(it) } }
         suspend fun create(text: String, chatId: String, account: AccountScope? = null): MutationReceipt<Message> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("text", jsonValue(text))
@@ -843,7 +843,7 @@ data class InterfaceRecord(
         val spec = Column<InterfaceRecord, SampleSpec?>("spec")
         fun where(condition: Condition) = Query("InterfaceRecord", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("InterfaceRecord", this, ids)
-        suspend fun node(id: String, force: Boolean = false, account: AccountScope? = null): InterfaceRecord? = onAccount(account) { database, epoch -> database.node(epoch, "InterfaceRecord", "node", id, force)?.let { InterfaceRecord.read(it) } }
+        suspend fun node(id: String, force: Boolean = false, account: AccountScope? = null): InterfaceRecord? = onAccountOf(account) { _, ordered_, epoch_ -> ordered_.node(epoch_, "InterfaceRecord", "node", id, force)?.let { InterfaceRecord.read(it) } }
         suspend fun create(slug: String, spec: SampleSpec? = null, account: AccountScope? = null): MutationReceipt<InterfaceRecord> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("slug", jsonValue(slug))
@@ -960,7 +960,7 @@ data class MediaMessage(
         val sequenceNumber = Column<MediaMessage, Long?>("sequenceNumber")
         fun where(condition: Condition) = Query("MediaMessage", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("MediaMessage", this, ids)
-        suspend fun node(id: String, force: Boolean = false, account: AccountScope? = null): MediaMessage? = onAccount(account) { database, epoch -> database.node(epoch, "MediaMessage", "node", id, force)?.let { MediaMessage.read(it) } }
+        suspend fun node(id: String, force: Boolean = false, account: AccountScope? = null): MediaMessage? = onAccountOf(account) { _, ordered_, epoch_ -> ordered_.node(epoch_, "MediaMessage", "node", id, force)?.let { MediaMessage.read(it) } }
         fun visualMedia(chatId: String): Query<MediaMessage> {
             var built_ = Query("MediaMessage", this, relation = "visual_media", params = buildJsonObject { this.put("chatId", jsonValue(chatId)) })
             return built_
@@ -1054,7 +1054,7 @@ data class Moment(
         val createdAt = Column<Moment, String>("createdAt")
         fun where(condition: Condition) = Query("Moment", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Moment", this, ids)
-        suspend fun transcodeStatus(id: String, force: Boolean = false, account: AccountScope? = null): Moment? = onAccount(account) { database, epoch -> database.node(epoch, "Moment", "transcode_status", id, force)?.let { Moment.read(it) } }
+        suspend fun transcodeStatus(id: String, force: Boolean = false, account: AccountScope? = null): Moment? = onAccountOf(account) { _, ordered_, epoch_ -> ordered_.node(epoch_, "Moment", "transcode_status", id, force)?.let { Moment.read(it) } }
         val recent: Query<Moment> get() {
             var built_ = Query("Moment", this, relation = "recent", params = buildJsonObject {  })
             built_ = built_.order(Order("createdAt", SortDirection.DESC))
@@ -1610,8 +1610,8 @@ data class Record(
             var built_ = Query("Record", this, relation = "thread", params = buildJsonObject { this.put("containerId", jsonValue(containerId)) })
             return built_
         }
-        suspend fun node(id: String, force: Boolean = false, account: AccountScope? = null): Record? = onAccount(account) { database, epoch -> database.node(epoch, "Record", "node", id, force)?.let { Record.read(it) } }
-        suspend fun transcodeStatus(id: String, force: Boolean = false, account: AccountScope? = null): Record? = onAccount(account) { database, epoch -> database.node(epoch, "Record", "transcode_status", id, force)?.let { Record.read(it) } }
+        suspend fun node(id: String, force: Boolean = false, account: AccountScope? = null): Record? = onAccountOf(account) { _, ordered_, epoch_ -> ordered_.node(epoch_, "Record", "node", id, force)?.let { Record.read(it) } }
+        suspend fun transcodeStatus(id: String, force: Boolean = false, account: AccountScope? = null): Record? = onAccountOf(account) { _, ordered_, epoch_ -> ordered_.node(epoch_, "Record", "transcode_status", id, force)?.let { Record.read(it) } }
         fun containerMedia(containerId: String): Query<Record> {
             var built_ = Query("Record", this, relation = "container_media", params = buildJsonObject { this.put("containerId", jsonValue(containerId)) })
             return built_
@@ -1897,7 +1897,7 @@ data class CustomScreen(
         val spec = Column<CustomScreen, ScreenSpec?>("spec")
         fun where(condition: Condition) = Query("CustomScreen", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("CustomScreen", this, ids)
-        suspend fun node(id: String, force: Boolean = false, account: AccountScope? = null): CustomScreen? = onAccount(account) { database, epoch -> database.node(epoch, "CustomScreen", "node", id, force)?.let { CustomScreen.read(it) } }
+        suspend fun node(id: String, force: Boolean = false, account: AccountScope? = null): CustomScreen? = onAccountOf(account) { _, ordered_, epoch_ -> ordered_.node(epoch_, "CustomScreen", "node", id, force)?.let { CustomScreen.read(it) } }
         suspend fun create(slug: String, version: Long, requires: ScreenRequires, spec: ScreenSpec? = null, account: AccountScope? = null): MutationReceipt<CustomScreen> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("slug", jsonValue(slug))
@@ -2138,7 +2138,7 @@ data class User(
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<User> = User.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<User> = User.destroy(id, account)
     suspend fun set(typing: Boolean? = null, mood: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null) {
-        onAccount(account) { database_, epoch_ -> database_.setEphemeral(epoch_, this.modelName, this.id, buildJsonObject {
+        onAccountOf(account) { _, ordered_, epoch_ -> ordered_.setEphemeral(epoch_, this.modelName, this.id, buildJsonObject {
             typing?.let { this.put("typing", jsonValue(it)) }
             this.put("mood", mood)
         }.jsonText()) }

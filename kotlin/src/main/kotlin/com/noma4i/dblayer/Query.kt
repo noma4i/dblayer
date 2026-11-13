@@ -110,7 +110,7 @@ class Query<Model : DBModel>(
             }
         }
     }
-    suspend fun refresh(account: AccountScope? = null) = onAccount(account) { database, epoch -> database.refresh(epoch, modelName, relation, params.jsonText()) }
+    suspend fun refresh(account: AccountScope? = null) = onAccountOf(account) { _, database, epoch -> database.refresh(epoch, modelName, relation, params.jsonText()) }
     /** Reads every page of the connection of this relation to its confirmed end, so that a stream opened afterwards holds all rows. `force = false` uses the current freshness and the pages that are stored, `force = true` refreshes the first page and then reads the rest. A call that runs together with another one for the same relation joins it. */
     suspend fun loadAll(force: Boolean = false, account: AccountScope? = null) {
         val admission = admit(account)
@@ -123,7 +123,7 @@ class Query<Model : DBModel>(
             }
         }
     }
-    suspend fun loadMore(account: AccountScope? = null): LoadMoreResult = onAccount(account) { database, epoch -> database.loadMore(epoch, modelName, relation, params.jsonText()) }
+    suspend fun loadMore(account: AccountScope? = null): LoadMoreResult = onAccountOf(account) { _, database, epoch -> database.loadMore(epoch, modelName, relation, params.jsonText()) }
 }
 
 fun <Model : DBModel> idsQuery(modelName: String, decoder: ModelDecoder<Model>, ids: List<String>): Query<Model> =

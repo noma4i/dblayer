@@ -93,10 +93,7 @@ internal fun admit(account: AccountScope?): Admission {
     return Admission(database, database.admit(account?.epoch))
 }
 
-/** Admits the call before the work leaves the caller, then runs it off the caller with the pair. */
-suspend fun <T> onAccount(account: AccountScope?, call: suspend (Database, ULong) -> T): T = onAccountOf(account) { _, ordered, epoch -> call(ordered, epoch) }
-
-/** The same with the database of the caller as the first argument, for the call that builds a receipt. */
+/** Admits the call before the work leaves the caller, then runs it off the caller with the database of the caller, the database that holds the place of the call and the epoch. The database of the place closes with the call: only a receipt keeps the database of the caller. */
 suspend fun <T> onAccountOf(account: AccountScope?, call: suspend (Database, Database, ULong) -> T): T {
     val admission = admit(account)
     return offCallerInOrder(admission.database) { ordered -> call(admission.database, ordered, admission.epoch) }
@@ -109,11 +106,11 @@ internal suspend fun <T> onAccountRead(account: AccountScope?, call: suspend (Da
 }
 
 suspend fun <Model : DBModel> ModelDecoder<Model>.retry(id: String, action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Model> = onAccountOf(account) { database, ordered, epoch -> MutationReceipt(database, this, ordered.retry(epoch, modelName, id, action, source?.wire())) }
-suspend fun DBModel.discard(action: String?, account: AccountScope? = null) = onAccount(account) { database, epoch -> database.discard(epoch, modelName, id, action) }
+suspend fun DBModel.discard(action: String?, account: AccountScope? = null) = onAccountOf(account) { _, database, epoch -> database.discard(epoch, modelName, id, action) }
 
 suspend fun <Model : DBModel> ModelDecoder<Model>.destroy(id: String, account: AccountScope? = null): MutationReceipt<Model> = onAccountOf(account) { database, ordered, epoch -> MutationReceipt(database, this, ordered.destroy(epoch, modelName, id)) }
 
-suspend fun DBModel.setLocal(path: String, value: kotlinx.serialization.json.JsonElement, account: AccountScope? = null) = onAccount(account) { database, epoch -> database.setLocal(epoch, modelName, id, path, value.jsonText()) }
+suspend fun DBModel.setLocal(path: String, value: kotlinx.serialization.json.JsonElement, account: AccountScope? = null) = onAccountOf(account) { _, database, epoch -> database.setLocal(epoch, modelName, id, path, value.jsonText()) }
 
 suspend fun <Model : DBModel> Model.act(action: String, values: kotlinx.serialization.json.JsonObject, args: kotlinx.serialization.json.JsonObject, decoder: ModelDecoder<Model>, account: AccountScope? = null): MutationReceipt<Model> {
     return onAccountOf(account) { database, ordered, epoch -> MutationReceipt(database, decoder, ordered.act(epoch, modelName, id, action, values.jsonText(), args.jsonText())) }

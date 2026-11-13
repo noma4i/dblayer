@@ -22,7 +22,7 @@ data class UploadRequest(
     }
 }
 
-suspend fun DBModel.cancelUpload(action: String, account: AccountScope? = null): Boolean = onAccount(account) { database, epoch -> database.cancelUpload(epoch, modelName, id, action) }
+suspend fun DBModel.cancelUpload(action: String, account: AccountScope? = null): Boolean = onAccountOf(account) { _, database, epoch -> database.cancelUpload(epoch, modelName, id, action) }
 
 /** A file sent before its row exists. [id] is the id of the row [commit] creates. */
 class StagedUpload<Model : DBModel> internal constructor(private val database: Database, private val epoch: ULong, private val decoder: ModelDecoder<Model>, val id: String, val action: String) {
@@ -59,10 +59,10 @@ data class UploadSource(
     internal fun wire() = WireUploadSource(path, name, mime, values.jsonText(), variables.jsonText(), prepare?.wire)
 }
 
-suspend fun DBModel.supplySource(action: String, source: UploadSource, account: AccountScope? = null) = onAccount(account) { database, epoch -> database.supplySource(epoch, modelName, id, action, source.wire()) }
-suspend fun <Model : DBModel> ModelDecoder<Model>.supplySource(id: String, action: String, source: UploadSource, account: AccountScope? = null) = onAccount(account) { database, epoch -> database.supplySource(epoch, modelName, id, action, source.wire()) }
-suspend fun DBModel.failSource(action: String, message: String, account: AccountScope? = null) = onAccount(account) { database, epoch -> database.failSource(epoch, modelName, id, action, message) }
-suspend fun <Model : DBModel> ModelDecoder<Model>.failSource(id: String, action: String, message: String, account: AccountScope? = null) = onAccount(account) { database, epoch -> database.failSource(epoch, modelName, id, action, message) }
+suspend fun DBModel.supplySource(action: String, source: UploadSource, account: AccountScope? = null) = onAccountOf(account) { _, database, epoch -> database.supplySource(epoch, modelName, id, action, source.wire()) }
+suspend fun <Model : DBModel> ModelDecoder<Model>.supplySource(id: String, action: String, source: UploadSource, account: AccountScope? = null) = onAccountOf(account) { _, database, epoch -> database.supplySource(epoch, modelName, id, action, source.wire()) }
+suspend fun DBModel.failSource(action: String, message: String, account: AccountScope? = null) = onAccountOf(account) { _, database, epoch -> database.failSource(epoch, modelName, id, action, message) }
+suspend fun <Model : DBModel> ModelDecoder<Model>.failSource(id: String, action: String, message: String, account: AccountScope? = null) = onAccountOf(account) { _, database, epoch -> database.failSource(epoch, modelName, id, action, message) }
 
 data class UploadBatchRequest(
     val operation: String,
