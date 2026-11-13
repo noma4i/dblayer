@@ -37,3 +37,31 @@ fn data_sets_newest_read_is_bounded() {
         assert!(few <= 2 && many == few, "{name}: the rows read for one change do not depend on the number of children: {few} for 20, {many} for 200");
     }
 }
+
+#[test]
+fn data_sets_destroy_ranking_reads_by_index_whatever_the_children() {
+    use rusqlite::{params_from_iter, StatementStatus};
+    let spec = all_specs().into_iter().find(|spec| spec.key.as_str() == "messages").unwrap();
+    let association = spec.associations.iter().find(|association| !association.sets.is_empty()).unwrap().clone();
+    let table = crate::store::ddl::table_name("messages");
+    let work = |count: i64| {
+        let db = open();
+        land_children(&db, (1..=count).map(|id| message(&id.to_string(), 5)).collect());
+        db.read(&["messages"], |reader| {
+            let connection = reader.connection();
+            let winner = crate::store::follow_pointer::winner_sql(&table, &association, false);
+            let contest = crate::store::follow_pointer::contest_sql(&table, &association);
+            let mut steps = 0;
+            for (sql, params) in [(&winner, vec!["c1".to_string()]), (&contest, vec![count.to_string(), "0".into(), "5".into(), "5".into()])] {
+                let plan: Vec<String> = connection.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap().query_map(params_from_iter(&params), |row| row.get::<_, String>(3)).unwrap().map(Result::unwrap).collect();
+                assert!(!plan.iter().any(|line| line.starts_with("SCAN") && line.contains(&table)) && (sql != &winner || !plan.iter().any(|line| line.contains("TEMP B-TREE"))), "{count} children: {plan:?}");
+                let mut statement = connection.prepare(sql).unwrap();
+                let _: Option<String> = statement.query_row(params_from_iter(&params), |row| row.get(0)).ok();
+                steps += statement.get_status(StatementStatus::VmStep) + statement.get_status(StatementStatus::Sort);
+            }
+            Ok(steps)
+        }).unwrap()
+    };
+    let (few, many) = (work(3), work(300));
+    assert_eq!(few, many, "the work of ranking a destroyed child does not depend on the number of children: {few} for 3, {many} for 300");
+}

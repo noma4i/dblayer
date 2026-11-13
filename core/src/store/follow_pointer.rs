@@ -45,7 +45,10 @@ pub(crate) fn named_parents(reader: &Reader<'_>, info: &ModelInfo, id: &str, bef
         let Some(parent) = before.get(&association.foreign_key).and_then(read_id) else { continue };
         if association.pointer_field().is_none() { continue }
         if reader.point(association.target.as_str(), parent.as_str())?.is_none() { continue }
-        let was_named = first_ranked(reader, &info.table, association, &parent, false, Some((id, before)))?.is_none_or(|winner| winner.as_str() == id);
+        let was_named = match first_ranked(reader, &info.table, association, &parent, false)? {
+            None => true,
+            Some(winner) => destroyed_outranks(reader, &info.table, association, id, before, &winner)?,
+        };
         if was_named { named.push(association.target.to_string()); }
     }
     Ok(named)
@@ -78,7 +81,7 @@ fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, pa
                     }
                 }
                 let mut newest = |permanent: bool| -> Result<Option<Row>, StoreError> {
-                    let Some(id) = first_ranked(reader, &child.table, association, &parent.id, permanent, None)? else { return Ok(None) };
+                    let Some(id) = first_ranked(reader, &child.table, association, &parent.id, permanent)? else { return Ok(None) };
                     read += 1;
                     reader.point(child.spec.key.as_str(), id.as_str())
                 };
@@ -99,25 +102,34 @@ fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, pa
     Ok((derived, read, stale))
 }
 
-fn first_ranked(reader: &Reader<'_>, table: &str, association: &AssociationSpec, parent_id: &RowId, permanent: bool, destroyed: Option<(&str, &Row)>) -> Result<Option<RowId>, StoreError> {
-    let order = crate::store::ddl::newer_order(association).into_iter().map(|(term, descending)| if descending { format!("{term} DESC") } else { term }).collect::<Vec<_>>().join(", ");
+pub(crate) fn winner_sql(table: &str, association: &AssociationSpec, permanent: bool) -> String {
     let foreign_key = crate::store::ddl::sql_ident(&crate::store::ddl::column_name(&association.foreign_key));
     let only = if permanent { format!(" AND {}", crate::identity::permanent_row_flag(&crate::store::ddl::sql_ident("id"))) } else { String::new() };
-    let mut bound: Vec<rusqlite::types::Value> = vec![parent_id.as_str().to_string().into()];
-    let sql = match destroyed {
-        None => format!("SELECT id FROM {table} WHERE {foreign_key} = ?1{only} ORDER BY {order} LIMIT 1"),
-        Some((id, row)) => {
-            let columns: Vec<String> = association.newer.iter().map(|field| crate::store::ddl::sql_ident(&crate::store::ddl::column_name(field))).collect();
-            bound.push(id.to_string().into());
-            for field in &association.newer {
-                bound.push(crate::store::query::binding(field, row.get(field).unwrap_or(&Value::Null)).map_err(|error| StoreError::Constraint(error.to_string()))?);
-            }
-            let slots: String = (0..columns.len()).map(|index| format!(", ?{}", index + 3)).collect();
-            let names: String = columns.iter().map(|name| format!(", {name}")).collect();
-            format!("SELECT id FROM (SELECT id{names} FROM {table} WHERE {foreign_key} = ?1{only} UNION ALL SELECT ?2{slots}) ORDER BY {order} LIMIT 1")
-        }
-    };
-    let mut statement = reader.connection().prepare_cached(&sql)?;
-    let id: Option<String> = statement.query_row(rusqlite::params_from_iter(bound), |row| row.get(0)).optional()?;
+    format!("SELECT id FROM {table} WHERE {foreign_key} = ?1{only} ORDER BY {} LIMIT 1", order_terms(association))
+}
+
+pub(crate) fn contest_sql(table: &str, association: &AssociationSpec) -> String {
+    let names: String = association.newer.iter().map(|field| format!(", {}", crate::store::ddl::sql_ident(&crate::store::ddl::column_name(field)))).collect();
+    let slots: String = (0..association.newer.len()).map(|index| format!(", ?{}", index + 3)).collect();
+    format!("SELECT id FROM (SELECT id{names} FROM {table} WHERE id = ?1 UNION ALL SELECT ?2{slots}) ORDER BY {} LIMIT 1", order_terms(association))
+}
+
+fn order_terms(association: &AssociationSpec) -> String {
+    crate::store::ddl::newer_order(association).into_iter().map(|(term, descending)| if descending { format!("{term} DESC") } else { term }).collect::<Vec<_>>().join(", ")
+}
+
+fn first_ranked(reader: &Reader<'_>, table: &str, association: &AssociationSpec, parent_id: &RowId, permanent: bool) -> Result<Option<RowId>, StoreError> {
+    let mut statement = reader.connection().prepare_cached(&winner_sql(table, association, permanent))?;
+    let id: Option<String> = statement.query_row(rusqlite::params![parent_id.as_str()], |row| row.get(0)).optional()?;
     id.map(|id| RowId::new(&id).map_err(fault)).transpose()
+}
+
+fn destroyed_outranks(reader: &Reader<'_>, table: &str, association: &AssociationSpec, id: &str, row: &Row, winner: &RowId) -> Result<bool, StoreError> {
+    let mut bound: Vec<rusqlite::types::Value> = vec![winner.as_str().to_string().into(), id.to_string().into()];
+    for field in &association.newer {
+        bound.push(crate::store::query::binding(field, row.get(field).unwrap_or(&Value::Null)).map_err(fault)?);
+    }
+    let mut statement = reader.connection().prepare_cached(&contest_sql(table, association))?;
+    let first: String = statement.query_row(rusqlite::params_from_iter(bound), |row| row.get(0))?;
+    Ok(first == id)
 }
