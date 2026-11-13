@@ -179,7 +179,7 @@ fn store_owed_kept_by_an_answer_older_than_the_event() {
     assert!(!owed(&db, "c1"), "the next request pays");
 }
 
-/// store_owed_goes_with_the_row: the delete of the row and the end of the account take the debt with them, a row created again under the same id is not in debt.
+/// store_owed_goes_with_the_row: the delete of the row and the end of the account take the debt with them, a row created again under the same id by a local write (a source that pays no debt) is not in debt.
 #[test]
 fn store_owed_goes_with_the_row() {
     fn row() -> RowValue { RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "again"}).to_string() } }
@@ -192,7 +192,6 @@ fn store_owed_goes_with_the_row() {
         owe(&db, 1, "c1");
         assert!(owed(&db, "c1"), "{path}: the debt stands");
         end(&db);
-        put(&db, "Chat", json!({"id": "c1", "title": "again"}));
         write_as(&db, 3, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::LocalRows { model: "Chat".into(), rows: vec![row()] }]);
         assert!(!owed(&db, "c1"), "{path}: the row created again owes nothing");
     }
@@ -219,7 +218,7 @@ fn store_owed_kept_by_a_write_without_a_load() {
     }
 }
 
-/// store_owed_goes_with_the_model_cache: the wipe of a model at open, after its fingerprint changed, takes the debt with the rows.
+/// store_owed_goes_with_the_model_cache: the wipe of a model at open, after its fingerprint changed, takes the debt with the rows; the row created again by a local write (a source that pays no debt) is not in debt.
 #[test]
 fn store_owed_goes_with_the_model_cache() {
     let directory = tempfile::tempdir().unwrap();
@@ -233,6 +232,6 @@ fn store_owed_goes_with_the_model_cache() {
     let mut changed = chat_spec();
     changed.fields.push(FieldSpec::scalar("extra", ScalarKind::Str).optional());
     let db = Arc::new(Store::open_models(Some(path.as_path()), vec![changed], None, Arc::new(crate::runtime::SystemClock)).unwrap());
-    put(&db, "Chat", json!({"id": "c1", "title": "t"}));
+    write_as(&db, 2, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::LocalRows { model: "Chat".into(), rows: vec![RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "t"}).to_string() }] }]);
     assert!(!owed(&db, "c1"), "the row created after the wipe owes nothing");
 }
