@@ -224,7 +224,7 @@ async fn xfer_stage_commit_twice() {
     std::fs::write(&path, b"data").unwrap();
     answers(&stand);
     stand.script.data("CompleteMultipart", COMPLETE);
-    stand.script.data("CreateMoment", LANDED);
+    let mutation = stand.script.hold("CreateMoment", LANDED);
     let staged = staged(&database, &path).await;
     held(&stand, &database, 1).await;
     let commit = |text: &str| database.commit_staged(database.session_epoch(), "Moment".into(), staged.row_id.clone(), "upload_clip".into(), format!(r#"{{"text":"{text}"}}"#), "{}".into());
@@ -233,6 +233,8 @@ async fn xfer_stage_commit_twice() {
     assert!(matches!(second, Err(crate::ffi::DbError::Invalid { .. })), "{second:?}");
     let shown = database.peek_row(database.session_epoch(), "Moment".into(), staged.row_id.clone()).await.unwrap().expect("the row of the first commit");
     assert!(format!("{:?}", shown.cells).contains("first"));
+    mutation.entered().await;
+    mutation.release();
     crate::test_wait::settled(&database, "the final mutation went", || stand.script.count("CreateMoment") == 1).await;
     assert_eq!(stand.script.count("CreateMoment"), 1);
 }
