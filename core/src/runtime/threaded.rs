@@ -501,6 +501,7 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, time
         Back::<O>::new(move |stamp, input| router.push(own, Command::Deliver(stamp, Box::new(input))), move |pending| failing.push(own, Command::Failed(pending)))
     };
     let mut armed = 0;
+    let mut due_held = false;
     loop {
         let cell = &owner.cell;
         let commands = owner.mailbox.take(|| cell.next_due().map(|at| Duration::from_millis(at.0.saturating_sub(timeline.now().0))));
@@ -522,7 +523,7 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, time
                     #[cfg(test)]
                     lock(&router.active[owner.slot]).clear();
                     router.stopped[owner.slot].store(true, Ordering::SeqCst);
-                    router.inflight.done(handled + owner.mailbox.drain());
+                    router.inflight.done(handled + owner.mailbox.drain() + usize::from(due_held));
                     return;
                 }
             }
@@ -559,6 +560,8 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, time
         }
         #[cfg(test)]
         { *lock(&router.waits[owner.slot]) = owner.cell.waits(); lock(&router.active[owner.slot]).clear(); }
-        router.inflight.done(handled);
+        let due_now = owner.cell.next_due().is_some_and(|at| at <= timeline.now());
+        if due_now { router.inflight.add(); }
+        router.inflight.done(handled + usize::from(std::mem::replace(&mut due_held, due_now)));
     }
 }
