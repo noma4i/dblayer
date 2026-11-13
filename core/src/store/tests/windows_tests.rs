@@ -206,6 +206,23 @@ fn mark_stale_op_sets_stale_since_for_models_and_keys_in_the_batch_transaction()
     assert_eq!(db.stale_window_keys().unwrap().len(), 2, "a model marks the windows of its lists");
 }
 
+#[test]
+fn stale_parents_mark_the_windows_of_the_parent_only_in_a_batch_of_the_feed() {
+    use crate::owners::contract::BatchAuthor;
+    use crate::owners::store::{RowValue, StoreBatch, StoreOp};
+    for (author, marked) in [(BatchAuthor::Feed, true), (BatchAuthor::Outbox, false)] {
+        let db = Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+        let chats = key("chats", "list", "1");
+        db.save_window(&window(&chats)).unwrap();
+        assert!(db.stale_window_keys().unwrap().is_empty());
+        let row = RowValue { row_id: "m1".into(), values: serde_json::json!({"id": "m1", "chatId": "c9", "body": "m1", "createdAt": 1}).to_string() };
+        let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Rows { model: "messages".into(), rows: vec![row] }] };
+        let written = db.write_batch(&batch, db.files(), None).unwrap();
+        assert_eq!(written.stale_parents, ["chats".to_string()], "{author:?}: the parent row is not in the base");
+        assert_eq!(db.stale_window_keys().unwrap(), if marked { vec![chats] } else { Vec::new() }, "{author:?}");
+    }
+}
+
 thread_local! { static PAGE_ADMISSION_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 
 fn count_page_admission(event: rusqlite::trace::TraceEvent<'_>) {

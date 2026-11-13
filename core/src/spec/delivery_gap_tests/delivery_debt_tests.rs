@@ -16,13 +16,20 @@ fn read(twin: &mut Twin, revision: i64, owing: &[&str]) -> Vec<String> {
     take(&twin.log).into_iter().filter_map(|entry| match entry { Emitted::Send { to: WINDOWS, input } => Some(input), _ => None }).collect()
 }
 
-/// dlv_owed_row_interest: a shown row in debt holds the interest of its `node` window, a row that pays nothing holds none.
+/// dlv_owed_row_interest: a shown row in debt holds the interest of its `node` window, a row that pays nothing holds none; a stream with `fetch: never` holds it as well when the window is not its own.
 #[test]
 fn dlv_owed_row_interest() {
     let mut twin = debt_list();
     let sends = read(&mut twin, 1, &["r1"]);
     assert_eq!(sends.iter().filter(|send| send.starts_with("InterestPlus") && send.contains("node|") && send.contains("r1")).count(), 1, "{sends:?}");
     assert!(!sends.iter().any(|send| send.contains("r2")), "{sends:?}");
+    let mut never = Twin::new();
+    let mut shown = view(Kind::Entity(Fetch::Never));
+    shown.node = Some("node".into());
+    never.post(d::DeliveryInput::Open { stream: STREAM, view: shown, epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: None });
+    never.step(Input::WindowState(Ws::loaded_at(1)));
+    let sends = read(&mut never, 1, &["r1"]);
+    assert_eq!(sends.iter().filter(|send| send.starts_with("InterestPlus") && send.contains("node|") && send.contains("r1")).count(), 1, "fetch never: {sends:?}");
 }
 
 /// dlv_owed_row_paid_releases: the interest ends when the row pays or the stream ends, and a second debt of the row holds it again.

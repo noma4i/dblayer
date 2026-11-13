@@ -13,7 +13,7 @@ use crate::value::ScalarKind;
 use super::data_sets_tests::{deliver, write_as};
 
 fn chat_spec() -> ModelSpec {
-    let mut chat = ModelSpec::new("Chat", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("title", ScalarKind::Str)]);
+    let mut chat = ModelSpec::new("Chat", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("title", ScalarKind::Str), FieldSpec::scalar("count", ScalarKind::Int).optional()]);
     let mut node = RelationSpec::new("node", &[]);
     node.text_params = vec![NODE_PARAM.into()];
     node.node = Some(NodeRead::One);
@@ -76,28 +76,26 @@ fn store_owe_reread_written() {
     assert_eq!(missing.revision, written.revision, "a row that is not stored writes nothing");
 }
 
-/// store_owe_reread_same: the debt that stands is not written again, the batch announces nothing and keeps the revision.
+/// store_owe_reread_same: the event of a row that stands in debt writes the debt again without announcing the row; the raised debt is not paid by a load issued before the second event.
 #[test]
 fn store_owe_reread_same() {
     let db = open();
-    let first = owe(&db, 1, "c1");
+    owe(&db, 1, "c1");
+    let issued = db.revision_seq().unwrap();
     let again = owe(&db, 2, "c1");
-    assert!(again.revision >= first.revision);
     assert!(again.notice.rows.as_ref().is_none_or(|rows| rows.is_empty()), "no row is announced: {:?}", again.notice.rows);
+    land_node_at(&db, 3, "c1", Vec::new(), issued);
+    assert!(owed(&db, "c1"), "the second event raised the debt above the request");
 }
 
-/// store_owed_cleared_by_server_row: every server source of the row pays the debt, the local write does not.
+/// store_owed_cleared_by_server_row: every server source of the row pays the debt.
 #[test]
 fn store_owed_cleared_by_server_row() {
     let row = || RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "server"}).to_string() };
-    for (path, pays) in [("event", true), ("page", true), ("node", true), ("response", false), ("local", false)] {
+    for (path, pays) in [("event", true), ("page", true), ("node", true)] {
         let db = open();
         owe(&db, 1, "c1");
-        if path == "local" {
-            write_as(&db, 2, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::LocalRows { model: "Chat".into(), rows: vec![row()] }]);
-        } else {
-            deliver(&db, 2, path, "Chat", row(), Vec::new());
-        }
+        deliver(&db, 2, path, "Chat", row(), Vec::new());
         assert_eq!(owed(&db, "c1"), !pays, "{path}");
     }
 }
@@ -146,7 +144,7 @@ fn feed_event_debt_survives_restart() {
     assert!(db.window_saved("Chat", "list", &params).unwrap().expect("the list is saved").stale, "the saved list still owes the reread");
 }
 
-/// store_owed_kept_by_an_answer_older_than_the_event: a load issued before the event does not pay the debt of the event, the next load does, for the node and for the page of a list; a write without the request of a load pays nothing.
+/// store_owed_kept_by_an_answer_older_than_the_event: a load issued before the event does not pay the debt of the event, the next load does, for the node and for the page of a list.
 #[test]
 fn store_owed_kept_by_an_answer_older_than_the_event() {
     fn row() -> RowValue { RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "answer"}).to_string() } }
@@ -171,17 +169,14 @@ fn store_owed_kept_by_an_answer_older_than_the_event() {
         land(&db, 4, db.revision_seq().unwrap());
         assert!(!owed(&db, "c1"), "{path}: the next load pays");
     }
-    let local = |db: &Arc<Store>| write_as(db, 2, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::LocalRows { model: "Chat".into(), rows: vec![row()] }]);
-    let fields = |db: &Arc<Store>| write_as(db, 2, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::LocalFields { model: "Chat".into(), row_id: "c1".into(), values: json!({"title": "local"}).to_string() }]);
-    let response = |db: &Arc<Store>| write_as(db, 2, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "Chat".into(), rows: vec![row()] }]);
-    type Write = Box<dyn Fn(&Arc<Store>) -> crate::store::batch_write::BatchWritten>;
-    let writes: [(&str, Write); 3] = [("local rows", Box::new(local)), ("local fields", Box::new(fields)), ("response", Box::new(response))];
-    for (path, write) in writes {
-        let db = open();
-        owe(&db, 1, "c1");
-        write(&db);
-        assert!(owed(&db, "c1"), "{path}: a write without the request of a load keeps the debt");
-    }
+    let db = open();
+    owe(&db, 1, "c1");
+    let issued = db.revision_seq().unwrap();
+    owe(&db, 2, "c1");
+    land_node_at(&db, 3, "c1", vec![row()], issued);
+    assert!(owed(&db, "c1"), "the second event of the row is newer than the request");
+    land_node_at(&db, 4, "c1", vec![row()], db.revision_seq().unwrap());
+    assert!(!owed(&db, "c1"), "the next request pays");
 }
 
 /// store_owed_goes_with_the_row: the delete of the row and the end of the account take the debt with them, a row created again under the same id is not in debt.
@@ -201,4 +196,43 @@ fn store_owed_goes_with_the_row() {
         write_as(&db, 3, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::LocalRows { model: "Chat".into(), rows: vec![row()] }]);
         assert!(!owed(&db, "c1"), "{path}: the row created again owes nothing");
     }
+}
+
+/// store_owed_kept_by_a_write_without_a_load: the rollback of an optimistic write and the numbers of a row build their batch with the default source and no request of a load: they pay nothing.
+#[test]
+fn store_owed_kept_by_a_write_without_a_load() {
+    use crate::owners::store::{EffectRow, IntentEffects, IntentOrigin};
+    let rollback = |db: &Arc<Store>| {
+        let effects = IntentEffects { rows: vec![EffectRow { model: "Chat".into(), row_id: "c1".into(), values: json!({"id": "c1", "title": "edit"}).to_string() }], ..Default::default() };
+        let intent = StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id: 7, model: "Chat".into(), row_id: "c1".into(), action: "update".into(), payload: "{}".into(), effects, origin: IntentOrigin::Api };
+        write_as(db, 2, BatchAuthor::Outbox, Vec::new(), vec![intent]);
+        write_as(db, 3, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RollBack { op_id: 7 }]);
+    };
+    let numbers = |db: &Arc<Store>| { write_as(db, 2, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Numbers { model: "Chat".into(), row_id: "c1".into(), writes: vec![("count".into(), 3)] }]); };
+    type Write = Box<dyn Fn(&Arc<Store>)>;
+    let writes: [(&str, Write); 2] = [("rollback", Box::new(rollback)), ("numbers", Box::new(numbers))];
+    for (path, write) in writes {
+        let db = open();
+        owe(&db, 1, "c1");
+        write(&db);
+        assert!(owed(&db, "c1"), "{path}: a write without the request of a load keeps the debt");
+    }
+}
+
+/// store_owed_goes_with_the_model_cache: the wipe of a model at open, after its fingerprint changed, takes the debt with the rows.
+#[test]
+fn store_owed_goes_with_the_model_cache() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    {
+        let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], None, Arc::new(crate::runtime::SystemClock)).unwrap());
+        put(&db, "Chat", json!({"id": "c1", "title": "t"}));
+        owe(&db, 1, "c1");
+        assert!(owed(&db, "c1"));
+    }
+    let mut changed = chat_spec();
+    changed.fields.push(FieldSpec::scalar("extra", ScalarKind::Str).optional());
+    let db = Arc::new(Store::open_models(Some(path.as_path()), vec![changed], None, Arc::new(crate::runtime::SystemClock)).unwrap());
+    put(&db, "Chat", json!({"id": "c1", "title": "t"}));
+    assert!(!owed(&db, "c1"), "the row created after the wipe owes nothing");
 }
