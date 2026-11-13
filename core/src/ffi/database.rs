@@ -74,10 +74,6 @@ pub(super) fn joined(error: tokio::task::JoinError) -> DbError {
     if error.is_cancelled() { DbError::Interrupted { detail: error.to_string() } } else { DbError::Runtime { detail: error.to_string() } }
 }
 
-pub(super) async fn on_executor<T: Send + 'static, E: Into<DbError> + Send + 'static>(work: impl std::future::Future<Output = Result<T, E>> + Send + 'static) -> Result<T, DbError> {
-    crate::task::spawn_on(executor()?.handle(), work).await.map_err(joined)?.map_err(Into::into)
-}
-
 #[cfg(test)]
 thread_local! { pub(super) static CALLER: std::cell::Cell<Option<std::thread::ThreadId>> = const { std::cell::Cell::new(None) }; }
 
@@ -426,12 +422,12 @@ impl Database {
     pub async fn close_database(&self) -> Result<(), DbError> { let this_db = self.clone(); on_core(Some(self.life.clone()), async move {
         let waiter = this_db.life.close();
         let _closing = crate::runtime::hold_until_woken(this_db.life.launch());
-        let answered = on_executor(crate::runtime::counted(Some(this_db.life.launch()), async move { Ok::<_, DbError>(waiter.wait().await) })).await;
+        let outcome = crate::runtime::counted(Some(this_db.life.launch()), async move { waiter.wait().await }).await;
         crate::runtime::release_holds();
-        let answered = answered.and_then(|outcome| match outcome {
+        let answered = match outcome {
             crate::runtime::Outcome::Value(_) | crate::runtime::Outcome::Closing => Ok(()),
             crate::runtime::Outcome::Internal | crate::runtime::Outcome::EpochEnded(_) => Err(DbError::Internal { detail: "the answer of the close was lost".into() }),
-        });
+        };
         let (life, _closing) = (this_db.life.clone(), crate::runtime::hold_until_woken(this_db.life.launch()));
         let ended = blocking(move || { life.shutdown(); Ok(()) }).await;
         crate::runtime::release_holds();
