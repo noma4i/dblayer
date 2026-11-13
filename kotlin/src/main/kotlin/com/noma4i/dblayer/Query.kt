@@ -101,21 +101,26 @@ class Query<Model : DBModel>(
 
     /** Loads the relation. Cancelling the coroutine gives up its interest in the shared request. */
     suspend fun load(account: AccountScope? = null) {
-        val request = beginLoad(account)
-        try {
-            request.result()
-        } finally {
-            request.cancel()
+        offCaller {
+            val request = beginLoad(account)
+            try {
+                request.result()
+            } finally {
+                request.cancel()
+            }
         }
     }
     suspend fun refresh(account: AccountScope? = null) = onAccount(account) { database, epoch -> database.refresh(epoch, modelName, relation, params.jsonText()) }
     /** Reads every page of the connection of this relation to its confirmed end, so that a stream opened afterwards holds all rows. `force = false` uses the current freshness and the pages that are stored, `force = true` refreshes the first page and then reads the rest. A call that runs together with another one for the same relation joins it. */
     suspend fun loadAll(force: Boolean = false, account: AccountScope? = null) {
-        val request = admit(account).let { admission -> admission.database.beginLoadAll(admission.epoch, modelName, relation, params.jsonText(), force) }
-        try {
-            request.result()
-        } finally {
-            request.cancel()
+        val admission = admit(account)
+        offCaller {
+            val request = admission.database.beginLoadAll(admission.epoch, modelName, relation, params.jsonText(), force)
+            try {
+                request.result()
+            } finally {
+                request.cancel()
+            }
         }
     }
     suspend fun loadMore(account: AccountScope? = null): LoadMoreResult = onAccount(account) { database, epoch -> database.loadMore(epoch, modelName, relation, params.jsonText()) }

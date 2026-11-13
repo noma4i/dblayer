@@ -30,7 +30,7 @@ class StagedUpload<Model : DBModel> internal constructor(private val database: D
 
     /** Creates the row with [values] and sends the final mutation with [variables]. A second call throws `Invalid`. */
     suspend fun commit(values: JsonObject, variables: JsonObject = JsonObject(emptyMap())): MutationReceipt<Model> =
-        MutationReceipt(database, decoder, offCaller { database.commitStaged(epoch, decoder.modelName, id, action, values.jsonText(), variables.jsonText()) })
+        offCaller { MutationReceipt(database, decoder, database.commitStaged(epoch, decoder.modelName, id, action, values.jsonText(), variables.jsonText())) }
 
     /** Removes the transfer and its files. Returns the value of the core. */
     suspend fun discard(): Boolean = offCaller { database.cancelUpload(epoch, decoder.modelName, id, action) }

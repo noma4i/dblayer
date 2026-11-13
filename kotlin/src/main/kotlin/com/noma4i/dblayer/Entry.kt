@@ -32,7 +32,7 @@ object DBlayer {
         offCaller { database.closeDatabase() }
     }
 
-    suspend fun subscriptionCensus(): SubscriptionCensus = database.subscriptionCensus()
+    suspend fun subscriptionCensus(): SubscriptionCensus = offCaller { database.subscriptionCensus() }
 
     fun openReport(): OpenReport = database.openReport()
 
@@ -46,9 +46,9 @@ object DBlayer {
     @PublishedApi internal val database: Database
         get() = opener.opened()
 
-    suspend fun serverConfig(context: Context, encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): ServerConfig {
+    suspend fun serverConfig(context: Context, encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): ServerConfig = offCaller {
         NetworkStatus(context)
-        return fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpTransport(), retries, null)
+        fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpTransport(), retries, null)
     }
 
     suspend fun open(
@@ -64,13 +64,15 @@ object DBlayer {
         http: EncryptedHttp? = null,
         uploadNotification: UploadNotification,
     ) {
-        val dataSync = dataSyncDeclared(android.os.Build.VERSION.SDK_INT) { context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty().toList() }
-        UploadNotifications.store(context, uploadNotification)
-        val ports = OpenPorts(transport, encrypted, credentials, http, endpoint, OkHttpTransport(headers), dataSync, SystemPreparer(context.applicationContext))
-        NetworkStatus(context)
-        val made = opener.open(Config(path, null), modelsJson, OpenOptions(definitions(operations)), ports, SystemObservers(context))
-        made.setRoundJobs(UploadRounds(context.applicationContext, made))
-        UploadService.opened(made)
+        offCaller {
+            val dataSync = dataSyncDeclared(android.os.Build.VERSION.SDK_INT) { context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty().toList() }
+            UploadNotifications.store(context, uploadNotification)
+            val ports = OpenPorts(transport, encrypted, credentials, http, endpoint, OkHttpTransport(headers), dataSync, SystemPreparer(context.applicationContext))
+            NetworkStatus(context)
+            val made = opener.open(Config(path, null), modelsJson, OpenOptions(definitions(operations)), ports, SystemObservers(context))
+            made.setRoundJobs(UploadRounds(context.applicationContext, made))
+            UploadService.opened(made)
+        }
     }
 
     private fun definitions(operations: List<GraphQLOperation>): List<OperationDefinition> = operations.map { OperationDefinition(it.operationName, it.document) }

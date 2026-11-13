@@ -12,9 +12,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
@@ -34,7 +36,7 @@ class ValueStream internal constructor(val epoch: ULong, private val reader: Rea
         } finally {
             reader.releaseReader(claim)
         }
-    }
+    }.flowOn(Dispatchers.Default)
 
     /** Loads the relation of the stream again. Throws `NoSession` when the session ended and `Invalid` when the stream has no relation. */
     suspend fun refresh() = offCaller { reader.refresh() }
@@ -43,7 +45,7 @@ class ValueStream internal constructor(val epoch: ULong, private val reader: Rea
 
     /** Stops reading: the stream ends in the core and nothing is delivered after this returns. */
     suspend fun cancel() {
-        reader.cancel()
+        offCaller { reader.cancel() }
     }
 
     fun close() {
@@ -110,7 +112,7 @@ class ListProjection<Model : DBModel> private constructor(
     fun apply(value: ReadValue, decoder: ModelDecoder<Model>): ListProjection<Model>? = value.listDelivery(decoder)?.let(::apply)
 }
 
-/** The screen model of a stream of rows: a StateFlow over a projection. It reads the stream until its scope completes, and the completion of the reading job ends the stream in the core, also when the scope was cancelled before the first delivery. Rows are decoded on [Dispatchers.Default], the collecting scope only publishes them. */
+/** The screen model of a stream of rows: a StateFlow over a projection. It reads the stream until its scope completes, and the completion of the reading job ends the stream in the core, also when the scope was cancelled before the first delivery. Rows are decoded and applied on [Dispatchers.Default]. */
 class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<Model>, scope: CoroutineScope) {
     private val held = MutableStateFlow(ListProjection<Model>())
     val projection: StateFlow<ListProjection<Model>> = held.asStateFlow()
@@ -123,9 +125,9 @@ class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<
                     stream.resync()
                     null
                 }
-            }.flowOn(Dispatchers.Default).collect {
+            }.onEach {
                 held.value = held.value.apply(it)
-            }
+            }.flowOn(Dispatchers.Default).collect()
         } finally {
             stream.close()
         }
@@ -186,7 +188,7 @@ fun <Model : DBModel> ValueStream.events(decoder: ModelDecoder<Model>): Flow<Mod
             else -> {}
         }
     }
-}
+}.flowOn(Dispatchers.Default)
 
 sealed interface ChangeItem {
     data object Ready : ChangeItem
@@ -205,7 +207,7 @@ internal fun ValueStream.changeItems(): Flow<ChangeItem> = flow {
             else -> {}
         }
     }
-}
+}.flowOn(Dispatchers.Default)
 
 /** The status of a transfer at one change. */
 data class TransferProgress(val revision: Long, val state: String, val waitReason: String?, val progress: Double, val error: String?, val localUrl: String?, val processing: WireProcessing?)
@@ -226,7 +228,7 @@ val ValueStream.uploadStatus: Flow<TransferItem>
                 else -> {}
             }
         }
-    }
+    }.flowOn(Dispatchers.Default)
 
 /** One item of the queue of operations: the whole queue, or the end of the stream with the cause of the core. */
 sealed interface OperationQueueItem {
@@ -244,7 +246,7 @@ internal fun ValueStream.operationLists(): Flow<OperationQueueItem> =
                 else -> {}
             }
         }
-    }
+    }.flowOn(Dispatchers.Default)
 
 /** The file of a media command and the declared upload action that sends it. */
 class UploadCommand(val action: String, val request: UploadRequest)
@@ -282,14 +284,12 @@ class AccountScope private constructor(val epoch: ULong, internal val database: 
 
     /** Writes the model locally and queues it for the server. It works without a network and after the app closed. A model with a `create` operation and a declared upload action work this way; another model is refused. Throws `NoSession` when the session of this scope ended. */
     suspend fun <Model : DBModel> send(decoder: ModelDecoder<Model>, values: JsonObject, args: JsonObject = JsonObject(emptyMap()), upload: UploadCommand? = null): MutationReceipt<Model> {
-        val receipt = offCaller { database.send(CommandRequest(epoch, decoder.modelName, values.jsonText(), args.jsonText(), upload?.let { CommandUpload(it.action, it.request.wire()) })) }
-        return MutationReceipt(database, decoder, receipt)
+        return offCaller { MutationReceipt(database, decoder, database.send(CommandRequest(epoch, decoder.modelName, values.jsonText(), args.jsonText(), upload?.let { CommandUpload(it.action, it.request.wire()) }))) }
     }
 
     /** Sends the file of a record through its declared upload action. The row does not need to exist. */
     suspend fun <Model : DBModel> upload(decoder: ModelDecoder<Model>, id: String, action: String, request: UploadRequest): MutationReceipt<Model> {
-        val receipt = offCaller { database.upload(epoch, decoder.modelName, id, action, request.wire()) }
-        return MutationReceipt(database, decoder, receipt)
+        return offCaller { MutationReceipt(database, decoder, database.upload(epoch, decoder.modelName, id, action, request.wire())) }
     }
 
     /** Sends the file of an existing record through its declared upload action. */
