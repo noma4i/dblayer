@@ -14,6 +14,7 @@
 - Throw `NotFound` from `commit` of a staged upload that is being removed.
 - Mirror a video on iOS that needs no re-encode when `mirror` is set.
 - Refuse a video probe with a rotation outside 0, 90, 180, 270 as `prepare_failed`.
+- Reread a row that a list shows after a `changed_by` event of its `node`.
 
 ## 6.32.0 - 2026-11-13
 
