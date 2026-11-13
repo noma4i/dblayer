@@ -22,13 +22,13 @@ fn life_prop_user_agent() {
 struct SecurityHttp {
     server: Arc<FakeServer>,
     refused: std::sync::atomic::AtomicBool,
-    requests: std::sync::atomic::AtomicUsize,
+    journal: std::sync::Mutex<Vec<String>>,
 }
 
 #[async_trait]
 impl FakeHttp for SecurityHttp {
     async fn post(&self, path: String, body: String, purpose: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
-        self.requests.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.journal.lock().unwrap().push(path.clone());
         if self.refused.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(DbError::Security { code: crate::transport::SecurityCode::TlsTrust, detail: "platform trust refused".into() });
         }
@@ -45,16 +45,23 @@ async fn sess_prop_security_code_kept() {
     use crate::transport::SecurityCode;
     let server = FakeServer::new(Arc::new(SystemClock));
     let credentials = Arc::new(MemoryCredentials::default());
-    let http = Arc::new(SecurityHttp { server, refused: false.into(), requests: 0.into() });
+    let http = Arc::new(SecurityHttp { server, refused: false.into(), journal: Default::default() });
     let database = within(Database::open(Config { path: None, data_version: None }, crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(crate::transport::encrypted::tests::protocol_tests::config()), credentials: Some(Arc::new(Held(credentials))), http: Some(http.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
     database.set_online(true).unwrap();
+    within(crate::ffi::settled(&database)).await.unwrap();
     within(database.session_call("social".into(), "{}".into())).await.unwrap();
+    within(crate::ffi::settled(&database)).await.unwrap();
     http.refused.store(true, std::sync::atomic::Ordering::SeqCst);
-    let before = http.requests.load(std::sync::atomic::Ordering::SeqCst);
+    let before = http.journal.lock().unwrap().len();
     assert!(matches!(within(database.session_call("confirm".into(), "{}".into())).await, Err(DbError::Security { code: SecurityCode::TlsTrust, detail }) if detail == "platform trust refused"));
+    within(crate::ffi::settled(&database)).await.unwrap();
+    let after_call = http.journal.lock().unwrap().len();
+    assert_eq!(after_call, before + 1, "the refused call sends once: {:?}", http.journal.lock().unwrap());
     let crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Mutated(outcome)) = within(database.life.mutate_answered(None, 42, "/api/auth/confirm".into(), "{}".into(), 0).wait()).await else { panic!("the author has an outcome") };
     assert!(matches!(outcome, AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::Security { code: SecurityCode::TlsTrust, detail }, pending_retained: false } if detail == "platform trust refused"));
-    assert_eq!(http.requests.load(std::sync::atomic::Ordering::SeqCst), before + 2);
+    within(crate::ffi::settled(&database)).await.unwrap();
+    let journal = http.journal.lock().unwrap().clone();
+    assert_eq!(journal.len(), before + 2, "{journal:?}");
     let answers = crate::store::session_state::answers(&database.db.lock().connection).unwrap();
     assert_eq!(answers.get(&42), Some(&crate::store::session_state::StoredAnswer::Security { code: SecurityCode::TlsTrust, detail: "platform trust refused".into() }));
     within(database.close_database()).await.unwrap();
