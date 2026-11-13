@@ -207,3 +207,4 @@ val receipt = staged.commit(values, variables)
 
 - A video with `mirror` set goes up mirrored on iOS also when the source needs no re-encode. The app changes nothing.
 - A custom `Preparer` that reports a video rotation outside 0, 90, 180 or 270 gets `prepare_failed` with the reason `failed`, and the copy of the source stays. Report the turn as one of the four values.
+- The first open after the update rebuilds the cache of the server models because the cache format changed. The app sees the server data load again once. Local models, queued operations, the session and uploads stay. The app changes nothing.

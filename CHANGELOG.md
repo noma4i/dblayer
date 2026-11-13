@@ -5,6 +5,7 @@
 ### Changed
 
 - Switch off the PUT in a background session on iOS: `DB.handleBackgroundEvents` returns `false`.
+- Rebuild the server cache on the first open after the update: the cache format changed. Queued operations, the session and uploads stay.
 
 ### Fixed
 
