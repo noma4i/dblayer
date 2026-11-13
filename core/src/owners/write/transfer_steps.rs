@@ -333,16 +333,19 @@ impl TransferState {
     /// `MintedPending x Tick`: the debt of a minted id is written again. It goes under `Control` when its transfer is gone or the epoch ended, as a row of the live transfer otherwise.
     fn tick_minted(&mut self, upload_id: &str, attempt_id: AttemptId, fx: &mut Fx) {
         let Some(debt) = self.minted.get(upload_id).filter(|debt| debt.attempt_id == attempt_id).cloned() else { return };
+        if debt.record == MintedRecord::Recorded {
+            return;
+        }
         if !self.debt_live(upload_id, debt.transfer) {
             self.minted.remove(upload_id);
             return;
         }
         let holds = debt.transfer.and_then(|id| self.transfers.get(&id)).is_some_and(|transfer| transfer.upload_id.as_deref() == Some(upload_id) && !matches!(transfer.stage, TransferStage::Removing | TransferStage::Done));
-        match (debt.transfer, holds && !self.ended) {
-            (Some(id), true) => self.store(&[id], StoreKind::UploadId, fx),
-            (Some(_), false) if !self.ended => { self.minted.remove(upload_id); }
+        match (debt.transfer, holds && !self.ended, debt.record) {
+            (Some(id), true, MintedRecord::Upload) => self.store(&[id], StoreKind::UploadId, fx),
+            (Some(_), false, _) if !self.ended => { self.minted.remove(upload_id); }
             _ => {
-                if !self.pending.values().any(|pending| pending.kind == StoreKind::ControlOrphan && pending.orphan.as_ref().is_some_and(|(written, _)| written == upload_id)) {
+                if !self.record_in_flight(upload_id) {
                     self.write_control_orphan(upload_id.to_string(), debt.key, fx);
                 }
             }

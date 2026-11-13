@@ -521,10 +521,10 @@ impl TransferState {
         };
         self.pending.retain(|_, pending| pending.kind == StoreKind::ControlOrphan);
         self.retrying.clear();
-        for (upload_id, key) in unanswered.into_iter().chain(active) { self.minted.entry(upload_id).or_insert(MintedDebt { transfer: None, key, attempts: 1, attempt_id: 0 }); }
+        for (upload_id, key) in unanswered.into_iter().chain(active) { self.minted.entry(upload_id).or_insert(MintedDebt { transfer: None, key, attempts: 1, attempt_id: 0, record: MintedRecord::Orphan }); }
         let done: Vec<String> = self.minted.iter().filter(|(upload_id, debt)| !self.debt_live(upload_id, debt.transfer)).map(|(upload_id, _)| upload_id.clone()).collect();
         for upload_id in done { self.minted.remove(&upload_id); }
-        let owed: Vec<(String, String)> = self.minted.iter().filter(|(upload_id, _)| !self.pending.values().any(|pending| pending.orphan.as_ref().is_some_and(|(written, _)| written == *upload_id))).map(|(upload_id, debt)| (upload_id.clone(), debt.key.clone())).collect();
+        let owed: Vec<(String, String)> = self.minted.iter().filter(|(upload_id, debt)| debt.record != MintedRecord::Recorded && !self.record_in_flight(upload_id)).map(|(upload_id, debt)| (upload_id.clone(), debt.key.clone())).collect();
         for (upload_id, key) in owed { self.write_control_orphan(upload_id, key, fx); }
         for id in self.open_ids() {
             self.interrupt(id, end.clone(), fx);

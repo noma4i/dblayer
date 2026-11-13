@@ -312,7 +312,7 @@ fn xfer_minted_write_interrupted() {
     }
 }
 
-/// xfer_minted_write_invalid (P-DATA-97): the Store refuses the write of the minted id as invalid and would refuse the same batch again. Nothing is written or scheduled, the debt stays in memory and the end of the epoch writes it as an orphan.
+/// xfer_minted_write_invalid (P-DATA-97, D-399): the Store refuses the write of the minted id as invalid and would refuse the same batch again. The debt goes out at once as a Control batch `UploadOrphan`, nothing is scheduled and nothing is aborted.
 #[test]
 fn xfer_minted_write_invalid() {
     let mut twin = Twin::new();
@@ -321,8 +321,8 @@ fn xfer_minted_write_invalid() {
     let out = minted(&mut twin, id, "u1");
     assert_eq!(out.writes(), 1);
     let refused = twin.reject(RejectReason::Invalid(String::new()));
-    assert_eq!((refused.writes(), refused.timers, refused.orphan_aborts().len(), twin.t(id).upload_id.as_deref()), (0, 0, 0, Some("u1")), "nothing is written again or scheduled: {refused:?}");
-    assert_eq!(twin.end_epoch_by(crate::runtime::Cause::Close).orphans_written(), vec![("u1".to_string(), KEY.to_string())], "the debt of the upload that is not complete is written when the epoch ends");
+    let control: Vec<_> = refused.batches.iter().filter(|batch| batch.stamp == crate::runtime::EpochStamp::Control).collect();
+    assert_eq!((control.len(), refused.orphans_written(), refused.timers, refused.orphan_aborts().len(), twin.t(id).upload_id.as_deref()), (1, vec![("u1".to_string(), KEY.to_string())], 0, 0, Some("u1")), "the record goes out at once: {refused:?}");
 }
 
 /// xfer_minted_write_other_no_abort (K1, D-192, transfer.md:201, 459): the minted upload_id of a LIVE transfer
@@ -344,6 +344,99 @@ fn xfer_minted_write_other_no_abort() {
             (Vec::<String>::new(), 0, timers, Some("u1")),
             "{reason:?}: no abort leaves for the live upload, the debt is kept: {refused:?}",
         );
+        if matches!(reason, RejectReason::Invalid(_)) {
+            assert_eq!(refused.orphans_written().len(), 1, "the record of the debt is written at once");
+            let storage = twin.reject(RejectReason::Storage("disk".into()));
+            assert_eq!((storage.orphan_aborts(), storage.aborts(), storage.timers), (Vec::<String>::new(), 0, 1), "the refused record waits for its backoff: {storage:?}");
+            let again = minted_due(&mut twin, "u1");
+            assert_eq!((again.writes(), again.orphans_written()), (1, vec![("u1".to_string(), KEY.to_string())]), "the tick writes the record again, not the row: {again:?}");
+            let committed = twin.commit();
+            assert_eq!((committed.orphan_aborts(), committed.aborts()), (Vec::<String>::new(), 0), "the record of a live upload is no abort: {committed:?}");
+            assert!(twin.online(true).orphan_aborts().is_empty(), "the network does not abort it either");
+        }
+    }
+}
+
+/// Drives the single part of an upload whose id `u1` is refused as `Invalid`, up to `Completing`, answering every batch but the Control record.
+fn invalid_record_open(twin: &mut Twin) -> (TransferId, crate::owners::contract::BatchId) {
+    let id = twin.uploading(KEY, 1);
+    minted(twin, id, "u1");
+    let refused = twin.reject(RejectReason::Invalid(String::new()));
+    let record = refused.batches.iter().find(|batch| batch.stamp == crate::runtime::EpochStamp::Control).expect("the record batch").id;
+    (id, record)
+}
+
+/// xfer_minted_recorded_orphan_released_without_abort (D-399, P-XFER-49): the record of an id that a live transfer holds is removed without abort, once a row of the transfer carries the id, or once the upload is complete.
+#[test]
+fn xfer_minted_recorded_orphan_released_without_abort() {
+    let mut twin = Twin::new();
+    let (id, _) = invalid_record_open(&mut twin);
+    assert!(twin.commit().orphans_removed().is_empty(), "the record alone releases nothing");
+    let part = twin.step_ok(id, 1, None);
+    let mut removed = part.orphans_removed();
+    let mut aborted = part.orphan_aborts();
+    while twin.has_pending() {
+        let out = twin.commit();
+        removed.extend(out.orphans_removed());
+        aborted.extend(out.orphan_aborts());
+    }
+    assert_eq!((removed, aborted), (vec!["u1".to_string()], Vec::<String>::new()), "a durable row of the transfer replaces the record");
+
+    let mut twin = Twin::new();
+    let (id, record) = invalid_record_open(&mut twin);
+    let first = twin.step_ok(id, 1, None);
+    let mut removed = first.orphans_removed();
+    let mut aborted = first.orphan_aborts();
+    let mut later: std::collections::VecDeque<_> = first.batches.into_iter().map(|batch| batch.id).collect();
+    while let Some(batch) = later.pop_front() {
+        let out = twin.commit_shown(batch);
+        removed.extend(out.orphans_removed());
+        aborted.extend(out.orphan_aborts());
+        later.extend(out.batches.into_iter().map(|batch| batch.id));
+    }
+    assert_eq!(twin.stage(id), TransferStage::Completing);
+    let done = twin.completed(id);
+    let out = twin.commit_shown(record);
+    removed.extend(done.orphans_removed().into_iter().chain(out.orphans_removed()));
+    aborted.extend(done.orphan_aborts().into_iter().chain(out.orphan_aborts()));
+    assert_eq!((removed, aborted), (vec!["u1".to_string()], Vec::<String>::new()), "the record of a complete upload goes without abort once: {out:?}");
+}
+
+/// xfer_minted_recorded_orphan_aborted_when_the_upload_is_gone (D-399): the record was written, the transfer leaves before any row carries the id. In a live epoch the id is aborted by the removal, at the end of the epoch nothing is written again.
+#[test]
+fn xfer_minted_recorded_orphan_aborted_when_the_upload_is_gone() {
+    let mut twin = Twin::new();
+    let (_, _) = invalid_record_open(&mut twin);
+    twin.commit();
+    let (_, discarded) = twin.discard(KEY);
+    let mut aborted = discarded.orphan_aborts();
+    while twin.has_pending() {
+        aborted.extend(twin.commit().orphan_aborts());
+    }
+    assert_eq!(aborted, vec!["u1".to_string()], "the removal aborts the upload once");
+
+    let mut twin = Twin::new();
+    let (_, _) = invalid_record_open(&mut twin);
+    twin.commit();
+    let ended = twin.end_epoch_by(crate::runtime::Cause::SessionReset);
+    assert_eq!((ended.orphans_written(), ended.orphan_aborts()), (Vec::new(), Vec::<String>::new()), "the end of the epoch writes the record no second time: {ended:?}");
+}
+
+/// xfer_minted_recorded_orphan_restored (D-399, `Restored`): a record whose id a stored row of a transfer holds goes without abort, a record without such a row is aborted after the open.
+#[test]
+fn xfer_minted_recorded_orphan_restored() {
+    for (held, removed, aborted) in [("u1", vec!["u1".to_string()], Vec::<String>::new()), ("u2", Vec::new(), vec!["u1".to_string()])] {
+        let mut row = stored(1, KEY, 2);
+        row.upload_id = Some(held.into());
+        let mut twin = Twin::bare(1);
+        twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false });
+        let opened = twin.post(TransferInput::Restored { uploads: vec![row], outcomes: Default::default(), orphans: vec![("u1".into(), KEY.into())], batches: Default::default(), held_orphan: None });
+        let ready = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+        let online = twin.online(true);
+        let mut found = opened.orphan_aborts();
+        found.extend(ready.orphan_aborts());
+        found.extend(online.orphan_aborts());
+        assert_eq!((opened.orphans_removed(), found), (removed, aborted), "row holds {held}: {opened:?}");
     }
 }
 

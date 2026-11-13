@@ -390,11 +390,16 @@ impl TransferState {
 
     /// The debt of a minted `upload_id` is data of the owner: it is written under `Control`, whatever epoch refused the write. `Closed` leaves the debt in memory, the next open writes it again.
     pub(super) fn write_control_orphan(&mut self, upload_id: String, key: String, fx: &mut Fx) {
+        if let Some(debt) = self.minted.get_mut(&upload_id).filter(|debt| debt.record == MintedRecord::Upload) { debt.record = MintedRecord::Orphan; }
         let id = self.next_batch;
         self.next_batch += 1;
         self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::ControlOrphan, orphan: Some((upload_id.clone(), key.clone())), written: BTreeMap::new() });
         let batch = StoreBatch { author: BatchAuthor::Transfer, id, stamp: crate::runtime::EpochStamp::Control, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::UploadOrphan { upload_id, key }] };
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
+    }
+
+    pub(super) fn record_in_flight(&self, upload_id: &str) -> bool {
+        self.pending.values().any(|pending| pending.kind == StoreKind::ControlOrphan && pending.orphan.as_ref().is_some_and(|(written, _)| written == upload_id))
     }
 
     pub(super) fn commit_ops(&mut self, ops: Vec<StoreOp>, fx: &mut Fx) -> Option<crate::owners::contract::BatchId> {
@@ -526,13 +531,15 @@ impl TransferState {
     /// The Store refused the write of a minted `upload_id`: the debt stays, and with `retry` the write goes again after the backoff.
     pub(super) fn owe_minted(&mut self, pending: &Pending, retry: bool, fx: &mut Fx) {
         let Some((upload_id, key, transfer)) = self.debt_of(pending) else { return };
+        let transfer = transfer.or_else(|| self.minted.get(&upload_id).and_then(|debt| debt.transfer).filter(|id| self.debt_live(&upload_id, Some(*id))));
+        let record = self.minted.get(&upload_id).map_or(if matches!(pending.kind, StoreKind::ControlOrphan | StoreKind::LateOrphan) { MintedRecord::Orphan } else { MintedRecord::Upload }, |debt| debt.record);
         let attempts = self.minted.get(&upload_id).map_or(1, |debt| debt.attempts + 1);
         let attempt_id = self.next_attempt;
         self.next_attempt += 1;
         if retry {
             fx.push(Effect::Backoff { id: ScheduleId(RETRY_TIMER + attempt_id), policy: RetryPolicy::Upload, attempt: attempts.max(1), input: TransferInput::Tick { kind: TransferTick::Minted { upload_id: upload_id.clone(), attempt_id } } });
         }
-        self.minted.insert(upload_id, MintedDebt { transfer, key, attempts, attempt_id });
+        self.minted.insert(upload_id, MintedDebt { transfer, key, attempts, attempt_id, record });
     }
 
     pub(super) fn schedule_retry(&mut self, id: TransferId, fx: &mut Fx) {
@@ -679,13 +686,27 @@ impl TransferState {
             return self.maybe_drained(fx);
         }
         let writes_id = matches!(pending.kind, StoreKind::SyncUpload | StoreKind::ConfirmedParts | StoreKind::Completed | StoreKind::Failed | StoreKind::Retrying | StoreKind::BatchIntent | StoreKind::MixedOutcomes);
-        let transfers = &self.transfers;
-        self.minted.retain(|upload_id, debt| {
-            let written = debt.transfer.is_some_and(|id| pending.ids.contains(&id) && (matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan) || (writes_id && transfers.get(&id).is_some_and(|transfer| transfer.upload_id.as_deref() == Some(upload_id.as_str())))));
-            !written && pending.orphan.as_ref().is_none_or(|(minted, _)| minted != upload_id)
-        });
+        let recording = pending.orphan.as_ref().map(|(upload_id, _)| upload_id.clone());
+        let mut released: Vec<String> = Vec::new();
+        for (upload_id, mut debt) in std::mem::take(&mut self.minted) {
+            let by_row = debt.transfer.is_some_and(|id| pending.ids.contains(&id) && (matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan) || (writes_id && self.transfers.get(&id).is_some_and(|transfer| transfer.upload_id.as_deref() == Some(upload_id.as_str())))));
+            if by_row {
+                if debt.record != MintedRecord::Upload { released.push(upload_id.clone()); }
+                if debt.record == MintedRecord::Orphan {
+                    for other in self.pending.values_mut().filter(|other| other.kind == StoreKind::ControlOrphan && other.orphan.as_ref().is_some_and(|(written, _)| *written == upload_id)) { other.orphan = None; }
+                }
+            } else if recording.as_ref() != Some(&upload_id) {
+                self.minted.insert(upload_id, debt);
+            } else if debt.record == MintedRecord::Orphan && debt.transfer.is_some() && self.debt_live(&upload_id, debt.transfer) {
+                debt.record = MintedRecord::Recorded;
+                self.minted.insert(upload_id, debt);
+            } else if debt.record == MintedRecord::Recorded {
+                self.minted.insert(upload_id, debt);
+            }
+        }
+        self.commit_ops(released.into_iter().map(|upload_id| StoreOp::RemoveOrphan { upload_id }).collect(), fx);
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan) {
-            if let Some((upload_id, key)) = pending.orphan {
+            if let Some((upload_id, key)) = pending.orphan.filter(|(upload_id, _)| self.minted.get(upload_id).is_none_or(|debt| debt.record != MintedRecord::Recorded)) {
                 self.orphans.insert(upload_id, key);
                 self.send_orphans(false, fx);
             }
@@ -771,12 +792,17 @@ impl TransferState {
             let minted = self.debt_of(&pending).map(|(upload_id, key, _)| (upload_id, key));
             match &rejected.reason {
                 RejectReason::Storage(_) | RejectReason::StaleGeneration { .. } => self.owe_minted(&pending, true, fx),
-                RejectReason::Invalid(_) => self.owe_minted(&pending, false, fx),
+                RejectReason::Invalid(_) => {
+                    self.owe_minted(&pending, false, fx);
+                    if let (StoreKind::UploadId, Some((upload_id, key))) = (pending.kind, minted) {
+                        self.write_control_orphan(upload_id, key, fx);
+                    }
+                }
                 RejectReason::Closed | RejectReason::NoSession => {
                     if let (StoreKind::ControlOrphan, Some((upload_id, key))) = (pending.kind, minted.clone()) {
                         let attempt_id = self.next_attempt;
                         self.next_attempt += 1;
-                        self.minted.insert(upload_id, MintedDebt { transfer: None, key, attempts: 1, attempt_id });
+                        self.minted.insert(upload_id, MintedDebt { transfer: None, key, attempts: 1, attempt_id, record: MintedRecord::Orphan });
                     } else if let (false, Some((upload_id, key))) = (pending.kind == StoreKind::ControlOrphan, minted) {
                         self.write_control_orphan(upload_id, key, fx);
                     }

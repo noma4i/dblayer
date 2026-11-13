@@ -648,6 +648,14 @@ pub(super) struct MintedDebt {
     pub key: Key,
     pub attempts: u32,
     pub attempt_id: AttemptId,
+    pub record: MintedRecord,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum MintedRecord {
+    Upload,
+    Orphan,
+    Recorded,
 }
 
 #[derive(Clone, Debug)]
