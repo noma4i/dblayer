@@ -14,14 +14,6 @@ pub struct TransferIdentity {
     pub step: TransferStep,
 }
 
-/// Names a PUT that the platform runs outside the process: the transfer, its cycle and the attempt count the row records. The numbers survive a restart.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Record)]
-pub struct PutIdentity {
-    pub transfer_id: u64,
-    pub cycle_id: u64,
-    pub attempt: u64,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct PutFile {
     pub path: String,

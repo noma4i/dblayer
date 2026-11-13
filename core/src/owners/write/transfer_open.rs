@@ -157,39 +157,9 @@ impl TransferState {
             return self.begin_failure(now, id, "missing_file".into(), false, fx);
         }
         if row.prepare.is_some() { return self.restore_prepare(id, fx); }
-        if self.restore_put(id, &row, fx) { return; }
         if row.source.as_ref().is_some_and(|source| row.confirmed_parts >= source.parts) { self.show(id, Shown::Uploading { progress: row.floor.max(99) }, fx); } else { self.show_queued(id, fx); }
         self.rounds_needed(vec![id], fx);
         self.schedule_expire(fx);
-    }
-
-    /// A multipart upload outside the process with a recorded attempt: the system may still run its PUT, so the transfer waits in `Uploading` for `PutEnded` or `PutMissing` after `ResumePuts`.
-    fn put_waits(&self, row: &StoredTransfer) -> bool {
-        super::transfer_steps::detached_put(self.put_executor, row.steps.as_ref(), row.source.as_ref()) && row.attempts > 0 && row.upload_id.is_some() && row.pending_step.is_none() && !row.completed && row.failed.is_none() && row.file_present && row.prepare.is_none() && !row.copying && !row.awaiting_source
-            && row.source.as_ref().is_some_and(|source| row.confirmed_parts < source.parts)
-    }
-
-    /// The PUTs outside the process that the opening waits for, also those of transfers that wait for the declaration of their operation.
-    pub(super) fn waiting_puts(&self) -> Vec<crate::transport::PutIdentity> {
-        let live = self.scan().filter(|transfer| transfer.put_detached && transfer.in_flight && transfer.stage == TransferStage::Uploading).map(|transfer| super::transfer_steps::put_identity(transfer.transfer_id, transfer.cycle_id, transfer.attempts));
-        let waiting = self.waiting.values().filter(|(row, _)| self.put_waits(row)).map(|(row, _)| super::transfer_steps::put_identity(row.transfer_id, row.cycle_id.max(1), row.attempts));
-        live.chain(waiting).collect()
-    }
-
-    fn restore_put(&mut self, id: TransferId, row: &StoredTransfer, fx: &mut Fx) -> bool {
-        if !self.put_waits(row) { return false; }
-        let attempt_id = self.attempt();
-        let Some(transfer) = self.transfers.get_mut(&id) else { return false };
-        transfer.stage = TransferStage::Uploading;
-        transfer.in_flight = true;
-        transfer.put_detached = true;
-        transfer.restored_put = true;
-        transfer.attempt_id = attempt_id;
-        let Some(progress) = Self::share(transfer, self.sizing.part_size, false) else { return false };
-        self.show(id, Shown::Uploading { progress }, fx);
-        self.rounds_needed(vec![id], fx);
-        self.schedule_expire(fx);
-        true
     }
 
     fn restore_copy(&mut self, id: TransferId, fx: &mut Fx) {
@@ -296,9 +266,6 @@ impl TransferState {
         self.send_orphans(true, fx);
         self.replay_held(now, fx);
         self.release_classified(now, fx);
-        if self.put_executor {
-            run(fx, TransferEffect::ResumePuts { identities: self.waiting_puts() });
-        }
     }
 
     fn release_classified(&mut self, now: crate::runtime::Time, fx: &mut Fx) {

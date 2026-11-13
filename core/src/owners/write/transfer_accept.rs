@@ -78,8 +78,6 @@ impl TransferState {
             attempts: 0,
             storage_refusals: 0,
             in_flight: false,
-            put_detached: false,
-            restored_put: false,
             waiting_retry: false,
             next_step: NextStep::Part(1),
             upload_id: None,

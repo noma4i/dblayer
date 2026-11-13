@@ -541,6 +541,7 @@ impl OutboxState {
     }
 
     /// No operation is being written, sent, landed or rolled back, and no local write is on its way.
+    #[cfg(test)]
     fn is_quiet(&self) -> bool {
         self.writes_active() == 0 && self.ops.values().all(|operation| match operation.stage {
             Stage::Submitting | Stage::PersistingAttempt | Stage::Landing | Stage::RollingBack(_) | Stage::MarkingFailed | Stage::MarkingRetry => false,
@@ -549,6 +550,7 @@ impl OutboxState {
         })
     }
 
+    #[cfg(test)]
     pub(super) fn release_quiet(&mut self, fx: &mut Effects<Outbox>) {
         if !self.quiet_waiters.is_empty() && self.is_quiet() {
             for reply in std::mem::take(&mut self.quiet_waiters) { Self::reply(fx, reply, OutboxAnswer::Ok); }

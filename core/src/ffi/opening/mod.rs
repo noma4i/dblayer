@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use crate::transport::{HttpRequest, RawOutcome};
 use super::open_slot::OpenSlot;
 use super::transport::ObserverStop;
-use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, PlatformObserver, Preparer, PutExecutor, TestClock, Transport};
+use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, PlatformObserver, Preparer, TestClock, Transport};
 
 /// A GraphQL operation the app declares: its name and its document.
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]
@@ -40,9 +40,6 @@ pub struct OpenPorts {
     /// Test stands set it: the database accepts a registration that leaves out an operation the library sends by itself. The `open` of an app never sets it.
     #[uniffi(default = false)]
     pub partial_operations: bool,
-    /// The executor of the PUTs outside the process (iOS: a background `URLSession`): its presence is the capability. `StartPut`, `CancelPut` and `ResumePuts` go to it.
-    #[uniffi(default = None)]
-    pub put_executor: Option<Arc<dyn PutExecutor>>,
 }
 
 struct ExecutorHttp(Arc<dyn Transport>);

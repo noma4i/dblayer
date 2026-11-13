@@ -236,6 +236,7 @@ pub enum OutboxInput {
     SelectedTransfer { reply: ReplyId, transfer_id: u64, version: u64 },
     Outcome { receipt: Receipt, reply: ReplyId, discard_on_failure: bool },
     /// Answers `Ok` when no operation is on its way (the platform `settled`).
+    #[cfg(test)]
     WhenQuiet { reply: ReplyId },
     /// The root row the answer of the operation landed.
     /// The row the landing batch of `op_id` showed; `member` names the transfer of a group whose row is asked for.

@@ -640,7 +640,6 @@ impl TransferState {
         }
         if in_flight {
             run(fx, TransferEffect::CancelStep { transfer_id: id });
-            if cause != crate::ffi::EndCause::Closed { self.cancel_put(id, fx); }
         }
         let outcome = match removal {
             Some(Removal::Confirmed { revision, result, row_id }) => OutboxOutcome::Confirmed { revision, result, row_id },
@@ -922,10 +921,8 @@ impl TransferState {
                 self.op_reserved(target, result, fx);
             }
             TransferInput::StepOk { transfer_id, attempt_id, part, upload_id, etag } => self.step_ok(now, transfer_id, attempt_id, part, upload_id, etag, fx),
-            TransferInput::InitDone { transfer_id, attempt_id, upload_id } => self.init_done(transfer_id, attempt_id, upload_id, fx),
-            TransferInput::PutEnded { identity, result } => self.put_ended(now, identity, result, fx),
+            #[cfg(test)]
             TransferInput::WhenQuiet { .. } => {}
-            TransferInput::PutMissing { identity } => self.put_missing(now, identity, fx),
             TransferInput::UploadMinted { transfer_id, upload_id, key, .. } => self.upload_minted(transfer_id, upload_id, key, fx),
             TransferInput::StepError { transfer_id, attempt_id, temporary, error } => self.step_error(now, transfer_id, attempt_id, (temporary, error), fx),
             TransferInput::Completed { transfer_id, attempt_id, signed_id } => self.completed(now, transfer_id, attempt_id, signed_id, fx),
@@ -977,7 +974,6 @@ impl TransferState {
             TransferInput::PrepareProgress { transfer_id, attempt_id, percent } => self.prepare_progress(transfer_id, attempt_id, percent, fx),
             TransferInput::PutStarted { transfer_id, attempt_id } => self.put_started(transfer_id, attempt_id, fx),
             TransferInput::PutProgress { transfer_id, attempt_id, sent } => self.put_progress(transfer_id, attempt_id, sent, fx),
-            TransferInput::PutSent { identity, sent } => { if let Some(attempt_id) = self.live_put(identity).map(|transfer| transfer.attempt_id) { self.put_progress(identity.transfer_id, attempt_id, sent, fx); } }
             TransferInput::Prepared { transfer_id, attempt_id, outcome } => self.prepared(now, transfer_id, attempt_id, outcome, fx),
             TransferInput::Online(Online(on)) => self.network_changed(now, Some(on), None, fx),
             TransferInput::PowerSaving(saving) => self.network_changed(now, None, Some(saving), fx),
@@ -1008,7 +1004,7 @@ impl TransferState {
                 self.replay_held(now, fx);
             }
             held @ (TransferInput::Accept { .. } | TransferInput::AcceptBatch { .. }) if Self::in_epoch(&held, self.epoch) => self.held.push(held),
-            held @ (TransferInput::PutEnded { .. } | TransferInput::PutMissing { .. } | TransferInput::Cancel { .. } | TransferInput::SupplySource { .. } | TransferInput::Commit { .. } | TransferInput::SourceFailed { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. } | TransferInput::MutationOutcome { .. } | TransferInput::MutationOutcomes { .. }) => self.held.push(held),
+            held @ (TransferInput::Cancel { .. } | TransferInput::SupplySource { .. } | TransferInput::Commit { .. } | TransferInput::SourceFailed { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. } | TransferInput::MutationOutcome { .. } | TransferInput::MutationOutcomes { .. }) => self.held.push(held),
             TransferInput::EpochStarted(started) => {
                 self.epoch = started.epoch;
                 self.base_generation = started.generation;
@@ -1030,7 +1026,7 @@ impl TransferState {
     /// A new epoch starts a new instance of the table: the declarations of the operations and the counters of ids stay, the rest of the state of the older epoch goes.
     fn begin_epoch(&mut self, epoch: Epoch) {
         let fresh = Self::new(epoch, self.slots, self.peers);
-        let kept = Self { abort_root: std::mem::take(&mut self.abort_root), init_root: std::mem::take(&mut self.init_root),orphans: std::mem::take(&mut self.orphans), minted: std::mem::take(&mut self.minted), pending: std::mem::take(&mut self.pending), declarations: std::mem::take(&mut self.declarations), complete: self.complete, next_id: self.next_id, next_seq: self.next_seq, next_group: self.next_group, next_batch: self.next_batch, next_attempt: self.next_attempt, next_timer: self.next_timer, put_timeout: self.put_timeout, sizing: self.sizing, put_executor: self.put_executor, ..fresh };
+        let kept = Self { abort_root: std::mem::take(&mut self.abort_root), init_root: std::mem::take(&mut self.init_root),orphans: std::mem::take(&mut self.orphans), minted: std::mem::take(&mut self.minted), pending: std::mem::take(&mut self.pending), declarations: std::mem::take(&mut self.declarations), complete: self.complete, next_id: self.next_id, next_seq: self.next_seq, next_group: self.next_group, next_batch: self.next_batch, next_attempt: self.next_attempt, next_timer: self.next_timer, put_timeout: self.put_timeout, sizing: self.sizing, ..fresh };
         *self = kept;
     }
 
@@ -1097,6 +1093,7 @@ impl StateOwner for Transfers {
         if let TransferInput::EpochStarted(started) = &input {
             state.begin_epoch(started.epoch);
         }
+        #[cfg(test)]
         if let TransferInput::WhenQuiet { reply } = input {
             state.quiet_waiters.push(reply);
         } else if state.phase == Phase::Restoring {
@@ -1106,7 +1103,16 @@ impl StateOwner for Transfers {
             state.handled += 1;
             state.handle(now, input, &mut fx);
         }
+        #[cfg(not(test))]
+        if state.phase == Phase::Restoring {
+            state.handled += 1;
+            state.restoring(now, input, &mut fx);
+        } else {
+            state.handled += 1;
+            state.handle(now, input, &mut fx);
+        }
         state.run_waiting_removals(now, &mut fx);
+        #[cfg(test)]
         state.release_quiet(&mut fx);
         fx
     }

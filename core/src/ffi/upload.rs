@@ -300,27 +300,6 @@ impl Database {
         Ok(WireBatchReceipt { epoch, items })
     }
 
-    /// The PUT `identity` ended outside the process: the core counts the outcome once, for the attempt that started it. Cheap and synchronous.
-    pub fn put_ended(&self, identity: crate::transport::PutIdentity, outcome: crate::transport::RawOutcome) {
-        self.life.put_ended(identity, crate::owners::write::transfer_executor::put_result(outcome));
-    }
-
-    /// Answers when the writes of the epoch have no work that runs without a new external event: no transfer step in the process, no batch in flight, no operation on its way. A PUT outside the process, a backoff, the network and a slot are waits for an event. The end of the epoch and `close` answer too.
-    /// Transfer answers, Outbox answers, Transfer answers again: when Transfer stepped no input in between, the first answer still held at the Outbox answer, so both owners were quiet at one moment. Otherwise the work Transfer handed over is waited for in the next round.
-    pub async fn writes_quiet(&self, epoch: u64) {
-        loop {
-            let Some(before) = self.transfers_quiet_at(epoch).await else { return };
-            if self.await_life(self.life.operations_quiet(epoch)).await.is_err() { return }
-            if before.is_none() || self.transfers_quiet_at(epoch).await == Some(before) { return }
-        }
-    }
-
-    /// The system task `identity` sent `sent` bytes of its file. Cheap and synchronous.
-    pub fn put_progress(&self, identity: crate::transport::PutIdentity, sent: u64) { self.life.put_sent(identity, sent); }
-
-    /// The executor has no system task for `identity`: the step starts again. Cheap and synchronous.
-    pub fn put_missing(&self, identity: crate::transport::PutIdentity) { self.life.put_missing(identity); }
-
     pub async fn cancel_upload(&self, epoch: u64, model: String, row_id: String, action: String) -> Result<bool, DbError> {
         let (row, _) = self.operation_target(epoch, &model, &row_id, Some(&action), true).await?;
         if self.uploads.is_none() { return Err(DbError::NotFound { detail: "cancel upload: there is no such operation".into() }); }
@@ -333,6 +312,18 @@ impl Database {
 }
 
 impl Database {
+    /// Answers when the writes of the epoch have no work that runs without a new external event: no transfer step in the process, no batch in flight, no operation on its way. A backoff, the network and a slot are waits for an event. The end of the epoch and `close` answer too.
+    /// Transfer answers, Outbox answers, Transfer answers again: when Transfer stepped no input in between, the first answer still held at the Outbox answer, so both owners were quiet at one moment. Otherwise the work Transfer handed over is waited for in the next round.
+    #[cfg(test)]
+    pub(crate) async fn writes_quiet(&self, epoch: u64) {
+        loop {
+            let Some(before) = self.transfers_quiet_at(epoch).await else { return };
+            if self.await_life(self.life.operations_quiet(epoch)).await.is_err() { return }
+            if before.is_none() || self.transfers_quiet_at(epoch).await == Some(before) { return }
+        }
+    }
+
+    #[cfg(test)]
     async fn transfers_quiet_at(&self, epoch: u64) -> Option<Option<u64>> {
         match self.await_life(self.life.transfers_quiet(epoch)).await {
             Ok(LifeReply::Transfer(TransferAnswer::Quiet(handled))) => Some(Some(handled)),

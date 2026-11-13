@@ -7,18 +7,10 @@ use super::transfer_types::*;
 use crate::owners::contract::RejectReason;
 use crate::owners::store::StoreOp;
 use crate::runtime::{Effect, ScheduleId};
-use crate::transport::{NetworkPurpose, PutIdentity};
+use crate::transport::NetworkPurpose;
 
 /// Attempt ids come from one counter, so the id of a timer of an attempt is never the id of another timer.
 fn put_timer(attempt_id: AttemptId) -> ScheduleId { ScheduleId(RETRY_TIMER + attempt_id) }
-
-/// The identity of the PUT outside the process, built from the numbers a transfer row records.
-pub(super) fn put_identity(transfer_id: u64, cycle_id: u64, attempts: u32) -> PutIdentity { PutIdentity { transfer_id, cycle_id, attempt: u64::from(attempts) } }
-
-/// The one rule of the mode of a PUT: it goes outside the process only in a build that can, for a multipart transfer of one part. A transfer of an earlier build with more parts goes on in the process.
-pub(super) fn detached_put(detached: bool, steps: Option<&Steps>, source: Option<&Source>) -> bool {
-    detached && source.is_some_and(|source| source.parts == 1) && steps.and_then(|steps| serde_json::from_str::<super::upload_codec::StepsBody>(&steps.body).ok()).is_some_and(|body| body.multipart)
-}
 
 impl TransferState {
     /// Transfers in the network: only a physical attempt in flight holds a slot.
@@ -45,38 +37,26 @@ impl TransferState {
     }
 
     /// No transfer has work that runs without a new external event. A PUT outside the process, a backoff, the network, a slot, the source, the declaration and the preparation are not such work. The final mutation belongs to Outbox.
+    #[cfg(test)]
     fn is_quiet(&self) -> bool {
         self.pending.is_empty() && self.scan().all(|transfer| match transfer.stage {
             TransferStage::Reserving | TransferStage::Accepting | TransferStage::PersistingPrepared | TransferStage::PersistingCopy | TransferStage::PersistingRetry | TransferStage::PersistingFailure | TransferStage::Removing | TransferStage::PersistingAttempt | TransferStage::PersistingPart | TransferStage::PersistingComplete | TransferStage::PersistingCommit | TransferStage::PersistingBatchIntent => false,
-            TransferStage::Uploading | TransferStage::Completing => transfer.waiting_retry || transfer.pending_step.is_some() || (transfer.put_detached && transfer.in_flight) || !transfer.in_flight,
+            TransferStage::Uploading | TransferStage::Completing => transfer.waiting_retry || transfer.pending_step.is_some() || !transfer.in_flight,
             TransferStage::Ready => transfer.waiting_retry || self.starts_held || self.online != Some(true) || self.active() >= self.slots || !self.can_start(transfer),
             TransferStage::WaitingDeclaration | TransferStage::AwaitingSource | TransferStage::Copying | TransferStage::CopyReady | TransferStage::Preparing | TransferStage::Measuring | TransferStage::Held | TransferStage::BatchReady | TransferStage::Mutating | TransferStage::Failed | TransferStage::Done => true,
         })
     }
 
+    #[cfg(test)]
     pub(super) fn release_quiet(&mut self, fx: &mut Fx) {
         if !self.quiet_waiters.is_empty() && self.is_quiet() {
             for waiter in std::mem::take(&mut self.quiet_waiters) { reply(fx, waiter, TransferAnswer::Quiet(self.handled)); }
         }
     }
 
-    fn step_effect(transfer: &Transfer, operation: u64, put: PutMode) -> Option<TransferEffect> {
+    fn step_effect(transfer: &Transfer, operation: u64) -> Option<TransferEffect> {
         let NextStep::Part(part) = transfer.next_step else { return Some(Self::complete_effect(transfer)) };
-        Some(TransferEffect::Step { transfer_id: transfer.transfer_id, attempt_id: transfer.attempt_id, cycle_id: transfer.cycle_id, key: transfer.key.clone(), operation, part: Some(part), purpose: NetworkPurpose::Transfer, upload_id: transfer.upload_id.clone(), source: transfer.source.clone()?, steps: transfer.steps.clone()?, place: transfer.place, seeded: transfer.seeded.clone(), put })
-    }
-
-    /// Who runs the PUT of the next step: a multipart upload outside the process creates the upload first and starts the PUT with the next step, which has the recorded `upload_id`.
-    fn put_mode(&self, transfer: &Transfer) -> PutMode {
-        match (detached_put(self.put_executor, transfer.steps.as_ref(), transfer.source.as_ref()) && matches!(transfer.next_step, NextStep::Part(_)), transfer.upload_id.is_some()) {
-            (false, _) => PutMode::Live,
-            (true, false) => PutMode::InitOnly,
-            (true, true) => PutMode::Detached { identity: put_identity(transfer.transfer_id, transfer.cycle_id, transfer.attempts) },
-        }
-    }
-
-    /// The PUT outside the process of a transfer in the network goes: the platform cancels the system task.
-    pub(super) fn cancel_put(&self, id: TransferId, fx: &mut Fx) {
-        if let Some(transfer) = self.transfers.get(&id).filter(|transfer| transfer.put_detached && transfer.stage == TransferStage::Uploading) { run(fx, TransferEffect::CancelPut { identity: put_identity(transfer.transfer_id, transfer.cycle_id, transfer.attempts) }); }
+        Some(TransferEffect::Step { transfer_id: transfer.transfer_id, attempt_id: transfer.attempt_id, cycle_id: transfer.cycle_id, key: transfer.key.clone(), operation, part: Some(part), purpose: NetworkPurpose::Transfer, upload_id: transfer.upload_id.clone(), source: transfer.source.clone()?, steps: transfer.steps.clone()?, place: transfer.place, seeded: transfer.seeded.clone() })
     }
 
     fn complete_effect(transfer: &Transfer) -> TransferEffect {
@@ -116,11 +96,7 @@ impl TransferState {
             return;
         }
         transfer.stage = if transfer.next_step == NextStep::Complete { TransferStage::Completing } else { TransferStage::Uploading };
-        let put = self.transfers.get(&id).map_or(PutMode::Live, |transfer| self.put_mode(transfer));
-        let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        transfer.put_detached = matches!(put, PutMode::Detached { .. });
-        transfer.restored_put = false;
-        let Some(effect) = Self::step_effect(transfer, operation, put) else { return self.begin_failure(now, id, "Internal(InvalidSource)".into(), false, fx) };
+        let Some(effect) = Self::step_effect(transfer, operation) else { return self.begin_failure(now, id, "Internal(InvalidSource)".into(), false, fx) };
         transfer.inflight = 0;
         let Some(progress) = Self::share(transfer, self.sizing.part_size, transfer.stage == TransferStage::Completing) else { return self.begin_failure(now, id, "Internal(InvalidSource)".into(), false, fx) };
         let shown = Shown::Uploading { progress };
@@ -137,7 +113,7 @@ impl TransferState {
     /// `Online(false)` and `PowerSaving(true)` of a transfer that is not urgent: the steps in the network go back to `Ready`.
     pub(super) fn leave_network(&mut self, fx: &mut Fx) {
         let blocked = self.online != Some(true);
-        let ids: Vec<TransferId> = self.scan().filter(|transfer| matches!(transfer.stage, TransferStage::Uploading | TransferStage::Completing) && !(transfer.put_detached && transfer.in_flight) && (blocked || (self.saving && !transfer.urgent))).map(|transfer| transfer.transfer_id).collect();
+        let ids: Vec<TransferId> = self.scan().filter(|transfer| matches!(transfer.stage, TransferStage::Uploading | TransferStage::Completing) && (blocked || (self.saving && !transfer.urgent))).map(|transfer| transfer.transfer_id).collect();
         for id in ids {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };
             transfer.next_step = if transfer.stage == TransferStage::Completing { NextStep::Complete } else { NextStep::Part(transfer.confirmed_parts + 1) };
@@ -153,49 +129,6 @@ impl TransferState {
     }
 
     fn live(&self, id: TransferId, stage: TransferStage, attempt_id: AttemptId) -> bool { self.transfers.get(&id).is_some_and(|transfer| transfer.stage == stage && transfer.in_flight && transfer.attempt_id == attempt_id) }
-
-    /// `Uploading x InitDone`: the upload is created, its id is written with the batch of the parts, and the next attempt starts the PUT.
-    pub(super) fn init_done(&mut self, id: TransferId, attempt_id: AttemptId, upload_id: String, fx: &mut Fx) {
-        if !self.live(id, TransferStage::Uploading, attempt_id) { return; }
-        self.step_answered(id);
-        fx.push(Effect::Cancel(put_timer(attempt_id)));
-        let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        transfer.upload_id = Some(upload_id);
-        transfer.attempts = 0;
-        transfer.in_flight = false;
-        transfer.stage = TransferStage::PersistingPart;
-        self.store(&[id], StoreKind::ConfirmedParts, fx);
-    }
-
-    /// `PutEnded`: the outcome of the system task counts once, for the attempt that started it. Any other identity gets `CancelPut`.
-    pub(super) fn put_ended(&mut self, now: crate::runtime::Time, identity: PutIdentity, result: Result<Option<String>, (bool, String)>, fx: &mut Fx) {
-        if self.waiting.contains_key(&identity.transfer_id) { return self.held.push(TransferInput::PutEnded { identity, result }); }
-        let Some((attempt_id, part)) = self.live_put(identity).map(|transfer| (transfer.attempt_id, transfer.confirmed_parts + 1)) else { return run(fx, TransferEffect::CancelPut { identity }) };
-        let id = identity.transfer_id;
-        match result {
-            Ok(etag) => self.step_ok(now, id, attempt_id, Some(part), None, etag, fx),
-            Err(error) => self.step_error(now, id, attempt_id, error, fx),
-        }
-    }
-
-    /// `PutMissing`: the system has no task for the attempt, the step starts again.
-    pub(super) fn put_missing(&mut self, now: crate::runtime::Time, identity: PutIdentity, fx: &mut Fx) {
-        if self.waiting.contains_key(&identity.transfer_id) { return self.held.push(TransferInput::PutMissing { identity }); }
-        if !self.live_put(identity).is_some_and(|transfer| transfer.restored_put) { return; }
-        let Some(transfer) = self.transfers.get_mut(&identity.transfer_id) else { return };
-        transfer.next_step = NextStep::Part(transfer.confirmed_parts + 1);
-        transfer.stage = TransferStage::Ready;
-        transfer.in_flight = false;
-        transfer.put_detached = false;
-        transfer.restored_put = false;
-        transfer.waiting_retry = false;
-        self.show_queued(identity.transfer_id, fx);
-        self.start_in_order(now, fx);
-    }
-
-    pub(super) fn live_put(&self, identity: PutIdentity) -> Option<&Transfer> {
-        self.transfers.get(&identity.transfer_id).filter(|transfer| transfer.put_detached && transfer.in_flight && transfer.stage == TransferStage::Uploading && put_identity(transfer.transfer_id, transfer.cycle_id, transfer.attempts) == identity)
-    }
 
     pub(super) fn step_ok(&mut self, now: crate::runtime::Time, id: TransferId, attempt_id: AttemptId, part: Option<u32>, upload_id: Option<String>, etag: Option<String>, fx: &mut Fx) {
         if !self.live(id, TransferStage::Uploading, attempt_id) {

@@ -141,6 +141,7 @@ impl Life {
     pub fn landed_row(&self, epoch: Epoch, op_id: u64) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Landed { op_id, reply }) }
 
     /// Answers when no operation of the owner Outbox is on its way.
+    #[cfg(test)]
     pub fn operations_quiet(&self, epoch: Epoch) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::WhenQuiet { reply }) }
 
     pub fn discard_operation(&self, epoch: Epoch, (model, row_id): (String, String), action: Option<String>) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Discard { model, row_id, action, reply }) }

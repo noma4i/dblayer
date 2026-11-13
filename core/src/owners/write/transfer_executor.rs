@@ -11,7 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::failure;
-use super::transfer::{PutMode, file_id, prepared_file_id, staged_file_id, AbortFault, CachedBlob, StatusSink, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
+use super::transfer::{file_id, prepared_file_id, staged_file_id, AbortFault, CachedBlob, StatusSink, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
 use super::wire::{Flights, Running, Wire};
 use crate::store::files::{CopiedSource, FileDirectories};
 use crate::owners::contract::{Drained, ReplyId};
@@ -33,9 +33,6 @@ pub struct Link {
     progress: Option<Arc<dyn Fn(u64) + Send + Sync>>,
     /// Called once the PUT is about to be sent: the owner of the transfer starts the timer of the step.
     started: Option<Arc<dyn Fn() + Send + Sync>>,
-    /// Who runs the PUT of the step and where its system task starts.
-    pub(crate) put: PutMode,
-    executor: Option<Arc<dyn crate::ffi::PutExecutor>>,
 }
 
 impl Drop for Link {
@@ -44,7 +41,7 @@ impl Drop for Link {
 
 impl Link {
     #[cfg(test)]
-    pub(super) fn over(gate: Arc<crate::runtime::EpochGate>, epoch: Epoch) -> Self { Self { cancel: CancelToken::new(), gate, epoch: Some(epoch), minted: None, identity: (0, 1, 0), seeded: None, seed_used: Default::default(), progress: None, started: None, put: PutMode::Live, executor: None } }
+    pub(super) fn over(gate: Arc<crate::runtime::EpochGate>, epoch: Epoch) -> Self { Self { cancel: CancelToken::new(), gate, epoch: Some(epoch), minted: None, identity: (0, 1, 0), seeded: None, seed_used: Default::default(), progress: None, started: None } }
 
     /// `step` names the request: its id is the function of the step, so a repeat of the step carries it again.
     pub async fn mutate(&self, mut request: GraphQLRequest, step: &crate::transport::RequestOwner) -> Result<Response, TransportError> {
@@ -85,15 +82,6 @@ impl Link {
         })
     }
 
-    /// Hands the PUT to the platform executor and returns: the outcome comes back as `PutEnded`. The cancel of the step and the end of the epoch stop it before the hand-over.
-    pub(crate) fn start_put(&self, request: PutRequest) -> Result<(), TransportError> {
-        let (PutMode::Detached { identity }, Some(executor)) = (&self.put, &self.executor) else { return Err(TransportError::Invalid("the step has no executor outside the process".into())) };
-        if self.cancel.is_cancelled() || self.epoch.is_some_and(|epoch| !self.gate.admits(epoch)) { return Err(TransportError::Interrupted("the step ended before the upload started".into())); }
-        let target = crate::ffi::PutTarget { url: request.url, headers: crate::transport::merge_headers(std::collections::HashMap::new(), request.headers.into_iter().collect()), connect_ms: crate::transport::CONNECT_TIMEOUT_MS, request_ms: crate::transport::REQUEST_TIMEOUT_MS, response_limit: crate::transport::MAX_PUT_RESPONSE_BYTES };
-        crate::lock::effect(|| executor.start_put(*identity, target, request.file));
-        Ok(())
-    }
-
     pub async fn put(&self, mut request: PutRequest) -> Result<PutReply, TransportError> {
         request.cancel = self.cancel.clone();
         if let Some(started) = &self.started { started(); }
@@ -107,16 +95,6 @@ impl Link {
 pub struct StepDone {
     pub upload_id: Option<String>,
     pub etag: Option<String>,
-    pub end: StepEnd,
-}
-
-/// How a step ends: with its result, with the upload created and no part sent, or with the PUT handed to the platform.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum StepEnd {
-    #[default]
-    Done,
-    Initiated,
-    Started,
 }
 
 /// Encoding of the requests of a step and decoding of the answers. It is stateless: everything it needs comes by value from the effect.
@@ -143,8 +121,6 @@ pub(crate) struct TransferPort {
     pub sizing: super::upload::Sizing,
     /// The platform that probes and writes the sources with prepare settings: it is set once, when the platform gives it to `open`.
     pub preparer: Arc<std::sync::OnceLock<Arc<dyn crate::ffi::Preparer>>>,
-    /// The executor of the PUTs outside the process: `Some` when the platform runs them there.
-    pub put: Option<Arc<dyn crate::ffi::PutExecutor>>,
 }
 
 type Call<T> = Pin<Box<dyn Future<Output = Result<T, TransportError>> + Send>>;
@@ -180,7 +156,6 @@ struct StepAsk {
     steps: Steps,
     key: String,
     seeded: Option<super::transfer_types::SeededAnswer>,
-    put: PutMode,
 }
 
 /// What the owner asks of Lifecycle and Network.
@@ -208,7 +183,6 @@ pub(crate) struct TransferExecutor {
     cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>,
     doomed: Vec<String>,
     answers: Vec<(ReplyId, TransferAnswer)>,
-    put: Option<Arc<dyn crate::ffi::PutExecutor>>,
 }
 
 /// Where the executor reports to.
@@ -222,12 +196,7 @@ pub struct TransferSinks {
 impl TransferExecutor {
     pub fn new(wire: Wire, codec: Arc<dyn StepCodec>, files: Arc<FileDirectories>, sinks: TransferSinks, cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>) -> Self {
         let TransferSinks { settle, status, drained, signal } = sinks;
-        Self { wire, codec, files, settle, status, drained, signal, copies: Flights::default(), steps: Flights::default(), prepares: Flights::default(), preparer: Arc::default(), cache, doomed: Vec::new(), answers: Vec::new(), put: None }
-    }
-
-    pub fn with_put(mut self, put: Option<Arc<dyn crate::ffi::PutExecutor>>) -> Self {
-        self.put = put;
-        self
+        Self { wire, codec, files, settle, status, drained, signal, copies: Flights::default(), steps: Flights::default(), prepares: Flights::default(), preparer: Arc::default(), cache, doomed: Vec::new(), answers: Vec::new() }
     }
 
     pub fn with_preparer(mut self, preparer: Arc<std::sync::OnceLock<Arc<dyn crate::ffi::Preparer>>>) -> Self {
@@ -331,7 +300,7 @@ impl TransferExecutor {
             EpochStamp::Control => None,
         };
         if epoch.is_some_and(|epoch| !self.wire.gate.admits(epoch)) { return None; }
-        Some(Link { cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch, minted: None, identity: (0, 1, 0), seeded: None, seed_used: Default::default(), progress: None, started: None, put: PutMode::Live, executor: None })
+        Some(Link { cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch, minted: None, identity: (0, 1, 0), seeded: None, seed_used: Default::default(), progress: None, started: None })
     }
 
     /// Runs `call` as the task of `transfer_id`: its result becomes `into_input(result)` for the owner, unless the task is cancelled first.
@@ -362,11 +331,7 @@ impl TransferExecutor {
     }
 
     fn step(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), ask: StepAsk) {
-        let StepAsk { cycle_id, operation, part, upload_id, source, steps, key, seeded, put } = ask;
-        let (put, executor) = match &self.put {
-            Some(executor) => (put, Some(executor.clone())),
-            None => (PutMode::Live, None),
-        };
+        let StepAsk { cycle_id, operation, part, upload_id, source, steps, key, seeded } = ask;
         let source = self.local(transfer_id, source);
         let (progress, started) = (back.clone(), back.clone());
         let report = { let back = back.clone(); move |upload_id| back.reply(stamp, TransferInput::UploadMinted { transfer_id, attempt_id, upload_id, key: key.clone() }) };
@@ -377,8 +342,6 @@ impl TransferExecutor {
             TransferInput::StepError { transfer_id, attempt_id, temporary: true, error: failure::no_link() },
             move |codec, mut link| {
                 link.minted = Some(Arc::new(report));
-                link.put = put;
-                link.executor = executor;
                 link.identity = (transfer_id, cycle_id, part.unwrap_or(0));
                 link.seeded = seeded_response(seeded);
                 link.started = Some(Arc::new(move || started.reply(stamp, TransferInput::PutStarted { transfer_id, attempt_id })));
@@ -386,9 +349,6 @@ impl TransferExecutor {
                 Box::pin(async move { codec.step(&link, operation, part, upload_id.as_deref(), &source, &steps).await })
             },
             move |result| match result {
-                Ok(StepDone { end: StepEnd::Started, .. }) => None,
-                Ok(StepDone { end: StepEnd::Initiated, upload_id: Some(upload_id), .. }) => Some(TransferInput::InitDone { transfer_id, attempt_id, upload_id }),
-                Ok(StepDone { end: StepEnd::Initiated, upload_id: None, .. }) => Some(TransferInput::StepError { transfer_id, attempt_id, temporary: false, error: failure::of_transport(&TransportError::Decode("the init step created no upload".into())) }),
                 Ok(done) => Some(TransferInput::StepOk { transfer_id, attempt_id, part, upload_id: done.upload_id, etag: done.etag }),
                 Err(error) => Some(TransferInput::StepError { transfer_id, attempt_id, temporary: temporary(&error), error: failure::of_transport(&error) }),
             },
@@ -473,15 +433,6 @@ pub(super) fn abort_result(result: &Result<(), TransportError>) -> Result<(), Ab
     }
 }
 
-/// `PutEnded` of the platform as the answer of a PUT in the process: the etag, or `(temporary, error)`.
-pub(crate) fn put_result(outcome: crate::transport::RawOutcome) -> Result<Option<String>, (bool, String)> {
-    let result = match outcome {
-        crate::transport::RawOutcome::Response { status, etag, .. } => super::upload_codec::part_reply(PutReply { status, etag }).map(Some),
-        crate::transport::RawOutcome::Failed { failure } => Err(crate::transport::classify(&failure, crate::transport::ExchangeKind::Put)),
-    };
-    result.map_err(|error| (temporary(&error), failure::of_transport(&error)))
-}
-
 pub(crate) fn temporary(error: &TransportError) -> bool { RetryClass::of_error(error) != RetryClass::Fatal }
 
 impl EffectRunner<Transfers> for TransferExecutor {
@@ -501,16 +452,14 @@ impl EffectRunner<Transfers> for TransferExecutor {
             TransferEffect::Prepare { transfer_id, attempt_id, plan } => self.prepare(stamp, back, (transfer_id, attempt_id), plan),
             TransferEffect::PrepareCancel { transfer_id, attempt_id } => self.prepare_cancel(transfer_id, attempt_id),
             TransferEffect::Measure { transfer_id, attempt_id } => self.measure(stamp, back, (transfer_id, attempt_id)),
-            TransferEffect::Step { transfer_id, attempt_id, cycle_id, key, operation, part, purpose, upload_id, source, steps, seeded, put, .. } => {
+            TransferEffect::Step { transfer_id, attempt_id, cycle_id, key, operation, part, purpose, upload_id, source, steps, seeded, .. } => {
                 debug_assert_eq!(purpose, NetworkPurpose::Transfer);
-                self.step(stamp, back, (transfer_id, attempt_id), StepAsk { cycle_id, operation, part, upload_id, source, steps, key, seeded, put });
+                self.step(stamp, back, (transfer_id, attempt_id), StepAsk { cycle_id, operation, part, upload_id, source, steps, key, seeded });
             }
             TransferEffect::Complete { transfer_id, attempt_id, cycle_id, key, upload_id, parts, seeded, .. } => self.complete(stamp, back, (transfer_id, attempt_id, cycle_id), key, (upload_id, parts), seeded),
             TransferEffect::Abort { upload_id, .. } => self.drop_upload(upload_id),
             TransferEffect::AbortOrphan { upload_id, .. } => self.abort_orphan(stamp, back, upload_id),
             TransferEffect::CancelStep { transfer_id } => self.steps.cancel(&transfer_id),
-            TransferEffect::CancelPut { identity } => { if let Some(put) = &self.put { crate::lock::effect(|| put.cancel_put(identity)); } }
-            TransferEffect::ResumePuts { identities } => { if let Some(put) = &self.put { crate::lock::effect(|| put.resume_puts(identities)); } }
             TransferEffect::ReleaseStep { request_id } => (self.signal)(LifeSignal::ReleaseStep(request_id)),
             TransferEffect::DeleteFile { path } => self.doomed.push(path),
             TransferEffect::Reply { reply, answer } => self.answers.push((reply, answer)),

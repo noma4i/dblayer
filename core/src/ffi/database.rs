@@ -138,8 +138,8 @@ pub(super) struct Encrypted {
 }
 
 impl Database {
-    fn start(config: Config, models_json: String, (transport, endpoint): (Option<Arc<dyn Transport>>, Option<String>), put: Option<Arc<dyn super::PutExecutor>>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
-        Self::start_with(config, models_json, clock, put, |db, _| {
+    fn start(config: Config, models_json: String, (transport, endpoint): (Option<Arc<dyn Transport>>, Option<String>), clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
+        Self::start_with(config, models_json, clock, |db, _| {
             #[cfg(test)]
             if transport.is_some() { super::tests::signed_session_tests::signed_session(db); }
             let _ = db;
@@ -151,7 +151,6 @@ impl Database {
         config: Config,
         models_json: String,
         clock: Arc<dyn Clock>,
-        put: Option<Arc<dyn super::PutExecutor>>,
         wire: impl FnOnce(&Arc<Store>, &Arc<dyn Clock>) -> Result<Wiring, DbError>,
     ) -> Result<Arc<Self>, DbError> {
         let Specs { models, operations } = Specs::parse(&models_json)?;
@@ -164,7 +163,7 @@ impl Database {
         let jobs: Arc<super::upload_rounds::RoundJobsSlot> = Arc::default();
         let preparer: Arc<OnceLock<Arc<dyn super::Preparer>>> = Arc::default();
         let upload_config = crate::owners::write::upload::UploadConfig::default();
-        let life = Self::build_life(&db, transport.clone(), encrypted.as_ref(), cable, seal, reads.clone(), (uploads.clone(), jobs.clone(), preparer.clone()), put.clone(), &upload_config)?;
+        let life = Self::build_life(&db, transport.clone(), encrypted.as_ref(), cable, seal, reads.clone(), (uploads.clone(), jobs.clone(), preparer.clone()), &upload_config)?;
         let remote = transport.is_some();
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
         Ok(Arc::new_cyclic(|me| Self { me: me.clone(), lease: Arc::new(OnceLock::new()), life, db, remote, reads, returns, uploads, preparer, partial_operations: Default::default(), jobs, upload_config, wires: Arc::new(wires) }))
@@ -179,7 +178,7 @@ impl Database {
     }
 
     async fn open_at(config: Config, models_json: String, ports: super::OpenPorts, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
-        let super::OpenPorts { transport, encrypted, credentials, http, endpoint, preparer, partial_operations, put_executor, .. } = ports;
+        let super::OpenPorts { transport, encrypted, credentials, http, endpoint, preparer, partial_operations, .. } = ports;
         blocking(move || {
             let database = match encrypted {
                 Some(encrypted) => {
@@ -187,7 +186,7 @@ impl Database {
                     let http = http.ok_or_else(|| DbError::Invalid { detail: "encrypted requires http".into() })?;
                     let transport = transport.ok_or_else(|| DbError::Invalid { detail: "encrypted requires transport".into() })?;
                     let _entered = executor()?.enter();
-                    Self::start_with(config, models_json, clock, put_executor, |db, clock| {
+                    Self::start_with(config, models_json, clock, |db, clock| {
                         super::encrypted::wire(db, clock, encrypted, http, credentials, transport)
                     })?
                 }
@@ -195,7 +194,7 @@ impl Database {
                     if credentials.is_some() || http.is_some() {
                         return Err(DbError::Invalid { detail: "credentials and http require encrypted".into() });
                     }
-                    Self::start(config, models_json, (transport, endpoint), put_executor, clock)?
+                    Self::start(config, models_json, (transport, endpoint), clock)?
                 }
             };
             if let Some(preparer) = preparer { let _ = database.preparer.set(preparer); }
@@ -206,14 +205,13 @@ impl Database {
     }
 
     /// F1: the owners of direction A on the threads of the core, started from the booted `Store`. It returns after the first `Publish`.
-    fn build_life(db: &Arc<Store>, transport: Option<Arc<dyn core::Upstream>>, encrypted: Option<&Encrypted>, cable: Option<Arc<dyn core::CableLines>>, seal: Option<Arc<crate::owners::session_seal::SealConfig>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, preparer): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<OnceLock<Arc<dyn super::Preparer>>>), put: Option<Arc<dyn super::PutExecutor>>, config: &crate::owners::write::upload::UploadConfig) -> Result<Arc<crate::owners::life::Life>, DbError> {
+    fn build_life(db: &Arc<Store>, transport: Option<Arc<dyn core::Upstream>>, encrypted: Option<&Encrypted>, cable: Option<Arc<dyn core::CableLines>>, seal: Option<Arc<crate::owners::session_seal::SealConfig>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, preparer): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<OnceLock<Arc<dyn super::Preparer>>>), config: &crate::owners::write::upload::UploadConfig) -> Result<Arc<crate::owners::life::Life>, DbError> {
         let executor = executor()?.handle().clone();
         let operations = operations_lookup(&read_operations);
         let transfer = uploads.filter(|_| encrypted.is_some()).map(|operations| crate::owners::write::transfer_executor::TransferPort {
             put_timeout: config.put_timeout,
             sizing: operations.sizing(&config),
             preparer,
-            put,
             abort_root: operations.multipart.as_ref().and_then(|steps| operations.root_of(&steps.abort.name)).map(str::to_string),
             codec: Arc::new(crate::owners::write::upload_codec::UploadCodec::new(operations, operations_lookup(&read_operations), config.clone())),
             jobs,

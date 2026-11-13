@@ -59,7 +59,6 @@ impl TransferState {
                 let Some(transfer) = self.transfers.get_mut(&id) else { return };
                 if std::mem::replace(&mut transfer.in_flight, false) {
                     run(fx, TransferEffect::CancelStep { transfer_id: id });
-                    self.cancel_put(id, fx);
                 }
                 self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::Ready), fx);
                 self.start_in_order(now, fx);

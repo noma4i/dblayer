@@ -78,6 +78,7 @@ pub struct OutboxState {
     pub(super) resets: BTreeMap<(String, String, String), (ScheduleId, u64)>,
     pub(super) drained: bool,
     pub(super) author: BatchAuthor,
+    #[cfg(test)]
     pub(super) quiet_waiters: Vec<ReplyId>,
     pub(super) closing: bool,
     pub(super) queue_error: Option<String>,
@@ -139,6 +140,7 @@ impl OutboxState {
             resets: BTreeMap::new(),
             drained: false,
             author: BatchAuthor::Outbox,
+            #[cfg(test)]
             quiet_waiters: Vec::new(),
             closing: false,
             queue_error: None,
@@ -874,7 +876,9 @@ impl OutboxState {
             OutboxInput::SelectedNone { reply, version } => { if self.selection_current(reply, version, fx) { Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)); } }
             OutboxInput::SelectedTransfer { reply, version, .. } => { if self.selection_current(reply, version, fx) { if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::SelectConfirmed { reply }))); } } }
             OutboxInput::Outcome { receipt, reply, discard_on_failure } => self.outcome(receipt, reply, discard_on_failure, fx),
-            OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } => {}
+            OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } => {}
+            #[cfg(test)]
+            OutboxInput::WhenQuiet { .. } => {}
             OutboxInput::Online(Online(on)) => self.online_changed(now, on, fx),
             OutboxInput::ActivateEpoch(epoch) => self.begin_epoch(epoch),
             OutboxInput::EpochStarted(started) => self.base_generation = started.generation,
@@ -923,7 +927,9 @@ impl StateOwner for Outbox {
                 _ => {}
             }
             match &input {
-                OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::DiscardTransfer { reply, .. } | OutboxInput::Outcome { reply, .. } | OutboxInput::WhenQuiet { reply } | OutboxInput::Landed { reply, .. } | OutboxInput::Resolve { reply, .. } | OutboxInput::LocalWrite { reply, .. } => OutboxState::reply(&mut fx, *reply, OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))),
+                OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::DiscardTransfer { reply, .. } | OutboxInput::Outcome { reply, .. } | OutboxInput::Landed { reply, .. } | OutboxInput::Resolve { reply, .. } | OutboxInput::LocalWrite { reply, .. } => OutboxState::reply(&mut fx, *reply, OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))),
+                #[cfg(test)]
+                OutboxInput::WhenQuiet { reply } => OutboxState::reply(&mut fx, *reply, OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))),
                 OutboxInput::ReserveOp { target, .. } => state.opened(&mut fx, *target, Err(Fault::Ended(crate::ffi::EndCause::Closed))),
                 OutboxInput::ReserveReplacement { target, .. } => if let Some(transfer) = state.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, TransferInput::ReplacementReserved { target: *target, result: Err(Fault::Ended(crate::ffi::EndCause::Closed)) }))); },
                 OutboxInput::RetryTransfer { uploads, .. } => state.retry_transfer_answer(uploads.iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(Fault::Ended(crate::ffi::EndCause::Closed)), &mut fx),
@@ -948,6 +954,7 @@ impl StateOwner for Outbox {
             OutboxState::reply(&mut fx, reply, OutboxAnswer::Resolved(resolved));
             return fx;
         }
+        #[cfg(test)]
         if let OutboxInput::WhenQuiet { reply } = input {
             state.quiet_waiters.push(reply);
         } else if state.phase == Phase::Restoring {
@@ -955,7 +962,14 @@ impl StateOwner for Outbox {
         } else {
             state.handle(now, input, &mut fx);
         }
+        #[cfg(not(test))]
+        if state.phase == Phase::Restoring {
+            state.restoring(now, input, &mut fx);
+        } else {
+            state.handle(now, input, &mut fx);
+        }
         state.run_waiting_discards(&mut fx);
+        #[cfg(test)]
         state.release_quiet(&mut fx);
         fx
     }
