@@ -82,12 +82,19 @@ pub fn barrier_report() -> String {
             let active = lock(&router.active[index]).iter().map(|(input, since)| format!("{input} {}ms", since.elapsed().as_millis())).collect::<Vec<_>>().join(", ");
             let queued = router.boxes[index].inspect(|items| items.iter().map(|item| format!("{} {}ms", item.label, item.since.elapsed().as_millis())).collect::<Vec<_>>());
             let state = lock(&router.diagnostics[index]).clone();
+            let now = router.clock.now().as_millis() as u64;
+            let waits = lock(&router.waits[index]).iter().map(|(due, backoff)| (i128::from(*due) - i128::from(now), *backoff)).collect::<Vec<_>>();
+            let timers = match waits.first() {
+                Some((left, backoff)) => format!("{} waits, next {left}ms {}", waits.len(), if *backoff { "Backoff" } else { "Schedule" }),
+                None => "0 waits".to_string(),
+            };
             if router.stopped[index].load(Ordering::SeqCst) { return format!("{name}: stopped, queued {} [{}], state [{state}]", queued.len(), queued.join(", ")); }
-            format!("{name}: queued {} [{}], active [{active}], state [{state}]", queued.len(), queued.join(", "))
+            format!("{name}: queued {} [{}], active [{active}], timers [{timers}], state [{state}]", queued.len(), queued.join(", "))
         }).collect();
         Some(format!("in flight {count}, counted tasks held at [{}], owners [{}]", held.join(", "), owners.join("; ")))
     }).collect();
-    if busy.is_empty() { "the barrier of every runtime is idle".into() } else { busy.join("; ") }
+    let census = format!("runtimes {}, waits {}", routers.len(), crate::test_wait::waiting_count());
+    if busy.is_empty() { format!("the barrier of every runtime is idle; {census}") } else { format!("{}; {census}", busy.join("; ")) }
 }
 
 struct Router {
@@ -104,6 +111,10 @@ struct Router {
     active: Vec<Mutex<Vec<(String, std::time::Instant)>>>,
     #[cfg(test)]
     diagnostics: Vec<Mutex<String>>,
+    #[cfg(test)]
+    waits: Vec<Mutex<Vec<(u64, bool)>>>,
+    #[cfg(test)]
+    clock: Arc<dyn crate::runtime::Clock>,
     #[cfg(test)]
     stopped: Vec<std::sync::atomic::AtomicBool>,
 }
@@ -401,7 +412,7 @@ impl RuntimeBuilder {
         }
         #[cfg(test)]
         let owners: Vec<_> = self.bodies.iter().filter_map(|body| body.as_ref().map(|(name, _)| *name)).collect();
-        let router = Arc::new(Router { boxes: self.boxes, inflight: Inflight::default(), failure: self.failure, history: self.history, record: self.record, #[cfg(test)] gates: Mutex::new(Vec::new()), #[cfg(test)] active: owners.iter().map(|_| Mutex::new(Vec::new())).collect(), #[cfg(test)] diagnostics: owners.iter().map(|_| Mutex::new(String::new())).collect(), #[cfg(test)] stopped: owners.iter().map(|_| std::sync::atomic::AtomicBool::new(false)).collect(), #[cfg(test)] owners });
+        let router = Arc::new(Router { boxes: self.boxes, inflight: Inflight::default(), failure: self.failure, history: self.history, record: self.record, #[cfg(test)] gates: Mutex::new(Vec::new()), #[cfg(test)] active: owners.iter().map(|_| Mutex::new(Vec::new())).collect(), #[cfg(test)] diagnostics: owners.iter().map(|_| Mutex::new(String::new())).collect(), #[cfg(test)] waits: owners.iter().map(|_| Mutex::new(Vec::new())).collect(), #[cfg(test)] clock: self.clock.clone(), #[cfg(test)] stopped: owners.iter().map(|_| std::sync::atomic::AtomicBool::new(false)).collect(), #[cfg(test)] owners });
         #[cfg(test)]
         ROUTERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(Arc::downgrade(&router));
         self.handle.router.set(router.clone()).map_err(|_| std::io::Error::other("the runtime is already started"))?;
@@ -540,7 +551,7 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, time
             armed = scheduled;
         }
         #[cfg(test)]
-        lock(&router.active[owner.slot]).clear();
+        { *lock(&router.waits[owner.slot]) = owner.cell.waits(); lock(&router.active[owner.slot]).clear(); }
         router.inflight.done(handled);
     }
 }

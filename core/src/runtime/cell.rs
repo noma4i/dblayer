@@ -79,6 +79,9 @@ impl<O: StateOwner> Cell<O> {
 
     pub fn dropped(&self) -> u64 { self.dropped }
 
+    #[cfg(test)]
+    pub fn waits(&self) -> Vec<(u64, bool)> { self.schedule.iter().map(|(key, scheduled)| (key.0 .0, scheduled.retry)).collect() }
+
     pub fn next_due(&self) -> Option<Time> { self.schedule.keys().next().map(|key| key.0) }
 
     pub fn due(&self) -> bool { self.next_due().is_some_and(|at| at <= self.now) }

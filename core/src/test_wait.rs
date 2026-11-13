@@ -41,6 +41,8 @@ impl Drop for Waiting {
     fn drop(&mut self) { WAITING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|(id, _)| *id != self.0); }
 }
 
+pub(crate) fn waiting_count() -> usize { WAITING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len() }
+
 pub(crate) fn hang_report() -> String {
     let waits: Vec<String> = WAITING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().map(|(_, what)| what.clone()).collect();
     let settled: Vec<String> = SETTLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter_map(|(_, life, phase)| life.upgrade().map(|life| format!("{phase}, flights={}", life.requests_in_flight()))).collect();

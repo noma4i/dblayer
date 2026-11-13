@@ -113,6 +113,9 @@ impl StateOwner for StoreWriter {
     type Input = StoreInput;
     type Effect = StoreEffect;
 
+    #[cfg(test)]
+    fn diagnostic(state: &StoreState) -> Option<String> { Some(format!("revision={}, writing={}, closing={}", state.revision, state.writing.is_some(), state.closing)) }
+
     fn step(state: &mut StoreState, input: StoreInput, _now: Time) -> Effects<Self> {
         let mut fx = Vec::new();
         state.run(input, &mut fx);

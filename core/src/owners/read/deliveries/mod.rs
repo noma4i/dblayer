@@ -588,6 +588,12 @@ impl StateOwner for Deliveries {
     type Input = DeliveryInput;
     type Effect = DeliveryEffect;
 
+    #[cfg(test)]
+    fn diagnostic(state: &DeliveriesState) -> Option<String> {
+        let queues: Vec<String> = state.streams.iter().filter(|(_, machine)| machine.view.kind == Kind::Operations).map(|(id, machine)| format!("{id:?}: stage={:?}, read_id={}, read_inflight={}, read_seen={}, read_position={}, journal={}, operations={}, waiting_pull={}", machine.stage, machine.read_id, machine.read_inflight, machine.read_seen, machine.read_position, machine.journal.len(), machine.operations.as_ref().map_or_else(|| "none".to_string(), |items| items.len().to_string()), machine.waiting.is_some())).collect();
+        Some(format!("revision={}, operation streams [{}]", state.revision, queues.join("; ")))
+    }
+
     fn step(state: &mut DeliveriesState, input: DeliveryInput, _now: crate::runtime::Time) -> Effects<Self> {
         let mut out: Effects<Self> = Vec::new();
         match input {
