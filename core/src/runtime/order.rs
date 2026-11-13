@@ -59,6 +59,32 @@ impl Drop for Place {
     fn drop(&mut self) { self.pass(); }
 }
 
+/// The task of a bridge call and the place its drop takes: the place taken on the thread of the drop passes when the task is gone, so the next call of the database enters after the consequences of the dropped one.
+#[derive(Default)]
+pub struct DropPlace(std::sync::Mutex<DropState>);
+
+#[derive(Default)]
+enum DropState {
+    #[default]
+    Running,
+    Gone,
+    Held(Arc<Place>),
+}
+
+impl DropPlace {
+    /// Takes the place of the drop unless the task is gone already or holds one.
+    pub fn hold(&self, order: &Arc<CallOrder>) {
+        let mut state = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if matches!(*state, DropState::Running) { *state = DropState::Held(order.take()); }
+    }
+
+    /// The task is gone: its drop place passes.
+    pub fn gone(&self) {
+        let state = std::mem::replace(&mut *self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner), DropState::Gone);
+        if let DropState::Held(place) = state { place.pass(); }
+    }
+}
+
 /// Polls `poll` with `place` as the place of the call that enters an owner from this thread.
 pub fn polling_place<R>(place: Option<&Arc<Place>>, poll: impl FnOnce() -> R) -> R {
     let previous = ENTERING.replace(place.cloned());

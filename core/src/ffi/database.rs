@@ -78,27 +78,35 @@ pub(super) fn joined(error: tokio::task::JoinError) -> DbError {
 thread_local! { pub(super) static CALLER: std::cell::Cell<Option<std::thread::ThreadId>> = const { std::cell::Cell::new(None) }; }
 
 /// What a bridge call runs under: the barrier of the owners it counts in and the place of the call in the order of its database.
-pub(super) struct Scope { life: Option<Arc<crate::owners::life::Life>>, place: Option<Arc<crate::runtime::Place>> }
+pub(super) struct Scope { life: Option<Arc<crate::owners::life::Life>>, place: Option<Arc<crate::runtime::Place>>, order: Option<Arc<crate::runtime::CallOrder>> }
 
 impl Scope {
     /// A call that counts in no barrier and has no place.
-    pub(super) fn root() -> Self { Self { life: None, place: None } }
-    pub(super) fn counted(life: Option<Arc<crate::owners::life::Life>>) -> Self { Self { life, place: None } }
+    pub(super) fn root() -> Self { Self { life: None, place: None, order: None } }
+    /// A call that takes its own place in the order of the database at the moment of the call.
+    pub(super) fn placed(life: Option<Arc<crate::owners::life::Life>>, order: &Arc<crate::runtime::CallOrder>) -> Self { Self { life, place: Some(order.take()), order: Some(order.clone()) } }
 }
 
 pub(super) async fn on_core<T: Send + 'static>(scope: Scope, work: impl std::future::Future<Output = T> + Send + 'static) -> Result<T, DbError> {
-    let Scope { life, place } = scope;
+    let Scope { life, place, order } = scope;
     struct Passes(Arc<crate::runtime::Place>);
     impl Drop for Passes {
         fn drop(&mut self) { self.0.pass(); }
     }
     #[derive(Default)]
     struct Start { started: std::sync::atomic::AtomicBool, cancelled: std::sync::atomic::AtomicBool }
-    struct Cancel(tokio::task::AbortHandle, Arc<Start>);
+    struct Gone(Arc<crate::runtime::DropPlace>);
+    impl Drop for Gone {
+        fn drop(&mut self) { self.0.gone(); }
+    }
+    struct Cancel(tokio::task::AbortHandle, Arc<Start>, Arc<crate::runtime::DropPlace>, Option<Arc<crate::runtime::CallOrder>>);
     impl Drop for Cancel {
         fn drop(&mut self) {
             self.1.cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
-            if self.1.started.load(std::sync::atomic::Ordering::SeqCst) { crate::lock::effect(|| self.0.abort()); }
+            if self.1.started.load(std::sync::atomic::Ordering::SeqCst) {
+                if let Some(order) = &self.3 { self.2.hold(order); }
+                crate::lock::effect(|| self.0.abort());
+            }
         }
     }
     #[cfg(test)]
@@ -106,8 +114,11 @@ pub(super) async fn on_core<T: Send + 'static>(scope: Scope, work: impl std::fut
     let start = Arc::new(Start::default());
     let launch = life.map(|life| life.launch());
     let seen = start.clone();
+    let dropped = Arc::new(crate::runtime::DropPlace::default());
+    let gone = Gone(dropped.clone());
     let (answer, answered) = tokio::sync::oneshot::channel();
     let task = crate::task::spawn_on(executor()?.handle(), crate::runtime::counted(launch, async move {
+        let _gone = gone;
         let mut work = Box::pin(work);
         seen.started.store(true, std::sync::atomic::Ordering::SeqCst);
         let _passes = place.clone().map(Passes);
@@ -124,7 +135,7 @@ pub(super) async fn on_core<T: Send + 'static>(scope: Scope, work: impl std::fut
         }).await;
         drop(crate::lock::effect(|| answer.send(output)));
     }));
-    let _cancel = Cancel(task.abort_handle(), start);
+    let _cancel = Cancel(task.abort_handle(), start, dropped, order);
     match answered.await {
         Ok(output) => output.ok_or_else(|| DbError::Interrupted { detail: "the call was dropped".into() }),
         Err(_) => Err(task.await.err().map_or_else(|| DbError::Interrupted { detail: "the call ended without an answer".into() }, joined)),
@@ -291,7 +302,7 @@ impl Database {
         Ok(life)
     }
 
-    pub(super) fn scope(&self) -> Scope { Scope { life: Some(self.life.clone()), place: self.place.clone() } }
+    pub(super) fn scope(&self) -> Scope { Scope { life: Some(self.life.clone()), place: self.place.clone(), order: Some(self.order.clone()) } }
 
     pub(super) fn not_closed(&self) -> Result<(), DbError> {
         if self.life.published().closed { Err(super::command::closed()) } else { Ok(()) }

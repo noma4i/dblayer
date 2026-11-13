@@ -37,7 +37,7 @@ pub use det::{wake_pumps, Choice, DetScheduler, Lane, TraceEntry};
 pub use flights::{Flights, Running};
 pub use gate::{send_in_cut, send_in_epoch, EpochGate};
 pub use open_slot::{OpenLease, OpenSlot};
-pub use order::{polling_place, CallOrder, Place};
+pub use order::{polling_place, CallOrder, DropPlace, Place};
 pub use held_ids::HeldIds;
 pub use published::PublishedCell;
 pub use explore::{explore, Limits, Report, Violation};

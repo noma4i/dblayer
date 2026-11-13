@@ -179,6 +179,7 @@ pub(super) fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadV
 pub struct ReadStream {
     me: Weak<ReadStream>,
     database: Weak<Database>,
+    order: Arc<crate::runtime::CallOrder>,
     stream: u64,
     ended: std::sync::Mutex<Option<EndCause>>,
     readers: std::sync::Mutex<ReadReaders>,
@@ -210,6 +211,8 @@ impl ReadStream {
     pub(crate) async fn pull_next(&self) -> Option<ReadValue> { self.pull(0).await }
 
     fn life(&self) -> Option<Arc<Life>> { self.database.upgrade().map(|database| database.life.clone()) }
+
+    fn scope(&self) -> super::database::Scope { super::database::Scope::placed(self.life(), &self.order) }
 
     fn relation(&self) -> Result<&RelationLoad, DbError> {
         self.load.as_ref().ok_or_else(|| DbError::Invalid { detail: "the stream has no relation to load".into() })
@@ -246,7 +249,7 @@ impl ReadStream {
     }
 
     /// The next value of the stream, `None` once the stream ended and its last value was taken. A failure of the stream arrives as its last value `Ended`.
-    pub async fn pull(&self, reader: u64) -> Option<ReadValue> { let Some(this_stream) = self.me.upgrade() else { return self.finished(EndCause::Closed) }; super::database::on_core(super::database::Scope::counted(self.life()), async move {
+    pub async fn pull(&self, reader: u64) -> Option<ReadValue> { let Some(this_stream) = self.me.upgrade() else { return self.finished(EndCause::Closed) }; super::database::on_core(self.scope(), async move {
         if this_stream.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).released.contains(&reader) { return Some(ReadValue::Ended { cause: EndCause::Closed }); }
         let Some(life) = this_stream.life() else { return this_stream.finished(EndCause::Closed) };
         let waiter = life.pull(this_stream.stream, reader);
@@ -274,7 +277,7 @@ impl ReadStream {
     }).await.unwrap_or_else(|error| self.finished(EndCause::Internal { detail: error.to_string() })) }
 
     /// Loads the first page of the relation of this stream again. `Invalid` when the stream reads no relation, `NoSession` when its session ended.
-    pub async fn refresh(&self) -> Result<(), DbError> { let this_stream = self.me.upgrade().ok_or_else(super::command::closed)?; super::database::on_core(super::database::Scope::counted(self.life()), async move {
+    pub async fn refresh(&self) -> Result<(), DbError> { let this_stream = self.me.upgrade().ok_or_else(super::command::closed)?; super::database::on_core(self.scope(), async move {
         let database = this_stream.database.upgrade().ok_or_else(super::command::closed)?;
         database.account_call(this_stream.epoch)?;
         let load = this_stream.relation()?;
@@ -282,7 +285,7 @@ impl ReadStream {
     }).await? }
 
     /// Loads the next page of the relation of this stream.
-    pub async fn load_more(&self) -> Result<LoadMoreResult, DbError> { let this_stream = self.me.upgrade().ok_or_else(super::command::closed)?; super::database::on_core(super::database::Scope::counted(self.life()), async move {
+    pub async fn load_more(&self) -> Result<LoadMoreResult, DbError> { let this_stream = self.me.upgrade().ok_or_else(super::command::closed)?; super::database::on_core(self.scope(), async move {
         let database = this_stream.database.upgrade().ok_or_else(super::command::closed)?;
         database.account_call(this_stream.epoch)?;
         let load = this_stream.relation()?;
@@ -290,7 +293,7 @@ impl ReadStream {
     }).await? }
 
     /// Takes the stream for one reader and returns its number or the reason the claim ended.
-    pub async fn claim_reader(&self) -> ReadClaim { let Some(this_stream) = self.me.upgrade() else { return ReadClaim::Ended { cause: EndCause::Closed } }; super::database::on_core(super::database::Scope::counted(self.life()), async move {
+    pub async fn claim_reader(&self) -> ReadClaim { let Some(this_stream) = self.me.upgrade() else { return ReadClaim::Ended { cause: EndCause::Closed } }; super::database::on_core(self.scope(), async move {
         {
             let readers = this_stream.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(reader) = readers.claimed.filter(|id| readers.released.contains(id)) { return ReadClaim::Claimed { reader }; }
@@ -310,7 +313,7 @@ impl ReadStream {
     }
 
     /// Returns when no value of this stream is delivered any more.
-    pub async fn cancel(&self) { let Some(this_stream) = self.me.upgrade() else { return }; super::database::on_core(super::database::Scope::counted(self.life()), async move {
+    pub async fn cancel(&self) { let Some(this_stream) = self.me.upgrade() else { return }; super::database::on_core(self.scope(), async move {
         {
             let readers = this_stream.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if readers.claimed.is_some_and(|id| readers.released.contains(&id)) { return; }
@@ -478,7 +481,7 @@ impl Database {
             (ReadRequest::List { query } | ReadRequest::Count { query }, true) => query.relation.as_ref().map(|relation| RelationLoad { model: query.model.clone(), relation: relation.clone(), params_json: query.params_json.clone() }),
             _ => None,
         };
-        Arc::new_cyclic(|me| ReadStream { me: me.clone(), database: self.me.clone(), stream, ended: std::sync::Mutex::new(None), readers: std::sync::Mutex::new(ReadReaders::default()), wire, epoch, load })
+        Arc::new_cyclic(|me| ReadStream { me: me.clone(), database: self.me.clone(), order: Arc::default(), stream, ended: std::sync::Mutex::new(None), readers: std::sync::Mutex::new(ReadReaders::default()), wire, epoch, load })
     }
 }
 

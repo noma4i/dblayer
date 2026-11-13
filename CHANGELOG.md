@@ -5,6 +5,7 @@
 ### Fixed
 
 - Keep the order of calls started without awaiting the previous call.
+- End a read started right after a cancelled read with the cancel, not with an error.
 
 ## 6.33.0 - 2026-11-13
 
