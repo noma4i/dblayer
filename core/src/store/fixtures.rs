@@ -193,13 +193,13 @@ pub(crate) fn list_view(query: &crate::store::query::Query) -> crate::owners::re
     use crate::owners::read::deliveries::{Kind, View};
     use crate::owners::read::windows::WindowKey;
     let model = query.model.to_string();
-    View { kind: Kind::List, tables: vec![crate::store::ddl::table_name(&model)], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: model.clone(), name: "list".into() }, subject: String::new(), node: None, deferred_rows: Vec::new(), query: Some(Arc::new(query.clone())), model }
+    View { kind: Kind::List, tables: vec![crate::store::ddl::table_name(&model)], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: model.clone(), name: "list".into() }, subject: String::new(), node: None, wants: Vec::new(), deferred_rows: Vec::new(), query: Some(Arc::new(query.clone())), model }
 }
 
 pub(crate) fn operations_view() -> crate::owners::read::deliveries::View {
     use crate::owners::read::deliveries::{Kind, View};
     use crate::owners::read::windows::WindowKey;
-    View { kind: Kind::Operations, tables: vec![crate::store::operation::QUEUE_TABLE.into()], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), node: None, deferred_rows: Vec::new(), query: None, model: String::new() }
+    View { kind: Kind::Operations, tables: vec![crate::store::operation::QUEUE_TABLE.into()], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), node: None, wants: Vec::new(), deferred_rows: Vec::new(), query: None, model: String::new() }
 }
 
 impl Store {

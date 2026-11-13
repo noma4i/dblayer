@@ -24,7 +24,7 @@ const STREAM: u64 = 7;
 
 fn people() -> ModelSpec { ModelSpec::new("people", vec![FieldSpec::scalar("id", ScalarKind::Id)]) }
 
-fn view() -> View { View { kind: Kind::List, model: "people".into(), tables: vec!["row_people".into()], local: false, remote: true, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: "people".into(), name: "list".into() }, subject: String::new(), node: None, deferred_rows: Vec::new(), query: None } }
+fn view() -> View { View { kind: Kind::List, model: "people".into(), tables: vec!["row_people".into()], local: false, remote: true, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: "people".into(), name: "list".into() }, subject: String::new(), node: None, wants: Vec::new(), deferred_rows: Vec::new(), query: None } }
 
 struct SqliteSnapshots {
     path: std::path::PathBuf,
@@ -41,7 +41,7 @@ impl Snapshots for SqliteSnapshots {
         if seen < revision {
             return Err(format!("the snapshot is at revision {seen}, older than {revision}"));
         }
-        let rows = fetch_keys(&connection, &statement).map_err(|error| error.to_string())?.into_iter().map(|(id, stamp)| d::StreamRow { id, stamp, row: None, owes: false }).collect();
+        let rows = fetch_keys(&connection, &statement).map_err(|error| error.to_string())?.into_iter().map(|(id, stamp)| d::StreamRow { id, stamp, row: None }).collect();
         drop(snapshot);
         Ok((d::ReadVersion { revision: seen, position: 0, relevant: Some((seen, 0)) }, d::ReadData::Rows { rows, replaced: Vec::new(), total: None }))
     }

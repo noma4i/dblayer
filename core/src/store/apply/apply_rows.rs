@@ -156,7 +156,7 @@ pub(super) fn apply_upsert(
     if hidden.contains(&(model.to_string(), id.clone())) {
         return Ok(());
     }
-    let paid = match super::super::reread_owed::Release::of(envelope.source, envelope.request_base) {
+    let paid = match super::super::reread_owed::Release::of(envelope.source, envelope.request_base).filter(|_| envelope.landed_read.is_none()) {
         Some(release) => super::super::reread_owed::release(connection, model.as_str(), &id, release)?,
         None => false,
     };

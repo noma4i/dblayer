@@ -11,8 +11,9 @@ fn debt_list() -> Twin {
 
 fn read(twin: &mut Twin, revision: i64, owing: &[&str]) -> Vec<String> {
     take(&twin.log);
-    let rows = ["r1", "r2"].iter().map(|id| d::StreamRow { owes: owing.contains(id), ..d::StreamRow::new(id, 1) }).collect();
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision, position: 0, relevant: Some((revision, 0)), data: d::ReadData::Rows { rows, replaced: Vec::new(), total: None } });
+    let rows = ["r1", "r2"].iter().map(|id| d::StreamRow::new(id, 1)).collect();
+    let debts = owing.iter().map(|id| ("Moment".to_string(), id.to_string(), "node".to_string())).collect();
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision, position: 0, relevant: Some((revision, 0)), data: d::ReadData::Owed(Box::new(d::ReadData::Rows { rows, replaced: Vec::new(), total: None }), debts) });
     take(&twin.log).into_iter().filter_map(|entry| match entry { Emitted::Send { to: WINDOWS, input } => Some(input), _ => None }).collect()
 }
 
@@ -62,7 +63,7 @@ fn dlv_owes_only_no_frame() {
 /// dlv_owed_row_interest: a count reads the debt of the members of its window, a read of a local table the debt of every row of the model.
 #[test]
 fn dlv_owed_row_interest_count_and_local_table() {
-    let ids = |names: &[&str]| names.iter().map(|id| id.to_string()).collect::<std::collections::BTreeSet<_>>();
+    let ids = |names: &[&str]| names.iter().map(|id| ("Moment".to_string(), id.to_string(), "node".to_string())).collect::<std::collections::BTreeSet<_>>();
     let mut count = Twin::new();
     let mut counted = view(Kind::Count);
     counted.node = Some("node".into());

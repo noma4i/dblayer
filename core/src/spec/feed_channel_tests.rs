@@ -173,8 +173,8 @@ fn feed_event_batch_carries_its_debt_or_stale_mark() {
     let derived = WindowKey::relation("Chat", "node", &[(crate::schema::NODE_PARAM.to_string(), serde_json::json!("c2"))].into_iter().collect());
     let named = WindowKey::relation("Chat", "byChat", &[("chatId".to_string(), serde_json::json!("c1"))].into_iter().collect());
     let cases: Vec<(&str, StaleKeys, Vec<StoreOp>)> = vec![
-        ("node", StaleKeys::Set([node].into_iter().collect()), vec![StoreOp::OweReread { model: "Chat".into(), id: "c1".into() }]),
-        ("id_of", StaleKeys::Set([derived].into_iter().collect()), vec![StoreOp::OweReread { model: "Chat".into(), id: "c2".into() }]),
+        ("node", StaleKeys::Set([node].into_iter().collect()), vec![StoreOp::OweReread { model: "Chat".into(), id: "c1".into(), relation: "node".into() }]),
+        ("id_of", StaleKeys::Set([derived].into_iter().collect()), vec![StoreOp::OweReread { model: "Chat".into(), id: "c2".into(), relation: "node".into() }]),
         ("named", StaleKeys::Set([named.clone()].into_iter().collect()), vec![StoreOp::MarkStale { models: Vec::new(), keys: vec![("Chat".into(), named.name.clone())] }]),
         ("observed", StaleKeys::All, vec![StoreOp::MarkStale { models: vec!["Chat".into()], keys: Vec::new() }]),
         ("family", StaleKeys::Relations(["byChat".to_string()].into_iter().collect()), vec![StoreOp::StaleFamilies { families: vec![("Chat".into(), "byChat".into())] }]),

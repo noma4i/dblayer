@@ -1,0 +1,1 @@
+DELETE FROM reread_owed WHERE model = ?1 AND row_id = ?2 AND relation = ?3 AND (?4 IS NULL OR owed_at <= ?4)

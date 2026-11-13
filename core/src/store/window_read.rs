@@ -31,7 +31,7 @@ impl Store {
         let remote = declared.remote.as_ref().ok_or_else(|| CoreError::Internal(format!("{model}.{relation} is no remote relation")))?;
         let (scope, key) = window_identity(spec, model, relation, remote, params)?;
         let owed = match (declared.node, params.get(crate::schema::NODE_PARAM).and_then(Value::as_str)) {
-            (Some(crate::schema::NodeRead::One), Some(id)) => self.read(&[model], |reader| super::reread_owed::is_owed(reader.connection(), model, id))?,
+            (Some(crate::schema::NodeRead::One), Some(id)) => self.read(&[model], |reader| super::reread_owed::is_owed(reader.connection(), model, id, relation))?,
             _ => false,
         };
         let (Some(record), Some(freshness)) = (self.window(&key)?, self.window_freshness(&key)?) else {

@@ -38,7 +38,7 @@ fn dlv_deferred_alias_after_log_evicted() {
     write(&db, BatchAuthor::Outbox, landed, swaps);
     for query in [Query::new("moments").filtered(Where::equal("id", json!("real-0"))), Query::new("moments")] {
         let (_, _, _, view, replaced) = db.read_view(&query, false, baseline, baseline, None, None, &crate::store::fixtures::list_view(&query), (baseline, 0)).unwrap();
-        assert!(matches!(view, crate::store::lookup::ViewRead::Rows(ref rows, _, _) if rows.iter().any(|(id, _, _)| id == "real-0")), "the view must contain the real row");
+        assert!(matches!(view, crate::store::lookup::ViewRead::Rows(ref rows, _) if rows.iter().any(|(id, _, _)| id == "real-0")), "the view must contain the real row");
         assert!(replaced.iter().any(|(temp, real)| temp.as_str() == "temp-0" && real.as_str() == "real-0"), "evicted swap must remain visible: {replaced:?}");
     }
 }
@@ -51,7 +51,7 @@ fn dlv_swap_same_id_other_model() {
     let baseline = db.read_view(&query, false, 0, 0, None, None, &crate::store::fixtures::list_view(&query), (0, 0)).unwrap().0;
     write(&db, BatchAuthor::Outbox, vec![("moments".into(), json!({"id":"real-1", "userId":"u1"}).to_string())], vec![StoreOp::Swap { model: "moments".into(), temp: "temp-1".into(), real: "real-1".into() }]);
     let (_, _, _, view, replaced) = db.read_view(&query, false, baseline, baseline, None, None, &crate::store::fixtures::list_view(&query), (baseline, 0)).unwrap();
-    assert!(matches!(view, crate::store::lookup::ViewRead::Rows(ref rows, _, _) if rows.iter().any(|(id, _, _)| id == "temp-1")), "the other model keeps its row");
+    assert!(matches!(view, crate::store::lookup::ViewRead::Rows(ref rows, _) if rows.iter().any(|(id, _, _)| id == "temp-1")), "the other model keeps its row");
     assert!(replaced.is_empty(), "another model's alias must not be returned: {replaced:?}");
 }
 
@@ -230,7 +230,7 @@ fn store_relevant_view_keeps_overlay_position_and_handles_eviction() {
     set_typing(&db, "m1", true);
     let (seen, position, relevant, read, _) = db.read_view(&query, false, baseline, baseline, None, None, &view, (baseline, 0)).unwrap();
     assert_eq!((seen, position, relevant), (baseline, 1, Some((baseline, 1))));
-    assert!(matches!(read, crate::store::lookup::ViewRead::Rows(ref rows, _, _) if rows.iter().any(|(_, _, row)| row.get("typing") == Some(&json!(true)))));
+    assert!(matches!(read, crate::store::lookup::ViewRead::Rows(ref rows, _) if rows.iter().any(|(_, _, row)| row.get("typing") == Some(&json!(true)))));
     set_typing(&db, "m1", false);
     let held = crate::store::HeldVersion { from: (baseline, 1), limit: 256 };
     let (seen, position, relevant, _, _) = db.read_view(&query, false, baseline, baseline, None, Some(held), &view, (baseline, 1)).unwrap();

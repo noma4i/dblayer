@@ -167,19 +167,11 @@ impl Delivery {
         fx.extend(std::mem::take(&mut self.debts).into_iter().map(Emit::DebtMinus));
     }
 
-    pub(super) fn debt_window(&self, row: &str) -> Option<WindowKey> {
-        let relation = self.view.node.as_ref()?;
-        let params = serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(row.to_string()))]);
-        Some(WindowKey::relation(&self.view.model, relation, &params))
-    }
-
     pub(super) fn settle_debts(&mut self, fx: &mut Vec<Emit>) {
-        let owing: BTreeSet<String> = match &self.owed_deps {
-            _ if self.stage != DeliveryStage::Live || self.view.node.is_none() => BTreeSet::new(),
-            Some(ids) => ids.clone(),
-            None => self.rows.iter().filter(|row| row.owes).map(|row| row.id.clone()).collect(),
+        let owing: BTreeSet<Debt> = match &self.owed_deps {
+            Some(deps) if self.stage == DeliveryStage::Live => deps.iter().filter(|debt| debt_window(debt) != self.view.window).cloned().collect(),
+            _ => BTreeSet::new(),
         };
-        let owing: BTreeSet<String> = owing.into_iter().filter(|row| self.debt_window(row).is_some_and(|window| window != self.view.window)).collect();
         fx.extend(self.debts.difference(&owing).cloned().map(Emit::DebtMinus));
         fx.extend(owing.difference(&self.debts).cloned().map(Emit::DebtPlus));
         self.debts = owing;

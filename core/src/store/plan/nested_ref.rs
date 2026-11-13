@@ -69,6 +69,27 @@ fn walk(fields: &[FieldSpec], shared: &[FieldSpec], value: &mut Value, fetch: &m
     }
 }
 
+fn walk_row(spec: &ModelSpec, data: &mut Map<String, Value>, fetch: &mut Fetch<'_>) -> Result<(), CoreError> {
+    for field in spec.fields.iter().filter(|field| matches!(field.kind, FieldKind::Object | FieldKind::Array)) {
+        let name = field.from.clone().unwrap_or_else(|| field.name.clone());
+        if let Some(value) = data.get_mut(&name) { walk(&field.fields, &field.shared, value, fetch)?; }
+    }
+    Ok(())
+}
+
+/// The rows (model, id) that the nested references of `rows` read.
+pub(crate) fn linked_rows<'a>(spec: &ModelSpec, rows: impl Iterator<Item = &'a Map<String, Value>>) -> BTreeSet<(String, String)> {
+    let mut found = BTreeSet::new();
+    let mut collect = |model: &str, id: &str| -> Result<FetchedRow, CoreError> {
+        found.insert((model.to_string(), id.to_string()));
+        Ok(None)
+    };
+    for row in rows {
+        let _ = walk_row(spec, &mut row.clone(), &mut collect);
+    }
+    found
+}
+
 impl Store {
     /// Replaces the nested records that reference a row by the current row at the revision of `reader`. A row that is not there keeps the record as written.
     /// Gives the newest revision among the rows read: the stamp of the row changes with them.
@@ -79,11 +100,7 @@ impl Store {
             Ok(None)
         };
         for row in rows.values_mut() {
-            let data = &mut Arc::make_mut(row).data;
-            for field in spec.fields.iter().filter(|field| matches!(field.kind, FieldKind::Object | FieldKind::Array)) {
-                let name = field.from.clone().unwrap_or_else(|| field.name.clone());
-                if let Some(value) = data.get_mut(&name) { walk(&field.fields, &field.shared, value, &mut collect)?; }
-            }
+            walk_row(spec, &mut Arc::make_mut(row).data, &mut collect)?;
         }
         let snapshot_revision = reader.revision_seq()?;
         let mut fetched = Fetched::new();
@@ -103,10 +120,7 @@ impl Store {
                 newest = newest.max(value.as_ref().map_or(snapshot_revision, |(_, revision)| *revision));
                 Ok(value)
             };
-            for field in spec.fields.iter().filter(|field| matches!(field.kind, FieldKind::Object | FieldKind::Array)) {
-                let name = field.from.clone().unwrap_or_else(|| field.name.clone());
-                if let Some(value) = row.data.get_mut(&name) { walk(&field.fields, &field.shared, value, &mut fetch)?; }
-            }
+            walk_row(spec, &mut row.data, &mut fetch)?;
             row.revision = row.revision.max(newest);
         }
         Ok(())

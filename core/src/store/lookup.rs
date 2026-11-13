@@ -35,9 +35,9 @@ pub(crate) type ParsedQuery = (Query, Option<(String, Map<String, Value>)>);
 
 pub(crate) enum ViewRead {
     /// The rows and the total the server gave for their window.
-    Rows(Vec<(String, i64, Row)>, Option<u64>, std::collections::BTreeSet<String>),
+    Rows(Vec<(String, i64, Row)>, Option<u64>),
     Count(i64),
-    Changes { keys: Vec<(String, i64)>, rows: Vec<(String, i64, Row)>, total: Option<u64>, owed: std::collections::BTreeSet<String> },
+    Changes { keys: Vec<(String, i64)>, rows: Vec<(String, i64, Row)>, total: Option<u64> },
     Overflow,
 }
 
@@ -301,10 +301,9 @@ impl Store {
                 }
                 _ => None,
             };
-            let owed = super::reread_owed::owed_among(reader.connection(), model, &wanted.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>())?;
             let stamped = wanted.into_iter().zip(rows).map(|((id, stamp), row)| (id, stamp.max(row.revision), row)).collect();
             let replaced = self.replaced_of(reader, model, &keys, after, seen)?;
-            Ok((seen, position, relevant, if named.is_some() { ViewRead::Changes { keys, rows: stamped, total, owed } } else { ViewRead::Rows(stamped, total, owed) }, replaced))
+            Ok((seen, position, relevant, if named.is_some() { ViewRead::Changes { keys, rows: stamped, total } } else { ViewRead::Rows(stamped, total) }, replaced))
         })
     }
 }

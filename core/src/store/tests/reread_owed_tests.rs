@@ -36,11 +36,11 @@ fn open() -> Arc<Store> {
 }
 
 fn owed(db: &Store, id: &str) -> bool {
-    db.read(&["Chat"], |reader| super::super::reread_owed::is_owed(reader.connection(), "Chat", id)).unwrap()
+    db.read(&["Chat"], |reader| super::super::reread_owed::is_owed(reader.connection(), "Chat", id, "node")).unwrap()
 }
 
 fn owe(db: &Arc<Store>, batch: u64, id: &str) -> crate::store::batch_write::BatchWritten {
-    write_as(db, batch, BatchAuthor::Feed, Vec::new(), vec![StoreOp::OweReread { model: "Chat".into(), id: id.into() }])
+    write_as(db, batch, BatchAuthor::Feed, Vec::new(), vec![StoreOp::OweReread { model: "Chat".into(), id: id.into(), relation: "node".into() }])
 }
 
 fn node_key(id: &str) -> WindowKey {
@@ -116,7 +116,9 @@ fn store_read_window_node_owed_is_stale() {
     assert!(saved_stale(&db, "c1"));
     let query = crate::store::query::Query::new("Chat");
     let (_, _, _, read, _) = db.read_view(&query, false, 0, 0, None, None, &crate::store::fixtures::list_view(&query), (0, 0)).unwrap();
-    assert!(matches!(read, crate::store::lookup::ViewRead::Rows(_, _, ref owed) if owed.iter().eq(["c1".to_string()].iter())), "the value of the reader names the row in debt");
+    assert!(matches!(read, crate::store::lookup::ViewRead::Rows(..)));
+    let owed = db.owed_dependencies(&crate::store::fixtures::list_view(&query), &["c1".to_string()]).unwrap().unwrap();
+    assert!(owed.iter().eq([("Chat".to_string(), "c1".to_string(), "node".to_string())].iter()), "the value of the reader names the row in debt");
     land_node(&db, 3, "c1", vec![RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "again"}).to_string() }]);
     assert!(!saved_stale(&db, "c1"));
 }
@@ -134,7 +136,7 @@ fn feed_event_debt_survives_restart() {
         let op = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: list.name.clone(), model: list.model.clone(), page: 1, replace_all: false, cursor: None, roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
         write_as(&db, 1, BatchAuthor::Window, Vec::new(), vec![op]);
         assert!(!db.window_saved("Chat", "list", &params).unwrap().expect("the list is saved").stale);
-        write_as(&db, 2, BatchAuthor::Feed, Vec::new(), vec![StoreOp::OweReread { model: "Chat".into(), id: "c1".into() }, StoreOp::MarkStale { models: Vec::new(), keys: vec![("Chat".into(), list.name.clone())] }]);
+        write_as(&db, 2, BatchAuthor::Feed, Vec::new(), vec![StoreOp::OweReread { model: "Chat".into(), id: "c1".into(), relation: "node".into() }, StoreOp::MarkStale { models: Vec::new(), keys: vec![("Chat".into(), list.name.clone())] }]);
     }
     let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], None, Arc::new(crate::runtime::SystemClock)).unwrap());
     assert!(owed(&db, "c1"), "the row still owes the reread");

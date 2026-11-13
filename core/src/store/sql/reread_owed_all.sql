@@ -1,0 +1,1 @@
+SELECT model, row_id, relation FROM reread_owed

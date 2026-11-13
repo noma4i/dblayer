@@ -204,6 +204,7 @@ pub struct BatchPlan {
     pub network: Option<NetworkAdmission>,
     pub parents: BTreeSet<RowRef>,
     pub request_base: Option<i64>,
+    pub landed_read: Option<String>,
 }
 
 /// A local value for a row that is not stored yet. It waits in `local_pending` and joins the row when it arrives.
@@ -248,6 +249,7 @@ impl BatchPlan {
             network: None,
             parents: BTreeSet::new(),
             request_base: None,
+            landed_read: None,
         }
     }
 

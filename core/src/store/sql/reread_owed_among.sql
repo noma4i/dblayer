@@ -1,1 +1,0 @@
-SELECT row_id FROM reread_owed WHERE model = ?1 AND row_id IN (SELECT value FROM json_each(?2))

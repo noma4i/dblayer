@@ -12,7 +12,7 @@ const EPOCH: u64 = 1;
 const STREAM: u64 = 7;
 
 fn blob_view() -> View {
-    View { kind: Kind::Blob, tables: vec![table_name("Chat")], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: crate::store::transfer_key("Chat", "r1", "photo"), node: None, deferred_rows: Vec::new(), query: None, model: "Chat".into() }
+    View { kind: Kind::Blob, tables: vec![table_name("Chat")], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: crate::store::transfer_key("Chat", "r1", "photo"), node: None, wants: Vec::new(), deferred_rows: Vec::new(), query: None, model: "Chat".into() }
 }
 
 fn opened() -> DeliveriesState {

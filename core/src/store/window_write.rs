@@ -69,8 +69,12 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
     let declared = spec.relations.iter().find(|item| item.name == relation).ok_or_else(|| StoreError::Constraint(format!("{model} has no relation {relation}")))?;
     let remote = declared.remote.as_ref().ok_or_else(|| StoreError::Constraint(format!("{model}.{relation} is not remote")))?;
     envelope.source = page.source;
+    let mut paid = None;
     if declared.node == Some(crate::schema::NodeRead::One) {
-        if let Some(id) = params.get(crate::schema::NODE_PARAM).and_then(Value::as_str) { super::reread_owed::release(writer.connection, model, id, super::reread_owed::Release::Landing(page.base_revision))?; }
+        envelope.landed_read = Some(relation.clone());
+        if let Some(id) = params.get(crate::schema::NODE_PARAM).and_then(Value::as_str) {
+            if super::reread_owed::release(writer.connection, model, id, super::reread_owed::Release::Node { relation: &relation, base: page.base_revision })? { paid = Some(id.to_string()); }
+        }
     }
     let (scope, key) = super::windows::window_identity(spec, model, &relation, remote, &params).map_err(fault)?;
     let stored = super::windows::read_window(writer.connection, &key)?;
@@ -123,7 +127,9 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
         pages: i64::from(pages),
         anchor: if keep_tail { stored.as_ref().and_then(|window| window.anchor.clone()) } else { incoming_ids(&accepted).last().map(ToString::to_string).or_else(|| stored.as_ref().filter(|_| !first).and_then(|window| window.anchor.clone())) }, issued, applied, cleared_at: first.then_some(page.landed_at),
     });
-    writer.apply(&envelope)
+    let mut result = writer.apply(&envelope)?;
+    if let Some(id) = paid { super::reread_owed::announce(&mut result, model, &id)?; }
+    Ok(result)
 }
 
 /// The marker of a media window replaces the stored one in the same transaction as the rows of its chain; the window lands now and no debt stays.

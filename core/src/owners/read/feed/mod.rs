@@ -382,8 +382,8 @@ impl Feed {
                 StaleKeys::All => { models.insert(event.model.clone()); }
                 StaleKeys::Set(keys) => for key in keys {
                     match key.kind() {
-                        WindowKind::Relation { params, .. } if params.contains_key(crate::schema::NODE_PARAM) => {
-                            if let Some(id) = params.get(crate::schema::NODE_PARAM).and_then(serde_json::Value::as_str) { owed.insert((key.model.clone(), id.to_string())); }
+                        WindowKind::Relation { relation, params } if params.contains_key(crate::schema::NODE_PARAM) => {
+                            if let Some(id) = params.get(crate::schema::NODE_PARAM).and_then(serde_json::Value::as_str) { owed.insert((key.model.clone(), id.to_string(), relation)); }
                         }
                         _ => { windows.insert((key.model.clone(), key.name.clone())); }
                     }
@@ -391,7 +391,7 @@ impl Feed {
                 StaleKeys::Relations(relations) => families.extend(relations.iter().map(|relation| (event.model.clone(), relation.clone()))),
             }
         }
-        let mut ops: Vec<StoreOp> = owed.into_iter().map(|(model, id)| StoreOp::OweReread { model, id }).collect();
+        let mut ops: Vec<StoreOp> = owed.into_iter().map(|(model, id, relation)| StoreOp::OweReread { model, id, relation }).collect();
         if !models.is_empty() || !windows.is_empty() { ops.push(StoreOp::MarkStale { models: models.into_iter().collect(), keys: windows.into_iter().collect() }); }
         if !families.is_empty() { ops.push(StoreOp::StaleFamilies { families: families.into_iter().collect() }); }
         ops

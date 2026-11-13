@@ -1,1 +1,1 @@
-INSERT INTO reread_owed (model, row_id, owed_at) VALUES (?1, ?2, ?3) ON CONFLICT (model, row_id) DO UPDATE SET owed_at = excluded.owed_at
+INSERT INTO reread_owed (model, row_id, relation, owed_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (model, row_id, relation) DO UPDATE SET owed_at = excluded.owed_at
