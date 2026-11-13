@@ -115,7 +115,6 @@ struct Router {
     waits: Vec<Mutex<Vec<(u64, bool)>>>,
     #[cfg(test)]
     clock: Arc<dyn crate::runtime::Clock>,
-    #[cfg(test)]
     stopped: Vec<std::sync::atomic::AtomicBool>,
 }
 
@@ -129,6 +128,7 @@ impl Router {
     fn push(&self, to: usize, command: Command) {
         self.inflight.add();
         self.boxes[to].push(Queued::new(command));
+        if self.stopped[to].load(Ordering::SeqCst) { self.inflight.done(self.boxes[to].drain()); }
     }
 
     fn report_failure(&self, executor: &str) {
@@ -412,7 +412,8 @@ impl RuntimeBuilder {
         }
         #[cfg(test)]
         let owners: Vec<_> = self.bodies.iter().filter_map(|body| body.as_ref().map(|(name, _)| *name)).collect();
-        let router = Arc::new(Router { boxes: self.boxes, inflight: Inflight::default(), failure: self.failure, history: self.history, record: self.record, #[cfg(test)] gates: Mutex::new(Vec::new()), #[cfg(test)] active: owners.iter().map(|_| Mutex::new(Vec::new())).collect(), #[cfg(test)] diagnostics: owners.iter().map(|_| Mutex::new(String::new())).collect(), #[cfg(test)] waits: owners.iter().map(|_| Mutex::new(Vec::new())).collect(), #[cfg(test)] clock: self.clock.clone(), #[cfg(test)] stopped: owners.iter().map(|_| std::sync::atomic::AtomicBool::new(false)).collect(), #[cfg(test)] owners });
+        let slots = self.boxes.len();
+        let router = Arc::new(Router { boxes: self.boxes, inflight: Inflight::default(), failure: self.failure, history: self.history, record: self.record, #[cfg(test)] gates: Mutex::new(Vec::new()), #[cfg(test)] active: owners.iter().map(|_| Mutex::new(Vec::new())).collect(), #[cfg(test)] diagnostics: owners.iter().map(|_| Mutex::new(String::new())).collect(), #[cfg(test)] waits: owners.iter().map(|_| Mutex::new(Vec::new())).collect(), #[cfg(test)] clock: self.clock.clone(), stopped: (0..slots).map(|_| std::sync::atomic::AtomicBool::new(false)).collect(), #[cfg(test)] owners });
         #[cfg(test)]
         ROUTERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(Arc::downgrade(&router));
         self.handle.router.set(router.clone()).map_err(|_| std::io::Error::other("the runtime is already started"))?;
@@ -441,8 +442,10 @@ impl RuntimeBuilder {
     }
 }
 
+fn signal_stop(router: &Router) { (0..router.boxes.len()).for_each(|to| router.push(to, Command::Stop)); }
+
 fn stop(router: &Router, joins: &mut Vec<JoinHandle<()>>) {
-    router.boxes.iter().for_each(|mailbox| mailbox.push(Queued::new(Command::Stop)));
+    signal_stop(router);
     for join in joins.drain(..) {
         if join.thread().id() == std::thread::current().id() { continue; }
         let _ = join.join();
@@ -473,7 +476,7 @@ impl Runtime {
 }
 
 impl Drop for Runtime {
-    fn drop(&mut self) { stop(&self.router, self.joins.get_mut().unwrap_or_else(std::sync::PoisonError::into_inner)); }
+    fn drop(&mut self) { signal_stop(&self.router); }
 }
 
 struct OwnerThread<O: StateOwner> {
@@ -515,7 +518,9 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, time
                 Command::Wake => {}
                 Command::Stop => {
                     #[cfg(test)]
-                    { lock(&router.active[owner.slot]).clear(); router.stopped[owner.slot].store(true, Ordering::SeqCst); }
+                    lock(&router.active[owner.slot]).clear();
+                    router.stopped[owner.slot].store(true, Ordering::SeqCst);
+                    router.inflight.done(handled + owner.mailbox.drain());
                     return;
                 }
             }

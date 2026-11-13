@@ -18,6 +18,8 @@ impl<C> Mailbox<C> {
         crate::lock::effect(|| self.wake.notify_one());
     }
 
+    pub fn drain(&self) -> usize { std::mem::take(&mut *lock(&self.commands)).len() }
+
     pub fn take(&self, mut next_due: impl FnMut() -> Option<Duration>) -> Vec<C> {
         let mut queue = lock(&self.commands);
         while queue.is_empty() {
