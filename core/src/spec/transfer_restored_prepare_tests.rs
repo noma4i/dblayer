@@ -97,7 +97,7 @@ fn run_seed(start: Start, seed: u64) -> Result<(), String> {
 fn xfer_prop_restored_preparing_ends_under_every_order() {
     let results: Vec<_> = std::thread::scope(|scope| {
         let runs: Vec<_> = (0..64u64).flat_map(|chunk| [Start::Preparing, Start::FailedThenRetry].map(|start| scope.spawn(move || (chunk * 32..chunk * 32 + 32).filter_map(|seed| run_seed(start, seed).err()).collect::<Vec<_>>()))).collect();
-        runs.into_iter().flat_map(|run| run.join().unwrap()).collect()
+        runs.into_iter().flat_map(crate::test_wait::join_within).collect()
     });
     assert!(results.is_empty(), "{} of 4096 orders leave the restored preparing transfer without its end; first: {}", results.len(), results[0]);
 }
