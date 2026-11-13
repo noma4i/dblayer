@@ -4,12 +4,16 @@
 
 ### Changed
 
-- Switch off the PUT in a background session on iOS.
+- Switch off the PUT in a background session on iOS: `DB.handleBackgroundEvents` returns `false`.
 
 ### Fixed
 
 - Send a file on iOS in parts again, with resume.
 - Cancel or discard a staged upload right after `commit` removes it instead of throwing `InFlight`.
+- Wait for a library step in `commit` of a staged upload instead of throwing `InFlight`.
+- Throw `NotFound` from `commit` of a staged upload that is being removed.
+- Mirror a video on iOS that needs no re-encode when `mirror` is set.
+- Refuse a video probe with a rotation outside 0, 90, 180, 270 as `prepare_failed`.
 
 ## 6.32.0 - 2026-11-13
 

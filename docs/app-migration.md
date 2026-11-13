@@ -172,3 +172,28 @@ let removed = try await staged.discard()
 ```kotlin
 val removed = staged.discard()
 ```
+
+## 11. After 6.32.0
+
+- `DB.handleBackgroundEvents(identifier:completion:)` stays in the API and always returns `false`: the PUT of a file on iOS runs in the app, in parts. Remove the call from `application(_:handleEventsForBackgroundURLSession:completionHandler:)` if you added it for 6.32.0, and keep the `beginBackgroundTask` around uploads. Android changes nothing. See [upload with the app in the background](files.md#upload-with-the-app-in-the-background).
+
+```swift
+// iOS: remove DB.handleBackgroundEvents, nothing replaces it.
+```
+
+```kotlin
+// Android: no change.
+```
+
+- `commit` of a staged upload during a step of the library waits for the step instead of throwing `InFlight`, and `commit` of an upload that is being removed throws `NotFound`. Remove a repeat of `commit` after `InFlight`, and handle `NotFound` as the end of the upload.
+
+```swift
+let receipt = try await staged.commit(values, variables)
+```
+
+```kotlin
+val receipt = staged.commit(values, variables)
+```
+
+- A video with `mirror` set goes up mirrored on iOS also when the source needs no re-encode. The app changes nothing.
+- A custom `Preparer` that reports a video rotation outside 0, 90, 180 or 270 gets `prepare_failed` with the reason `failed`, and the copy of the source stays. Report the turn as one of the four values.
