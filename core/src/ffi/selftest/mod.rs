@@ -30,6 +30,7 @@ mod upload_tests;
 mod sequenced_paths_tests;
 mod session_replay_tests;
 mod id_reuse_tests;
+mod net_first_value_tests;
 mod rig_events;
 mod stale_event_tests;
 mod data_event_tests;
