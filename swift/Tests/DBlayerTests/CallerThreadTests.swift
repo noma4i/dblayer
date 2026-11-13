@@ -37,13 +37,25 @@ private struct ThreadNotice: DBModel {
   var estimatedBytes: UInt64 { notice.estimatedBytes }
 }
 
+private struct ThreadMoment: DBModel {
+  static let modelName = Moment.modelName
+  static let wireLayout = Moment.wireLayout
+  let moment: Moment
+  init(wire: WireRow) throws { DecoderThreads.shared.record(); moment = try Moment(wire: wire) }
+  var id: String { moment.id }
+  var sync: SyncInfo { moment.sync }
+  var uploads: [String: UploadInfo] { moment.uploads }
+  var rowRevision: Int64 { moment.rowRevision }
+  var estimatedBytes: UInt64 { moment.estimatedBytes }
+}
+
 extension BridgeProbeTests {
-  /// Requirement: the library decodes a model off the main actor, the reader on the main actor only receives the value. Observable: the main-thread flag the model decoder records, and the value the reader gets.
+  /// Requirement: the library decodes a model of the app off the main actor on every entry that hands a model to the caller: the rows of a stream, the events and the value of a write receipt. The reader on the main actor only receives the value. Observable: the main-thread flag the model decoder records, and the value the reader gets.
   @MainActor
   @Test(.timeLimit(.minutes(1)))
-  func streamValuesAreDecodedOffTheMainActor() async throws {
+  func everyEntryDecodesTheModelOffTheMainActor() async throws {
     let transport = MockTransport()
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"},{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"}]"#)
+    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"},{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
     DecoderThreads.shared.clear()
 
     let projected = Projected<ThreadChat>(try DB.account().stream(Query<ThreadChat>(relation: "list", params: ["list": .string("SECONDARY")])))
@@ -70,5 +82,12 @@ extension BridgeProbeTests {
     #expect(received == "c1")
     #expect(!DecoderThreads.shared.calls.isEmpty, "events: the decoder never ran")
     #expect(!DecoderThreads.shared.calls.contains(true), "events: the decoder ran on the main thread: \(DecoderThreads.shared.calls)")
+
+    DecoderThreads.shared.clear()
+    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
+    let sent = try await DB.account().send(ThreadMoment.self, values: ["text": .string("hello")])
+    #expect(sent.optimisticValue != nil, "send: the receipt carries no optimistic value")
+    #expect(!DecoderThreads.shared.calls.isEmpty, "send: the decoder never ran")
+    #expect(!DecoderThreads.shared.calls.contains(true), "send: the decoder ran on the main thread: \(DecoderThreads.shared.calls)")
   }
 }

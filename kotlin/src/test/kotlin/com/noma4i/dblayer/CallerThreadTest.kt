@@ -40,11 +40,11 @@ class CallerThreadTest {
         assertEquals("$case: the decoder ran on the thread of the caller: ${decoded.toList()}", false, decoded.any { it.startsWith("caller-main") })
     }
 
-    /** Requirement: a stream delivers its values to a collector with the models decoded off the collector thread. Observable: the thread of the decoder and the value the collector receives. */
+    /** Requirement: every entry that hands a model of the app to the caller decodes it off the caller thread: the rows of a stream, the events and the value of a write receipt. Observable: the thread of the decoder and the value the caller receives. */
     @Test
-    fun streamValuesAreDecodedOffTheCollectorThread() = bounded {
+    fun everyEntryDecodesTheModelOffTheCallerThread() = bounded {
         val transport = MockTransport()
-        openSigned(Config(null, null), modelsJSON, transport, """[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"},{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"}]""")
+        openSigned(Config(null, null), modelsJSON, transport, """[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"},{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"}]""")
         val screen = CoroutineScope(SupervisorJob() + caller)
         try {
             decoded.clear()
@@ -63,24 +63,14 @@ class CallerThreadTest {
             val item = awaitWithin("the event reaches the collector") { heard.receive() }
             assertEquals("c1", ((item as ModelEventItem.Event<*>).event.after as ChatActivityNotice).chatId)
             assertDecodedOffTheCaller("events")
-        } finally {
-            screen.cancel()
-            closeForCleanup()
-        }
-    }
 
-    /** Requirement: the value of a write receipt is decoded off the thread of the caller. Observable: the thread of the decoder of the optimistic value. */
-    @Test
-    fun receiptValueIsDecodedOffTheCallerThread() = bounded {
-        val transport = MockTransport()
-        transport.enqueue("CreateMoment", """{"data":{"createMoment":{"id":"1"}}}""")
-        openSigned(Config(null, null), modelsJSON, transport, """[{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"}]""")
-        try {
             decoded.clear()
+            transport.enqueue("CreateMoment", """{"data":{"createMoment":{"id":"1"}}}""")
             val sent = withContext(caller) { AccountScope.current().send(recording(Moment), buildJsonObject { put("text", "hello") }) }
             assertNotEquals("the receipt carries no optimistic value", null, sent.optimisticValue)
             assertDecodedOffTheCaller("send")
         } finally {
+            screen.cancel()
             closeForCleanup()
         }
     }
