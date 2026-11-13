@@ -731,6 +731,13 @@ for path in sorted((source / "store").rglob("*.rs")):
                 number = text.count("\n", 0, header.end() + found.start()) + 1
                 findings.append(f"Z56 the entry of a row in a window reads only the source of the batch, RelationSpec::admits decides it (P-DATA-100): {path.relative_to(root)}:{number}")
 
+put_outside = re.compile(r"PutExecutor|put_executor|putExecutor|PutMode|PutIdentity|PutEnded|PutSent|PutMissing|ResumePuts|CancelPut|detached_put|writesQuiet|UrlSessionPuts|handleBackgroundEvents")
+for folder, suffix in ((source, "*.rs"), (root / "swift" / "Sources", "*.swift"), (root / "kotlin" / "src" / "main", "*.kt")):
+    for path in sorted(folder.rglob(suffix)):
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            if put_outside.search(line):
+                findings.append(f"Z59 the PUT outside the process is off for good, the PUT of a step runs in the process only (D-404): {path.relative_to(root)}:{number}")
+
 manifest = source / "ffi" / "selftest" / "manifest.tsv"
 lanes = {"core": (source, ".rs", "fn"), "swift": (root / "swift" / "Tests", ".swift", "func"), "kotlin": (root / "kotlin" / "src", ".kt", "fun")}
 declared = {lane: set(re.findall(rf"\b{word}\s+`?(\w+)`?\s*\(", "".join(path.read_text() for path in sorted(folder.rglob(f"*{suffix}"))))) for lane, (folder, suffix, word) in lanes.items() if folder.is_dir()}
