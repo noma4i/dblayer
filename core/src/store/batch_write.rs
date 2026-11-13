@@ -104,7 +104,7 @@ impl Store {
             }
             (Vec::new(), Vec::new())
         };
-        let mut writes_database = !results.is_empty() || (batch.author != BatchAuthor::Feed && !batch.rows.is_empty());
+        let mut writes_database = results.iter().any(|result| !result.is_noop());
         let mut resets = Vec::new();
         let mut rolled_back = std::collections::BTreeSet::new();
         let mut virtual_transfers = Vec::new();
@@ -132,7 +132,7 @@ impl Store {
                 }
                 continue;
             }
-            writes_database = true;
+            writes_database |= !matches!(op, crate::owners::store::StoreOp::Rows { .. } | crate::owners::store::StoreOp::LocalRows { .. } | crate::owners::store::StoreOp::RemoveRows { .. } | crate::owners::store::StoreOp::RemoveServerRows { .. } | crate::owners::store::StoreOp::ExpireRow { .. });
             if let crate::owners::store::StoreOp::Swap { model, temp, real } = op {
                 results.push(super::swap::apply(&mut writer, model, temp, real, &closing)?);
                 continue;
@@ -148,6 +148,7 @@ impl Store {
         let (derived, pointer_rows, named_gone) = super::follow_pointer::settle_parents(&Reader::new(&transaction, &inner.models), &inner.models, &results, |plan| writer.apply(&plan), inner.generation)?;
         results.extend(derived);
         if let Some(touched) = super::touch_ancestors::touch_ancestors(&mut writer)? { results.push(touched); }
+        writes_database |= results.iter().any(|result| !result.is_noop());
         let candidates = writer.candidates;
         let mut live_files = std::collections::HashSet::new();
         for file in files {

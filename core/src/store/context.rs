@@ -130,7 +130,6 @@ impl Store {
             StoreEvent::Reset { revision, models, .. } => {
                 notified.notify(CommittedBroadcast::of_reset(u64::try_from(revision).unwrap_or_default(), models.as_deref()));
             }
-            StoreEvent::Renewed => {}
         }))?;
         store.context = Context {
             specs: models.into_iter().map(|spec| (spec.key.as_str().to_string(), spec)).collect(),

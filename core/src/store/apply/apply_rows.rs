@@ -191,9 +191,9 @@ pub(super) fn apply_upsert(
             if changed.is_empty() {
                 if info.spec.is_memory() && info.spec.expire_window().is_some() {
                     connection.execute(&format!(include_str!("../sql/apply_rows/apply_upsert.sql"), info.table), params![revision, id])?;
-                }
-                if let Ok(row_id) = crate::identity::RowId::new(&id) {
-                    result.renewed.push(RowRef::new(model.clone(), row_id));
+                    if let Ok(row_id) = crate::identity::RowId::new(&id) {
+                        result.renewed.push(RowRef::new(model.clone(), row_id));
+                    }
                 }
                 if paid { result.push(model, &id, RowChangeKind::Touched, BTreeSet::new()); }
                 prefetched.insert((model.to_string(), id.clone()), existing.clone());

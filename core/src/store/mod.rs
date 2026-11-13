@@ -147,7 +147,6 @@ impl Inner {
 
 pub(crate) enum StoreEvent<'a> {
     Committed(&'a crate::store::CommitResult),
-    Renewed,
     Reset { revision: i64, models: Option<Vec<String>> },
 }
 
@@ -203,10 +202,6 @@ impl Committed<'_> {
         Self { result, turn: None }
     }
 
-    fn event(result: &CommitResult) -> StoreEvent<'_> {
-        if result.is_noop() { StoreEvent::Renewed } else { StoreEvent::Committed(result) }
-    }
-
     pub(crate) fn result(&self) -> &CommitResult {
         &self.result
     }
@@ -219,7 +214,7 @@ impl Committed<'_> {
 
     fn announce(&mut self) {
         if let Some((store, ticket)) = self.turn.take() {
-            store.line.run(ticket, || store.announce(Self::event(&self.result)));
+            store.line.run(ticket, || store.announce(StoreEvent::Committed(&self.result)));
         }
     }
 }
@@ -328,12 +323,11 @@ impl Store {
 
     fn commit_announcement(&self, inner: MutexGuard<'_, Inner>, result: CommitResult) -> Committed<'_> {
         if let Some(revision) = result.revision { self.committed_revision.store(revision, std::sync::atomic::Ordering::Release); }
-        let renewal = result.is_noop();
-        if renewal && result.renewed.is_empty() {
+        if result.is_noop() {
             return Committed::unannounced(result);
         }
         if let Some(log) = self.commit_log.get() {
-            log(&Committed::event(&result));
+            log(&StoreEvent::Committed(&result));
         }
         let ticket = self.line.ticket();
         drop(inner);

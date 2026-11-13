@@ -120,6 +120,24 @@ fn out_server_removed_row() {
     assert_eq!(moment_text(&db), Value::Null);
 }
 
+/// R12, P-STORE-23: a server delete repeated for a row already removed, by an event or by a server removal of an answer, moves neither the tombstone number nor the revision.
+#[test]
+fn a_repeated_server_delete_changes_nothing() {
+    for via_event in [true, false] {
+        let db = open_moments();
+        crate::store::fixtures::put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "a"}));
+        let delete = |id: u64| {
+            let (author, rows, ops) = if via_event { (BatchAuthor::Feed, vec![("moments".into(), json!({"op": "delete", "id": "m1"}).to_string())], Vec::new()) } else { (BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RemoveServerRows { model: "moments".into(), ids: vec!["m1".into()] }]) };
+            let batch = StoreBatch { author, id, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops };
+            let revision = db.write_batch(&batch, db.files(), None).unwrap().revision;
+            (revision, db.read(&[], |reader| reader.tombstone_seq("moments", "m1")).unwrap())
+        };
+        let first = delete(2);
+        assert!(first.1.is_some(), "via_event={via_event}: the first delete writes the tombstone");
+        assert_eq!(delete(3), first, "via_event={via_event}");
+    }
+}
+
 #[test]
 fn out_local_destroy_is_not_a_server_removal() {
     let db = open_moments();

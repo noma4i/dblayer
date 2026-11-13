@@ -102,9 +102,9 @@ fn write_followed(
             EntityOp::Destroy { model, id, reason } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
                 let removed = remove_row(connection, info, id.as_str())?;
-                super::super::reread_owed::release(connection, model.as_str(), id.as_str(), super::super::reread_owed::Release::Deleted)?;
+                wrote |= super::super::reread_owed::release(connection, model.as_str(), id.as_str(), super::super::reread_owed::Release::Deleted)?;
                 prefetched.insert((model.to_string(), id.to_string()), None);
-                if reason.writes_tombstone() {
+                if reason.writes_tombstone() && (removed > 0 || Reader::new(connection, models).tombstone_seq(model.as_str(), id.as_str())?.is_none()) {
                     write_tombstone(connection, model.as_str(), id.as_str(), revision, now_ms)?;
                     tombstoned = true;
                 }
@@ -189,7 +189,7 @@ fn write_followed(
             wrote = true;
         }
     }
-    wrote |= !changes.changes.is_empty() || tombstoned;
+    wrote |= !changes.changes.is_empty() || !changes.renewed.is_empty() || tombstoned;
 
     files_changed |= apply_file_ops(connection, &envelope.file_ops)?;
     wrote |= files_changed;
@@ -240,15 +240,15 @@ fn write_followed(
     }
 
     result.renewed = changes.renewed;
+    for removed in destroyed.iter().filter(|removed| removed.reason == DestroyReason::Server) {
+        let Ok(id) = crate::identity::RowId::new(&removed.id) else { continue };
+        result.server_removed.push(RowRef::new(removed.model.clone(), id));
+    }
     if wrote {
         manifest_write(connection, REVISION_SEQ_KEY, &revision.to_string())?;
         result.revision = Some(revision);
         result.rows = changes.changes;
         result.replaced = replaced;
-        for removed in destroyed.iter().filter(|removed| removed.reason == DestroyReason::Server) {
-            let Ok(id) = crate::identity::RowId::new(&removed.id) else { continue };
-            result.server_removed.push(RowRef::new(removed.model.clone(), id));
-        }
         result.queue_operations = crate::store::operation::read_operations(connection, &result.operations)?;
     } else {
         result.scopes.clear();

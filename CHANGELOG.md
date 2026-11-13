@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Keep the revision when the server repeats the delete of a removed row.
+
 ## 6.35.0 - 2026-11-14
 
 ### Added
