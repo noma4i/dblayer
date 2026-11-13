@@ -182,7 +182,7 @@ pub struct ReadStream {
     order: Arc<crate::runtime::CallOrder>,
     stream: u64,
     ended: std::sync::Mutex<Option<EndCause>>,
-    readers: std::sync::Mutex<ReadReaders>,
+    readers: Arc<std::sync::Mutex<ReadReaders>>,
     /// The model of an events stream, to turn the rows of its events into wire rows.
     wire: Option<Arc<WireModel>>,
     /// The epoch of the open, and the relation the request reads from the server.
@@ -242,10 +242,14 @@ impl Drop for PullWait {
 #[uniffi::export]
 impl ReadStream {
     pub fn resync(&self) {
-        let readers = self.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if readers.claimed.is_some_and(|id| readers.released.contains(&id)) { return; }
-        drop(readers);
-        if let Some(life) = self.life() { life.request_snapshot(self.stream); }
+        let Some(life) = self.life() else { return };
+        let (readers, stream) = (self.readers.clone(), self.stream);
+        self.order.enter(move || {
+            let readers = readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if readers.claimed.is_some_and(|id| readers.released.contains(&id)) { return; }
+            drop(readers);
+            life.request_snapshot(stream);
+        });
     }
 
     /// The next value of the stream, `None` once the stream ended and its last value was taken. A failure of the stream arrives as its last value `Ended`.
@@ -256,7 +260,6 @@ impl ReadStream {
         let mut waiting = PullWait { life, stream: this_stream.stream, outcome: waiter.id(), armed: true };
         let answer = waiter.wait().await;
         waiting.armed = false;
-        if this_stream.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).released.contains(&reader) { return Some(ReadValue::Ended { cause: EndCause::Closed }); }
         match answer {
             Outcome::Value(PullAnswer::Value(value)) => {
                 let mut value = *value;
@@ -308,8 +311,11 @@ impl ReadStream {
 
     /// The reader left the stream: its interest ends while the handle lives. Another reader's number changes nothing.
     pub fn release_reader(&self, reader: u64) {
-        if !self.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).released.insert(reader) { return; }
-        if let Some(life) = self.life() { life.release_reader(self.stream, reader); }
+        let (readers, stream, life) = (self.readers.clone(), self.stream, self.life());
+        self.order.enter(move || {
+            if !readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).released.insert(reader) { return; }
+            if let Some(life) = life { life.release_reader(stream, reader); }
+        });
     }
 
     /// Returns when no value of this stream is delivered any more.
@@ -328,7 +334,9 @@ pub enum ReadClaim { Claimed { reader: u64 }, Ended { cause: EndCause } }
 
 impl Drop for ReadStream {
     fn drop(&mut self) {
-        if let Some(life) = self.life() { life.release_stream(self.stream); }
+        let Some(life) = self.life() else { return };
+        let stream = self.stream;
+        self.order.enter(move || life.release_stream(stream));
     }
 }
 
@@ -481,7 +489,7 @@ impl Database {
             (ReadRequest::List { query } | ReadRequest::Count { query }, true) => query.relation.as_ref().map(|relation| RelationLoad { model: query.model.clone(), relation: relation.clone(), params_json: query.params_json.clone() }),
             _ => None,
         };
-        Arc::new_cyclic(|me| ReadStream { me: me.clone(), database: self.me.clone(), order: Arc::default(), stream, ended: std::sync::Mutex::new(None), readers: std::sync::Mutex::new(ReadReaders::default()), wire, epoch, load })
+        Arc::new_cyclic(|me| ReadStream { me: me.clone(), database: self.me.clone(), order: Arc::default(), stream, ended: std::sync::Mutex::new(None), readers: Arc::new(std::sync::Mutex::new(ReadReaders::default())), wire, epoch, load })
     }
 }
 

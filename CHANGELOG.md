@@ -14,6 +14,7 @@
 - Never send a temporary id after a restart once its create ended without a server id.
 - Keep the server ids of created rows across a database format change.
 - Treat a server id that starts with temp- as a server id.
+- Keep a stream release, a resync and a load start behind the calls started before them.
 
 ### Removed
 

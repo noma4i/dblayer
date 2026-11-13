@@ -189,17 +189,24 @@ impl Addresses {
 }
 
 impl super::Life {
-    /// A platform call that waits for a load of `key`: the waiter is the id of the call in `Windows`.
     /// Takes the place of a platform call in the order of the loads: the id and the waiter of its outcome. `Windows` registers the loads in the order of their ids.
     pub fn reserve_load(&self, epoch: Epoch) -> (Waiter<LifeReply>, u64) {
+        let (waiter, id) = self.register_load(epoch);
+        self.send_reservation(epoch, id);
+        (waiter, id)
+    }
+
+    /// The id and the waiter of a platform call that waits for a load: no input reaches `Windows`.
+    pub fn register_load(&self, epoch: Epoch) -> (Waiter<LifeReply>, u64) {
         let waiter = self.wiring.outcomes.register(epoch);
         let id = waiter.id().raw() | CALL;
-        if self.is_shut() {
-            self.wiring.outcomes.settle(waiter.id(), LifeReply::Closed);
-        } else {
-            self.wiring.to_windows_in(epoch, WindowsInput::Reserve { id });
-        }
+        if self.is_shut() { self.wiring.outcomes.settle(waiter.id(), LifeReply::Closed); }
         (waiter, id)
+    }
+
+    /// The reservation of `id` reaches `Windows`.
+    pub fn send_reservation(&self, epoch: Epoch, id: u64) {
+        if !self.is_shut() { self.wiring.to_windows_in(epoch, WindowsInput::Reserve { id }); }
     }
 
     /// The call of `id` ended before its load was registered.

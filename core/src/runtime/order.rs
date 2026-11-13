@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
@@ -12,6 +12,7 @@ pub struct CallOrder {
 struct Places {
     next: u64,
     waiting: BTreeSet<u64>,
+    queued: BTreeMap<u64, Box<dyn FnOnce() + Send>>,
     wakers: Vec<Waker>,
 }
 
@@ -32,6 +33,40 @@ impl CallOrder {
         places.waiting.insert(number);
         Arc::new(Place { order: self.clone(), number })
     }
+
+    /// A synchronous entry takes a place in O(1): it runs now when every smaller place passed, else the thread that passes the previous place runs it, outside the lock of the places.
+    pub fn enter(self: &Arc<Self>, entry: impl FnOnce() + Send + 'static) {
+        let number = {
+            let mut places = held(&self.state);
+            places.next += 1;
+            let number = places.next;
+            places.waiting.insert(number);
+            if places.waiting.first() != Some(&number) {
+                places.queued.insert(number, Box::new(entry));
+                return;
+            }
+            number
+        };
+        polling_place(None, entry);
+        pass_number(self, number);
+    }
+}
+
+fn pass_number(order: &Arc<CallOrder>, number: u64) {
+    let mut passing = Some(number);
+    while let Some(number) = passing.take() {
+        let (woken, next) = {
+            let mut places = held(&order.state);
+            if !places.waiting.remove(&number) { return; }
+            let first = places.waiting.first().copied();
+            (std::mem::take(&mut places.wakers), first.and_then(|first| places.queued.remove(&first).map(|entry| (first, entry))))
+        };
+        woken.into_iter().for_each(Waker::wake);
+        if let Some((first, entry)) = next {
+            polling_place(None, entry);
+            passing = Some(first);
+        }
+    }
 }
 
 impl Place {
@@ -45,14 +80,7 @@ impl Place {
         })
     }
 
-    pub fn pass(&self) {
-        let woken = {
-            let mut places = held(&self.order.state);
-            if !places.waiting.remove(&self.number) { return; }
-            std::mem::take(&mut places.wakers)
-        };
-        woken.into_iter().for_each(Waker::wake);
-    }
+    pub fn pass(&self) { pass_number(&self.order, self.number); }
 }
 
 impl Drop for Place {

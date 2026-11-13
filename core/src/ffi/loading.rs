@@ -98,11 +98,17 @@ struct LoadSlot {
     life: Arc<crate::owners::life::Life>,
     waiter: Option<crate::runtime::Waiter<LifeReply>>,
     id: u64,
+    order: Option<Arc<crate::runtime::CallOrder>>,
 }
 
 impl Drop for LoadSlot {
     fn drop(&mut self) {
-        if self.waiter.is_some() { self.life.unreserve_load(self.id); }
+        if self.waiter.is_none() { return; }
+        let (life, id) = (self.life.clone(), self.id);
+        match &self.order {
+            Some(order) => order.enter(move || life.unreserve_load(id)),
+            None => life.unreserve_load(id),
+        }
     }
 }
 
@@ -223,12 +229,18 @@ impl Database {
         let answer = sender.clone();
         let this = self.clone();
         let launch = self.life.launch();
-        let slot = self.reserve_load(args.epoch);
+        let handle = executor()?.handle().clone();
+        let (waiter, id) = self.life.register_load(args.epoch);
+        let slot = LoadSlot { life: self.life.clone(), waiter: Some(waiter), id, order: Some(self.order.clone()) };
+        let (reserved, sent) = tokio::sync::oneshot::channel();
+        let (life, epoch) = (self.life.clone(), args.epoch);
+        self.order.enter(move || { life.send_reservation(epoch, id); let _ = crate::lock::effect(|| reserved.send(())); });
         let dropping: Arc<Mutex<Option<crate::runtime::Launch>>> = Arc::default();
         let release = ReleaseBarrier(dropping.clone());
-        let task = crate::task::spawn_on(executor()?.handle(), crate::runtime::counted(Some(launch), async move {
+        let task = crate::task::spawn_on(&handle, crate::runtime::counted(Some(launch), async move {
             let _release = release;
             let sender = sender;
+            let _ = sent.await;
             let this = this;
             let LoadArgs { epoch, model, relation, params_json, goal, force } = args;
             let started = match this.prepare_load(&model, &relation, &params_json).await {
@@ -248,7 +260,7 @@ impl Database {
 
     fn reserve_load(&self, epoch: u64) -> LoadSlot {
         let (waiter, id) = self.life.reserve_load(epoch);
-        LoadSlot { life: self.life.clone(), waiter: Some(waiter), id }
+        LoadSlot { life: self.life.clone(), waiter: Some(waiter), id, order: None }
     }
 
     #[cfg(test)]

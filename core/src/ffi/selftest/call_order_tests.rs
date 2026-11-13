@@ -216,3 +216,89 @@ async fn bridge_call_after_a_dropped_call_enters_after_its_cancel() {
     assert!(matches!(value, Some(crate::ffi::ReadValue::Ended { cause: crate::ffi::EndCause::Cancelled })), "the pull after the dropped pull entered before its cancel: {value:?}");
     crate::test_wait::within(database.close_database()).await.unwrap();
 }
+
+async fn hold_executor() -> Vec<Arc<crate::test_wait::Flag>> {
+    let executor = crate::ffi::database::executor().unwrap().handle().clone();
+    let stands: Vec<_> = (0..2).map(|_| (Arc::new(crate::test_wait::Flag::default()), Arc::new(crate::test_wait::Flag::default()))).collect();
+    for (entered, release) in &stands {
+        let (entered, release) = (entered.clone(), release.clone());
+        drop(crate::task::spawn_on(&executor, async move { entered.set(); release.wait_blocking("release the worker"); }));
+    }
+    for (entered, _) in &stands { entered.wait("a worker of the executor stands").await; }
+    stands.into_iter().map(|(_, release)| release).collect()
+}
+
+async fn poll_once<F: Future>(call: &mut std::pin::Pin<Box<F>>) { std::future::poll_fn(|cx| { drop(call.as_mut().poll(cx)); std::task::Poll::Ready(()) }).await }
+
+async fn note_stream() -> (Arc<Database>, Arc<crate::ffi::ReadStream>) {
+    let mut note = crate::schema::ModelSpec::new("Note", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id)]);
+    note.storage = crate::schema::Storage::Local;
+    let database = Database::open(crate::ffi::Config { path: None }, crate::ffi::specs(serde_json::to_string(&vec![note]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap();
+    let stream = database.subscribe_values(database.session_epoch(), crate::ffi::ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
+    crate::ffi::owners_drained(&database).await.unwrap();
+    (database, stream)
+}
+
+/// Requirement P-BR-10 (6): a pull that started before `release_reader` of its reader enters the owner first.
+/// Observable: the pull gets the `Snapshot` that waited in the journal, not `Ended{Closed}` of the flag the later release set.
+/// Defect caught: `release_reader` set `released` on the thread of the caller ahead of its place and the pull body read it.
+#[tokio::test(flavor = "multi_thread")]
+async fn bridge_pull_before_release_reader_gets_the_value_of_its_place() {
+    let (database, stream) = note_stream().await;
+    let stands = hold_executor().await;
+    let mut pull = Box::pin(stream.pull(0));
+    poll_once(&mut pull).await;
+    stream.release_reader(0);
+    stands.iter().for_each(|release| release.set());
+    let value = crate::test_wait::within(pull).await;
+    assert!(matches!(value, Some(crate::ffi::ReadValue::Snapshot { .. })), "the pull before the release got {value:?}");
+    drop(stream);
+    crate::test_wait::within(database.close_database()).await.unwrap();
+}
+
+/// Requirement P-BR-10 (6): a pull that started before `resync` enters the owner first.
+/// Observable: the pull gets the `Delta` that waited in the journal, not the `Snapshot` that `resync` reads after wiping it.
+/// Defect caught: `resync` reached the owner at the call, ahead of the place of the earlier pull (`dlv_live_resync_after_read_delta`).
+#[tokio::test(flavor = "multi_thread")]
+async fn bridge_pull_before_resync_gets_the_value_of_its_place() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let stream = rig.database.subscribe_values(epoch, crate::ffi::ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Group"}"#) });
+    assert!(matches!(bound(stream.pull_next()).await, Some(crate::ffi::ReadValue::Snapshot { .. })));
+    let held = rig.world.hold_next("CreateGroup");
+    let (values, args) = super::bridge_support_tests::group("written");
+    bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+    crate::ffi::owners_drained(&rig.database).await.unwrap();
+    let stands = hold_executor().await;
+    let mut pull = Box::pin(stream.pull_next());
+    poll_once(&mut pull).await;
+    stream.resync();
+    stands.iter().for_each(|release| release.set());
+    let value = crate::test_wait::within(pull).await;
+    assert!(matches!(value, Some(crate::ffi::ReadValue::Delta { .. })), "the pull before the resync got {value:?}");
+    held.release();
+    rig.settle().await;
+    rig.database.close_now();
+}
+
+/// Requirement P-BR-10 (6): `begin_load` after a `refresh` that took its place reserves its load after the refresh.
+/// Observable: both calls end on 1 request of the window.
+/// Defect caught: `begin_load` reserved at once, ahead of the earlier refresh, so the forced refresh asked the server a second time.
+#[tokio::test(flavor = "multi_thread")]
+async fn bridge_begin_load_after_a_refresh_joins_its_request() {
+    let rig = rig().await;
+    let epoch = rig.database.session_epoch();
+    let earlier = rig.database.in_order();
+    let refreshing = rig.database.in_order();
+    let held = rig.world.hold_next("MomentsFeed");
+    let refresh = tokio::spawn(async move { refreshing.refresh(epoch, "Moment".into(), Some("feed".into()), "{}".into()).await });
+    let request = rig.database.begin_load(epoch, "Moment".into(), Some("feed".into()), "{}".into()).unwrap();
+    drop(earlier);
+    held.entered().await;
+    held.release();
+    bound(refresh).await.unwrap().unwrap();
+    bound(request.result()).await.unwrap();
+    assert_eq!(requests(&rig, "MomentsFeed"), 1, "the load after the refresh asked the server again");
+    rig.database.close_now();
+}
