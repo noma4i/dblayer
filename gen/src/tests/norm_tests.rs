@@ -70,6 +70,17 @@ fn gen_storage_default_disk() {
 }
 
 #[test]
+fn gen_removed_second_forms_are_refused() {
+    for (source, line, word) in [
+        ("model A, storage: :disk do\nend\n", 1, "omit `storage`"),
+        ("model A do\n  attribute :a, :string\n  subscribe \"E\", apply: { effect: :upsert, delete_unless: \"active\" }\nend\n", 3, "delete_if: { not: path }"),
+        ("model A do\n  attribute :a, :string, optional: true, local: true\nend\n", 2, "local implies optional"),
+    ] {
+        refused_at(source, line, word);
+    }
+}
+
+#[test]
 fn gen_nullability_explicit_then_schema() {
     let checked = compile_note(&note_model("  attribute :text, :string\n  attribute :score, :int\n  attribute :title, :string\n")).unwrap();
     let nullable: Vec<_> = ["text", "score", "title"].iter().map(|name| checked.models[0].field(name).unwrap().nullable).collect();

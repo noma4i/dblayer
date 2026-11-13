@@ -191,7 +191,11 @@ pub(super) fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> 
     };
     let null_given = line.opt(cx, "null");
     decl.null = null_given.map_or(schema_null, |pair| boolean(cx, &pair.value, "`null`").unwrap_or(false));
-    decl.optional = line.opt(cx, "optional").and_then(|pair| boolean(cx, &pair.value, "`optional`")).unwrap_or(false);
+    let optional_given = line.opt(cx, "optional").and_then(|pair| boolean(cx, &pair.value, "`optional`").map(|value| (value, pair_pos(pair))));
+    if let (true, Some((true, at_optional))) = (local, optional_given) {
+        cx.fail(at_optional, format!("attribute `{}`: local implies optional, omit `optional: true`", decl.name));
+    }
+    decl.optional = local || optional_given.is_some_and(|(value, _)| value);
     if let Some(pair) = line.opt(cx, "default") {
         decl.default = Some(Spanned::new(json_of(&pair.value.item), at(&pair.value)));
     }

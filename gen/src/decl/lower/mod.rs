@@ -230,10 +230,13 @@ fn model(cx: &mut Cx, node: &ModelNode) -> ModelDecl {
     let mut options = Line { word: "model", pos: Pos { line: node.line, column: node.column }, args: &[], options: &node.options, used: vec![false; node.options.len()] };
     let storage = options.opt(cx, "storage").map_or(Storage::Disk, |pair| match &pair.value.item {
         Value::Symbol(name) if name == "memory" => Storage::Memory,
-        Value::Symbol(name) if name == "disk" => Storage::Disk,
         Value::Symbol(name) if name == "local" => Storage::Local,
+        Value::Symbol(name) if name == "disk" => {
+            cx.fail(at(&pair.value), "storage `:disk` is the default; omit `storage`");
+            Storage::Disk
+        }
         _ => {
-            cx.fail(at(&pair.value), "`storage` must be `:memory`, `:disk` or `:local`");
+            cx.fail(at(&pair.value), "`storage` must be `:memory` or `:local`");
             Storage::Disk
         }
     });

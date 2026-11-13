@@ -180,7 +180,7 @@ fn model_with_one_single_record_relation_gets_a_singleton_entity() {
 
 #[test]
 fn a_local_field_is_in_the_model_type_but_not_in_create_or_update() {
-    let models = parse_models("model Moment do\n  attribute :text, :string\n  attribute :tone, :string, optional: true, local: true\nend\n").unwrap();
+    let models = parse_models("model Moment do\n  attribute :text, :string\n  attribute :tone, :string, local: true\nend\n").unwrap();
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
     assert!(swift.contains("public let tone: String?") && kotlin.contains("val tone: String? = null"), "{swift}\n{kotlin}");

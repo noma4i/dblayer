@@ -2,11 +2,11 @@
 
 Choose storage in the model declaration. Both platforms use the same rules.
 
-| Declaration | Persistence | Writes | Server declarations |
-| --- | --- | --- | --- |
-| `storage: :local` | SQLite file | Immediate, no outbox | Rejected |
-| Default or `storage: :disk` | SQLite file | Optimistic, queued | Allowed |
-| `storage: :memory` | Memory only | No durable outbox | Remote reads allowed |
+| Declaration            | Persistence | Writes               | Server declarations  |
+| ---------------------- | ----------- | -------------------- | -------------------- |
+| `storage: :local`      | SQLite file | Immediate, no outbox | Rejected             |
+| Default (no `storage`) | SQLite file | Optimistic, queued   | Allowed              |
+| `storage: :memory`     | Memory only | No durable outbox    | Remote reads allowed |
 
 Local and synced models can share a database. A local model needs no separate database file.
 

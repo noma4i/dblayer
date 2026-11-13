@@ -488,7 +488,7 @@ pub(super) fn subscribe(cx: &mut Cx, call: &Call) -> Option<SubscribeDecl> {
     let debounce = line.opt(cx, "debounce").and_then(|pair| duration(cx, &pair.value, "`debounce`"));
     let apply = match line.opt(cx, "apply") {
         Some(pair) => apply(cx, pair)?,
-        None => ApplyDecl { pos: line.pos, effect: Effect::Upsert, fields: Vec::new(), values: Vec::new(), matches: Vec::new(), via: None, delete_if: None, delete_unless: None },
+        None => ApplyDecl { pos: line.pos, effect: Effect::Upsert, fields: Vec::new(), values: Vec::new(), matches: Vec::new(), via: None, delete_if: None },
     };
     line.finish(cx);
     Some(SubscribeDecl { pos: line.pos, name, from, id, apply, debounce })
@@ -496,7 +496,7 @@ pub(super) fn subscribe(cx: &mut Cx, call: &Call) -> Option<SubscribeDecl> {
 
 pub(super) fn apply(cx: &mut Cx, pair: &Pair) -> Option<ApplyDecl> {
     let pairs = hash_pairs(cx, &pair.value, "`apply`")?;
-    let mut decl = ApplyDecl { pos: at(&pair.value), effect: Effect::Upsert, fields: Vec::new(), values: Vec::new(), matches: Vec::new(), via: None, delete_if: None, delete_unless: None };
+    let mut decl = ApplyDecl { pos: at(&pair.value), effect: Effect::Upsert, fields: Vec::new(), values: Vec::new(), matches: Vec::new(), via: None, delete_if: None };
     let mut seen_effect = false;
     for entry in pairs {
         match entry.key.as_str() {
@@ -556,8 +556,13 @@ pub(super) fn apply(cx: &mut Cx, pair: &Pair) -> Option<ApplyDecl> {
                 }
             }
             "via" => decl.via = symbol(cx, &entry.value, "`via`"),
-            "delete_if" => decl.delete_if = path(cx, &entry.value, "`delete_if`"),
-            "delete_unless" => decl.delete_unless = path(cx, &entry.value, "`delete_unless`"),
+            "delete_if" => {
+                decl.delete_if = match &entry.value.item {
+                    Value::Hash(parts) if parts.len() == 1 && parts[0].key == "not" => path(cx, &parts[0].value, "`delete_if`").map(|found| (found, true)),
+                    _ => path(cx, &entry.value, "`delete_if`").map(|found| (found, false)),
+                };
+            }
+            "delete_unless" => cx.fail(pair_pos(entry), "`delete_unless` is removed: use `delete_if: { not: path }`"),
             other => cx.fail(pair_pos(entry), format!("unknown key `{other}` for `apply`")),
         }
     }

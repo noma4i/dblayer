@@ -78,11 +78,10 @@ fn attribute_options_are_closed_and_each_applies_to_its_own_types() {
 #[test]
 fn local_attributes_follow_their_own_rules() {
     run(&[
-        ("local optional", "  attribute :a, :string, optional: true, local: true", None),
+        ("local implies optional", "  attribute :a, :string, local: true", None),
         ("local null", "  attribute :a, :string, null: true, local: true", None),
-        ("local needs optional or null", "  attribute :a, :string, local: true", Some("needs `optional: true` or `null: true`")),
-        ("local with default", "  attribute :a, :string, optional: true, local: true, default: \"x\"", Some("cannot set `merge`, `default`, `from` or `id_from`")),
-        ("local with from", "  attribute :a, :string, optional: true, local: true, from: \"x\"", Some("cannot set")),
+        ("local with default", "  attribute :a, :string, local: true, default: \"x\"", Some("cannot set `merge`, `default`, `from` or `id_from`")),
+        ("local with from", "  attribute :a, :string, local: true, from: \"x\"", Some("cannot set")),
     ]);
 }
 
@@ -100,7 +99,7 @@ fn names_are_unique_and_blocks_are_not_empty() {
         ("nested only attributes", "  attribute :a, Inner do\n    index :x\n  end", Some("a block holds only `attribute` declarations")),
         ("nested merge", "  attribute :a, Inner do\n    attribute :x, :int, merge: :positive\n  end", Some("`merge` applies only to a top-level")),
         ("nested id_from", "  attribute :a, Inner do\n    attribute :x, :id, id_from: :owner\n  end", Some("`id_from` applies only to a top-level")),
-        ("nested local", "  attribute :a, Inner do\n    attribute :x, :int, optional: true, local: true\n  end", Some("`local` applies only to a top-level")),
+        ("nested local", "  attribute :a, Inner do\n    attribute :x, :int, local: true\n  end", Some("`local` applies only to a top-level")),
         ("nested link", "  attribute :a, [Cell] do\n    attribute :ownerId, :id\n    attribute :o, Inner, null: true, ref: Sample, id: :ownerId do\n      attribute :x, :int, null: true\n    end\n  end", None),
         ("link unknown model", "  attribute :a, [Cell] do\n    attribute :ownerId, :id\n    attribute :o, Inner, null: true, ref: Ghost, id: :ownerId do\n      attribute :x, :int, null: true\n    end\n  end", Some("links to an unknown model")),
         ("link missing id attribute", "  attribute :a, [Cell] do\n    attribute :ownerId, :id\n    attribute :o, Inner, null: true, ref: Sample, id: :gone do\n      attribute :x, :int, null: true\n    end\n  end", Some("id attribute that is not declared beside it")),

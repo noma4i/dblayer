@@ -9,7 +9,7 @@ model Kind, storage: :local do
   attribute :mood, :enum, values: ["calm", "loud"], null: true
   attribute :fallback, :string, default: "base"
   attribute :tags, [:string], default: []
-  attribute :note, :string, optional: true, local: true
+  attribute :note, :string, local: true
   attribute :photo, :file, null: true
   attribute :box, KindBox, null: true, merge: { stamp: :local } do
     attribute :label, :string

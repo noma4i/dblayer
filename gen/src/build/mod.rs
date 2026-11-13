@@ -314,8 +314,8 @@ fn updates_spec(update: &SubscribeDecl) -> UpdatesSpec {
     };
     UpdatesSpec {
         subscription: update.name.clone(),
-        deleted_by: apply.delete_if.as_ref().map(|found| found.item.clone()),
-        deleted_unless: apply.delete_unless.as_ref().map(|found| found.item.clone()),
+        deleted_by: apply.delete_if.as_ref().filter(|(_, negated)| !negated).map(|(found, _)| found.item.clone()),
+        deleted_unless: apply.delete_if.as_ref().filter(|(_, negated)| *negated).map(|(found, _)| found.item.clone()),
         set: apply.values.iter().map(|(name, value, _)| (name.clone(), value.clone())).collect::<Map<_, _>>(),
         removes: apply.effect == Effect::Delete,
         debounce: update.debounce.clone(),

@@ -42,28 +42,28 @@ SQLite column identifiers are quoted, so keyword fields also support storage, in
 With `--schema`, `attribute :name` without a type infers its type and nullability from the matching GraphQL type. Local attributes require an explicit type.
 The DSL is parsed by Rust. It does not execute Ruby expressions or load Ruby gems.
 
-| Word | Type |
-| ---- | ---- |
-| `:string`, `:num`, `:int`, `:bool`, `:date`, `:id` | scalars (`id` accepts a string or a number and stores a string, `date` accepts an ISO 8601 text or milliseconds and stores UTC text with milliseconds, `2026-01-03T00:00:05Z` becomes `2026-01-03T00:00:05.000Z`, so text order is time order) |
-| `attribute :name, :enum, values: ["a", "b"]` | one of the listed values, generated as a typed enum (see [Enums](#enums)). `as: Name` names the type |
-| `attribute :name, [:enum], values: ["a", "b"], as: Name` | list of enum values, `[Name]` in Swift and `List<Name>` in Kotlin, stored like `[:string]` (see [Enums](#enums)) |
-| `:json` | any JSON value, an object, an array or a scalar |
-| `attribute :name, [:string]` | array of scalars |
-| `attribute :name, :file` | binary attachment, see [files](files.md) |
+| Word                                                     | Type                                                                                                                                                                                                                                           |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `:string`, `:num`, `:int`, `:bool`, `:date`, `:id`       | scalars (`id` accepts a string or a number and stores a string, `date` accepts an ISO 8601 text or milliseconds and stores UTC text with milliseconds, `2026-01-03T00:00:05Z` becomes `2026-01-03T00:00:05.000Z`, so text order is time order) |
+| `attribute :name, :enum, values: ["a", "b"]`             | one of the listed values, generated as a typed enum (see [Enums](#enums)). `as: Name` names the type                                                                                                                                           |
+| `attribute :name, [:enum], values: ["a", "b"], as: Name` | list of enum values, `[Name]` in Swift and `List<Name>` in Kotlin, stored like `[:string]` (see [Enums](#enums))                                                                                                                               |
+| `:json`                                                  | any JSON value, an object, an array or a scalar                                                                                                                                                                                                |
+| `attribute :name, [:string]`                             | array of scalars                                                                                                                                                                                                                               |
+| `attribute :name, :file`                                 | binary attachment, see [files](files.md)                                                                                                                                                                                                       |
 
 Attribute options:
 
-| Option | Meaning |
-| ------ | ------- |
-| `null: true` | value may be null |
-| `optional: true` | key may be absent in server responses |
-| `default: value` | default value, also stored when the server answers null for a field without `null: true` |
-| `parse: :json` | `:json` attribute input must be JSON text, core stores the parsed value, and its default must be an object or null |
-| `id_from: :parent` | take the id from a nested parent object, also when the same object is a `belongs_to` association |
-| `MomentMedia` or `[MomentMedia]` as the type | named nested value or list, declared once by an attribute block |
-| `from: "location.lat"` | read the value from a nested path of the response when the attribute name itself is absent |
-| `merge: :non_empty` | what a row from the server may replace in a stored value, see below |
-| `local: true` | the server never sends the field and a refresh never replaces or clears it, see [local fields](#local-fields) (needs `optional: true` or `null: true`) |
+| Option                                       | Meaning                                                                                                                                                                        |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `null: true`                                 | value may be null                                                                                                                                                              |
+| `optional: true`                             | key may be absent in server responses                                                                                                                                          |
+| `default: value`                             | default value, also stored when the server answers null for a field without `null: true`                                                                                       |
+| `parse: :json`                               | `:json` attribute input must be JSON text, core stores the parsed value, and its default must be an object or null                                                             |
+| `id_from: :parent`                           | take the id from a nested parent object, also when the same object is a `belongs_to` association                                                                               |
+| `MomentMedia` or `[MomentMedia]` as the type | named nested value or list, declared once by an attribute block                                                                                                                |
+| `from: "location.lat"`                       | read the value from a nested path of the response when the attribute name itself is absent                                                                                     |
+| `merge: :non_empty`                          | what a row from the server may replace in a stored value, see below                                                                                                            |
+| `local: true`                                | the server never sends the field and a refresh never replaces or clears it, see [local fields](#local-fields) (implies `optional`, so `optional: true` next to it is an error) |
 
 For a top-level `from` field, an explicit null at any segment clears a nullable field or applies its non-null default.
 An absent path key leaves the stored field unchanged.
@@ -210,19 +210,19 @@ Nested blocks contain `attribute` declarations. Their options include `null`, `o
 
 For reusable names, recursive lists, unrestricted JSON, typed defaults, GraphQL unions and interfaces, see [nested value types](nested-types.md).
 
-| Input | Decoding rule on both platforms |
-| ----- | ------------------------------ |
-| Unknown key | ignored by generated types, retained inside unrestricted JSON |
-| Absent nullable or optional field without a default | `nil` / `null` |
-| Absent field with a default | declared default |
-| Null nullable or optional field | `nil` / `null`, even when a default is declared |
-| Null required field with a default | declared default |
-| Absent or null required field without a default | decoding error |
-| Wrong type for a present field | decoding error |
-| ID string or signed 64-bit integer | string, for scalar IDs and scalar ID lists |
-| Boolean, fractional number, object or out-of-range integer as an ID | decoding error |
-| Nested date | string, as in the generated model properties |
-| Nested enum | its generated enum, a value the declaration lacks becomes the `unknown` case with the text |
+| Input                                                               | Decoding rule on both platforms                                                            |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Unknown key                                                         | ignored by generated types, retained inside unrestricted JSON                              |
+| Absent nullable or optional field without a default                 | `nil` / `null`                                                                             |
+| Absent field with a default                                         | declared default                                                                           |
+| Null nullable or optional field                                     | `nil` / `null`, even when a default is declared                                            |
+| Null required field with a default                                  | declared default                                                                           |
+| Absent or null required field without a default                     | decoding error                                                                             |
+| Wrong type for a present field                                      | decoding error                                                                             |
+| ID string or signed 64-bit integer                                  | string, for scalar IDs and scalar ID lists                                                 |
+| Boolean, fractional number, object or out-of-range integer as an ID | decoding error                                                                             |
+| Nested date                                                         | string, as in the generated model properties                                               |
+| Nested enum                                                         | its generated enum, a value the declaration lacks becomes the `unknown` case with the text |
 
 An enum default must be one of its declared values. `from` reads a server response path at every nesting level. A path such as `user.id` traverses the `user` object, never a literal server key containing a dot. The core reads the path once and stores its value under the canonical key `user.id`. Swift `Codable` and Kotlin serializers use that canonical key for local values. SQLite, row cells and optimistic changes keep that representation and never interpret it as a server path again.
 
@@ -236,15 +236,15 @@ Nested values belong to their containing row. They have no independent table, in
 
 A row from the server (page, event, mutation answer, replace) replaces the fields it carries. A `merge:` rule on a field decides what an arriving value may replace, so the order in which answers arrive does not matter.
 
-| Rule | An arriving value is ignored when |
-| ---- | --------------------------------- |
-| `:present` | it is null and a value is stored |
-| `:non_empty` | it is null, `""`, `[]` or `{}` and a non-empty value is stored |
-| `:positive` | it is not a number above 0 and a positive number is stored (`int`, `num`, `date`) |
-| `:monotonic` | it is null or lower than the stored number or date (`int`, `num`, `date`) |
-| `[[:PENDING, :PROGRESSING], [:COMPLETED, :FAILED]]` | its tier is below the tier of the stored value, values inside a tier replace each other (`enum` or `string`) |
-| `:stable_list` | never: the stored ids keep their places, ids that the server no longer lists are dropped and new ids follow in the order they arrived (`[:id]` or another list of scalars) |
-| `{ key: rule, ... }` | `:json`: the object is merged key by key, a key without a rule ignores null, a null object keeps the stored one |
+| Rule                                                | An arriving value is ignored when                                                                                                                                          |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `:present`                                          | it is null and a value is stored                                                                                                                                           |
+| `:non_empty`                                        | it is null, `""`, `[]` or `{}` and a non-empty value is stored                                                                                                             |
+| `:positive`                                         | it is not a number above 0 and a positive number is stored (`int`, `num`, `date`)                                                                                          |
+| `:monotonic`                                        | it is null or lower than the stored number or date (`int`, `num`, `date`)                                                                                                  |
+| `[[:PENDING, :PROGRESSING], [:COMPLETED, :FAILED]]` | its tier is below the tier of the stored value, values inside a tier replace each other (`enum` or `string`)                                                               |
+| `:stable_list`                                      | never: the stored ids keep their places, ids that the server no longer lists are dropped and new ids follow in the order they arrived (`[:id]` or another list of scalars) |
+| `{ key: rule, ... }`                                | `:json`: the object is merged key by key, a key without a rule ignores null, a null object keeps the stored one                                                            |
 
 ```ruby
 attribute :media, MomentMedia, null: true, merge: { fileUrl: :non_empty, width: :positive, transcodeStep: [[:PENDING, :SUBMITTED, :PROGRESSING], [:COMPLETED, :FAILED]], transcodeProgress: :monotonic }
@@ -266,7 +266,7 @@ Sources share one read snapshot. `operation :update` accepts plain `local` and r
 A local field is written by the app and stored with the row. The server never sends it: it is not in the sync diff, no mutation carries it, and no answer, page, event or refresh replaces or clears it. It reads `nil` until it is written, survives a restart, and goes with the row when the row is destroyed. Every subscription of the row delivers it together with the server fields.
 
 ```ruby
-attribute :tone, :string, optional: true, local: true
+attribute :tone, :string, local: true
 attribute :media, MomentMedia, null: true, merge: { fileUrl: :non_empty, tone: :local }
 ```
 
@@ -302,10 +302,10 @@ model User do
 end
 ```
 
-| Option | Meaning |
-| ------ | ------- |
-| `default: value` | value before the first write and after a reset. Required unless `null: true` |
-| `null: true` | the default is null |
+| Option                   | Meaning                                                                          |
+| ------------------------ | -------------------------------------------------------------------------------- |
+| `default: value`         | value before the first write and after a reset. Required unless `null: true`     |
+| `null: true`             | the default is null                                                              |
 | `reset_after: 5.seconds` | after this time without a write the value returns to `default`. Needs `default:` |
 
 - Reads see the values: `user.typing` is part of the row.
@@ -413,12 +413,12 @@ val interactions = Projected(scope.stream(InteractionNotice.recent), Interaction
 
 ## Associations
 
-| Word | Options |
-| ---- | ------- |
+| Word               | Options                                                                  |
+| ------------------ | ------------------------------------------------------------------------ |
 | `belongs_to :name` | `class_name:`, `foreign_key:`, `touch: true`, `sets:`, `newer:`, `from:` |
-| `has_many :name` | `class_name:`, `foreign_key:`, `dependent: :destroy`, `from:` |
-| `has_one :name` | `class_name:`, `foreign_key:`, `dependent: :destroy`, `from:` |
-| `references :name` | `class_name:`, `foreign_key:` (array of ids), `from:` |
+| `has_many :name`   | `class_name:`, `foreign_key:`, `dependent: :destroy`, `from:`            |
+| `has_one :name`    | `class_name:`, `foreign_key:`, `dependent: :destroy`, `from:`            |
+| `references :name` | `class_name:`, `foreign_key:` (array of ids), `from:`                    |
 
 Singular associations capitalize their name, preserving a final `s`. Plural associations remove one final `s` before capitalization. Use `class_name:` for irregular names.
 `belongs_to` defaults to `<name>Id`. `has_many` and `has_one` use the owner's lower-camel name plus `Id`. `references` uses its association name.
@@ -579,27 +579,27 @@ let audio = try Message.audioSince(chatId, afterSequence: 120)
 val audio = Message.audioSince(chatId, afterSequence = 120)
 ```
 
-| Line | Meaning | Default |
-| ---- | ------- | ------- |
-| `query "Operation"` | GraphQL operation name (required) | none |
-| `response from: "a.b"` | path of the rows inside the response, `node.x` for a list under a [node read](#node-reads) | first field of the operation |
-| `response shape: :list` | the response is a plain list | single record |
-| `paginate size: 20, direction: :forward` | Relay-style pages of 20 | whole response |
-| `paginate size: 20, direction: :backward` | pages backward | forward |
-| `paginate size: 20, direction: :forward, cursor: { parameter: :afterSequence, from: "lastSequenceNumber", type: :int }` | the server pages by its own variable: the next page sends `afterSequence`, taken from `lastSequenceNumber` of the connection. `parameter`, `from` and `type` are all required | Relay `first`/`after` |
-| `paginate ..., max_pages: 5` | page limit per load, the list ends there | none |
-| `total from: "node.membersCount"` | `total` of the list state comes from this field of the response, after `paginate` | `totalCount` of the connection |
-| `freshness expires_in: 5.minutes` | how long a response counts as fresh. A saved window stays fresh after a restart of the app until the time is up, and the events of the time the app did not run are not replayed: a shorter time gives fresher data | `5.minutes` |
-| `freshness expires_in: 5.minutes, empty_in: 30.seconds` | shorter freshness for an empty response | same |
-| `preload`, `preload channel: ["lobby", "stage"]`, `preload vibeId: { from: "Vibe.list" }, limit: 40` | Automatically after session, reset, network return and leaving power saving. For `from`, a positive `limit` is required. The limit applies to unique windows of the parameter product. Parameters follow declaration order, ids follow the source scope. SQLite reads a bounded prefix, and source changes add incoming windows and cancel unneeded requests. Fresh windows are not requested again, errors go to the snapshot | no preload |
-| `scope :chat_members, members_complete: true do` | Automatic page chain, without `max_pages`. `settled` with `hasMore == false` only after the final `hasNextPage == false`. Full membership is stored in SQLite. Multiple readers share the request, the last cancels it, the next continues the cursor. Error with partial rows: Loaded + error, the list is not complete | ordinary paged loading |
-| `refresh_on_foreground: true` (on the `scope` line, needs `query`) | an online idle window with a reader reloads on foreground, whether fresh or stale | foreground alone does not reload the window |
-| `keep_on_gap: true` (on the `scope` line, needs `query`, not with `refresh_on_foreground`), for example `scope :feed, keep_on_gap: true do` | after a connection gap the window is not reread and its rows, order and position stay as shown | the window is reread once after the gap |
-| `stable_order: true` (on the `scope` line) | the list keeps the order the rows were shown in, see [stable order](#scopes) | sorted by the `order` values on every read |
-| `matches mediaKind: { in: ["IMAGE", "VIDEO"] }`, `matches kind: { equals: "GIFT" }`, `matches sequenceNumber: { greater_than: :afterSequence }` | row fields the scope admits for `insert_on`: a literal set, a literal, or a row field above a scope parameter, combined with `where` and `membership` by AND | every row of the `where` columns |
-| `variables statusFilter: :status, includeRewards: false` | name the GraphQL variables: a symbol takes the value of a scope parameter, any other value is sent as written | every parameter under its own name |
-| `edge do attribute :impressionUuid, :string, null: true end` | values of the connection edge that carried the row, stored for this scope, see [edge values](#edge-values) | none |
-| `subscribe "Subscription", apply: { ... }` | keep the scope current with a subscription. Write the line again for each subscription. `debounce: 300.milliseconds` merges bursts: the model waits for the longest `debounce:` of its subscriptions | none |
+| Line                                                                                                                                            | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                        | Default                                     |
+| ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
+| `query "Operation"`                                                                                                                             | GraphQL operation name (required)                                                                                                                                                                                                                                                                                                                                                                                              | none                                        |
+| `response from: "a.b"`                                                                                                                          | path of the rows inside the response, `node.x` for a list under a [node read](#node-reads)                                                                                                                                                                                                                                                                                                                                     | first field of the operation                |
+| `response shape: :list`                                                                                                                         | the response is a plain list                                                                                                                                                                                                                                                                                                                                                                                                   | single record                               |
+| `paginate size: 20, direction: :forward`                                                                                                        | Relay-style pages of 20                                                                                                                                                                                                                                                                                                                                                                                                        | whole response                              |
+| `paginate size: 20, direction: :backward`                                                                                                       | pages backward                                                                                                                                                                                                                                                                                                                                                                                                                 | forward                                     |
+| `paginate size: 20, direction: :forward, cursor: { parameter: :afterSequence, from: "lastSequenceNumber", type: :int }`                         | the server pages by its own variable: the next page sends `afterSequence`, taken from `lastSequenceNumber` of the connection. `parameter`, `from` and `type` are all required                                                                                                                                                                                                                                                  | Relay `first`/`after`                       |
+| `paginate ..., max_pages: 5`                                                                                                                    | page limit per load, the list ends there                                                                                                                                                                                                                                                                                                                                                                                       | none                                        |
+| `total from: "node.membersCount"`                                                                                                               | `total` of the list state comes from this field of the response, after `paginate`                                                                                                                                                                                                                                                                                                                                              | `totalCount` of the connection              |
+| `freshness expires_in: 5.minutes`                                                                                                               | how long a response counts as fresh. A saved window stays fresh after a restart of the app until the time is up, and the events of the time the app did not run are not replayed: a shorter time gives fresher data                                                                                                                                                                                                            | `5.minutes`                                 |
+| `freshness expires_in: 5.minutes, empty_in: 30.seconds`                                                                                         | shorter freshness for an empty response                                                                                                                                                                                                                                                                                                                                                                                        | same                                        |
+| `preload`, `preload channel: ["lobby", "stage"]`, `preload vibeId: { from: "Vibe.list" }, limit: 40`                                            | Automatically after session, reset, network return and leaving power saving. For `from`, a positive `limit` is required. The limit applies to unique windows of the parameter product. Parameters follow declaration order, ids follow the source scope. SQLite reads a bounded prefix, and source changes add incoming windows and cancel unneeded requests. Fresh windows are not requested again, errors go to the snapshot | no preload                                  |
+| `scope :chat_members, members_complete: true do`                                                                                                | Automatic page chain, without `max_pages`. `settled` with `hasMore == false` only after the final `hasNextPage == false`. Full membership is stored in SQLite. Multiple readers share the request, the last cancels it, the next continues the cursor. Error with partial rows: Loaded + error, the list is not complete                                                                                                       | ordinary paged loading                      |
+| `refresh_on_foreground: true` (on the `scope` line, needs `query`)                                                                              | an online idle window with a reader reloads on foreground, whether fresh or stale                                                                                                                                                                                                                                                                                                                                              | foreground alone does not reload the window |
+| `keep_on_gap: true` (on the `scope` line, needs `query`, not with `refresh_on_foreground`), for example `scope :feed, keep_on_gap: true do`     | after a connection gap the window is not reread and its rows, order and position stay as shown                                                                                                                                                                                                                                                                                                                                 | the window is reread once after the gap     |
+| `stable_order: true` (on the `scope` line)                                                                                                      | the list keeps the order the rows were shown in, see [stable order](#scopes)                                                                                                                                                                                                                                                                                                                                                   | sorted by the `order` values on every read  |
+| `matches mediaKind: { in: ["IMAGE", "VIDEO"] }`, `matches kind: { equals: "GIFT" }`, `matches sequenceNumber: { greater_than: :afterSequence }` | row fields the scope admits for `insert_on`: a literal set, a literal, or a row field above a scope parameter, combined with `where` and `membership` by AND                                                                                                                                                                                                                                                                   | every row of the `where` columns            |
+| `variables statusFilter: :status, includeRewards: false`                                                                                        | name the GraphQL variables: a symbol takes the value of a scope parameter, any other value is sent as written                                                                                                                                                                                                                                                                                                                  | every parameter under its own name          |
+| `edge do attribute :impressionUuid, :string, null: true end`                                                                                    | values of the connection edge that carried the row, stored for this scope, see [edge values](#edge-values)                                                                                                                                                                                                                                                                                                                     | none                                        |
+| `subscribe "Subscription", apply: { ... }`                                                                                                      | keep the scope current with a subscription. Write the line again for each subscription. `debounce: 300.milliseconds` merges bursts: the model waits for the longest `debounce:` of its subscriptions                                                                                                                                                                                                                           | none                                        |
 
 Freshness starts when the server response arrives, not when the database stores it.
 
@@ -761,6 +761,7 @@ model Chat do
   changed_by "CHAT", via: :observed
 end
 ```
+
 Full event rows use `payload` paths relative to each item in `changes`:
 
 ```ruby
@@ -871,7 +872,7 @@ All matching row declarations apply in one commit. `ephemeral` values land in th
 Model-level subscriptions are read with `scope.events(Model)`, without replay.
 `effect: :ephemeral` copies the response paths in `fields` into declared ephemeral attributes without changing stored columns.
 `effect: :reread, via: :node` rereads the declared node with the event ID. A singleton read needs no ID.
-`effect: :upsert` writes the row, with `values:` for ephemeral attributes, `delete_if:` for a payload path that deletes the row when it is true and `delete_unless:` for a path that deletes the row when it is present and false. `effect: :delete` deletes it. `effect: :ignore` discards the event. Unknown effects, keys that do not fit the effect, empty ephemeral fields and missing reread destinations produce generator errors.
+`effect: :upsert` writes the row, with `values:` for ephemeral attributes, `delete_if: path` for a payload path that deletes the row when it is true and `delete_if: { not: path }` for a path that deletes the row when it is present and false. `effect: :delete` deletes it. `effect: :ignore` discards the event. Unknown effects, keys that do not fit the effect, empty ephemeral fields and missing reread destinations produce generator errors.
 
 ```ruby
 subscribe "PresenceSignal", from: "presenceSignal", id: "memberId", apply: { effect: :ephemeral, fields: { typing: "active" }, matches: { kind: ["ACTIVE"] } }
@@ -928,10 +929,53 @@ end
 ```
 
 ```graphql
-query GroupNode($id: ID!) { node(id: $id) { ... on Group { id title shareUrl } } }
-query NoteTranscodeStatus($id: ID!) { node(id: $id) { ... on Note { id groupId media { kind fileUrl } } } }
-query GroupMedia($groupId: ID!, $first: Int, $after: Cursor) { node(id: $groupId) { ... on Group { messages(first: $first, after: $after) { edges { node { ...NoteFragment } } pageInfo { hasNextPage endCursor } } } } }
-query GroupsByIds($ids: [ID!]!) { nodes(ids: $ids) { ... on Group { id title shareUrl } } }
+query GroupNode($id: ID!) {
+  node(id: $id) {
+    ... on Group {
+      id
+      title
+      shareUrl
+    }
+  }
+}
+query NoteTranscodeStatus($id: ID!) {
+  node(id: $id) {
+    ... on Note {
+      id
+      groupId
+      media {
+        kind
+        fileUrl
+      }
+    }
+  }
+}
+query GroupMedia($groupId: ID!, $first: Int, $after: Cursor) {
+  node(id: $groupId) {
+    ... on Group {
+      messages(first: $first, after: $after) {
+        edges {
+          node {
+            ...NoteFragment
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
+query GroupsByIds($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on Group {
+      id
+      title
+      shareUrl
+    }
+  }
+}
 ```
 
 A paged list of the entities under a node, such as the members of a group, is a scope of the listed model with a parameter that has no `where`. It has no local `order`: the rows keep the order of the server across pages, a restart and a refresh of a row by another list. When the server orders the list by a param, such as `order: GroupMemberOrder` (`JOINED` or `OWNER_FIRST`), the parameter is an enum parameter: each pair of group and order has its own window, its own members, its own cursor and its own total, and a cursor is never sent with another order.
@@ -951,7 +995,26 @@ end
 ```
 
 ```graphql
-query GroupMembers($groupId: ID!, $order: GroupMemberOrder = JOINED, $first: Int, $after: Cursor) { node(id: $groupId) { ... on Group { membersCount members(first: $first, after: $after, order: $order) { edges { cursor node { id name } } pageInfo { hasNextPage endCursor } } } } }
+query GroupMembers($groupId: ID!, $order: GroupMemberOrder = JOINED, $first: Int, $after: Cursor) {
+  node(id: $groupId) {
+    ... on Group {
+      membersCount
+      members(first: $first, after: $after, order: $order) {
+        edges {
+          cursor
+          node {
+            id
+            name
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
 ```
 
 ```swift
@@ -979,14 +1042,14 @@ let members = Projected<User>(try scope.stream(User.groupMembers(groupId)))   //
 val members = Projected(scope.stream(User.groupMembers(groupId)), User, screenScope)   // members.projection.value.state?.total is Group.membersCount
 ```
 
-| Line | Meaning |
-| ---- | ------- |
-| `scope :node, node: :one` with `parameter :id, :id` and `query "Operation"` | one entity by id, generates `Model.node(id)`. The id goes into `$id` |
-| `scope :name, node: :one` | a second read of the same model, such as a small status read, generates `Model.name(id)` |
-| `variables momentId: :id` | the id goes into `$momentId` |
-| `freshness expires_in: 1.minute, empty_in: 10.seconds` | how long an answer counts as fresh |
-| `scope :nodes, node: :many` with `response shape: :list` | many entities in one request, generates `Model.nodes(ids)`. The operation takes `$ids` |
-| `response from: "node.messages"` | a related list under the node: the path starts at `node` and continues inside the `... on` type |
+| Line                                                                        | Meaning                                                                                         |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `scope :node, node: :one` with `parameter :id, :id` and `query "Operation"` | one entity by id, generates `Model.node(id)`. The id goes into `$id`                            |
+| `scope :name, node: :one`                                                   | a second read of the same model, such as a small status read, generates `Model.name(id)`        |
+| `variables momentId: :id`                                                   | the id goes into `$momentId`                                                                    |
+| `freshness expires_in: 1.minute, empty_in: 10.seconds`                      | how long an answer counts as fresh                                                              |
+| `scope :nodes, node: :many` with `response shape: :list`                    | many entities in one request, generates `Model.nodes(ids)`. The operation takes `$ids`          |
+| `response from: "node.messages"`                                            | a related list under the node: the path starts at `node` and continues inside the `... on` type |
 
 Freshness starts when the server response arrives, not when the database stores it.
 
@@ -1018,8 +1081,8 @@ val groups = Group.nodes(ids)
 
 Every operation that reaches the server waits in the durable queue while the network is away. An option on the `operation` line limits that wait.
 
-| Line | Meaning | Default |
-| ---- | ------- | ------- |
+| Line                                      | Meaning                                                                                                                                                                                                       | Default                                     |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
 | `operation :typing, expires_after: 30 do` | whole seconds a queued operation may wait before it is sent. When the library picks it after that time, it rolls the optimistic change back and ends the operation `rejected` with the failure kind `expired` | none: the operation waits as long as needed |
 
 ## Effects of an operation before the answer
@@ -1076,7 +1139,7 @@ val added = club.addMember(userIds = listOf("u4"))
 
 ## Validation
 
-`dblayer-gen` reports mistakes with file and line (`user.dbl:12: unknown key `touch` for `has_many``). The same checks run in the core when a database is opened: unknown models, missing indexes on foreign keys, duplicate names and invalid combinations.
+`dblayer-gen` reports mistakes with file and line (`user.dbl:12: unknown key `touch`for`has_many``). The same checks run in the core when a database is opened: unknown models, missing indexes on foreign keys, duplicate names and invalid combinations.
 
 `dblayer-gen spec models/*.dbl` prints the model specification. `dblayer-gen explain models/*.dbl` creates an empty in-memory database and prints DDL, scope SQL and SQLite query plans. Plans use sample parameters and have no production statistics.
 
@@ -1092,14 +1155,14 @@ For each scope with `query`, the check finds the named operation, takes its firs
 
 A path that a declaration writes names keys of the response, so the check follows it through the selection of the operation that sends it: the aliases of the document, spreads of named fragments, inline fragments (with or without `... on`), union branches and the `edges { node }` or `nodes` of a connection. The path starts at the top-level key of the operation. These declarations are followed:
 
-| Declaration | Starts at | Follows |
-| --- | --- | --- |
-| `response from:` of a scope, of a model `operation` and of a standalone operation | top of the operation | the path |
-| `upsert Model, from:` | top of the operation | the path |
-| `returns` attributes of an `operation` block | the first part of `response from:`, or the first field | each key, and the keys of nested objects and lists |
-| `total from:` | top of the operation | the path, an alias of the document resolves to its schema field |
-| `paginate ..., from:` | the connection | the path |
-| `from:` and `id:` of `subscribe` and `changes` | top of the subscription, or the row | the path |
+| Declaration                                                                       | Starts at                                              | Follows                                                         |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------- |
+| `response from:` of a scope, of a model `operation` and of a standalone operation | top of the operation                                   | the path                                                        |
+| `upsert Model, from:`                                                             | top of the operation                                   | the path                                                        |
+| `returns` attributes of an `operation` block                                      | the first part of `response from:`, or the first field | each key, and the keys of nested objects and lists              |
+| `total from:`                                                                     | top of the operation                                   | the path, an alias of the document resolves to its schema field |
+| `paginate ..., from:`                                                             | the connection                                         | the path                                                        |
+| `from:` and `id:` of `subscribe` and `changes`                                    | top of the subscription, or the row                    | the path                                                        |
 
 A path the document does not select is an error with the file and line of the declaration. The message names the declaration, the path, the segment where the path ends and the keys the document has at that place:
 
@@ -1180,15 +1243,15 @@ val props: StickerPropsInput = StickerPropsInput.Emoji(StickerEmojiInput(code = 
 
 The generator writes every input object that an operation names, and every input object those fields use, once each, after the models. Input fields that match Swift or Kotlin keywords use escaped identifiers and retain their original GraphQL keys. A name that the schema does not have, a name that is neither an input object nor an enum, or an operation that names one without a schema file stops the run with code 1 and a message.
 
-| Schema field | Swift | Kotlin |
-| ------------ | ----- | ------ |
-| `String`, `ID`, a scalar mapped to `:string` or `:date` | `String` | `String` |
-| a scalar mapped to `:long` | `Int` | `Long` |
-| an enum | its enum with an `unknown` case | its sealed class with `Unknown` |
-| the scalar named `JSON` | `JSONValue` | `JsonElement` |
-| `Int`, `Float`, `Boolean` | `Int`, `Double`, `Bool` | `Long`, `Double`, `Boolean` |
-| `[T!]!`, `[T]` | `[T]`, `GraphQLNullable<[T?]>` | `List<T>`, `GraphQLNullable<List<T?>>` |
-| another input object | its struct | its data class |
-| an input object with `@oneOf` | an enum with one case per field | a sealed interface with one class per field |
-| a field without `!` | `.omitted`, `.null`, `.value(value)` | `Omitted`, `Null`, `Value(value)` |
-| a required field with a schema default | optional, omitted when nil | nullable, omitted when null |
+| Schema field                                            | Swift                                | Kotlin                                      |
+| ------------------------------------------------------- | ------------------------------------ | ------------------------------------------- |
+| `String`, `ID`, a scalar mapped to `:string` or `:date` | `String`                             | `String`                                    |
+| a scalar mapped to `:long`                              | `Int`                                | `Long`                                      |
+| an enum                                                 | its enum with an `unknown` case      | its sealed class with `Unknown`             |
+| the scalar named `JSON`                                 | `JSONValue`                          | `JsonElement`                               |
+| `Int`, `Float`, `Boolean`                               | `Int`, `Double`, `Bool`              | `Long`, `Double`, `Boolean`                 |
+| `[T!]!`, `[T]`                                          | `[T]`, `GraphQLNullable<[T?]>`       | `List<T>`, `GraphQLNullable<List<T?>>`      |
+| another input object                                    | its struct                           | its data class                              |
+| an input object with `@oneOf`                           | an enum with one case per field      | a sealed interface with one class per field |
+| a field without `!`                                     | `.omitted`, `.null`, `.value(value)` | `Omitted`, `Null`, `Value(value)`           |
+| a required field with a schema default                  | optional, omitted when nil           | nullable, omitted when null                 |

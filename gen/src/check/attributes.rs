@@ -48,9 +48,7 @@ fn check_local(attribute: &AttributeDecl, report: &mut impl FnMut(Pos, String)) 
         return;
     }
     let name = &attribute.name;
-    if !attribute.optional && !attribute.null {
-        report(attribute.pos, format!("local attribute `{name}` needs `optional: true` or `null: true`"));
-    } else if attribute.merge.is_some() || attribute.default.is_some() || attribute.from.is_some() || attribute.id_from.is_some() {
+    if attribute.merge.is_some() || attribute.default.is_some() || attribute.from.is_some() || attribute.id_from.is_some() {
         report(attribute.pos, format!("local attribute `{name}` cannot set `merge`, `default`, `from` or `id_from`"));
     }
 }

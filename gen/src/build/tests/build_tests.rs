@@ -401,7 +401,7 @@ fn an_attribute_merge_rule_keeps_its_words_tiers_and_keys() {
 
 #[test]
 fn a_local_attribute_and_a_local_key_become_the_local_merge_rule() {
-    let models = check_source("model Sample do\n  attribute :tone, :string, optional: true, local: true\n  attribute :media, Media, optional: true, merge: { tone: :local, width: :positive } do\n    attribute :width, :int, null: true\n  end\nend\n").unwrap();
+    let models = check_source("model Sample do\n  attribute :tone, :string, local: true\n  attribute :media, Media, optional: true, merge: { tone: :local, width: :positive } do\n    attribute :width, :int, null: true\n  end\nend\n").unwrap();
     let fields = &models[0].fields;
     assert_eq!(fields.iter().find(|field| field.name == "tone").unwrap().merge, Some(MergeRule::Local));
     let keys = [("tone", MergeRule::Local), ("width", MergeRule::Positive)].map(|(key, rule)| (key.to_string(), rule)).into();

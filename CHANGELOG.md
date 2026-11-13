@@ -5,6 +5,7 @@
 ### Changed
 
 - Close the server cable while the app is in the background.
+- local: true makes an attribute optional; optional: true next to it is an error.
 
 ### Fixed
 
@@ -23,6 +24,8 @@
 ### Removed
 
 - dataVersion of Config: the format of the database follows its declarations.
+- storage: :disk in .dbl files: disk is the default.
+- delete_unless in .dbl files: write delete_if: { not: path }.
 
 ## 6.35.0 - 2026-11-14
 

@@ -9,7 +9,7 @@ model Moment do
   attribute :text, :string, null: true
   attribute :likedByMe, :bool, default: false
   attribute :media, :json, default: {}
-  attribute :tone, :string, optional: true, local: true
+  attribute :tone, :string, local: true
   attribute :createdAt, :date
   index :uuid
   search :text

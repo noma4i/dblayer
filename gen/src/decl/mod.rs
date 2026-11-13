@@ -262,8 +262,7 @@ pub struct ApplyDecl {
     pub values: Vec<(String, Json, Pos)>,
     pub matches: Vec<(String, dblayer::schema::MatchValues, Pos)>,
     pub via: Option<String>,
-    pub delete_if: Option<Spanned<String>>,
-    pub delete_unless: Option<Spanned<String>>,
+    pub delete_if: Option<(Spanned<String>, bool)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

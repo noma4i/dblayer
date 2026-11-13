@@ -25,7 +25,7 @@ model ChatAction, storage: :memory, expires_in: 8.seconds do
   scope :by_chat do
     parameter :chatId, :id
     where chatId: :chatId
-    subscribe "ChatActionSignal", id: ["chatId", "userId"], apply: { effect: :upsert, matches: { kind: ["TYPING", "RECORDING_AUDIO", "RECORDING_VIDEO", "UPLOADING_PHOTO", "UPLOADING_VIDEO"] }, delete_unless: "active" }
+    subscribe "ChatActionSignal", id: ["chatId", "userId"], apply: { effect: :upsert, matches: { kind: ["TYPING", "RECORDING_AUDIO", "RECORDING_VIDEO", "UPLOADING_PHOTO", "UPLOADING_VIDEO"] }, delete_if: { not: "active" } }
   end
 end
 
@@ -34,7 +34,7 @@ model ChatActivityNotice, storage: :memory, expires_in: 1.minute do
   attribute :userId, :id
   attribute :kind, :string
   attribute :active, :bool
-  subscribe "ChatActionSignal", id: ["chatId", "userId"], apply: { effect: :upsert, matches: { kind: ["SCREENSHOT"] }, delete_unless: "active" }
+  subscribe "ChatActionSignal", id: ["chatId", "userId"], apply: { effect: :upsert, matches: { kind: ["SCREENSHOT"] }, delete_if: { not: "active" } }
   scope :recent do
     order kind: :asc
   end
