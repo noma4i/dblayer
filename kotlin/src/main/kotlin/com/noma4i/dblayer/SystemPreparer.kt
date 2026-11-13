@@ -81,7 +81,7 @@ internal class SystemPreparer(
 
     private suspend fun writeVideo(source: File, destination: File, plan: PreparePlan.Video, progress: PrepareProgress): PrepareOutcome {
         val facts = videoFacts(source)
-        val encode = plan.plan.reencode || plan.mirror
+        val encode = plan.plan.reencode
         if (encode) decoderRefusal(facts, decoderList(facts.mime))?.let { return PrepareOutcome.CannotDecode(it) }
         exporter(VideoExport(context, source, destination, transformSetup(plan, facts, encode)) { progress.report(it) })
         currentCoroutineContext().ensureActive()

@@ -321,6 +321,46 @@ async fn xfer_prepare_strips_private_metadata_without_reencode() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn xfer_prepare_mirror_makes_the_plan_reencode() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = source_file(directory.path(), "clip.mp4", SOURCE);
+    let preparer = ScriptedPreparer::new(video_probe(&[], false), PREPARED, &[]);
+    let stand = Stand::new().with_preparer(preparer.clone());
+    let database = stand.open(Some(&directory.path().join("db.sqlite")), &[CREATE_MOMENT]).await;
+    stand.script.data("CreateBlob", BLOB);
+    stand.script.data("CreateMoment", LANDED);
+    let mirrored = WirePrepare::Video { limits: None, mirror: true, on_cannot_decode: crate::ffi::upload_wire::CannotDecode::Fail, max_bytes: None };
+    let receipt = bound(database.send(send(database.session_epoch(), &source, mirrored))).await.unwrap();
+    bound(database.confirmed(receipt, false)).await.unwrap();
+    match &preparer.jobs()[0].plan {
+        PreparePlan::Video { plan, mirror, .. } => assert_eq!((plan.reencode, *mirror), (true, true), "a clean source that the table keeps still goes through the encoder to be mirrored"),
+        other => panic!("not a video plan: {other:?}"),
+    }
+    database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_prepare_refuses_a_rotation_outside_the_set() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let source = source_file(directory.path(), "clip.mp4", SOURCE);
+    let ProbeOutcome::Video { source: facts, metadata_keys } = video_probe(&[], false) else { unreachable!() };
+    let probe = ProbeOutcome::Video { source: crate::prepare::VideoSource { rotation_degrees: 45, ..facts }, metadata_keys };
+    let preparer = ScriptedPreparer::new(probe, PREPARED, &[]);
+    let stand = Stand::new().keep_moment().with_preparer(preparer.clone());
+    let database = stand.open(Some(&path), &[CREATE_MOMENT]).await;
+    let epoch = database.session_epoch();
+    let receipt = bound(database.send(send(epoch, &source, video(|_| {})))).await.unwrap();
+    let id = receipt.optimistic_value.as_ref().unwrap().id.clone();
+    let _ = bound(database.confirmed(receipt, false)).await;
+    crate::test_wait::settled(&database, "the refusal is shown", || upload_of(&database, &id).is_some_and(|upload| upload.status == WireUploadStatus::Failed)).await;
+    let failed = upload_of(&database, &id).unwrap();
+    assert_eq!((failed.error.as_ref().map(|error| error.kind.clone()), failure_reason(&failed).as_deref()), (Some("prepare_failed".to_string()), Some("failed")));
+    assert!(preparer.jobs().is_empty() && files_left(&path) > 0, "nothing ran and the copy of the source stays");
+    database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn xfer_prepare_cannot_decode() {
     const MESSAGE: &str = "decoder up to 2560x1440";
     let cases: [(&str, bool, &[&str]); 3] = [("refuse", false, &[]), ("send the source", true, &["major_brand"]), ("send a repack", true, &[LOCATION])];

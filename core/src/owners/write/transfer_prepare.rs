@@ -17,9 +17,11 @@ fn plan_of(settings: &WirePrepare, probed: &ProbeOutcome) -> Result<Option<Prepa
     match (settings, probed) {
         (WirePrepare::Video { limits, mirror, .. }, ProbeOutcome::Video { source, metadata_keys }) => {
             let limits = limits.clone().unwrap_or_else(crate::prepare::default_video_limits);
+            if !matches!(source.rotation_degrees, 0 | 90 | 180 | 270) { return Err(format!("the rotation of the video is {}, not 0, 90, 180 or 270", source.rotation_degrees)); }
             let plan = crate::prepare::plan_video(*source, limits.clone()).map_err(|error| error.to_string())?;
+            let plan = crate::prepare::VideoPlan { reencode: plan.reencode || *mirror, ..plan };
             let strip_metadata = crate::prepare::video_metadata_to_strip(metadata_keys.clone());
-            if !plan.reencode && !*mirror && strip_metadata.is_empty() { return Ok(None); }
+            if !plan.reencode && strip_metadata.is_empty() { return Ok(None); }
             Ok(Some(PreparePlan::Video { plan, strip_metadata, audio_bitrate: limits.audio_bitrate, audio_channels: limits.audio_channels, audio_sample_rate: limits.audio_sample_rate, mirror: *mirror }))
         }
         (WirePrepare::Image { edit, quality, format, .. }, ProbeOutcome::Image { width, height, exif_orientation, .. }) => {
