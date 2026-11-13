@@ -58,8 +58,8 @@ extension BridgeProbeTests {
     try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"},{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
     DecoderThreads.shared.clear()
 
-    let projected = Projected<ThreadChat>(try DB.account().stream(Query<ThreadChat>(relation: "list", params: ["list": .string("SECONDARY")])))
     transport.enqueue("ChatList", reply: #"{"data":{"chats":[{"__typename":"Chat","id":"c1","title":"t","revision":1,"lists":["SECONDARY"]}]}}"#)
+    let projected = Projected<ThreadChat>(try DB.account().stream(Query<ThreadChat>(relation: "list", params: ["list": .string("SECONDARY")])))
     try await Chat.list("SECONDARY").load()
     await eventually("the reader received the row") { projected.rows.map(\.id) == ["c1"] }
     #expect(!DecoderThreads.shared.calls.isEmpty, "Projected: the decoder never ran")

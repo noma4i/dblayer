@@ -48,8 +48,8 @@ class CallerThreadTest {
         val screen = CoroutineScope(SupervisorJob() + caller)
         try {
             decoded.clear()
-            val projected = Projected(AccountScope.current().stream(Chat.list("SECONDARY")), recording(Chat), screen)
             transport.enqueue("ChatList", """{"data":{"chats":[{"__typename":"Chat","id":"c1","title":"t","revision":1,"lists":["SECONDARY"]}]}}""")
+            val projected = Projected(AccountScope.current().stream(Chat.list("SECONDARY")), recording(Chat), screen)
             screen.launch { Chat.list("SECONDARY").load() }
             projected.until("the collector received the row") { it.rows.any { row -> row.id == "c1" } }
             assertDecodedOffTheCaller("Projected")
