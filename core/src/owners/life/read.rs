@@ -38,6 +38,14 @@ fn debounce_of(db: &Store) -> BTreeMap<String, u64> {
     }).collect()
 }
 
+/// The relations of each model that declare `keep_on_gap` (D-421).
+fn kept_of(db: &Store) -> BTreeMap<String, std::collections::BTreeSet<String>> {
+    db.specs().values().filter_map(|spec| {
+        let kept: std::collections::BTreeSet<String> = spec.relations.iter().filter(|relation| relation.keep_on_gap).map(|relation| relation.name.clone()).collect();
+        (!kept.is_empty()).then(|| (spec.key.to_string(), kept))
+    }).collect()
+}
+
 pub(super) struct ReadAt {
     pub windows: Address<Windows>,
     pub deliveries: Address<Deliveries>,
@@ -137,7 +145,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
         FeedEffect::SnapshotRequest { epoch } => feed_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Feed, epoch }),
         _ => {}
     });
-    let feed_state = FeedState::new(0, FeedPeers { store, windows: windows_at, deliveries: deliveries_at }, debounce_of(&db), channels_of(&db));
+    let feed_state = FeedState::new(0, FeedPeers { store, windows: windows_at, deliveries: deliveries_at }, debounce_of(&db), channels_of(&db)).with_kept(kept_of(&db));
     match &ports.cable {
         Some(lines) => {
             let codec = Arc::new(SchemaFeedCodec::new(db.clone(), ports.read_operations.clone().unwrap_or_default()));

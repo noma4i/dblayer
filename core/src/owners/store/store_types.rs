@@ -185,7 +185,8 @@ pub enum StoreOp {
     /// The answer of an action landed: the stored windows of these (model, relation) pairs are stale, whoever reads them.
     StaleFamilies { families: Vec<(String, String)> },
     /// The windows of `models` and the windows `keys` owe a reread: `stale_since` is set in the transaction of the batch.
-    MarkStale { models: Vec<String>, keys: Vec<(String, String)> },
+    /// The windows of `models` except the families `kept` (model, relation), and the windows `keys`, owe a reread: `stale_since` is set in the transaction of the batch.
+    MarkStale { models: Vec<String>, keys: Vec<(String, String)>, kept: Vec<(String, String)> },
     OweReread { model: String, id: String, relation: String },
     /// Set or clear the error shown on the row of the operation (`on_failure: keep`).
     MarkError { op_id: u64, error: Option<String> },

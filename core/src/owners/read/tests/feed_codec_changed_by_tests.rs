@@ -55,7 +55,7 @@ fn feed_changed_by_two_forms() {
     assert_eq!(events.len(), 1, "one event of the model for two forms");
     assert_eq!(events[0].reread, keys(&[key("node", json!({crate::schema::NODE_PARAM: "c1"})), key("named", json!({"other":"c1"}))]));
     let observed = codec(vec![json!({"area":"CHAT", "relation":"node"}), json!({"area":"CHAT", "relation":"list", "observed":true})]).events("Changes", frame("CHAT", "UPDATED", "c1"));
-    assert_eq!((observed.len(), &observed[0].reread), (1, &StaleKeys::All), "an observed form widens the union to the model");
+    assert_eq!((observed.len(), &observed[0].reread), (1, &StaleKeys::all()), "an observed form widens the union to the model");
 }
 
 #[test]

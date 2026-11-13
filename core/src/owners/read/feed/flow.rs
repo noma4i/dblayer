@@ -104,7 +104,7 @@ impl FeedState {
             Mode::Opening { .. } if self.opening_connection() == Some(connection) => {
                 let lost = self.lose_held(fx);
                 self.wait_resubscribe(fx);
-                Self::stale_all(&lost, fx);
+                self.stale_lost(&lost, fx);
             }
             Mode::Live if self.active_connection() == Some(connection) => {
                 self.flush_pending(fx);
@@ -115,7 +115,7 @@ impl FeedState {
                 self.mode = Mode::Opening { gap: true };
                 self.attempts = 0;
                 self.open_connection(fx);
-                Self::stale_all(&lost, fx);
+                self.stale_lost(&lost, fx);
             }
             _ => {}
         }
@@ -138,7 +138,7 @@ impl FeedState {
             self.active = None;
             self.gap_seq = Some(self.online_seq);
             self.mode = Mode::Draining { connection, then: Resume::Reopen };
-            Self::stale_all(&lost, fx);
+            self.stale_lost(&lost, fx);
             return;
         }
         fx.push(Fx::Run(FeedEffect::Close { connection, goodbye, drain: false, intended: false }));
@@ -302,7 +302,7 @@ impl FeedState {
     pub(super) fn leave(&mut self, fx: &mut Vec<Fx>) {
         self.close_all(false, fx);
         let lost = self.lose_held(fx);
-        Self::stale_all(&lost, fx);
+        self.stale_lost(&lost, fx);
     }
 
     pub(super) fn online_changed(&mut self, online: bool, online_seq: u64, fx: &mut Vec<Fx>) {

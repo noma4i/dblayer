@@ -187,7 +187,7 @@ fn mark_stale_op_sets_stale_since_for_models_and_keys_in_the_batch_transaction()
         key
     };
     let write = |db: &Store, models: Vec<String>, keys: Vec<(String, String)>| {
-        let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::MarkStale { models, keys }] };
+        let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::MarkStale { models, keys, kept: Vec::new() }] };
         db.write_batch(&batch, db.files(), None).unwrap();
     };
     let fresh = || Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();

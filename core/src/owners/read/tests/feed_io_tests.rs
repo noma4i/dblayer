@@ -234,7 +234,7 @@ fn feed_io_counter_mismatch_closes() {
     let saved = batches.all();
     assert_eq!(saved.len(), 1);
     assert!(saved[0].rows.is_empty(), "the skipped frame must not write rows");
-    assert!(matches!(saved[0].ops.as_slice(), [crate::owners::store::StoreOp::MarkStale { models, keys }] if models == &["Chat"] && keys.is_empty()));
+    assert!(matches!(saved[0].ops.as_slice(), [crate::owners::store::StoreOp::MarkStale { models, keys, .. }] if models == &["Chat"] && keys.is_empty()));
 }
 
 #[test]
@@ -250,7 +250,7 @@ fn feed_io_broken_next_drops() {
     let saved = batches.all();
     assert_eq!(saved.len(), 1);
     assert!(saved[0].rows.is_empty(), "the broken frame must not write rows");
-    assert!(matches!(saved[0].ops.as_slice(), [crate::owners::store::StoreOp::MarkStale { models, keys }] if models == &["Chat"] && keys.is_empty()));
+    assert!(matches!(saved[0].ops.as_slice(), [crate::owners::store::StoreOp::MarkStale { models, keys, .. }] if models == &["Chat"] && keys.is_empty()));
     assert!(saw_input(&det, "ProtocolError") == 1, "the broken frame is an explicit protocol error");
 }
 

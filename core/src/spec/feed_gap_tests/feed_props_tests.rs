@@ -11,7 +11,7 @@ fn feed_prop_gap_visible() {
     assert_eq!(twin.step(Input::Dropped { to: To::Active }), [Effect::Commit, Effect::Connect]);
     let batches: Vec<_> = twin.history[before_drop..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } => Some(input), _ => None }).collect();
     assert_eq!(batches.len(), 1);
-    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\", \"Post\"], keys: [] }]"), "the loss marks both models in one batch: {batches:?}");
+    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\", \"Post\"], keys: [], kept: [] }]"), "the loss marks both models in one batch: {batches:?}");
     let effects_before = twin.history.len();
     assert_eq!(twin.step(Input::HandshakeDone), [Effect::SealSubscribe, Effect::Stale { model: "Chat".into(), all: true }, Effect::Stale { model: "Post".into(), all: true }, Effect::ModelReady(CHAT), Effect::ModelReady(POST)]);
     assert!(!twin.history[effects_before..].iter().any(|entry| matches!(entry, Emitted::Send { to: STORE, .. })), "confirmation must not write the same debt twice");

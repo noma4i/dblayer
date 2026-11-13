@@ -175,8 +175,8 @@ fn feed_event_batch_carries_its_debt_or_stale_mark() {
     let cases: Vec<(&str, StaleKeys, Vec<StoreOp>)> = vec![
         ("node", StaleKeys::Set([node].into_iter().collect()), vec![StoreOp::OweReread { model: "Chat".into(), id: "c1".into(), relation: "node".into() }]),
         ("id_of", StaleKeys::Set([derived].into_iter().collect()), vec![StoreOp::OweReread { model: "Chat".into(), id: "c2".into(), relation: "node".into() }]),
-        ("named", StaleKeys::Set([named.clone()].into_iter().collect()), vec![StoreOp::MarkStale { models: Vec::new(), keys: vec![("Chat".into(), named.name.clone())] }]),
-        ("observed", StaleKeys::All, vec![StoreOp::MarkStale { models: vec!["Chat".into()], keys: Vec::new() }]),
+        ("named", StaleKeys::Set([named.clone()].into_iter().collect()), vec![StoreOp::MarkStale { models: Vec::new(), keys: vec![("Chat".into(), named.name.clone())], kept: Vec::new() }]),
+        ("observed", StaleKeys::all(), vec![StoreOp::MarkStale { models: vec!["Chat".into()], keys: Vec::new(), kept: Vec::new() }]),
         ("family", StaleKeys::Relations(["byChat".to_string()].into_iter().collect()), vec![StoreOp::StaleFamilies { families: vec![("Chat".into(), "byChat".into())] }]),
     ];
     for (form, reread, ops) in cases {

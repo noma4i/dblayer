@@ -139,11 +139,15 @@ pub(super) fn upsert_window(connection: &Connection, record: &WindowRecord, land
 }
 
 /// The windows of `models` and the windows named by `keys` owe a reread from the next sequence on.
-pub(super) fn mark_stale(connection: &Connection, models: &[String], keys: &[String]) -> Result<(), StoreError> {
+pub(super) fn mark_stale(connection: &Connection, models: &[String], kept: &[(String, String)], keys: &[String]) -> Result<(), StoreError> {
     let since = max_sequence(connection)? + 1;
-    let mut by_prefix = connection.prepare_cached(include_str!("sql/windows/mark_families.sql"))?;
     for model in models {
-        by_prefix.execute(params![like_prefix(ListKey::compose(&[model]).as_str()), since])?;
+        let spared: Vec<String> = kept.iter().filter(|(owner, _)| owner == model).map(|(owner, relation)| like_prefix(&family_prefix(owner, relation))).collect();
+        let mut sql = String::from(include_str!("sql/windows/mark_families.sql"));
+        for place in 0..spared.len() { sql.push_str(&format!(" AND key NOT LIKE ?{} ESCAPE '\\'", place + 3)); }
+        let mut arguments = vec![rusqlite::types::Value::Text(like_prefix(ListKey::compose(&[model]).as_str())), rusqlite::types::Value::Integer(since)];
+        arguments.extend(spared.into_iter().map(rusqlite::types::Value::Text));
+        connection.execute(&sql, rusqlite::params_from_iter(arguments))?;
     }
     let mut by_key = connection.prepare_cached(include_str!("sql/windows/mark_key.sql"))?;
     for key in keys {

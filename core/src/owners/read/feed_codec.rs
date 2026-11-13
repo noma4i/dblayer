@@ -132,7 +132,7 @@ impl SchemaFeedCodec {
     fn reread_keys(&self, spec: &ModelSpec, read: &ChangeRead, id: &RowId) -> StaleKeys {
         let model = spec.key.as_str();
         if read.observed {
-            return StaleKeys::All;
+            return StaleKeys::all();
         }
         let Some(relation) = spec.relations.iter().find(|relation| relation.name == read.relation) else { return StaleKeys::none() };
         let parameter = if relation.node == Some(NodeRead::One) { Some(NODE_PARAM) } else { read.parameter.as_deref().or_else(|| relation.text_params.iter().chain(&relation.by_columns).next().map(String::as_str)) };

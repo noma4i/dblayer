@@ -252,10 +252,10 @@ impl Twin {
                 self.post(w::WindowsInput::Rejected(Rejected { batch: *request, reason }));
             }
             Input::Stale { in_keys } => {
-                let keys = if *in_keys { StaleKeys::All } else { StaleKeys::Set(BTreeSet::new()) };
+                let keys = if *in_keys { StaleKeys::all() } else { StaleKeys::Set(BTreeSet::new()) };
                 self.post(w::WindowsInput::Stale { model: "Moment".into(), keys, cause: w::StaleCause::Change });
             }
-            Input::StaleGap => self.post(w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::All, cause: w::StaleCause::Gap { online_seq: self.online_seq } }),
+            Input::StaleGap => self.post(w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::all(), cause: w::StaleCause::Gap { online_seq: self.online_seq } }),
             Input::Foreground { seq } => self.post(w::WindowsInput::Foreground(*seq)),
             Input::SourceChanged { revision } => self.post(w::WindowsInput::StoreCommitted { models: vec!["Moment".into()], revision: *revision }),
             Input::Online(on) => {

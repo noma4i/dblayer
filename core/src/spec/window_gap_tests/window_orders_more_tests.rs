@@ -361,7 +361,7 @@ fn win_orders_reconnect_gap() {
                     twin.post(match event {
                         Off => w::WindowsInput::Online { online: Online(false), online_seq: 0 },
                         On => w::WindowsInput::Online { online: Online(true), online_seq: 1 },
-                        Gap => w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::All, cause: w::StaleCause::Gap { online_seq: 1 } },
+                        Gap => w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::all(), cause: w::StaleCause::Gap { online_seq: 1 } },
                     });
                     reads += requests(&twin.split(take(&twin.log)).0);
                 }

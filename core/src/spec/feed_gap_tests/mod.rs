@@ -55,7 +55,7 @@ fn names(models: &[&str]) -> Vec<String> { models.iter().map(|model| model.to_st
 fn framed(model: &str, payload: &str, reread: &Reread, refused: bool) -> FramedEvent {
     let reread = match reread {
         Reread::None => StaleKeys::none(),
-        Reread::All => StaleKeys::All,
+        Reread::All => StaleKeys::all(),
         Reread::Set(names) => StaleKeys::Set(names.iter().map(|name| WindowKey { model: model.into(), name: name.clone() }).collect()),
     };
     FramedEvent { model: model.into(), payload: payload.into(), reread, refused }

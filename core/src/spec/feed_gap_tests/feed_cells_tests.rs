@@ -68,7 +68,7 @@ fn feed_landing_after_drop() {
     twin.step(Input::Dropped { to: To::Active });
     let batches: Vec<_> = twin.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } => Some(input), _ => None }).collect();
     assert_eq!(batches.len(), 1);
-    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\"], keys: [] }]"), "the loss has its own stale batch: {batches:?}");
+    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\"], keys: [], kept: [] }]"), "the loss has its own stale batch: {batches:?}");
     assert!(matches!(twin.state().mode(), f::Mode::Opening { gap: true }));
     twin.step(Input::Committed);
     assert_eq!(twin.state().landing(), 1, "only the stale batch remains after the event lands");
@@ -175,7 +175,7 @@ fn feed_opening_last_unwant() {
     assert_eq!(twin.step(minus("Chat")), [Effect::Close, Effect::Commit, Effect::Stale { model: "Chat".into(), all: true }]);
     let batches: Vec<_> = twin.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } => Some(input), _ => None }).collect();
     assert_eq!(batches.len(), 1);
-    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\"], keys: [] }]"), "the lost held model is marked: {batches:?}");
+    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\"], keys: [], kept: [] }]"), "the lost held model is marked: {batches:?}");
     assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
 }
 
@@ -187,7 +187,7 @@ fn feed_opening_offline() {
     assert_eq!(twin.step(Input::Online(false)), [Effect::Close, Effect::Commit, Effect::Stale { model: "Chat".into(), all: true }]);
     let batches: Vec<_> = twin.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } => Some(input), _ => None }).collect();
     assert_eq!(batches.len(), 1);
-    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\"], keys: [] }]"), "the lost held model is marked: {batches:?}");
+    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\"], keys: [], kept: [] }]"), "the lost held model is marked: {batches:?}");
     assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
     assert_eq!(twin.step(Input::Online(true)), [Effect::Connect], "the want is kept: coming online opens the subscription again");
 }
@@ -493,7 +493,7 @@ fn feed_proto_frame_kinds() {
     assert_eq!(replayed.step(Input::Frame { to: To::Active, counter: Counter::Replayed, kind: Kind::Complete }), [Effect::Close, Effect::ScheduleDrain, Effect::Commit], "the counter is checked before the meaning of the frame");
     let batches: Vec<_> = replayed.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } => Some(input), _ => None }).collect();
     assert_eq!(batches.len(), 1);
-    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\"], keys: [] }]"), "the broken connection marks the model: {batches:?}");
+    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\"], keys: [], kept: [] }]"), "the broken connection marks the model: {batches:?}");
 }
 
 #[test]

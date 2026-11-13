@@ -8,6 +8,11 @@ impl FeedState {
             }
         }
     }
+    pub fn with_kept(mut self, kept: BTreeMap<String, BTreeSet<String>>) -> Self {
+        self.kept = kept;
+        self
+    }
+
     pub fn new(epoch: Epoch, peers: FeedPeers, debounce: BTreeMap<String, u64>, channels: BTreeMap<String, Vec<Channel>>) -> Self {
         Self {
             epoch,
@@ -21,6 +26,7 @@ impl FeedState {
             streams: BTreeSet::new(),
             debounce,
             channels,
+            kept: BTreeMap::new(),
             subscribed: BTreeSet::new(),
             confirmed: BTreeSet::new(),
             announced: BTreeSet::new(),
@@ -215,14 +221,24 @@ impl FeedState {
 
     pub(super) fn stale_all(models: &[String], fx: &mut Vec<Fx>) {
         for model in models {
-            fx.push(Fx::Stale { model: model.clone(), keys: StaleKeys::All, cause: StaleCause::Change });
+            fx.push(Fx::Stale { model: model.clone(), keys: StaleKeys::all(), cause: StaleCause::Change });
+        }
+    }
+
+    /// The keys of a step of the break: every window of the model except the windows of the relations that declare `keep_on_gap` (D-421).
+    fn gap_keys(&self, model: &str) -> StaleKeys { StaleKeys::AllBut(self.kept.get(model).cloned().unwrap_or_default()) }
+
+    /// The held frames of a step of the break are lost: `Stale` of the models with the keys of the step.
+    pub(super) fn stale_lost(&self, models: &[String], fx: &mut Vec<Fx>) {
+        for model in models {
+            fx.push(Fx::Stale { model: model.clone(), keys: self.gap_keys(model), cause: StaleCause::Change });
         }
     }
 
     pub(super) fn stale_gap(&mut self, models: &[(String, u64)], fx: &mut Vec<Fx>) {
         for (model, gap_seq) in models {
             let cause = if self.online_seq > *gap_seq { StaleCause::Gap { online_seq: self.online_seq } } else { StaleCause::Lost };
-            fx.push(Fx::Stale { model: model.clone(), keys: StaleKeys::All, cause });
+            fx.push(Fx::Stale { model: model.clone(), keys: self.gap_keys(model), cause });
         }
     }
 
@@ -245,7 +261,8 @@ impl FeedState {
         let basis = models.iter().map(|model| (model.clone(), self.generation_of(model))).collect();
         self.landing.push((batch, Vec::new()));
         self.gap_landing.insert(batch, models.clone());
-        fx.push(Fx::CommitGap { batch, models, basis });
+        let kept = models.iter().flat_map(|model| self.kept.get(model).into_iter().flatten().map(|relation| (model.clone(), relation.clone()))).collect();
+        fx.push(Fx::CommitGap { batch, models, basis, kept });
     }
 
     /// One batch per equal basis, in the order the bases first appear.

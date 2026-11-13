@@ -2,7 +2,7 @@
 //! feed_codec_payload_upsert: a change with a full payload -> an `upsert` event of the declared model with the normalized row.
 //! feed_codec_removes_on: a change of a `removes_on` kind -> a `delete` event of the event id.
 //! feed_codec_direct_reread: a direct read -> the `reread` key of the relation with the event id as its parameter.
-//! feed_codec_observed_reread: an `observed` read -> `StaleKeys::All` of the model, so Windows decides which windows are live; the codec reads no registry.
+//! feed_codec_observed_reread: an `observed` read -> `StaleKeys::all()` of the model, so Windows decides which windows are live; the codec reads no registry.
 //! feed_codec_listens: `listens` -> `apply`, `deleted_by`, `deleted_unless`, `id`, `matches` decide the op of the event.
 //! feed_codec_invalid: a change that misses its kind -> an `invalid` event, never a silent drop.
 //! feed_codec_relation_updates_channel: the `updates` of a relation read the frames of their own channel.
@@ -99,7 +99,7 @@ fn feed_codec_direct_reread() {
 #[test]
 fn feed_codec_observed_reread() {
     let events = codec(true).events("Changes", frame(change("CHATSEEN", "UPDATED", "c1", Value::Null)));
-    assert_eq!((events.len(), events[0].model.as_str(), &events[0].reread), (1, "chats", &StaleKeys::All));
+    assert_eq!((events.len(), events[0].model.as_str(), &events[0].reread), (1, "chats", &StaleKeys::all()));
 }
 
 #[test]

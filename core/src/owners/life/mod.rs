@@ -430,7 +430,7 @@ impl Life {
                     Arc::new(move |families: Vec<(String, String)>, revision: i64| {
                         stale_wiring.to_windows(super::read::windows::WindowsInput::StoreCommitted { models: Vec::new(), revision });
                         for (model, relation) in families {
-                            let keys = if relation.is_empty() { super::read::windows::StaleKeys::All } else { super::read::windows::StaleKeys::Relations(std::collections::BTreeSet::from([relation])) };
+                            let keys = if relation.is_empty() { super::read::windows::StaleKeys::all() } else { super::read::windows::StaleKeys::Relations(std::collections::BTreeSet::from([relation])) };
                             stale_wiring.to_windows(super::read::windows::WindowsInput::Stale { model, keys, cause: super::read::windows::StaleCause::Change });
                         }
                     })

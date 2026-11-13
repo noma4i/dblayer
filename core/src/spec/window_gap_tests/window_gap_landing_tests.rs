@@ -317,7 +317,7 @@ pub(super) fn explore_rig() -> DetScheduler {
     det.start_epoch(EPOCH);
     let load = |id: u64| w::WindowsInput::Load { key: key(), id, goal: w::Goal::First, force: false, store_revision: 0 };
     let callers = det.add::<Source<Windows>>("callers", SourceState { to: windows, script: vec![load(1), load(2)] }, Silent);
-    let marks = det.add::<Source<Windows>>("feed", SourceState { to: windows, script: vec![w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::All, cause: w::StaleCause::Change }] }, Silent);
+    let marks = det.add::<Source<Windows>>("feed", SourceState { to: windows, script: vec![w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::all(), cause: w::StaleCause::Change }] }, Silent);
     let network = det.add::<Source<Windows>>("network", SourceState { to: windows, script: vec![w::WindowsInput::Online { online: Online(false), online_seq: 0 }, w::WindowsInput::Online { online: Online(true), online_seq: 1 }] }, Silent);
     for source in [callers, marks, network] {
         det.post(source, EpochStamp::Control, SourceInput::Go);

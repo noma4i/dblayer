@@ -256,7 +256,7 @@ fn win_change_after_commit_marks_the_next_load() {
         for turn in turns {
             let landed = rig.batches.all().len();
             match turn {
-                Stale => rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Stale { model: "Moment".into(), keys: w::StaleKeys::All, cause: w::StaleCause::Change }),
+                Stale => rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Stale { model: "Moment".into(), keys: w::StaleKeys::all(), cause: w::StaleCause::Change }),
                 Load | LoadRefused => {
                     let reply = if matches!(turn, Load) { Reply::data(json!({ "rows": ["r1"], "cursor": null })) } else { Reply::fail(TransportError::Decode("broken".into())) };
                     rig.mock.enqueue("Page", reply);

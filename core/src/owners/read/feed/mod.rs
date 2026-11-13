@@ -204,7 +204,7 @@ enum Fx {
     CancelPong { connection: ConnectionId },
     Commit { batch: BatchId, events: Vec<FeedEvent> },
     Gap(Vec<String>),
-    CommitGap { batch: BatchId, models: Vec<String>, basis: BTreeMap<String, u64> },
+    CommitGap { batch: BatchId, models: Vec<String>, basis: BTreeMap<String, u64>, kept: Vec<(String, String)> },
     Stale { model: String, keys: StaleKeys, cause: StaleCause },
     Joined { id: SubscriptionId, position: u64 },
     /// `id` = `None`: every stream that wants the model.
@@ -313,6 +313,8 @@ pub struct FeedState {
     debounce: BTreeMap<String, u64>,
     /// The channels each model reads, from the schema at `install`.
     channels: BTreeMap<String, Vec<Channel>>,
+    /// The relations of each model that declare `keep_on_gap`, from the schema at `install`: the windows of a step of the break do not name them (D-421).
+    kept: BTreeMap<String, BTreeSet<String>>,
     /// Channels with a `Subscribe` on the active connection.
     subscribed: BTreeSet<Channel>,
     /// Channels the server confirmed on the active connection.
@@ -379,7 +381,7 @@ impl Feed {
         let (mut owed, mut models, mut windows, mut families) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
         for event in events.iter().filter(|event| !event.refused) {
             match &event.reread {
-                StaleKeys::All => { models.insert(event.model.clone()); }
+                StaleKeys::AllBut(_) => { models.insert(event.model.clone()); }
                 StaleKeys::Set(keys) => for key in keys {
                     match key.kind() {
                         WindowKind::Relation { relation, params } if params.contains_key(crate::schema::NODE_PARAM) => {
@@ -392,7 +394,7 @@ impl Feed {
             }
         }
         let mut ops: Vec<StoreOp> = owed.into_iter().map(|(model, id, relation)| StoreOp::OweReread { model, id, relation }).collect();
-        if !models.is_empty() || !windows.is_empty() { ops.push(StoreOp::MarkStale { models: models.into_iter().collect(), keys: windows.into_iter().collect() }); }
+        if !models.is_empty() || !windows.is_empty() { ops.push(StoreOp::MarkStale { models: models.into_iter().collect(), keys: windows.into_iter().collect(), kept: Vec::new() }); }
         if !families.is_empty() { ops.push(StoreOp::StaleFamilies { families: families.into_iter().collect() }); }
         ops
     }
@@ -440,7 +442,7 @@ impl Feed {
                 Fx::CancelPong { connection } => out.push(Effect::Cancel(ScheduleId(PONG_SCHEDULE | connection))),
                 Fx::Commit { batch, events } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(Self::commit_batch(state, batch, events))))),
                 Fx::Gap(_) => {}
-                Fx::CommitGap { batch, models, basis } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(StoreBatch { author: BatchAuthor::Feed, id: batch, stamp: crate::runtime::EpochStamp::Epoch(state.epoch), basis, rows: Vec::new(), intents: 0, credential: None, ops: vec![crate::owners::store::StoreOp::MarkStale { models, keys: Vec::new() }] })))),
+                Fx::CommitGap { batch, models, basis, kept } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(StoreBatch { author: BatchAuthor::Feed, id: batch, stamp: crate::runtime::EpochStamp::Epoch(state.epoch), basis, rows: Vec::new(), intents: 0, credential: None, ops: vec![crate::owners::store::StoreOp::MarkStale { models, keys: Vec::new(), kept }] })))),
                 Fx::Stale { model, keys, cause } => out.push(Effect::Send(Outbound::new(peers.windows, WindowsInput::Stale { model, keys, cause }))),
                 Fx::Joined { id, position } => out.push(Effect::Send(Outbound::new(peers.deliveries, DeliveryInput::Joined { stream: id, position }))),
                 Fx::ModelReady { id: Some(id), .. } => out.push(Effect::Send(Outbound::new(peers.deliveries, DeliveryInput::ModelReady { stream: id }))),
@@ -477,7 +479,7 @@ impl StateOwner for Feed {
             return effects;
         }
         if let FeedInput::ActivateEpoch(epoch) = &input {
-            *state = FeedState::new(*epoch, state.peers, std::mem::take(&mut state.debounce), std::mem::take(&mut state.channels));
+            *state = FeedState::new(*epoch, state.peers, std::mem::take(&mut state.debounce), std::mem::take(&mut state.channels)).with_kept(std::mem::take(&mut state.kept));
             return Vec::new();
         }
         for models in std::mem::take(&mut state.gap_retry) { state.commit_gap(models, &mut fx); }
@@ -538,7 +540,7 @@ impl StateOwner for Feed {
             FeedInput::Committed(committed) => {
                 let landed = state.owns_landing(committed.batch);
                 state.verdict(committed.batch, None, &committed.refused, &mut fx);
-                if landed { fx.extend(committed.stale_parents.into_iter().map(|model| Fx::Stale { model, keys: StaleKeys::All, cause: StaleCause::Change })); }
+                if landed { fx.extend(committed.stale_parents.into_iter().map(|model| Fx::Stale { model, keys: StaleKeys::all(), cause: StaleCause::Change })); }
             }
             FeedInput::Rejected(rejected) => state.verdict(rejected.batch, Some(rejected.reason), &[], &mut fx),
             FeedInput::Tick => {

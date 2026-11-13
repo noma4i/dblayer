@@ -193,20 +193,23 @@ pub enum WindowsEffect {
 /// Which keys of a model a `Stale` names.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StaleKeys {
-    All,
+    /// Every window of the model except the windows of the relations named (D-421: the relations that declare `keep_on_gap`); no relation named = every window.
+    AllBut(BTreeSet<String>),
     Set(BTreeSet<WindowKey>),
     /// Every window of the model whose relation is named, whatever its params.
     Relations(BTreeSet<String>),
 }
 
 impl StaleKeys {
+    pub fn all() -> Self { Self::AllBut(BTreeSet::new()) }
+
     pub fn none() -> Self { Self::Set(BTreeSet::new()) }
 
     pub fn is_empty(&self) -> bool { matches!(self, Self::Set(set) if set.is_empty()) || matches!(self, Self::Relations(set) if set.is_empty()) }
 
     pub(super) fn names(&self, key: &WindowKey) -> bool {
         match self {
-            Self::All => true,
+            Self::AllBut(kept) => !matches!(key.kind(), WindowKind::Relation { relation, .. } if kept.contains(&relation)),
             Self::Set(set) => set.contains(key),
             Self::Relations(relations) => matches!(key.kind(), WindowKind::Relation { relation, .. } if relations.contains(&relation)),
         }
@@ -216,7 +219,8 @@ impl StaleKeys {
         match (self, other) {
             (Self::Set(mut left), Self::Set(right)) => { left.extend(right); Self::Set(left) }
             (Self::Relations(mut left), Self::Relations(right)) => { left.extend(right); Self::Relations(left) }
-            _ => Self::All,
+            (Self::AllBut(left), Self::AllBut(right)) => Self::AllBut(left.intersection(&right).cloned().collect()),
+            _ => Self::all(),
         }
     }
 }
