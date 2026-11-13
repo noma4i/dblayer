@@ -6,7 +6,7 @@ fn source(width: u32, height: u32) -> VideoSource {
 }
 
 fn plan(source: VideoSource) -> VideoPlan {
-    plan_video(source, default_video_limits()).unwrap()
+    plan_video(source, 0, default_video_limits()).unwrap()
 }
 
 fn size(width: u32, height: u32) -> PixelSize {
@@ -38,7 +38,7 @@ fn prepare_video_long_side_follows_the_table_without_upscale() {
     assert_eq!((plan(source(640, 360)).width, plan(source(640, 360)).height), (640, 360));
     let mut limits = default_video_limits();
     limits.max_long_side = 48;
-    let small = plan_video(source(32, 64), limits).unwrap();
+    let small = plan_video(source(32, 64), 0, limits).unwrap();
     assert_eq!((small.width, small.height), (24, 48));
 }
 
@@ -114,9 +114,9 @@ fn prepare_video_limits_the_planner_cannot_work_with_are_refused() {
         let mut limits = default_video_limits();
         change(&mut limits);
         assert!(matches!(check(&limits), Err(DbError::Invalid { .. })));
-        assert!(matches!(plan_video(source(1280, 720), limits), Err(DbError::Invalid { .. })));
+        assert!(matches!(plan_video(source(1280, 720), 0, limits), Err(DbError::Invalid { .. })));
     }
-    assert!(matches!(plan_video(source(0, 720), default_video_limits()), Err(DbError::Invalid { .. })));
+    assert!(matches!(plan_video(source(0, 720), 0, default_video_limits()), Err(DbError::Invalid { .. })));
 }
 
 #[test]

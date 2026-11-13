@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- recodeAboveBytes in the video limits: a smaller video is not encoded again.
+
 ## 6.34.1 - 2026-11-14
 
 ### Fixed

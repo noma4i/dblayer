@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS sync_upload_prepare (
   audio_bitrate INTEGER,
   audio_channels INTEGER,
   audio_sample_rate INTEGER,
+  recode_above_bytes INTEGER,
   max_width INTEGER,
   max_height INTEGER,
   enlarge INTEGER,

@@ -13,12 +13,12 @@ use crate::runtime::{Effect, Time};
 use crate::value::sync::PrepareReason;
 
 /// The plan of the run for what the platform read, `None` when the source goes as it is.
-fn plan_of(settings: &WirePrepare, probed: &ProbeOutcome) -> Result<Option<PreparePlan>, String> {
+fn plan_of(settings: &WirePrepare, probed: &ProbeOutcome, size: u64) -> Result<Option<PreparePlan>, String> {
     match (settings, probed) {
         (WirePrepare::Video { limits, mirror, .. }, ProbeOutcome::Video { source, metadata_keys }) => {
             let limits = limits.clone().unwrap_or_else(crate::prepare::default_video_limits);
             if !matches!(source.rotation_degrees, 0 | 90 | 180 | 270) { return Err(format!("the rotation of the video is {}, not 0, 90, 180 or 270", source.rotation_degrees)); }
-            let plan = crate::prepare::plan_video(*source, limits.clone()).map_err(|error| error.to_string())?;
+            let plan = crate::prepare::plan_video(*source, size, limits.clone()).map_err(|error| error.to_string())?;
             let plan = crate::prepare::VideoPlan { reencode: plan.reencode || *mirror, ..plan };
             let strip_metadata = crate::prepare::video_metadata_to_strip(metadata_keys.clone());
             if !plan.reencode && strip_metadata.is_empty() { return Ok(None); }
@@ -122,10 +122,11 @@ impl TransferState {
     pub(super) fn probed(&mut self, now: Time, id: TransferId, attempt_id: AttemptId, outcome: ProbeOutcome, fx: &mut Fx) {
         if !self.current(id, attempt_id, &[TransferStage::Preparing], fx) { return; }
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        let size = transfer.size;
         let Some(prep) = transfer.prep.as_mut().filter(|prep| prep.phase == PreparePhase::Probe) else { return };
         let Some(settings) = transfer.prepare.clone() else { return };
         if let ProbeOutcome::Failed { message } = &outcome { return self.fail_prepare(now, id, PrepareReason::Failed, message.clone(), fx); }
-        let plan = match plan_of(&settings, &outcome) {
+        let plan = match plan_of(&settings, &outcome, size) {
             Ok(plan) => plan,
             Err(message) => return self.fail_prepare(now, id, PrepareReason::Failed, message, fx),
         };

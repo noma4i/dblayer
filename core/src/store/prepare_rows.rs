@@ -37,6 +37,7 @@ pub(super) fn put_prepare(connection: &Connection, transfer_id: u64, prepare: &W
                 ":max_long_side": limits.as_ref().map(|limits| limits.max_long_side), ":min_frame_rate": limits.as_ref().map(|limits| limits.min_frame_rate),
                 ":max_frame_rate": limits.as_ref().map(|limits| limits.max_frame_rate), ":source_bitrate_cap_percent": limits.as_ref().map(|limits| limits.source_bitrate_cap_percent),
                 ":audio_bitrate": limits.as_ref().map(|limits| limits.audio_bitrate), ":audio_channels": limits.as_ref().map(|limits| limits.audio_channels), ":audio_sample_rate": limits.as_ref().map(|limits| limits.audio_sample_rate),
+                ":recode_above_bytes": limits.as_ref().and_then(|limits| limits.recode_above_bytes).map(|bytes| i64::try_from(bytes).unwrap_or(i64::MAX)),
                 ":max_width": None::<u32>, ":max_height": None::<u32>, ":enlarge": None::<bool>, ":crop_x": None::<f64>, ":crop_y": None::<f64>, ":crop_width": None::<f64>, ":crop_height": None::<f64>,
                 ":output_width": None::<u32>, ":output_height": None::<u32>, ":rotation_degrees": None::<u32>, ":quality": None::<f64>, ":format": None::<&str>, ":on_cannot_decode": cannot_decode_text(*on_cannot_decode),
             })?;
@@ -48,7 +49,7 @@ pub(super) fn put_prepare(connection: &Connection, transfer_id: u64, prepare: &W
             connection.execute(include_str!("sql/prepare_rows/put_prepare.sql"), named_params! {
                 ":transfer_id": id, ":kind": "image", ":mirror": edit.mirror,
                 ":max_long_side": None::<u32>, ":min_frame_rate": None::<u32>, ":max_frame_rate": None::<u32>, ":source_bitrate_cap_percent": None::<u32>,
-                ":audio_bitrate": None::<u32>, ":audio_channels": None::<u32>, ":audio_sample_rate": None::<u32>,
+                ":audio_bitrate": None::<u32>, ":audio_channels": None::<u32>, ":audio_sample_rate": None::<u32>, ":recode_above_bytes": None::<i64>,
                 ":max_width": edit.max_size.map(|size| size.width), ":max_height": edit.max_size.map(|size| size.height), ":enlarge": edit.enlarge,
                 ":crop_x": edit.crop.map(|crop| crop.x), ":crop_y": edit.crop.map(|crop| crop.y), ":crop_width": edit.crop.map(|crop| crop.width), ":crop_height": edit.crop.map(|crop| crop.height),
                 ":output_width": edit.output_size.map(|size| size.width), ":output_height": edit.output_size.map(|size| size.height), ":rotation_degrees": edit.rotation_degrees,
@@ -96,20 +97,21 @@ pub(crate) fn read_prepares(connection: &Connection) -> rusqlite::Result<BTreeMa
             let limits = row.get::<_, Option<u32>>(3)?.map(|max_long_side| Ok::<_, rusqlite::Error>(VideoLimits {
                 max_long_side, corridors: corridors.remove(&id).unwrap_or_default(), min_frame_rate: row.get(4)?, max_frame_rate: row.get(5)?,
                 source_bitrate_cap_percent: row.get(6)?, audio_bitrate: row.get(7)?, audio_channels: row.get(8)?, audio_sample_rate: row.get(9)?,
+                recode_above_bytes: row.get::<_, Option<i64>>(10)?.and_then(|bytes| u64::try_from(bytes).ok()),
             })).transpose()?;
-            let on_cannot_decode = if row.get::<_, Option<String>>(22)?.as_deref() == Some("upload_source") { CannotDecode::UploadSource } else { CannotDecode::Fail };
+            let on_cannot_decode = if row.get::<_, Option<String>>(23)?.as_deref() == Some("upload_source") { CannotDecode::UploadSource } else { CannotDecode::Fail };
             return Ok((id, WirePrepare::Video { limits, mirror, on_cannot_decode }));
         }
         let size = |width: usize, height: usize| -> rusqlite::Result<Option<PixelSize>> {
             Ok(row.get::<_, Option<u32>>(width)?.zip(row.get::<_, Option<u32>>(height)?).map(|(width, height)| PixelSize { width, height }))
         };
-        let crop = match row.get::<_, Option<f64>>(13)? {
-            Some(x) => Some(CropFractions { x, y: row.get(14)?, width: row.get(15)?, height: row.get(16)? }),
+        let crop = match row.get::<_, Option<f64>>(14)? {
+            Some(x) => Some(CropFractions { x, y: row.get(15)?, width: row.get(16)?, height: row.get(17)? }),
             None => None,
         };
-        let edit = PhotoEdit { max_size: size(10, 11)?, enlarge: row.get::<_, Option<bool>>(12)?.unwrap_or(false), crop, output_size: size(17, 18)?, mirror, rotation_degrees: row.get::<_, Option<u32>>(19)?.unwrap_or(0) };
-        let format = if row.get::<_, Option<String>>(21)?.as_deref() == Some("png") { ImageFormat::Png } else { ImageFormat::Jpeg };
-        Ok((id, WirePrepare::Image { edit, quality: row.get(20)?, format }))
+        let edit = PhotoEdit { max_size: size(11, 12)?, enlarge: row.get::<_, Option<bool>>(13)?.unwrap_or(false), crop, output_size: size(18, 19)?, mirror, rotation_degrees: row.get::<_, Option<u32>>(20)?.unwrap_or(0) };
+        let format = if row.get::<_, Option<String>>(22)?.as_deref() == Some("png") { ImageFormat::Png } else { ImageFormat::Jpeg };
+        Ok((id, WirePrepare::Image { edit, quality: row.get(21)?, format }))
     })?;
     rows.collect()
 }

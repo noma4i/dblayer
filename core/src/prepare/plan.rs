@@ -17,6 +17,8 @@ pub struct VideoLimits {
     pub audio_bitrate: u32,
     pub audio_channels: u32,
     pub audio_sample_rate: u32,
+    #[uniffi(default = None)]
+    pub recode_above_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
@@ -56,10 +58,11 @@ pub fn default_video_limits() -> VideoLimits {
         audio_bitrate: 128_000,
         audio_channels: 2,
         audio_sample_rate: 44_100,
+        recode_above_bytes: None,
     }
 }
 
-pub fn plan_video(source: VideoSource, limits: VideoLimits) -> Result<VideoPlan, DbError> {
+pub fn plan_video(source: VideoSource, size: u64, limits: VideoLimits) -> Result<VideoPlan, DbError> {
     check(&limits)?;
     if source.width == 0 || source.height == 0 {
         return Err(DbError::Invalid { detail: "the source video has an empty side".to_string() });
@@ -82,7 +85,8 @@ pub fn plan_video(source: VideoSource, limits: VideoLimits) -> Result<VideoPlan,
         }
     };
     let source_band = corridor(&limits, width.max(height))?;
-    let as_is = source.mp4_h264_aac
+    let below_threshold = limits.recode_above_bytes.is_some_and(|threshold| threshold > 0 && size <= threshold);
+    let as_is = below_threshold || source.mp4_h264_aac
         && rotation == 0
         && width.max(height) <= limits.max_long_side
         && source.frame_rate > 0.0

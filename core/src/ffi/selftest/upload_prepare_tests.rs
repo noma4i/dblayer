@@ -345,6 +345,24 @@ async fn xfer_prepare_mirror_makes_the_plan_reencode() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn xfer_prepare_recode_above_bytes() {
+    let size = SOURCE.len() as u64;
+    for (threshold, runs, body) in [(size, 0, SOURCE), (size - 1, 1, PREPARED)] {
+        let directory = tempfile::tempdir().unwrap();
+        let source = source_file(directory.path(), "clip.mp4", SOURCE);
+        let preparer = ScriptedPreparer::new(video_probe(&[], true), PREPARED, &[]);
+        let stand = Stand::new().with_preparer(preparer.clone());
+        let database = stand.open(Some(&directory.path().join("db.sqlite")), &[CREATE_MOMENT]).await;
+        stand.script.data("CreateBlob", BLOB);
+        stand.script.data("CreateMoment", LANDED);
+        let receipt = bound(database.send(send(database.session_epoch(), &source, video(|limits| limits.recode_above_bytes = Some(threshold))))).await.unwrap();
+        bound(database.confirmed(receipt, false)).await.unwrap();
+        assert_eq!((preparer.jobs().len(), stand.puts.bodies.lock().unwrap().clone()), (runs, vec![body.to_vec()]), "threshold {threshold} for a copy of {size} bytes that the limits encode");
+        database.close_now();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn xfer_prepare_refuses_a_rotation_outside_the_set() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db.sqlite");
