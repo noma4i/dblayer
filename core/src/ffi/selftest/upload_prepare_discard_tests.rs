@@ -26,15 +26,19 @@ async fn xfer_discard_of_a_failed_prepared_multipart_leaves_nothing() {
     let id = receipt.optimistic_value.unwrap().id;
     crate::test_wait::settled(&database, "the upload failed after the multipart was created", || upload_of(&database, &id).is_some_and(|upload| upload.status == WireUploadStatus::Failed)).await;
     assert_eq!(stand.script.count("InitMultipart"), 1, "the multipart exists on the server: {:?}", stand.script.names());
-    bound(database.discard(epoch, "Moment".into(), id, Some("upload_clip".into()))).await.unwrap();
+    bound(database.discard(epoch, "Moment".into(), id.clone(), Some("upload_clip".into()))).await.unwrap();
     crate::test_wait::settled(&database, &format!("the abort went ({:?})", stand.script.names()), || stand.script.count("AbortMultipart") >= 1).await;
     drained(&database).await;
-    let connection = rusqlite::Connection::open(&live).unwrap();
-    let count = |table: &str| connection.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get::<_, i64>(0)).unwrap();
     let files: Vec<_> = std::fs::read_dir(files_of(&live).join("transfers")).map_or_else(|_| Vec::new(), |found| found.map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect());
     assert_eq!(stand.script.count("AbortMultipart"), 1, "{:?}", stand.script.names());
     assert!(stand.script.variables("AbortMultipart")[0].to_string().contains("upload"), "{:?}", stand.script.variables("AbortMultipart"));
-    assert_eq!((count("sync_upload"), count("sync_upload_prepare"), count("op"), count("upload_orphan")), (0, 0, 0, 0));
     assert!(files.is_empty(), "the directory of the base keeps {files:?}");
+    assert!(upload_of(&database, &id).is_none(), "the discarded upload still shows");
+    let before = stand.script.names();
     database.close_now();
+    let reopened = stand.open(Some(&live), &[CREATE_MOMENT]).await;
+    drained(&reopened).await;
+    assert_eq!(stand.script.names(), before, "the reopened base asks the server again: nothing of the upload stays");
+    assert!(upload_of(&reopened, &id).is_none(), "the discarded upload came back at the open");
+    reopened.close_now();
 }
