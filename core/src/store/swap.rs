@@ -107,8 +107,14 @@ fn carry_locals(reader: &Reader<'_>, envelope: &mut BatchPlan, model: &str, real
         Ok(())
 }
 
-pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, temp: &str, real: &str, closing: &[i64]) -> Result<crate::store::CommitResult, StoreError> {
+/// The fact `temp -> real` of a replaced temporary row: `resolve` reads it for every later call with the temporary id.
+pub(super) fn record_alias(writer: &super::row_write::RowWrite<'_>, model: &str, temp: &str, real: &str) -> Result<(), StoreError> {
     writer.connection.execute(include_str!("sql/ddl/put_row_alias.sql"), rusqlite::params![model, temp, real])?;
+    Ok(())
+}
+
+pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, temp: &str, real: &str, closing: &[i64]) -> Result<crate::store::CommitResult, StoreError> {
+    record_alias(writer, model, temp, real)?;
     let temp = RowId::new(temp).map_err(|error| StoreError::Constraint(error.to_string()))?;
     let real = RowId::new(real).map_err(|error| StoreError::Constraint(error.to_string()))?;
     let held = writer.stored(model, temp.as_str())?.map(|stored| stored.row);

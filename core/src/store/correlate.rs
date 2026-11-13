@@ -65,6 +65,7 @@ pub(super) fn replace_temp_rows(writer: &mut super::row_write::RowWrite<'_>, env
         let Some(found) = found.filter(|found| found.temp != id && !replaced.contains(&found.temp)) else { continue };
         let held = writer.stored(model.as_str(), found.temp.as_str())?.map(|stored| stored.row);
         let outbox = crate::store::plan::read_outbox(&Reader::new(writer.connection, writer.models))?;
+        super::swap::record_alias(writer, model.as_str(), found.temp.as_str(), id.as_str())?;
         super::swap::plan(writer, envelope, &outbox, super::swap::TempReplacement { model: model.as_str(), temp: &found.temp, real: &id }, std::slice::from_ref(&found.operation), held)?;
         replaced.push(found.temp);
     }

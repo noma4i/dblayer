@@ -386,6 +386,20 @@ fn inv_id_08_one_matching_candidate_is_replaced_by_the_row_of_the_event_and_seve
 }
 
 #[test]
+fn a_temp_row_replaced_by_the_row_of_an_event_is_found_by_its_temporary_id() {
+    use crate::schema::{ActionDeclaration, RootShape};
+    let mut specs = all_specs();
+    let mut create = ActionDeclaration::new("create", RootShape::Upsert);
+    create.correlate = vec!["userId".into(), "text".into()];
+    specs.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap().actions.push(create);
+    let db = Arc::new(Store::open_models(None, specs, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+    let temp = sent_create(&db, 1, "one");
+    event_row(&db, "m1", "one");
+    let found = db.find("moments", &crate::identity::RowId::new(&temp).unwrap()).unwrap().map(|row| row.id.to_string());
+    assert_eq!(found, Some("m1".to_string()));
+}
+
+#[test]
 fn inv_row_07_fsck_quarantines_temp_rows_without_an_operation_and_keeps_the_others() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db.sqlite");

@@ -100,6 +100,7 @@ impl Store {
     }
 
     pub(crate) fn plan_update(&self, model: &str, id: &RowId, patch: Row, args: Row) -> Result<Planned, CoreError> {
+        let asked = id;
         self.validate_update(model, &patch)?;
         let spec = self.spec(model)?;
         let mut patch = spec.patch(&patch);
@@ -118,11 +119,11 @@ impl Store {
             Ok((id, Some(effects)))
         })?;
         let mut input = patch;
-        input.insert("id".to_string(), Value::String(id.to_string()));
+        input.insert("id".to_string(), Value::String(asked.to_string()));
         input.extend(args);
         Ok(match effects {
-            Some(effects) => Planned { model: model.to_string(), row_id: id.clone(), shown: id.clone(), input: Value::Object(input), effects, noop: false },
-            None => Planned { model: model.to_string(), row_id: id.clone(), shown: id.clone(), input: Value::Object(input), effects: IntentEffects::default(), noop: true },
+            Some(effects) => Planned { model: model.to_string(), row_id: asked.clone(), shown: id.clone(), input: Value::Object(input), effects, noop: false },
+            None => Planned { model: model.to_string(), row_id: asked.clone(), shown: id.clone(), input: Value::Object(input), effects: IntentEffects::default(), noop: true },
         })
     }
 
@@ -137,6 +138,7 @@ impl Store {
     }
 
     pub(crate) fn plan_act(&self, model: &str, action: &str, id: &RowId, mut patch: Row, args: Row) -> Result<Planned, CoreError> {
+        let asked = id;
         self.validate_act(model, patch.clone(), &args)?;
         let spec = self.spec(model)?;
         crate::schema::keyed::resolve_maps(&mut patch, &args);
@@ -173,12 +175,13 @@ impl Store {
             Ok((id.clone(), effects))
         })?;
         let mut input = args;
-        input.insert("id".to_string(), Value::String(id.to_string()));
-        Ok(Planned { model: model.to_string(), row_id: id.clone(), shown: shown.unwrap_or_else(|| id.clone()), input: Value::Object(input), effects, noop: false })
+        input.insert("id".to_string(), Value::String(asked.to_string()));
+        Ok(Planned { model: model.to_string(), row_id: asked.clone(), shown: shown.unwrap_or_else(|| id.clone()), input: Value::Object(input), effects, noop: false })
     }
 
     /// The row and every row that depends on it.
     pub(crate) fn plan_destroy(&self, model: &str, id: &RowId) -> Result<Planned, CoreError> {
+        let asked = id;
         let spec = self.spec(model)?;
         let local_only = spec.is_memory() || spec.is_local();
         let (id, effects) = self.read_models(&[model], |reader| {
@@ -192,9 +195,9 @@ impl Store {
         })?;
         let id = &id;
         let Some(effects) = effects else {
-            return Ok(Planned { model: model.to_string(), row_id: id.clone(), shown: id.clone(), input: json!({ "id": id.as_str() }), effects: IntentEffects::default(), noop: true });
+            return Ok(Planned { model: model.to_string(), row_id: asked.clone(), shown: id.clone(), input: json!({ "id": asked.as_str() }), effects: IntentEffects::default(), noop: true });
         };
-        Ok(Planned { model: model.to_string(), row_id: id.clone(), shown: id.clone(), input: json!({ "id": id.as_str() }), effects, noop: false })
+        Ok(Planned { model: model.to_string(), row_id: asked.clone(), shown: id.clone(), input: json!({ "id": asked.as_str() }), effects, noop: false })
     }
 
     fn plan_closed_effect(&self, reader: &Reader<'_>, spec: &ModelSpec, declared: &crate::schema::ActionDeclaration, (own, args): (&RowRef, &Map<String, Value>), now_ms: i64, effects: &mut IntentEffects) -> Result<Option<RowId>, CoreError> {
