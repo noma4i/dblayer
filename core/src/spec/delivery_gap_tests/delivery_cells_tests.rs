@@ -27,7 +27,7 @@ fn dlv_opening_pull() {
     let mut twin = open_rows();
     assert!(twin.step(Input::Pull).is_empty(), "nothing to give yet");
     let effects = twin.step(Input::ReadDone { revision: 1, rows: rows(&["r1"]) });
-    assert_eq!(effects, [Effect::Answer(Pulled::Value(snap(1, &["r1"], Ws::idle())))], "the first value goes to the waiting Pull, no Available");
+    assert_eq!(effects, [Effect::Answer(Pulled::Value(snap(1, &["r1"], Ws::idle())))], "the first value goes to the waiting Pull");
 }
 
 #[test]
@@ -202,7 +202,7 @@ fn dlv_release_ended() {
 #[test]
 fn dlv_epoch_ended() {
     for mut twin in [live_rows(), open_rows()] {
-        assert_eq!(twin.step(Input::EpochEnded { own: true }), [Effect::InterestMinus, Effect::Available, Effect::CloseSink]);
+        assert_eq!(twin.step(Input::EpochEnded { own: true }), [Effect::InterestMinus, Effect::CloseSink]);
         assert_eq!(twin.read_all(), [Val::Ended(Cause::SessionEnded)]);
     }
     let mut waiting = live_rows();
@@ -220,7 +220,7 @@ fn dlv_epoch_other() {
 #[test]
 fn dlv_closing() {
     let mut twin = live_rows();
-    assert_eq!(twin.step(Input::Closing), [Effect::InterestMinus, Effect::Available, Effect::CloseSink]);
+    assert_eq!(twin.step(Input::Closing), [Effect::InterestMinus, Effect::CloseSink]);
     assert_eq!(twin.step(Input::SinkClosed), [Effect::Drained], "Drained once every sink is closed");
     assert_eq!(twin.read_all(), [Val::Ended(Cause::Closed)]);
 }
@@ -248,7 +248,7 @@ fn dlv_live_read_unacked_first() {
     twin.step(Input::ReadDone { revision: 1, rows: rows(&["r1"]) });
     twin.step(Input::WindowState(Ws::loaded_at(2)));
     twin.step(Input::Committed { revision: 2, touches: true });
-    assert!(twin.step(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) }).is_empty(), "the journal held a value: no new Available");
+    assert!(twin.step(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) }).is_empty(), "the journal held a value: nothing is pushed");
     assert_eq!(twin.read_all(), [snap(2, &["r1", "r2"], Ws::loaded_at(2))], "the unread first value is replaced by the newer one");
 }
 
@@ -350,7 +350,7 @@ fn dlv_live_read_changed() {
     let mut twin = live_rows();
     twin.step(Input::WindowState(Ws::loaded_at(2)));
     let (effects, values) = twin.step_read(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) });
-    assert_eq!(effects, [Effect::Available]);
+    assert!(effects.is_empty());
     assert_eq!(values, [Val::Delta { base: 1, revision: 2, size: 2, edits: vec![insert(1, "r2")], state: Ws::loaded_at(2) }]);
     let (_, values) = twin.step_read(Input::ReadDone { revision: 3, rows: rows(&["r2"]) });
     assert_eq!(values, [Val::Delta { base: 2, revision: 3, size: 1, edits: vec![remove(0, "r1")], state: Ws::loaded_at(2) }]);
@@ -468,7 +468,7 @@ fn dlv_live_event_before_ready() {
 fn dlv_live_event() {
     let mut twin = open_events();
     let (effects, values) = twin.step_read(Input::ModelEvent { position: 1, payload: "c1".into() });
-    assert_eq!(effects, [Effect::Available]);
+    assert!(effects.is_empty());
     assert_eq!(values, [Val::Event { position: 1, payload: "c1".into() }]);
 }
 
@@ -506,7 +506,7 @@ fn dlv_live_gap() {
 fn dlv_live_gap_coalesced() {
     let mut twin = open_events();
     twin.step_read(Input::ModelEvent { position: 1, payload: "c1".into() });
-    assert_eq!(twin.step(Input::ModelGap), [Effect::Available]);
+    assert!(twin.step(Input::ModelGap).is_empty());
     assert!(twin.step(Input::ModelGap).is_empty(), "a second Gap without a read has no effect");
     assert_eq!(twin.state().journal_len(STREAM), 1);
     assert_eq!(twin.read_all(), [Val::Gap]);

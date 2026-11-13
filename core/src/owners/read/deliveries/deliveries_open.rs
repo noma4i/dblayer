@@ -95,12 +95,11 @@ impl Delivery {
         }
     }
 
-    pub(super) fn ended(view: View, epoch: Epoch, cause: EndCause, fx: &mut Vec<Emit>) -> Self {
+    pub(super) fn ended(view: View, epoch: Epoch, cause: EndCause) -> Self {
         let mut machine = Self::new(epoch, view, DeliveryStage::Ended, 0);
         machine.journal.push_back(Value::Ended(cause.clone()));
         machine.cause = cause;
         machine.sink_closed = true;
-        fx.push(Emit::Run(StreamEffect::Available));
         machine
     }
 }

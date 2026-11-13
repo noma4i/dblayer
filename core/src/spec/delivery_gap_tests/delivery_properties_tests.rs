@@ -341,9 +341,6 @@ fn dlv_prop_no_available_after_cancel() {
         assert!(effects.contains(&Effect::InterestMinus), "{name}: the interest goes");
         assert!(!effects.iter().any(|effect| matches!(effect, Effect::Cancelled(_))), "{name}: the reply waits for SinkClosed");
         twin.step(Input::SinkClosed);
-        for input in [Input::Committed { revision: 5, touches: true }, Input::ReadDone { revision: 5, rows: rows(&["r5"]) }, Input::WindowState(Ws::loading_after(5))] {
-            assert!(!twin.step(input).contains(&Effect::Available), "{name}: no Available after SinkClosed");
-        }
     }
 }
 

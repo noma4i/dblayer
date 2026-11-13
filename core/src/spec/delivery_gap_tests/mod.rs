@@ -169,7 +169,6 @@ impl Twin {
                             Effect::Read(revision)
                         }
                         StreamEffect::Answer { answer, .. } => Effect::Answer(pulled_of(&answer)),
-                        StreamEffect::Available => Effect::Available,
                         StreamEffect::CloseSink => Effect::CloseSink,
                         StreamEffect::Cancelled { reply } => Effect::Cancelled(reply),
                         StreamEffect::ReaderClaimed { .. } => unreachable!("the twin posts no ClaimReader"),
@@ -393,7 +392,7 @@ fn dlv_opening_status() {
     full.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 11, position: 0, relevant: Some((11, 0)), data: d::ReadData::Upload { wait_reason: None, local_url: local_url.clone(), processing: processing.clone() } });
     assert!(matches!(full.state().journal(STREAM).as_slice(), [d::Value::Status { revision: 11, blob }] if blob.local_url == local_url && blob.processing == processing && blob.progress == 42));
     let mut blob = open_as(Kind::Blob);
-    assert_eq!(blob.step(Input::Transfer { state: "uploading".into(), revision: 11 }), [Effect::Available]);
+    assert!(blob.step(Input::Transfer { state: "uploading".into(), revision: 11 }).is_empty());
     assert_eq!(blob.read_all(), [Val::Status { revision: 11, state: "uploading".into() }]);
 }
 
@@ -402,7 +401,7 @@ fn dlv_live_status() {
     let mut twin = open_as(Kind::Blob);
     twin.step(Input::Transfer { state: "uploading".into(), revision: 12 });
     twin.read_all();
-    assert_eq!(twin.step(Input::Transfer { state: "done".into(), revision: 13 }), [Effect::Available]);
+    assert!(twin.step(Input::Transfer { state: "done".into(), revision: 13 }).is_empty());
     assert_eq!(twin.read_all(), [Val::Status { revision: 13, state: "done".into() }]);
     twin.step(Input::Transfer { state: "failed".into(), revision: 14 });
     twin.step(Input::Transfer { state: "retrying".into(), revision: 15 });
@@ -413,7 +412,7 @@ fn dlv_live_status() {
 #[test]
 fn dlv_open_stale() {
     let mut twin = Twin::new();
-    assert_eq!(twin.step(Input::Open { kind: Kind::List, epoch_current: false }), [Effect::Available]);
+    assert!(twin.step(Input::Open { kind: Kind::List, epoch_current: false }).is_empty());
     assert_eq!(twin.read_all(), [Val::Ended(Cause::SessionEnded)]);
 }
 
@@ -424,7 +423,7 @@ fn dlv_opening_read_holds() {
     let (effects, values) = twin.step_read(Input::ReadDone { revision: 1, rows: rows(&["r1"]) });
     assert_eq!((effects, values), (Vec::new(), Vec::new()), "the read of a watched window waits for the first state of the window");
     let (effects, values) = twin.step_read(Input::WindowState(Ws::loaded_at(1)));
-    assert_eq!(effects, [Effect::Available]);
+    assert!(effects.is_empty());
     assert_eq!(values, [snap(1, &["r1"], Ws::loaded_at(1))], "the first value holds the loaded phase");
 }
 
@@ -451,7 +450,7 @@ fn dlv_opening_read_done() {
     let mut twin = open_rows();
     twin.step(Input::WindowState(Ws::loaded_at(1)));
     let (effects, values) = twin.step_read(Input::ReadDone { revision: 1, rows: rows(&["r1"]) });
-    assert_eq!(effects, [Effect::Available]);
+    assert!(effects.is_empty());
     assert_eq!(values, [snap(1, &["r1"], Ws::loaded_at(1))]);
     let mut count = open_as(Kind::Count);
     count.step(Input::WindowState(Ws::loaded_at(1)));
@@ -463,11 +462,11 @@ fn dlv_opening_read_done() {
 fn dlv_opening_read_done_if_missing() {
     let mut twin = open_as(Kind::Entity(Fetch::IfMissing));
     let (effects, values) = twin.step_read(Input::ReadDone { revision: 1, rows: Vec::new() });
-    assert_eq!(effects, [Effect::Available, Effect::Load { force: false }], "no row after the first read: ask the window once");
+    assert_eq!(effects, [Effect::Load { force: false }], "no row after the first read: ask the window once");
     assert_eq!(values, [snap(1, &[], Ws::idle())]);
     let mut present = open_as(Kind::Entity(Fetch::IfMissing));
     let (effects, _) = present.step_read(Input::ReadDone { revision: 1, rows: rows(&["r1"]) });
-    assert_eq!(effects, [Effect::Available], "a row is there: no load");
+    assert!(effects.is_empty(), "a row is there: no load");
 }
 
 #[test]

@@ -325,7 +325,7 @@ impl Delivery {
                 let answer = self.take_first().unwrap_or(PullAnswer::Done);
                 fx.push(Emit::Run(StreamEffect::Answer { outcome, answer }));
             }
-            None => fx.push(Emit::Run(StreamEffect::Available)),
+            None => {}
         }
         fx.push(Emit::Run(StreamEffect::CloseSink));
     }

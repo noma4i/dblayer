@@ -133,7 +133,6 @@ pub(super) enum Effect {
     WantPlus,
     WantMinus,
     StatusInterest(bool),
-    Available,
     CloseSink,
     Cancelled(u64),
     Answer(Pulled),

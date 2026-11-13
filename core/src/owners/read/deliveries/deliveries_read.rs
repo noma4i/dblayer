@@ -111,7 +111,6 @@ impl Delivery {
         if matches!(value, Value::Gap) && matches!(self.journal.back(), Some(Value::Gap)) {
             return;
         }
-        let was_empty = self.journal.is_empty();
         match &value {
             Value::Snapshot { .. } | Value::Count { .. } | Value::Operations { .. } => self.journal.retain(|kept| !matches!(kept, Value::Delta(_) | Value::Snapshot { .. } | Value::Count { .. } | Value::Operations { .. } | Value::State { .. })),
             Value::Delta(_) if self.journal.iter().any(Value::is_rows) => self.journal.retain(|kept| !matches!(kept, Value::Delta(_) | Value::Snapshot { .. } | Value::Count { .. } | Value::State { .. })),
@@ -126,8 +125,6 @@ impl Delivery {
         if let Some(outcome) = self.waiting.take() {
             let answer = self.take_first().unwrap_or(PullAnswer::Done);
             fx.push(Emit::Run(StreamEffect::Answer { outcome, answer }));
-        } else if was_empty && self.sink_open() {
-            fx.push(Emit::Run(StreamEffect::Available));
         }
     }
 

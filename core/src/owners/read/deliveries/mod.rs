@@ -253,7 +253,6 @@ impl PullAnswer {
 pub enum StreamEffect {
     Read { read_id: u64, revision: i64, after: i64, view: View, mode: ReadMode },
     Answer { outcome: OutcomeId, answer: PullAnswer },
-    Available,
     CloseSink,
     Cancelled { reply: ReplyId },
     ReaderClaimed { reply: ReplyId, claimed: bool },
@@ -619,9 +618,9 @@ impl StateOwner for Deliveries {
                 view.deferred_rows = deferred.as_ref().filter(|_| view.kind.reads_rows()).map_or_else(Vec::new, |deferred| deferred.temps.iter().map(|(model, id)| (crate::store::ddl::table_name(model), id.clone())).collect());
                 let mut fx = Vec::new();
                 let machine = if epoch != state.epoch || (!identity && !view.local && !matches!(view.kind, Kind::Blob)) {
-                    Delivery::ended(view, epoch, EndCause::SessionEnded, &mut fx)
+                    Delivery::ended(view, epoch, EndCause::SessionEnded)
                 } else if !valid {
-                    Delivery::ended(view, epoch, EndCause::Invalid { detail: "the stream request is invalid".into() }, &mut fx)
+                    Delivery::ended(view, epoch, EndCause::Invalid { detail: "the stream request is invalid".into() })
                 } else {
                     Delivery::open(view, epoch, revision, &mut fx)
                 };

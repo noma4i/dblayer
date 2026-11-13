@@ -7,7 +7,7 @@ fn changed(revision: i64, rows: &[(&str, &str)], reset: bool) -> Input { Input::
 #[test]
 fn dlv_changes_opened() {
     let mut twin = Twin::new();
-    assert_eq!(twin.step(Input::Open { kind: Kind::Changes, epoch_current: true }), [Effect::Available]);
+    assert!(twin.step(Input::Open { kind: Kind::Changes, epoch_current: true }).is_empty());
     assert_eq!(twin.read_all(), [Val::Ready]);
 }
 
