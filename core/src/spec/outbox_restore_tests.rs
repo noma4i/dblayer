@@ -4,6 +4,7 @@ use super::outbox_harness::*;
 use super::outbox_harness::{Policy, St};
 use crate::owners::contract::{Committed, EpochStarted, Online, RejectReason, Rejected};
 use crate::owners::session::StoredAnswer;
+use crate::owners::store::StoreOp;
 use crate::owners::write::outbox::{CommitKind, Fault, OutboxAnswer, OutboxInput, OutboxOutcome, Phase, Receipt, StoredOp};
 use crate::runtime::Cause;
 
@@ -27,7 +28,7 @@ fn out_restore_discards_only_orphaned_transfer_intents() {
     let effects = ready(&mut twin);
     assert_eq!(kinds(&effects), vec![CommitKind::Rollback], "{effects:?}");
     assert_eq!(twin.stage(2), Some(St::Failed));
-    assert!(twin.store_text.contains("RetireTransferOutcome") && twin.store_text.contains("Discarded"), "{}", twin.store_text);
+    assert!(has_op!(twin, StoreOp::RetireTransferOutcome { .. }) && has_op!(twin, StoreOp::TransferOutcome { outcome: OutboxOutcome::Discarded, .. }), "{:?}", twin.store_ops);
 }
 
 pub(super) fn declare(twin: &mut Twin) { twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())], complete: false }); }
@@ -288,7 +289,7 @@ fn out_open_restores_exhausted() {
     let expected = twin.state().ops[&7].error.as_ref().unwrap();
     if cause.is_some() { assert_eq!(serde_json::from_str::<serde_json::Value>(expected).unwrap()["kind"], "response_too_large:64"); }
     else { assert_eq!(expected, "Exhausted"); }
-    assert!(twin.store_text.contains(&format!("{expected:?}")), "{}", twin.store_text);
+    assert!(has_op!(twin, StoreOp::MarkError { op_id: 7, error: Some(error) } if error == expected), "{:?}", twin.store_ops);
     }
 }
 
@@ -381,7 +382,7 @@ fn out_restore_removed_row_removes_saved_answer() {
     let item = StoredOp { answered: Some((41, StoredAnswer::Ok("{}".into()))), removed_rows: vec![("Moment".into(), "r".into(), 20)], ..stored(7, "r") };
     let effects = restore(&mut twin, vec![item]);
     assert_eq!((twin.stores.len(), sends(&effects)), (1, 0), "{effects:?}");
-    assert!(twin.store_text.contains("RemoveIntent { op_id: 7 }") && twin.store_text.contains("RemoveAnswer { request_id: 41 }"), "{}", twin.store_text);
+    assert!(twin.store_ops.contains(&StoreOp::RemoveIntent { op_id: 7 }) && twin.store_ops.contains(&StoreOp::RemoveAnswer { request_id: 41 }), "{:?}", twin.store_ops);
     let completed = twin.committed(7);
     assert_eq!((twin.stage(7), sends(&completed)), (Some(St::Done), 0));
 }

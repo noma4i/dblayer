@@ -1,12 +1,13 @@
 //! Stubs for the owner-level tests: an effect log and a scripted source of inputs.
 
+use std::any::Any;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use crate::owners::contract::{BatchId, Committed, RejectReason, Rejected};
-use crate::owners::store::StoreInput;
+use crate::owners::store::{StoreBatch, StoreInput};
 use crate::runtime::{Address, Back, Cause, Control, Effect, EffectRunner, Effects, Epoch, EpochStamp, Outbound, ScheduleId, StateOwner};
 
 pub(crate) type Log<E> = Arc<Mutex<Vec<E>>>;
@@ -119,6 +120,7 @@ pub(crate) struct Spy<O: StateOwner>(PhantomData<fn() -> O>);
 pub(crate) struct SpyState<O: StateOwner> {
     pub inner: O::State,
     pub seen: Log<Emitted<O::Effect>>,
+    pub store_batches: Log<StoreBatch>,
 }
 
 impl<O: StateOwner> StateOwner for Spy<O>
@@ -142,6 +144,9 @@ where
                     Effect::Run(run)
                 }
                 Effect::Send(outbound) => {
+                    if let Some(StoreInput::Commit(batch)) = (&*outbound.payload as &dyn Any).downcast_ref::<StoreInput>() {
+                        state.store_batches.lock().unwrap_or_else(PoisonError::into_inner).push(batch.clone());
+                    }
                     seen.push(Emitted::Send { to: outbound.to, input: format!("{:?}", outbound.payload) });
                     Effect::Send(outbound)
                 }
@@ -178,7 +183,7 @@ where
 }
 
 impl<O: StateOwner> SpyState<O> {
-    pub fn new(inner: O::State, seen: &Log<Emitted<O::Effect>>) -> Self { Self { inner, seen: seen.clone() } }
+    pub fn new(inner: O::State, seen: &Log<Emitted<O::Effect>>) -> Self { Self { inner, seen: seen.clone(), store_batches: new_log() } }
 }
 
 /// The address of `O` for the slot of a `Spy<O>`.

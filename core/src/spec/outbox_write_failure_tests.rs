@@ -6,6 +6,7 @@ use super::outbox_harness::{Policy, RWhy, St};
 use super::outbox_restore_tests::{declare, ready, restore, stored};
 use crate::owners::contract::{Online, RejectReason};
 use crate::owners::session::StoredAnswer;
+use crate::owners::store::StoreOp;
 use crate::owners::write::outbox::{CommitKind, OpId, OutboxAnswer, OutboxInput, OutboxOutcome, StoredOp};
 
 fn landing(twin: &mut Twin) -> OpId {
@@ -35,8 +36,8 @@ fn out_invalid_refusal_of_the_server_outcome_batch_writes_it_again_without_rows(
         let refused = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
         assert_eq!(sends(&refused), 0, "landing={landing_stage}");
         assert!(!twin.det.trace()[at..].iter().any(|entry| entry.effects.contains("Stale")), "landing={landing_stage}: no Stale inside the refused batch");
-        let rows_or_rollback = if landing_stage { "Rows { model: \"Moment\"" } else { "RollBack {" };
-        assert!(twin.store_text.contains("RemoveIntent") && twin.store_text.contains("RemoveAnswer") && !twin.store_text.contains(rows_or_rollback), "landing={landing_stage}: {}", twin.store_text);
+        let rows_or_rollback = if landing_stage { has_op!(twin, StoreOp::Rows { model, .. } if model == "Moment") } else { has_op!(twin, StoreOp::RollBack { .. }) };
+        assert!(has_op!(twin, StoreOp::RemoveIntent { .. }) && has_op!(twin, StoreOp::RemoveAnswer { .. }) && !rows_or_rollback, "landing={landing_stage}: {:?}", twin.store_ops);
         assert!(outcomes(&refused).is_empty(), "no outcome before Committed: {refused:?}");
         let at = twin.det.trace().len();
         let done = twin.committed(id);
@@ -55,12 +56,12 @@ fn out_landing_invalid_create_alias_written() {
     twin.committed(follower);
     twin.waiter(created);
     twin.post(OutboxInput::Response { op_id: created, rows: server_rows(), swaps: vec![("r".into(), "R".into())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    assert!(twin.store_text.contains("Swap"), "the first landing batch swaps: {}", twin.store_text);
+    assert!(has_op!(twin, StoreOp::Swap { .. }), "the first landing batch swaps: {:?}", twin.store_ops);
     let refused = refuse(&mut twin, created, RejectReason::Invalid("bad row".into()));
-    assert!(!twin.store_text.contains("Swap") && !twin.store_text.contains("Rows { model: \"Moment\"") && twin.store_text.contains("RemoveIntent"), "the batch without rows has no swap: {}", twin.store_text);
+    assert!(!has_op!(twin, StoreOp::Swap { .. }) && !has_op!(twin, StoreOp::Rows { model, .. } if model == "Moment") && has_op!(twin, StoreOp::RemoveIntent { .. }), "the batch without rows has no swap: {:?}", twin.store_ops);
     assert_eq!((twin.stage(created), refused.iter().filter(|effect| matches!(effect, OutboxEffect::Store { .. })).count()), (Some(St::Landing), 1));
     twin.committed(created);
-    assert!(!twin.store_text.contains("\"R\""), "no row with the real id is written: {}", twin.store_text);
+    assert!(!has_op!(twin, StoreOp::Rows { rows, .. } if rows.iter().any(|row| row.row_id == "R")), "no row with the real id is written: {:?}", twin.store_ops);
     assert_eq!(twin.state().ops[&follower].op.row_id, "R", "the alias is written: the open operation of the row goes with the real id");
     let next = twin.submit("r", Policy::Rollback, false);
     assert_eq!(twin.state().ops[&next].op.row_id, "R", "the next operation of the row goes with the real id");
@@ -144,7 +145,7 @@ fn out_prop_landing_ended_answer_lands_at_open() {
             assert_eq!(twin.stage(id), Some(St::Done), "{reason:?}");
             let cause = if reason == RejectReason::Closed { "Closed" } else { "SessionEnded" };
             assert!(sends(&ended) == 0 && format!("{:?}", outcomes(&ended)) == format!("[Ended({cause})]"), "the unit of work ends with Ended, not Failed or Confirmed: {ended:?}");
-            assert!(kinds(&ended).is_empty() && ["RemoveAnswer", "RemoveIntent", "MarkFailed", "MarkError"].iter().all(|name| !twin.store_text.contains(name)), "Ended writes nothing to the Store: {ended:?} {}", twin.store_text);
+            assert!(kinds(&ended).is_empty() && !has_op!(twin, StoreOp::RemoveAnswer { .. } | StoreOp::RemoveIntent { .. } | StoreOp::MarkError { .. }), "Ended writes nothing to the Store: {ended:?} {:?}", twin.store_ops);
             let saved = twin.state().ops[&id].clone();
             let mut reopened = Twin::bare();
             declare(&mut reopened);

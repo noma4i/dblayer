@@ -2,6 +2,7 @@
 
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, St};
+use crate::owners::store::StoreOp;
 use crate::owners::write::outbox::{Fault, OutboxAnswer, OutboxInput, OutboxOutcome, StoredOp};
 
 const DISCARD: u64 = 60;
@@ -26,8 +27,8 @@ fn out_failed_discard_restore_failed() {
     let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD });
     assert_eq!(twin.stage(7), Some(St::RollingBack(super::outbox_harness::RWhy::Discarded)));
     assert!(answers(&effects, DISCARD).is_empty(), "nothing is answered before the commit");
-    assert!(twin.store_text.contains("DiscardRestoreFailed { table: \"op\", key: \"k1\" }") && twin.store_text.contains("RemoveIntent"), "{}", twin.store_text);
-    assert!(!twin.store_text.contains("RollBack"), "the dropped intent has no optimistic effects to take back: {}", twin.store_text);
+    assert!(twin.store_ops.contains(&StoreOp::DiscardRestoreFailed { table: "op".into(), key: "k1".into() }) && has_op!(twin, StoreOp::RemoveIntent { .. }), "{:?}", twin.store_ops);
+    assert!(!has_op!(twin, StoreOp::RollBack { .. }), "the dropped intent has no optimistic effects to take back: {:?}", twin.store_ops);
 }
 
 #[test]
@@ -47,8 +48,8 @@ fn out_discard_restore_failed_committed() {
 fn out_open_orphan_answer() {
     let mut twin = Twin::new();
     twin.post(OutboxInput::OrphanAnswers { request_ids: vec![41, 42] });
-    assert!(twin.store_text.contains("RemoveAnswer { request_id: 41 }") && twin.store_text.contains("RemoveAnswer { request_id: 42 }"), "{}", twin.store_text);
+    assert!(twin.store_ops.contains(&StoreOp::RemoveAnswer { request_id: 41 }) && twin.store_ops.contains(&StoreOp::RemoveAnswer { request_id: 42 }), "{:?}", twin.store_ops);
     assert!(twin.state().ops.is_empty(), "the owner holds no operation for them");
     twin.post(OutboxInput::OrphanAnswers { request_ids: Vec::new() });
-    assert_eq!(twin.store_text, "", "no answers, no batch");
+    assert!(twin.store_batches.is_empty(), "no answers, no batch");
 }

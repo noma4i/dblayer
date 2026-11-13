@@ -4,6 +4,7 @@ use super::outbox_cells_tests::*;
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, St};
 use crate::owners::contract::{Online, RejectReason};
+use crate::owners::store::StoreOp;
 use crate::owners::write::outbox::{CommitKind, Fault, NewOp, OutboxAnswer, OutboxInput, OutboxOutcome, Receipt};
 
 #[test]
@@ -44,7 +45,7 @@ fn out_marking_retry_committed_queued() {
     twin.post(OutboxInput::Online(Online(false)));
     let effects = twin.committed(id);
     assert_eq!((sends(&effects), answers(&effects, RETRY_REPLY).len()), (0, 1));
-    assert!(twin.store_text.contains(&format!("Requeue {{ op_id: {id} }}")), "{}", twin.store_text);
+    assert!(twin.store_ops.contains(&StoreOp::Requeue { op_id: id }), "{:?}", twin.store_ops);
 }
 
 #[test]
@@ -84,9 +85,9 @@ fn out_sending_response_ignore() {
     let id = sending(&mut twin, Policy::Rollback, false);
     twin.waiter(id);
     twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    assert!(twin.store_text.contains("RemoveIntent") && !twin.store_text.contains("Rows"), "the intent goes, the optimistic fields stay, no row of the answer: {}", twin.store_text);
+    assert!(has_op!(twin, StoreOp::RemoveIntent { .. }) && !has_op!(twin, StoreOp::Rows { .. } | StoreOp::LocalRows { .. } | StoreOp::EphemeralRows { .. } | StoreOp::RemoveRows { .. } | StoreOp::RemoveServerRows { .. }), "the intent goes, the optimistic fields stay, no row of the answer: {:?}", twin.store_ops);
     let request_id = twin.state().ops[&id].request_id;
-    assert!(twin.store_text.contains(&format!("RemoveAnswer {{ request_id: {request_id} }}")), "{}", twin.store_text);
+    assert!(twin.store_ops.contains(&StoreOp::RemoveAnswer { request_id }), "{:?}", twin.store_ops);
     let effects = twin.committed(id);
     assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. }))), "{effects:?}");
 }
@@ -101,7 +102,7 @@ fn out_sending_refused_without_effects() {
     twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: Some(false) });
     let request_id = twin.state().ops[&id].request_id;
     assert_eq!(twin.stores.len(), 1);
-    assert!(twin.store_text.contains(&format!("RemoveIntent {{ op_id: {id} }}")) && twin.store_text.contains(&format!("RemoveAnswer {{ request_id: {request_id} }}")), "{}", twin.store_text);
+    assert!(twin.store_ops.contains(&StoreOp::RemoveIntent { op_id: id }) && twin.store_ops.contains(&StoreOp::RemoveAnswer { request_id }), "{:?}", twin.store_ops);
     let effects = twin.committed(id);
     assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Rejected { .. }))), "the rollback of nothing still gives the outcome: {effects:?}");
     let effects = retry(&mut twin);
@@ -117,7 +118,7 @@ fn out_landing_committed_root_row() {
     twin.post(OutboxInput::Response { op_id: id, rows: other, swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     let effects = twin.committed(id);
     assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. }))) && twin.stage(id).is_none_or(|stage| stage == St::Done), "{effects:?}");
-    assert!(!twin.store_text.contains("Swap"), "no swap for a root of another model");
+    assert!(!has_op!(twin, StoreOp::Swap { .. }), "no swap for a root of another model");
 }
 
 /// A request above the limit of the transport ends the operation with a typed failure: the kind and both numbers reach the outcome, not a general transport text.

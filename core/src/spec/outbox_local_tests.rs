@@ -3,6 +3,7 @@
 use super::outbox_harness::*;
 use super::outbox_harness::Policy;
 use crate::owners::contract::{Committed, Online, RejectReason, Rejected};
+use crate::owners::store::{RowValue, StoreOp};
 use crate::owners::write::outbox::{CommitKind, Fault, LocalWriteKind, OutboxAnswer, OutboxInput, OutboxOutcome};
 use crate::runtime::{Cause, Time};
 
@@ -33,13 +34,19 @@ fn close(twin: &mut Twin) -> Vec<OutboxEffect> {
 
 #[test]
 fn out_local_write() {
-    for kind in [LocalWriteKind::SetLocal, LocalWriteKind::SetEphemeral { expire_after: None }, LocalWriteKind::Detach] {
+    let rows = || vec![RowValue { row_id: "w".into(), values: "{}".into() }];
+    let cases = [
+        (LocalWriteKind::SetLocal, StoreOp::LocalRows { model: "Moment".into(), rows: rows() }),
+        (LocalWriteKind::SetEphemeral { expire_after: None }, StoreOp::EphemeralRows { model: "Moment".into(), rows: rows() }),
+        (LocalWriteKind::Detach, StoreOp::DetachFile { model: "Moment".into(), row_id: "w".into(), field: "{}".into() }),
+    ];
+    for (kind, expected) in cases {
         let mut twin = Twin::new();
         twin.det.tick(Time(100));
         let effects = twin.post(write(kind));
         assert_eq!((kinds(&effects), answers(&effects, WRITE)), (vec![CommitKind::LocalWrite], Vec::<OutboxAnswer>::new()));
         assert_eq!(twin.stores.len(), 1);
-        assert!(twin.store_text.contains("model: \"Moment\"") && twin.store_text.contains("\"w\""), "{}", twin.store_text);
+        assert_eq!(twin.store_ops, vec![expected], "the batch carries the write of the row");
     }
 }
 
@@ -57,11 +64,12 @@ fn out_local_write_stale_generation() {
     let mut twin = Twin::new();
     twin.det.tick(Time(100));
     twin.post(write(LocalWriteKind::SetLocal));
-    let original = twin.store_text.split("ops: ").nth(1).unwrap().to_string();
+    let original = twin.store_ops.clone();
+    assert_eq!(original.len(), 1);
     let effects = twin.post(OutboxInput::Rejected(Rejected { batch: 1, reason: RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 2)].into() } }));
     assert!(answers(&effects, WRITE).is_empty());
     assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: CommitKind::LocalWrite, generation: 2, .. }]));
-    assert_eq!(twin.store_text.split("ops: ").nth(1), Some(original.as_str()));
+    assert_eq!(twin.store_ops, original);
     let [OutboxEffect::Store { batch, .. }] = effects.as_slice() else { unreachable!() };
     let committed = twin.post(OutboxInput::Committed(Committed { batch: *batch, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
     assert_eq!(answers(&committed, WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
@@ -124,7 +132,7 @@ fn out_local_write_memory_same() {
     let again = twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetEphemeral { expire_after: Some(10) }, row: "w".into(), values: "{}".into(), reply: WRITE + 1 });
     assert_eq!(kinds(&again), vec![CommitKind::LocalWrite], "the same values commit again: the write renews the expiry");
     assert_eq!(twin.stores.len(), 1);
-    assert!(twin.store_text.contains("EphemeralRows { model: \"Moment\"") && twin.store_text.contains("row_id: \"w\""), "{}", twin.store_text);
+    assert_eq!(twin.store_ops, vec![StoreOp::EphemeralRows { model: "Moment".into(), rows: vec![RowValue { row_id: "w".into(), values: "{}".into() }] }]);
     let committed = twin.post(OutboxInput::Committed(Committed { batch: 2, revision: 12, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
     assert_eq!(answers(&committed, WRITE + 1), vec![OutboxAnswer::Written { revision: 12, shown: None, files_removed: 0 }]);
     assert!(committed.iter().any(|effect| matches!(effect, OutboxEffect::Schedule)), "the new timer: {committed:?}");
@@ -146,7 +154,7 @@ fn out_prop_landing_no_stale() {
         let id = twin.submit("r", Policy::Rollback, false);
         twin.committed(id);
         twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale, result: None, missing: Vec::new(), errors: None });
-        assert_eq!(twin.store_text.contains("StaleFamilies"), marks, "{}", twin.store_text);
+        assert_eq!(has_op!(twin, StoreOp::StaleFamilies { .. }), marks, "{:?}", twin.store_ops);
         twin.committed(id);
         let announced = twin.det.trace().iter().any(|entry| entry.effects.contains("Stale"));
         assert_eq!(announced, marks, "the windows turn stale only for a declared refetch");
@@ -238,7 +246,7 @@ fn out_ephemeral_reset_by_position_batch() {
     twin.post(OutboxInput::ArmReset { reset: reset.clone() });
     twin.post(OutboxInput::ResetField { reset });
     assert_eq!(twin.stores.len(), 1);
-    assert!(twin.store_text.contains("ResetEphemeral { model: \"Moment\", row_id: \"w\", field: \"typing\", position: 42 }"), "{}", twin.store_text);
+    assert!(twin.store_ops.contains(&StoreOp::ResetEphemeral { model: "Moment".into(), row_id: "w".into(), field: "typing".into(), position: 42 }), "{:?}", twin.store_ops);
 }
 
 #[test]
@@ -247,5 +255,5 @@ fn out_ephemeral_expire_batch() {
     twin.post(OutboxInput::ArmExpiry { model: "Moment".into(), row: "w".into(), revision: 42, deadline: 100 });
     twin.post(OutboxInput::ExpireRow { model: "Moment".into(), row: "w".into(), revision: 42 });
     assert_eq!(twin.stores.len(), 1);
-    assert!(twin.store_text.contains("ExpireRow { model: \"Moment\", row_id: \"w\", write_revision: 42 }"), "{}", twin.store_text);
+    assert!(twin.store_ops.contains(&StoreOp::ExpireRow { model: "Moment".into(), row_id: "w".into(), write_revision: 42 }), "{:?}", twin.store_ops);
 }

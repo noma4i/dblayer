@@ -2,6 +2,7 @@ use super::outbox_harness::*;
 use super::outbox_harness::{Policy, St};
 use crate::owners::contract::{ErrorClass, Online, RequestId};
 use crate::owners::session::{AuthorOutcome, SessionError};
+use crate::owners::store::StoreOp;
 use crate::owners::write::outbox::{OpId, OutboxInput, StoredOp};
 
 const DISCARD: u64 = 77;
@@ -29,7 +30,7 @@ fn releases(text: &str) -> usize { text.matches("Release {").count() }
 fn out_discard_releases_pending() {
     let (mut twin, id, req_id) = queued_after_answer(true);
     discard(&mut twin);
-    assert!(twin.store_text.contains(&format!("ReleasePendingOwner {{ request_id: {req_id} }}")), "the rollback batch hands the pair to Session: {}", twin.store_text);
+    assert!(twin.store_ops.contains(&StoreOp::ReleasePendingOwner { request_id: req_id }), "the rollback batch hands the pair to Session: {:?}", twin.store_ops);
     assert_eq!(releases(&twin.session_text), 0, "Release waits for the commit of the rollback");
     twin.committed(id);
     assert_eq!(releases(&twin.session_text), 1, "{}", twin.session_text);
@@ -42,7 +43,7 @@ fn out_discard_releases_pending() {
 fn out_discard_without_pending_owner() {
     let (mut twin, id, _) = queued_after_answer(false);
     discard(&mut twin);
-    assert!(!twin.store_text.contains("ReleasePendingOwner"), "{}", twin.store_text);
+    assert!(!has_op!(twin, StoreOp::ReleasePendingOwner { .. }), "{:?}", twin.store_ops);
     twin.committed(id);
     assert_eq!(releases(&twin.session_text), 0, "no pending, nothing to release");
 }
@@ -56,7 +57,7 @@ fn out_discard_pending_owner_crash() {
     twin.post(OutboxInput::Restored { ops: vec![restored], pending_lost: false });
     twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
     discard(&mut twin);
-    assert!(twin.store_text.contains("ReleasePendingOwner { request_id: 41 }"), "a pair restored from the base is released by the rollback batch: {}", twin.store_text);
+    assert!(twin.store_ops.contains(&StoreOp::ReleasePendingOwner { request_id: 41 }), "a pair restored from the base is released by the rollback batch: {:?}", twin.store_ops);
     twin.rejected(7, super::outbox_harness::RReason::Storage);
     assert!(twin.state().ops[&7].pending_owned, "a refused batch leaves the owner as it was");
     assert_eq!(releases(&twin.session_text), 0, "no Release without the commit");

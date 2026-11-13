@@ -5,6 +5,7 @@ use std::time::Duration;
 use super::outbox_cells_tests::{answers, kinds, sends, submit_op, tick};
 use super::outbox_harness::*;
 use crate::owners::contract::Online;
+use crate::owners::store::StoreOp;
 use crate::owners::write::failure;
 use crate::owners::write::outbox::{NewOp, OpId, OutboxAnswer, OutboxInput, OutboxOutcome, Stage, StoredOp, DRAIN_LIMIT};
 use crate::runtime::Time;
@@ -61,7 +62,7 @@ fn out_queued_expired() {
     let online = twin.post(OutboxInput::Online(Online(true)));
     assert_eq!((kinds(&online), sends(&online)), (vec![o_rollback()], 0), "{online:?}");
     assert_eq!(twin.stores.len(), 1);
-    assert!(twin.store_text.contains(&format!("RollBack {{ op_id: {id} }}")) && twin.store_text.contains(&format!("RemoveIntent {{ op_id: {id} }}")), "{}", twin.store_text);
+    assert!(twin.store_ops.contains(&StoreOp::RollBack { op_id: id }) && twin.store_ops.contains(&StoreOp::RemoveIntent { op_id: id }), "{:?}", twin.store_ops);
     let done = twin.committed(id);
     let outcome = answers(&done, WAITER).into_iter().find_map(|answer| match answer { OutboxAnswer::Outcome(OutboxOutcome::Rejected { error }) => Some(error), _ => None }).expect("the outcome is Rejected");
     assert_eq!(failure::parse(&outcome).kind, FailureKind::Expired);

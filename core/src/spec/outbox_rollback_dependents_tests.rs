@@ -2,6 +2,7 @@
 
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, St};
+use crate::owners::store::StoreOp;
 use crate::owners::write::outbox::{OutboxAnswer, OutboxInput, OutboxOutcome};
 
 const TEMP: &str = "temp-0F2B7C1E-5D3A-4C8B-9E10-7A6B5C4D3E2F";
@@ -13,8 +14,8 @@ fn submit_row(twin: &mut Twin, action: &str) -> crate::owners::write::outbox::Op
     *twin.state().ops.keys().max().expect("the operation exists")
 }
 
-fn rollback_ops(text: &str) -> Vec<String> {
-    text.match_indices("RollBack { op_id: ").map(|(at, _)| text[at..].split(" }").next().unwrap_or_default().to_string()).collect()
+fn rollback_ops(ops: &[StoreOp]) -> Vec<u64> {
+    ops.iter().filter_map(|op| match op { StoreOp::RollBack { op_id } => Some(*op_id), _ => None }).collect()
 }
 
 fn outcomes(effects: &[OutboxEffect], reply: u64) -> Vec<OutboxOutcome> {
@@ -34,13 +35,13 @@ fn out_rollback_retry_keeps_the_dependents() {
     twin.post(OutboxInput::Outcome { receipt: dependent_receipt, reply: DEPENDENT_WAITER, discard_on_failure: false });
 
     let first = twin.post(OutboxInput::TransportError { op_id: create, temporary: false });
-    let first_ops = rollback_ops(&twin.store_text);
-    assert_eq!(first_ops.len(), 2, "the first rollback batch carries the create and its dependent: {}", twin.store_text);
+    let first_ops = rollback_ops(&twin.store_ops);
+    assert_eq!(first_ops.len(), 2, "the first rollback batch carries the create and its dependent: {:?}", twin.store_ops);
     let first_batch = twin.batches[&create];
     let refused = twin.reject_batch(first_batch, RReason::Storage);
     let due = super::outbox_cells_tests::tick(&mut twin, create);
-    let second_ops = rollback_ops(&twin.store_text);
-    assert_eq!(second_ops, first_ops, "the repeated rollback batch carries the same operations: {}", twin.store_text);
+    let second_ops = rollback_ops(&twin.store_ops);
+    assert_eq!(second_ops, first_ops, "the repeated rollback batch carries the same operations: {:?}", twin.store_ops);
     let second_batch = twin.stores.iter().map(|(id, _)| *id).max().expect("the repeated batch");
     let done = twin.commit_batch(second_batch);
 

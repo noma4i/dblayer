@@ -4,6 +4,7 @@ use super::outbox_cells_tests::{kinds, persisting, sends, transfer_outcomes};
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, St};
 use crate::owners::contract::Online;
+use crate::owners::store::StoreOp;
 use crate::owners::write::outbox::{CommitKind, NewOp, OutboxInput, OutboxOutcome, StoredOp};
 
 fn stored(op_id: u64, row: &str) -> StoredOp {
@@ -96,10 +97,11 @@ fn out_open_format_change() {
     let restored = restore(&mut twin, vec![after_format]);
     assert_eq!((twin.stage(7), sends(&restored)), (Some(St::Queued), 0), "the saved intent classifies after a format change, no network before RestoreReady");
     let readied = ready(&mut twin);
-    assert!(!twin.store_text.contains("optimistic"), "the optimistic row of a saved intent is not restored: {}", twin.store_text);
+    assert!(!has_op!(twin, StoreOp::Intent { effects, .. } | StoreOp::Effects { effects, .. } | StoreOp::Planned { effects } if !effects.rows.is_empty()) && !has_op!(twin, StoreOp::Rows { rows, .. } | StoreOp::LocalRows { rows, .. } if rows.iter().any(|row| row.values.contains("optimistic"))), "the optimistic row of a saved intent is not restored: {:?}", twin.store_ops);
     assert_eq!((kinds(&readied), sends(&readied)), (vec![], 1));
     twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    assert!(twin.store_text.contains("server"), "the row comes from the server answer: {}", twin.store_text);
+    let (model, rows) = server_rows().remove(0);
+    assert!(twin.store_ops.contains(&StoreOp::Rows { model, rows }), "the row comes from the server answer: {:?}", twin.store_ops);
 }
 
 enum Step {

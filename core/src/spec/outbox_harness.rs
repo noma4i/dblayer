@@ -4,7 +4,7 @@ use crate::schema::OnFailure;
 use std::collections::BTreeMap;
 use crate::owners::contract::{BatchId, Committed, Online, RejectReason, Rejected, ReplyId, RequestId};
 use crate::owners::session::SessionCalls;
-use crate::owners::store::StoreWriter;
+use crate::owners::store::{StoreBatch, StoreOp, StoreWriter};
 use crate::spec::support::{new_log, number_after, Discard, Emitted, Log, Sink, Spy, SpyState};
 use crate::owners::write::outbox::{self as o, CommitKind, NewOp, OpId, OpSource, Outbox, OutboxAnswer, OutboxEffect as Run, OutboxInput, OutboxPeers, OutboxState, Receipt, Stage, StoredOp, Why};
 use crate::owners::write::transfer::Transfers;
@@ -221,7 +221,10 @@ pub(super) struct Twin {
     pub(super) follower: Option<OpId>,
     /// The typed text of the last inputs the Store received (`StoreOp` names).
     pub(super) last: Vec<OutboxEffect>,
-    pub(super) store_text: String,
+    /// The Store batches of the last post, in the order sent.
+    pub(super) store_batches: Vec<StoreBatch>,
+    /// The ops of `store_batches`, in the order sent.
+    pub(super) store_ops: Vec<StoreOp>,
     /// The pauses of the timers the last post set.
     pub(super) pauses: Vec<std::time::Duration>,
     /// Every Store input of the last post with the id of its batch, in the order sent.
@@ -241,7 +244,7 @@ impl Twin {
         det.start_epoch(EPOCH);
         det.run_until_quiet(10_000).expect("the owner is quiet");
         take_fx(&log, None);
-        Self { det, log, batches: BTreeMap::new(), first_pair: BTreeMap::new(), asked: Vec::new(), revision: 10, reply: 10, follower: None, last: Vec::new(), store_text: String::new(), pauses: Vec::new(), stores: Vec::new(), session_text: String::new() }
+        Self { det, log, batches: BTreeMap::new(), first_pair: BTreeMap::new(), asked: Vec::new(), revision: 10, reply: 10, follower: None, last: Vec::new(), store_batches: Vec::new(), store_ops: Vec::new(), pauses: Vec::new(), stores: Vec::new(), session_text: String::new() }
     }
 
     /// The owner in the phase `Ready` with an empty queue.
@@ -295,16 +298,22 @@ impl Twin {
 
     fn post_input(&mut self, input: OutboxInput) -> Vec<OutboxEffect> {
         take_fx(&self.log, None);
+        self.spy_batches();
         self.det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), input);
         self.run();
         self.stores = crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: STORE_AT, input } => Some((number_after(&input, "id: ")?, input)), _ => None }).collect();
-        self.store_text = self.stores.iter().map(|(_, input)| input.as_str()).collect::<Vec<_>>().join("\n");
+        self.store_batches = self.spy_batches();
+        self.store_ops = self.store_batches.iter().flat_map(|batch| batch.ops.clone()).collect();
         self.pauses = crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Schedule { after, .. } => Some(after), _ => None }).collect();
         self.asked.extend(crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("SelectRow") => Some(input), _ => None }));
         self.session_text = crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: SESSION_AT, input } => Some(input), _ => None }).collect::<Vec<_>>().join("\n");
         let effects = take_fx(&self.log, state_of(&self.det));
         self.note(&effects);
         effects
+    }
+
+    fn spy_batches(&self) -> Vec<StoreBatch> {
+        self.det.state(Address::<Spy<Outbox>>::new(OUTBOX_AT)).map(|spy: &SpyState<Outbox>| crate::spec::support::take(&spy.store_batches)).unwrap_or_default()
     }
 
     pub(super) fn state(&self) -> &OutboxState { state_of(&self.det).expect("the owner state") }
@@ -467,3 +476,9 @@ pub(super) fn keep() -> Ctx { Ctx { policy: Policy::Keep, ..Ctx::ready() } }
 
 
 pub(super) fn sends_of(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Send { .. })).count() }
+
+/// Whether a Store op of the last post matches the pattern.
+macro_rules! has_op {
+    ($twin:expr, $($pattern:tt)+) => { $twin.store_ops.iter().any(|op| matches!(op, $($pattern)+)) };
+}
+pub(super) use has_op;

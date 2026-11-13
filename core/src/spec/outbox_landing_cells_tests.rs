@@ -4,6 +4,7 @@ use super::outbox_cells_tests::*;
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, RWhy, St};
 use crate::owners::contract::{Online, RejectReason};
+use crate::owners::store::StoreOp;
 use crate::owners::write::outbox::{CommitKind, NewOp, OutboxAnswer, OutboxInput, OutboxOutcome};
 
 #[test]
@@ -39,11 +40,11 @@ fn out_sending_exhausted_keep() {
                 OutboxInput::Answered { req_id: twin.state().ops[&id].request_id, outcome: crate::owners::session::AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Network, error: crate::owners::session::SessionError::ResponseTooLarge { limit }, pending_retained: true } }
             } else { OutboxInput::Dropped { op_id: id } };
             let effects = twin.post(input);
-            assert!(twin.store_text.contains(&format!("MarkError {{ op_id: {id}, error: Some(")), "{}", twin.store_text);
+            assert!(has_op!(twin, StoreOp::MarkError { op_id, error: Some(_) } if *op_id == id), "{:?}", twin.store_ops);
             let expected = twin.state().ops[&id].error.as_ref().unwrap();
             if cause.is_some() { assert_eq!(serde_json::from_str::<serde_json::Value>(expected).unwrap()["kind"], "response_too_large:64"); }
             else { assert_eq!(expected, "Exhausted"); }
-            assert!(twin.store_text.contains(&format!("{expected:?}")), "{}", twin.store_text);
+            assert!(has_op!(twin, StoreOp::MarkError { op_id, error: Some(error) } if *op_id == id && error == expected), "{:?}", twin.store_ops);
             let expected_kinds = if cause.is_some() { vec![CommitKind::Land, CommitKind::ErrorMark] } else { vec![CommitKind::ErrorMark] };
             assert_eq!((twin.stage(id), kinds(&effects), sends(&effects)), (Some(St::MarkingFailed), expected_kinds, 0), "{policy:?} cause={cause:?}: the 40th attempt fails under any on_failure");
         }
@@ -63,8 +64,8 @@ fn out_sending_destroy_not_found_batch() {
     let Decoded::MissingDestroy { stale } = decode_answer(&db, &|_| None, &job) else { panic!("NOT_FOUND destroy must land") };
     twin.post(OutboxInput::MissingDestroy { op_id: id, stale });
     assert_eq!(twin.stores.len(), 1);
-    assert!(twin.store_text.contains("RemoveServerRows { model: \"Moment\", ids: [\"r\"] }"), "{}", twin.store_text);
-    assert!(twin.store_text.contains(&format!("RemoveIntent {{ op_id: {id} }}")) && twin.store_text.contains(&format!("RemoveAnswer {{ request_id: {request_id} }}")), "{}", twin.store_text);
+    assert!(twin.store_ops.contains(&StoreOp::RemoveServerRows { model: "Moment".into(), ids: vec!["r".into()] }), "{:?}", twin.store_ops);
+    assert!(twin.store_ops.contains(&StoreOp::RemoveIntent { op_id: id }) && twin.store_ops.contains(&StoreOp::RemoveAnswer { request_id }), "{:?}", twin.store_ops);
 }
 
 #[test]
