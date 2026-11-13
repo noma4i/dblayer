@@ -201,8 +201,6 @@ async fn fetch_observed(encrypted: EncryptedConfig, platform: core::AppPlatform,
 pub(super) struct Waits { pub connectivity: Arc<core::Connectivity>, pub clock: Arc<dyn crate::runtime::Clock> }
 
 pub(super) async fn fetch_server_config_with(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retries: Option<Arc<RetryProgress>>, waits: Waits) -> Result<ServerConfig, DbError> {
-    super::database::on_core(None, async move {
-        let progress = retries.map(|retries| retries.inner.clone()).unwrap_or_else(|| core::retry::retry_progress().clone());
-        core::encrypted::bootstrap::fetch(&encrypted, &core::encrypted::bootstrap::AppRelease { platform, version: &version, build: build.as_deref() }, Arc::new(ForeignHttp { port: http, origin: encrypted.origin.clone() }), &*waits.clock, &progress, &waits.connectivity).await.map_err(DbError::from)
-    }).await?
+    let progress = retries.map(|retries| retries.inner.clone()).unwrap_or_else(|| core::retry::retry_progress().clone());
+    core::encrypted::bootstrap::fetch(&encrypted, &core::encrypted::bootstrap::AppRelease { platform, version: &version, build: build.as_deref() }, Arc::new(ForeignHttp { port: http, origin: encrypted.origin.clone() }), &*waits.clock, &progress, &waits.connectivity).await.map_err(DbError::from)
 }
