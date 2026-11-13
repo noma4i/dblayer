@@ -13,7 +13,7 @@ use crate::value::ScalarKind;
 use super::data_sets_tests::{deliver, write_as};
 
 fn chat_spec() -> ModelSpec {
-    let mut chat = ModelSpec::new("Chat", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("title", ScalarKind::Str), FieldSpec::scalar("count", ScalarKind::Int).optional()]);
+    let mut chat = ModelSpec::new("Chat", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("title", ScalarKind::Str), FieldSpec::scalar("count", ScalarKind::Int).optional(), FieldSpec::file("media").optional()]);
     let mut node = RelationSpec::new("node", &[]);
     node.text_params = vec![NODE_PARAM.into()];
     node.node = Some(NodeRead::One);
@@ -216,6 +216,41 @@ fn store_owed_kept_by_a_write_without_a_load() {
         write(&db);
         assert!(owed(&db, "c1"), "{path}: a write without the request of a load keeps the debt");
     }
+}
+
+/// store_owed_kept_by_a_local_write: a local write carries no request of a load, so attach, detach, the swap of a temporary id and the rows rebuilt from the outbox at open keep the debt of the row.
+#[test]
+fn store_owed_kept_by_a_local_write() {
+    use crate::owners::store::{EffectRow, IntentEffects, IntentOrigin};
+    fn attach(db: &Arc<Store>) { write_as(db, 2, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::AttachFile { model: "Chat".into(), row_id: "c1".into(), field: "media".into(), bytes: vec![7; 64], name: "photo".into(), mime: "image/jpeg".into() }]); }
+    let detach = |db: &Arc<Store>| {
+        attach(db);
+        write_as(db, 3, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::DetachFile { model: "Chat".into(), row_id: "c1".into(), field: "media".into() }]);
+    };
+    let swap = |db: &Arc<Store>| {
+        put(db, "Chat", json!({"id": "temp-1", "title": "t"}));
+        write_as(db, 2, BatchAuthor::Outbox, vec![("Chat".into(), json!({"id": "c1", "title": "t"}).to_string())], vec![StoreOp::Swap { model: "Chat".into(), temp: "temp-1".into(), real: "c1".into() }]);
+    };
+    type Write = Box<dyn Fn(&Arc<Store>)>;
+    let writes: [(&str, Write); 3] = [("attach", Box::new(|db: &Arc<Store>| attach(db))), ("detach", Box::new(detach)), ("swap", Box::new(swap))];
+    for (path, write) in writes {
+        let db = open();
+        owe(&db, 1, "c1");
+        write(&db);
+        assert!(owed(&db, "c1"), "{path}: a local write keeps the debt");
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    {
+        let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], None, Arc::new(crate::runtime::SystemClock)).unwrap());
+        put(&db, "Chat", json!({"id": "c1", "title": "t"}));
+        owe(&db, 1, "c1");
+        let effects = IntentEffects { rows: vec![EffectRow { model: "Chat".into(), row_id: "c1".into(), values: json!({"id": "c1", "title": "edit"}).to_string() }], ..Default::default() };
+        let intent = StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id: 7, model: "Chat".into(), row_id: "c1".into(), action: "update".into(), payload: "{}".into(), effects, origin: IntentOrigin::Api };
+        write_as(&db, 2, BatchAuthor::Outbox, Vec::new(), vec![intent]);
+    }
+    let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], None, Arc::new(crate::runtime::SystemClock)).unwrap());
+    assert!(owed(&db, "c1"), "open: the rows rebuilt from the outbox keep the debt");
 }
 
 /// store_owed_goes_with_the_model_cache: the wipe of a model at open, after its fingerprint changed, takes the debt with the rows; the row created again by a local write (a source that pays no debt) is not in debt.
