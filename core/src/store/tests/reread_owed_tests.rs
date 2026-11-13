@@ -149,13 +149,13 @@ fn feed_event_debt_survives_restart() {
 /// store_owed_kept_by_an_answer_older_than_the_event: a load issued before the event does not pay the debt of the event, the next load does, for the node and for the page of a list; a write without the request of a load pays nothing.
 #[test]
 fn store_owed_kept_by_an_answer_older_than_the_event() {
-    let row = || RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "answer"}).to_string() };
+    fn row() -> RowValue { RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "answer"}).to_string() } }
     let page = |db: &Arc<Store>, batch: u64, base_revision: i64| {
         let key = WindowKey::nodes("Chat", &["c1"]);
         let op = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row()], related: Vec::new(), total: None, base_revision };
         write_as(db, batch, BatchAuthor::Window, Vec::new(), vec![op]);
     };
-    let node = |db: &Arc<Store>, batch: u64, base_revision: i64| land_node_at(db, batch, "c1", vec![row()], base_revision);
+    let node = move |db: &Arc<Store>, batch: u64, base_revision: i64| land_node_at(db, batch, "c1", vec![row()], base_revision);
     type Land = Box<dyn Fn(&Arc<Store>, u64, i64)>;
     let paths: [(&str, Land); 2] = [("node", Box::new(node)), ("page", Box::new(page))];
     for (path, land) in paths {
@@ -187,7 +187,7 @@ fn store_owed_kept_by_an_answer_older_than_the_event() {
 /// store_owed_goes_with_the_row: the delete of the row and the end of the account take the debt with them, a row created again under the same id is not in debt.
 #[test]
 fn store_owed_goes_with_the_row() {
-    let row = || RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "again"}).to_string() };
+    fn row() -> RowValue { RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "again"}).to_string() } }
     let removed = |db: &Arc<Store>| { write_as(db, 2, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RemoveServerRows { model: "Chat".into(), ids: vec!["c1".into()] }]); };
     let account = |erase_encrypted: bool| move |db: &Arc<Store>| { db.erase_account(db.generation(), erase_encrypted).unwrap(); };
     type Ends = Box<dyn Fn(&Arc<Store>)>;
