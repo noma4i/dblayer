@@ -271,7 +271,8 @@ pub struct RankedStatement {
 pub fn compile_ranked(query: &Query, model: &ModelSpec, only: Option<&[String]>) -> Result<RankedStatement, QueryError> {
     check_model(query, model)?;
     let terms = sort_terms(query, model)?;
-    let columns: Vec<&str> = std::iter::once(KEY_COLUMNS).chain(terms.iter().map(|term| term.expression.as_str())).collect();
+    let id_key = format!("({})", id_order_sql("r.id"));
+    let columns: Vec<&str> = std::iter::once(KEY_COLUMNS).chain(terms.iter().map(|term| term.expression.as_str())).chain(std::iter::once(id_key.as_str())).collect();
     let mut bindings = Vec::new();
     let join = join_clause(query, &mut bindings, only.is_some()) + &sync_join(query, &mut bindings) + &search_join(query, model, &mut bindings)?;
     let (filter, order) = match only {

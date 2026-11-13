@@ -28,7 +28,7 @@ fn places_of(connection: &Connection, info: &ModelInfo, fields: &[SortField], id
     let statement = compile_ranked(&query, &info.spec, Some(ids)).map_err(invalid)?;
     let found = fetch_ranked(connection, &statement.statement).map_err(invalid)?;
     Ok(found.into_iter().map(|record| {
-        let place = place_of(&record.cells, &statement.descending) + &crate::identity::id_order_key(&record.id).bytes().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let place = place_of(&record.cells, &statement.descending) + &record.id_key.bytes().map(|byte| format!("{byte:02x}")).collect::<String>();
         (record.id, place)
     }).collect())
 }

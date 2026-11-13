@@ -86,3 +86,17 @@ fn data_stable_order_places() {
     let (small, large) = (steps_to_find_a_place(200), steps_to_find_a_place(2000));
     assert!(large <= small + small / 10, "{small} steps at 200 members, {large} at 2000");
 }
+
+const ID_ORDER_IDS: [&str; 16] = ["0", "7", "9", "10", "007", "+5", "-3", "m1", "m2", "1a", "Z", "18446744073709551615", "18446744073709551616", "99999999999999999999", "123456789012345678901234", "3f2504e0-4f89-11d3-9a0c-0305e82c3301"];
+
+#[test]
+fn data_stable_place_of_equal_fields_follows_the_id_order() {
+    let db = open(None, messages_spec(true));
+    let (scope, _) = scope_of(&db);
+    let rows: Vec<(&str, serde_json::Value)> = ID_ORDER_IDS.iter().map(|id| (*id, json!(5))).collect();
+    land(&db, &scope, &rows, &ID_ORDER_IDS);
+    let connection = &db.lock().connection;
+    let by_place: Vec<String> = connection.prepare("SELECT row_id FROM scope_member ORDER BY place").unwrap().query_map([], |row| row.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+    let by_sql: Vec<String> = connection.prepare(&format!("SELECT id FROM {} ORDER BY ({})", crate::store::ddl::table_name("messages"), crate::identity::id_order_sql("id"))).unwrap().query_map([], |row| row.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+    assert_eq!(by_place, by_sql, "rows with equal order fields are neighbours in the order of the SQL id key");
+}

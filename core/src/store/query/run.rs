@@ -18,14 +18,15 @@ pub struct RankedRow {
     pub id: String,
     pub revision: i64,
     pub cells: Vec<Value>,
+    pub id_key: String,
 }
 
 pub fn fetch_ranked(connection: &Connection, statement: &CompiledStatement) -> Result<Vec<RankedRow>, QueryError> {
     let mut prepared = connection.prepare_cached(&statement.sql)?;
     let width = prepared.column_count();
     let rows = prepared.query_map(params_from_iter(statement.bindings.iter()), |row| {
-        let cells = (2..width).map(|index| row.get::<_, Value>(index)).collect::<Result<_, _>>()?;
-        Ok(RankedRow { id: row.get(0)?, revision: row.get(1)?, cells })
+        let cells = (2..width - 1).map(|index| row.get::<_, Value>(index)).collect::<Result<_, _>>()?;
+        Ok(RankedRow { id: row.get(0)?, revision: row.get(1)?, cells, id_key: row.get(width - 1)? })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
