@@ -17,7 +17,7 @@ enum Start {
 
 fn preparing_row(start: Start) -> crate::owners::write::transfer::StoredTransfer {
     let mut found = stored(1, KEY, 1);
-    found.prepare = Some(WirePrepare::Image { edit: PhotoEdit { max_size: None, enlarge: false, crop: None, output_size: None, mirror: false, rotation_degrees: 0 }, quality: None, format: ImageFormat::Jpeg, max_bytes: None });
+    found.prepare = Some(WirePrepare::Image { edit: PhotoEdit { max_size: None, enlarge: false, crop: None, output_size: None, mirror: false, rotation_degrees: 0 }, quality: None, format: ImageFormat::Jpeg });
     found.size = 10;
     if matches!(start, Start::FailedThenRetry) { found.failed = Some(crate::owners::write::failure::of_prepare(crate::value::sync::PrepareReason::Failed, "the prepared file is gone".into())); }
     found

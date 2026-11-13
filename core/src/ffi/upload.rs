@@ -60,7 +60,8 @@ impl Database {
         Ok((Source { path: path.to_string(), parts }, multipart))
     }
 
-    fn checked_prepare(&self, prepare: Option<&super::upload_wire::WirePrepare>) -> Result<(), DbError> {
+    fn checked_prepare(&self, prepare: Option<&super::upload_wire::WirePrepare>, max_bytes: Option<u64>) -> Result<(), DbError> {
+        if max_bytes == Some(0) { return Err(invalid("the size limit of the source is 0")); }
         let Some(prepare) = prepare else { return Ok(()) };
         crate::prepare::check_settings(prepare)?;
         if self.preparer.get().is_none() { return Err(invalid("a source with prepare settings needs a preparer: pass one to open")); }
@@ -69,12 +70,12 @@ impl Database {
 
     /// The source of a call: the prepare settings are checked before the file is read.
     fn checked_source(&self, source: &WireSource, held: bool) -> Result<Option<(Source, bool)>, DbError> {
-        self.checked_prepare(source.prepare())?;
+        self.checked_prepare(source.prepare(), source.max_bytes())?;
         source.path().map(|path| self.source_of(path, held)).transpose()
     }
 
     fn supplied_source(&self, model: &str, row: &crate::identity::RowId, action: &str, source: WireUploadSource) -> Result<SuppliedSource, DbError> {
-        self.checked_prepare(source.prepare.as_ref())?;
+        self.checked_prepare(source.prepare.as_ref(), source.max_bytes)?;
         let values = super::upload_wire::object(&source.values_json)?;
         let variables = super::upload_wire::object(&source.variables_json)?;
         let (planned, local) = self.db.plan_supplied(model, row, values)?;
@@ -90,7 +91,7 @@ impl Database {
             Some(batch) => spec.actions.iter().find(|action| action.name == batch.single).and_then(|action| action.wrap.clone()),
             None => declaration.wrap.clone(),
         };
-        Ok(SuppliedSource { source: file, prepare: source.prepare, steps, values: effects, local: Value::Object(local).to_string(), variables, wrap })
+        Ok(SuppliedSource { source: file, prepare: source.prepare, max_bytes: source.max_bytes, steps, values: effects, local: Value::Object(local).to_string(), variables, wrap })
     }
 
     /// The request of the final mutation: the variables carry a sentinel where the signed id of the file goes.
@@ -108,7 +109,7 @@ impl Database {
             let name = file_name(plan.file, &file.path);
             StepsBody { multipart: *multipart, mime: plan.file.source.mime().map_or_else(|| mime_of(&name).to_string(), str::to_string), name, signed_variable: "signedId".into(), item: item.to_string() }.steps()
         });
-        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), held: false, fields, urgent: false, source: source.map(|(source, _)| source), prepare: plan.file.source.prepare().cloned(), mutation: self.upload_mutation(plan, mutation)?, steps })
+        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), held: false, fields, urgent: false, source: source.map(|(source, _)| source), prepare: plan.file.source.prepare().cloned(), max_bytes: plan.file.source.max_bytes(), mutation: self.upload_mutation(plan, mutation)?, steps })
     }
 
     fn single_of(&self, model: &str, action: &str, file: &UploadFile, held: bool) -> Result<Single, DbError> {

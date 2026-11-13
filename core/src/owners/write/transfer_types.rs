@@ -77,6 +77,7 @@ pub struct Source {
 pub struct SuppliedSource {
     pub source: Source,
     pub prepare: Option<crate::ffi::upload_wire::WirePrepare>,
+    pub max_bytes: Option<u64>,
     pub steps: Steps,
     pub values: crate::owners::store::IntentEffects,
     /// The local fields of the values as a JSON object, written by the transaction of the copy.
@@ -99,6 +100,7 @@ pub struct StoredTransfer {
     pub seq: u64,
     pub source: Option<Source>,
     pub prepare: Option<crate::ffi::upload_wire::WirePrepare>,
+    pub max_bytes: Option<u64>,
     pub awaiting_source: bool,
     pub batch: Option<u64>,
     pub fields: serde_json::Map<String, serde_json::Value>,
@@ -226,6 +228,7 @@ pub struct BatchItem {
     pub urgent: bool,
     pub source: Option<Source>,
     pub prepare: Option<crate::ffi::upload_wire::WirePrepare>,
+    pub max_bytes: Option<u64>,
     pub mutation: NewOp,
     pub steps: Option<Steps>,
 }
@@ -514,6 +517,7 @@ pub struct Transfer {
     pub seq: u64,
     pub source: Option<Source>,
     pub prepare: Option<crate::ffi::upload_wire::WirePrepare>,
+    pub max_bytes: Option<u64>,
     pub batch_id: Option<BatchId>,
     pub epoch: Epoch,
     pub stage: TransferStage,
@@ -598,6 +602,11 @@ pub struct Transfer {
     pub staged_failed: Option<(Option<ReplyId>, Fault)>,
     pub clearing: Option<AttemptId>,
     pub closing: bool,
+}
+
+impl Transfer {
+    /// The file that goes to the network is larger than the limit of its source.
+    pub(super) fn over_limit(&self, size: u64) -> bool { self.max_bytes.is_some_and(|limit| size > limit) }
 }
 
 /// The elements of one `AcceptBatch`: one reply, N receipts after the common `Committed`.
@@ -833,6 +842,7 @@ pub(super) fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
         op_id: transfer.op_id,
         etags: if kind == StoreKind::Failed && transfer.failure_abort { Vec::new() } else { transfer.etags.clone() },
         prepare: transfer.prepare.clone(),
+        max_bytes: transfer.max_bytes,
     }
 }
 

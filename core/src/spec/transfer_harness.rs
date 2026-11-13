@@ -156,7 +156,7 @@ pub(super) fn mutation(key: &str) -> NewOp {
     NewOp { model: model.into(), row_id: row.into(), action: action.into(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: "/moments".into(), body: String::new(), effects, expires_after: None }
 }
 
-pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.into(), held: false, fields: Default::default(), urgent: false, source: Some(Source { path: format!("/src/{key}"), parts }), prepare: None, mutation: mutation(key), steps: Some(Steps { path: "/upload".into(), body: String::new() }) } }
+pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.into(), held: false, fields: Default::default(), urgent: false, source: Some(Source { path: format!("/src/{key}"), parts }), prepare: None, mutation: mutation(key), steps: Some(Steps { path: "/upload".into(), body: String::new() }), max_bytes: None } }
 
 /// The batch of the tests: two to ten elements go in one mutation.
 pub(super) fn joint() -> Joint { Joint { minimum: 2, maximum: 10, items_key: "items".into(), mutation: mutation("Batch:r:upload"), renumber: None } }
@@ -198,7 +198,7 @@ pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
         restore_failed: None,
         restore_element: None,
         pending_step: None,
-        saved_answer: None,
+        saved_answer: None, max_bytes: None,
     }
 }
 
@@ -553,7 +553,7 @@ impl Twin {
 
     pub fn retry(&mut self, key: &str, source: Option<Source>) -> (ReplyId, Out) {
         let reply = self.reply();
-        let source = source.map(|source| crate::owners::write::transfer::SuppliedSource { source, prepare: None, steps: Steps { path: "/upload".into(), body: String::new() }, values: Default::default(), local: String::new(), variables: Default::default(), wrap: None });
+        let source = source.map(|source| crate::owners::write::transfer::SuppliedSource { source, prepare: None, steps: Steps { path: "/upload".into(), body: String::new() }, values: Default::default(), local: String::new(), variables: Default::default(), wrap: None, max_bytes: None });
         (reply, self.post(TransferInput::Retry { key: key.into(), source, reply }))
     }
 

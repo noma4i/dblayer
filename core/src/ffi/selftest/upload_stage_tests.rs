@@ -107,7 +107,7 @@ async fn xfer_stage_commit_early() {
         };
         let (run_hold, put_hold) = (preparer.hold_next(), stand.puts.hold_next());
         let staged = if case == "preparing" {
-            let request = WireUploadRequest { source: WireSource::File { path: source.to_str().unwrap().into(), name: None, mime: None, prepare: Some(shrink()) }, variables_json: "{}".into() };
+            let request = WireUploadRequest { source: WireSource::File { path: source.to_str().unwrap().into(), name: None, mime: None, prepare: Some(shrink()), max_bytes: None }, variables_json: "{}".into() };
             bound(database.stage(database.session_epoch(), "Moment".into(), "upload_clip".into(), request)).await.unwrap()
         } else { staged(&database, &source).await };
         match case {

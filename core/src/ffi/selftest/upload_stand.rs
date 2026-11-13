@@ -451,7 +451,7 @@ impl Preparer for ScriptedPreparer {
 
 /// The source of `supply_source` that carries the prepare settings of the transfer.
 pub(super) fn source_of(path: &Path, values_json: &str, prepare: &crate::ffi::upload_wire::WirePrepare) -> crate::ffi::upload_wire::WireUploadSource {
-    crate::ffi::upload_wire::WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: values_json.into(), variables_json: "{}".into(), prepare: Some(prepare.clone()) }
+    crate::ffi::upload_wire::WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: values_json.into(), variables_json: "{}".into(), prepare: Some(prepare.clone()), max_bytes: None }
 }
 
 /// The video the platform read: `reencode` is a source that the table of limits cannot keep as it is, `keys` are the metadata keys of the file.
@@ -461,7 +461,7 @@ pub(super) fn video_probe(keys: &[&str], reencode: bool) -> ProbeOutcome {
 
 /// The settings of a video that say what a device that cannot decode the source does: the field of the settings comes with the type.
 pub(super) fn cannot_decode_settings(upload_source: bool) -> crate::ffi::upload_wire::WirePrepare {
-    crate::ffi::upload_wire::WirePrepare::Video { limits: Some(crate::prepare::default_video_limits()), mirror: false, on_cannot_decode: if upload_source { crate::ffi::upload_wire::CannotDecode::UploadSource } else { crate::ffi::upload_wire::CannotDecode::Fail }, max_bytes: None }
+    crate::ffi::upload_wire::WirePrepare::Video { limits: Some(crate::prepare::default_video_limits()), mirror: false, on_cannot_decode: if upload_source { crate::ffi::upload_wire::CannotDecode::UploadSource } else { crate::ffi::upload_wire::CannotDecode::Fail } }
 }
 
 /// The typed reason of a failed upload: the field of the failure comes with the type.

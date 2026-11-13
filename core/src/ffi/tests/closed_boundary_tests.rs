@@ -11,7 +11,7 @@ async fn boundary_closed_call_precedence() {
     let (database, transport) = with_transport(Arc::new(ManualClock::new(std::time::Duration::from_secs(1)))).await;
     database.close_now();
     let (model, epoch) = ("Notice".to_string(), 1);
-    let source = WireUploadSource { path: String::new(), name: None, mime: None, values_json: "{".into(), variables_json: "{".into(), prepare: None };
+    let source = WireUploadSource { path: String::new(), name: None, mime: None, values_json: "{".into(), variables_json: "{".into(), prepare: None, max_bytes: None };
     let answers: Vec<(&str, Result<(), DbError>)> = vec![
         ("begin_load", database.begin_load(epoch, model.clone(), None, "{}".into()).map(drop)),
         ("refresh", database.refresh(epoch, model.clone(), None, "{}".into()).await),

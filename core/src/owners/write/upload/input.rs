@@ -24,7 +24,7 @@ pub struct UploadFile {
 
 impl UploadFile {
     pub fn new(path: &str) -> Self {
-        Self { source: WireSource::File { path: path.to_string(), name: None, mime: None, prepare: None }, variables: Map::new() }
+        Self { source: WireSource::File { path: path.to_string(), name: None, mime: None, prepare: None, max_bytes: None }, variables: Map::new() }
     }
 
     pub fn variable(mut self, name: &str, value: Value) -> Self {

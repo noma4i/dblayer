@@ -95,7 +95,7 @@ async fn run() {
     table.push(("create", Returned::Pending, Box::new(move |report| report.drive(db.create(epoch, "Moment".into(), r#"{"text":"third"}"#.into(), "{}".into())))));
     let (db, file) = (database.clone(), source.clone());
     table.push(("upload_create_batch", Returned::Pending, Box::new(move |report| {
-        let item = WireUploadItem { values_json: r#"{"clientKey":"k1"}"#.into(), source: WireSource::File { path: file.to_str().unwrap().into(), name: None, mime: None, prepare: None }, variables_json: "{}".into() };
+        let item = WireUploadItem { values_json: r#"{"clientKey":"k1"}"#.into(), source: WireSource::File { path: file.to_str().unwrap().into(), name: None, mime: None, prepare: None, max_bytes: None }, variables_json: "{}".into() };
         report.drive(async move { db.upload_create_batch(epoch, "Asset".into(), vec![item], WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() }).await.map(drop) })
     })));
     let db = database.clone();

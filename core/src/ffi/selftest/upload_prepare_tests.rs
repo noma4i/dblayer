@@ -201,7 +201,7 @@ async fn xfer_prepare_failed_and_retry() {
     assert_eq!(failed.error.map(|error| error.kind), Some("prepare_failed".to_string()));
     assert!(files_left(&path) > 0, "the copy of the source stays");
     assert_eq!(stand.script.count("CreateBlob"), 0);
-    let again = crate::ffi::upload_wire::WireUploadSource { path: source.to_str().unwrap().into(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into(), prepare: None };
+    let again = crate::ffi::upload_wire::WireUploadSource { path: source.to_str().unwrap().into(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into(), prepare: None, max_bytes: None };
     assert!(matches!(bound(database.retry(epoch, "Moment".into(), id.clone(), Some("upload_clip".into()), Some(again))).await, Err(DbError::Invalid { .. })), "a new source is a new upload");
     let retried = bound(database.retry(epoch, "Moment".into(), id.clone(), Some("upload_clip".into()), None)).await.unwrap();
     bound(database.confirmed(retried, false)).await.unwrap();

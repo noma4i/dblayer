@@ -19,15 +19,15 @@ pub struct WireUploadItem {
 
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum WireSource {
-    File { path: String, name: Option<String>, mime: Option<String>, prepare: Option<WirePrepare> },
+    File { path: String, name: Option<String>, mime: Option<String>, prepare: Option<WirePrepare>, max_bytes: Option<u64> },
     Pending,
 }
 
-/// What the library makes of the source file before it uploads: `limits = None` takes `default_video_limits`, `max_bytes` is the largest file that may go to the network.
+/// What the library makes of the source file before it uploads: `limits = None` takes `default_video_limits`.
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum WirePrepare {
-    Video { limits: Option<VideoLimits>, mirror: bool, on_cannot_decode: CannotDecode, max_bytes: Option<u64> },
-    Image { edit: PhotoEdit, quality: Option<f64>, format: ImageFormat, max_bytes: Option<u64> },
+    Video { limits: Option<VideoLimits>, mirror: bool, on_cannot_decode: CannotDecode },
+    Image { edit: PhotoEdit, quality: Option<f64>, format: ImageFormat },
 }
 
 impl WirePrepare {
@@ -35,12 +35,6 @@ impl WirePrepare {
         match self {
             Self::Video { .. } => super::PrepareKind::Video,
             Self::Image { .. } => super::PrepareKind::Image,
-        }
-    }
-
-    pub(crate) fn max_bytes(&self) -> Option<u64> {
-        match self {
-            Self::Video { max_bytes, .. } | Self::Image { max_bytes, .. } => *max_bytes,
         }
     }
 }
@@ -75,6 +69,14 @@ impl WireSource {
         }
     }
 
+    /// The largest file that may go to the network.
+    pub(crate) fn max_bytes(&self) -> Option<u64> {
+        match self {
+            Self::File { max_bytes, .. } => *max_bytes,
+            Self::Pending => None,
+        }
+    }
+
     pub(crate) fn mime(&self) -> Option<&str> {
         match self {
             Self::File { mime, .. } => mime.as_deref(),
@@ -92,6 +94,9 @@ pub struct WireUploadSource {
     pub variables_json: String,
     #[uniffi(default = None)]
     pub prepare: Option<WirePrepare>,
+    /// The largest file that may go to the network.
+    #[uniffi(default = None)]
+    pub max_bytes: Option<u64>,
 }
 
 /// A file accepted before its row: `row_id` is the id of the row `commit_staged` creates.

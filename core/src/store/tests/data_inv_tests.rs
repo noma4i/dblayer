@@ -160,7 +160,7 @@ fn store_retry_preserves_transfer_outcome() {
         size: 3, sha256: "hash".into(), path: "/mutation".into(), body: "{}".into(),
         on_failure: OnFailure::Keep, steps_path: Some("/steps".into()), steps_body: Some("{}".into()),
         transfer_id: 3, cycle_id: 1, signed_id: Some("signed".into()), aborted: false, staged: false, failed_at: None, blob_created_at: None, held: false,
-        op_id: Some(5), etags: vec![None], prepare: None,
+        op_id: Some(5), etags: vec![None], prepare: None, max_bytes: None,
     };
     write(&db, BatchAuthor::Transfer, Vec::new(), vec![StoreOp::Upload { row, kind: UploadKind::Failed }]);
     let StoreOp::Intent { op_id, model, row_id, action, payload, effects, .. } = intent(5) else { unreachable!() };

@@ -13,7 +13,7 @@ impl TransferState {
             transfer.stage = stage;
             return row.transfer_id;
         }
-        let item = BatchItem { key: row.key.clone(), held: row.held, fields: row.fields.clone(), urgent: false, source: row.source.clone(), prepare: row.prepare.clone(), mutation: row.mutation.clone(), steps: row.steps.clone() };
+        let item = BatchItem { key: row.key.clone(), held: row.held, fields: row.fields.clone(), urgent: false, source: row.source.clone(), prepare: row.prepare.clone(), max_bytes: row.max_bytes, mutation: row.mutation.clone(), steps: row.steps.clone() };
         let id = row.transfer_id;
         self.next_id = self.next_id.max(id + 1);
         let created = self.create(item, row.batch.filter(|group| self.groups.contains_key(group)), row.created_at, stage);

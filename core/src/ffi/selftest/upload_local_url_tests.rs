@@ -69,7 +69,7 @@ fn source_files(directory: &Path, count: usize) -> Vec<std::path::PathBuf> {
 fn remove_all(paths: &[std::path::PathBuf]) { for path in paths { std::fs::remove_file(path).unwrap(); } }
 
 fn file_source(path: &Path, prepared: bool) -> WireSource {
-    WireSource::File { path: path.to_str().unwrap().into(), name: None, mime: None, prepare: prepared.then(shrink) }
+    WireSource::File { path: path.to_str().unwrap().into(), name: None, mime: None, prepare: prepared.then(shrink), max_bytes: None }
 }
 
 /// P-XFER-23 (D-386): `localUrl` of every upload of a call (a single upload, each item of a batch, a staged file), with and without the prepare step, is the URL of a readable file from the return of the call to the end of the transfer, while the file of the caller is already deleted. Input: the file of the caller deleted at once; the points: call returned, prepare running, prepare ended with the PUT held, the final mutation held (`sending`), the end. Assert: at each point every upload shows a URL with a non-empty file; after the end no URL. Catches: a status whose URL depends on the written size or on the copy of the source that the prepare step removes.
@@ -165,7 +165,7 @@ fn readable_url(database: &Database, model: &str, id: &str, action: &str) -> Opt
 async fn xfer_local_url_after_supply_source_and_retry_with_source() {
     let directory = tempfile::tempdir().unwrap();
     let file = |name: &str, bytes: &[u8]| { let path = directory.path().join(name); std::fs::write(&path, bytes).unwrap(); path };
-    let source_of = |path: &Path| crate::ffi::upload_wire::WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into(), prepare: None };
+    let source_of = |path: &Path| crate::ffi::upload_wire::WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into(), prepare: None, max_bytes: None };
 
     let stand = Stand::new();
     let database = stand.open(Some(&directory.path().join("supply.sqlite")), &OPERATIONS).await;

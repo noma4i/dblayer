@@ -83,7 +83,7 @@ fn batch_items(directory: &std::path::Path, empty_key_at: Option<usize>, pending
         let path = directory.join(format!("{index}.jpg"));
         std::fs::write(&path, b"image").unwrap();
         let key = if empty_key_at == Some(index) { String::new() } else { format!("key-{index}") };
-        WireUploadItem { values_json: format!(r#"{{"clientKey":"{key}","size":3,"position":{index}}}"#), source: (!pending).then(|| path.to_str().unwrap().into()).map(|path| crate::ffi::upload_wire::WireSource::File { path, name: None, mime: None, prepare: None }).unwrap_or(crate::ffi::upload_wire::WireSource::Pending), variables_json: "{}".into() }
+        WireUploadItem { values_json: format!(r#"{{"clientKey":"{key}","size":3,"position":{index}}}"#), source: (!pending).then(|| path.to_str().unwrap().into()).map(|path| crate::ffi::upload_wire::WireSource::File { path, name: None, mime: None, prepare: None, max_bytes: None }).unwrap_or(crate::ffi::upload_wire::WireSource::Pending), variables_json: "{}".into() }
     }).collect()
 }
 
@@ -99,7 +99,7 @@ async fn call_refusal_order_table() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"video").unwrap();
-    let request = |path: Option<&std::path::Path>| WireUploadRequest { source: path.map(|path| path.to_string_lossy().into_owned()).map(|path| crate::ffi::upload_wire::WireSource::File { path, name: None, mime: None, prepare: None }).unwrap_or(crate::ffi::upload_wire::WireSource::Pending), variables_json: "{}".into() };
+    let request = |path: Option<&std::path::Path>| WireUploadRequest { source: path.map(|path| path.to_string_lossy().into_owned()).map(|path| crate::ffi::upload_wire::WireSource::File { path, name: None, mime: None, prepare: None, max_bytes: None }).unwrap_or(crate::ffi::upload_wire::WireSource::Pending), variables_json: "{}".into() };
     let batch = |operation: &str| WireUploadBatch { operation: operation.into(), variables_json: "{}".into() };
     let mut table: Vec<(String, &str, &str)> = Vec::new();
     for (stale, model, row_id, action, expected) in [

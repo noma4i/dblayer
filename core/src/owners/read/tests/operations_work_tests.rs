@@ -32,7 +32,7 @@ fn queue_work(n: usize, m: usize) -> (usize, usize) {
         }
     }
     for index in 0..m {
-        let row = UploadRow { key: format!("moments:t{index}:upload"), seq: 100 + index as u64, source: Some("/source".into()), parts: 1, batch: None, fields: None, upload_id: None, confirmed_parts: 0, progress: 0, attempts: 0, completed: false, failed: None, created_at: 1, inline: false, size: 9, sha256: "hash".into(), path: "/mutation".into(), body: "{}".into(), on_failure: OnFailure::Keep, steps_path: None, steps_body: None, transfer_id: 100 + index as u64, cycle_id: 1, signed_id: None, aborted: false, staged: false, failed_at: None, blob_created_at: None, held: false, op_id: None, etags: vec![], prepare: None };
+        let row = UploadRow { key: format!("moments:t{index}:upload"), seq: 100 + index as u64, source: Some("/source".into()), parts: 1, batch: None, fields: None, upload_id: None, confirmed_parts: 0, progress: 0, attempts: 0, completed: false, failed: None, created_at: 1, inline: false, size: 9, sha256: "hash".into(), path: "/mutation".into(), body: "{}".into(), on_failure: OnFailure::Keep, steps_path: None, steps_body: None, transfer_id: 100 + index as u64, cycle_id: 1, signed_id: None, aborted: false, staged: false, failed_at: None, blob_created_at: None, held: false, op_id: None, etags: vec![], prepare: None, max_bytes: None };
         let batch = StoreBatch { author: BatchAuthor::Transfer, id: index as u64 + 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Upload { row, kind: UploadKind::SyncUpload }] };
         db.write_batch(&batch, db.files(), None).unwrap();
     }

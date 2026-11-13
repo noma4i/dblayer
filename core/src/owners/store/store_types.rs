@@ -119,6 +119,8 @@ pub struct UploadRow {
     pub etags: Vec<Option<String>>,
     /// The settings of the prepare step: written with the row (`sync_upload_prepare`).
     pub prepare: Option<crate::ffi::upload_wire::WirePrepare>,
+    /// The largest file that may go to the network (`sync_upload.max_bytes`).
+    pub max_bytes: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -13,6 +13,6 @@ pub(super) fn items(directory: &std::path::Path) -> Vec<WireUploadItem> {
     (0..3).map(|index| {
         let path = directory.join(format!("{index}.jpg"));
         std::fs::write(&path, format!("image-{index}")).unwrap();
-        WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":3,"position":{index}}}"#), source: crate::ffi::upload_wire::WireSource::File { path: path.to_str().unwrap().into(), name: None, mime: None, prepare: None }, variables_json: "{}".into() }
+        WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":3,"position":{index}}}"#), source: crate::ffi::upload_wire::WireSource::File { path: path.to_str().unwrap().into(), name: None, mime: None, prepare: None, max_bytes: None }, variables_json: "{}".into() }
     }).collect()
 }
