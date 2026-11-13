@@ -15,7 +15,7 @@ use super::row_write::RowWrite;
 use super::{Reader, StoreError};
 use super::window_values::{edge_writes, row_values, WindowPage};
 
-fn fault(error: impl std::fmt::Display) -> StoreError { StoreError::Constraint(error.to_string()) }
+pub(super) fn fault(error: impl std::fmt::Display) -> StoreError { StoreError::Constraint(error.to_string()) }
 
 fn admitted_rows(writer: &mut RowWrite<'_>, model: &str, rows: &[Map<String, Value>], base_revision: i64) -> Result<Vec<Map<String, Value>>, StoreError> {
     let ids: Vec<String> = rows.iter().filter_map(|row| row.get("id").and_then(read_id).map(|id| id.to_string())).collect();

@@ -394,7 +394,7 @@ impl Database {
             ReadRequest::Entity { model, id, fetch } => {
                 let fetch = fetch_of(*fetch);
                 let spec = self.db.spec(model)?;
-                let node = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One));
+                let node = node_read(spec);
                 if fetch != Fetch::Never && node.is_none() {
                     return Err(DbError::Invalid { detail: format!("{model} declares no node read to fetch from") });
                 }
@@ -507,8 +507,11 @@ impl RowEdit {
     }
 }
 
-/// The relation that reads one row by its id: a row in debt is read through it.
+pub(crate) fn node_read(spec: &crate::schema::ModelSpec) -> Option<&crate::schema::RelationSpec> {
+    spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One))
+}
+
 fn node_relation(spec: &crate::schema::ModelSpec) -> Option<String> {
     if spec.is_local() { return None; }
-    spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One)).map(|relation| relation.name.clone())
+    node_read(spec).map(|relation| relation.name.clone())
 }

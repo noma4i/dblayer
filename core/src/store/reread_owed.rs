@@ -6,11 +6,9 @@ use crate::identity::{ModelKey, RowId, RowRef};
 use crate::store::{CommitResult, RowChange, RowChangeKind};
 
 use super::row_write::RowWrite;
+use super::window_write::fault;
 use super::StoreError;
 
-fn fault(error: impl std::fmt::Display) -> StoreError { StoreError::Constraint(error.to_string()) }
-
-/// The row changed for the readers without a new revision: they read it again and see the debt.
 fn announced(model: &str, id: &str) -> Result<CommitResult, StoreError> {
     let mut result = CommitResult::noop(uuid::Uuid::new_v4());
     result.rows.push(RowChange { row: RowRef::new(ModelKey::new(model), RowId::new(id).map_err(fault)?), kind: RowChangeKind::Touched, fields: BTreeSet::new() });
@@ -27,19 +25,14 @@ pub(super) fn owe(writer: &mut RowWrite<'_>, model: &str, id: &str) -> Result<Op
 
 pub(super) enum Owed { New(CommitResult), Raised }
 
-/// What pays the debt of a row (store.md "долг строки"): the one list of the rules.
 #[derive(Clone, Copy)]
 pub(super) enum Release {
-    /// A load landed: it pays only when the request was issued at this revision, not older than the debt.
     Landing(i64),
-    /// A payload of a later event of the row.
     Event,
-    /// The row is gone.
     Deleted,
 }
 
 impl Release {
-    /// The answer of a mutation, the local writes and a batch of rows without the request of a load pay nothing.
     pub(super) fn of(source: crate::schema::RowSource, request_base: Option<i64>) -> Option<Release> {
         use crate::schema::RowSource;
         match source {
@@ -59,7 +52,6 @@ pub(crate) fn is_owed(connection: &Connection, model: &str, id: &str) -> Result<
     Ok(connection.query_row(include_str!("sql/reread_owed_exists.sql"), params![model, id], |row| row.get(0))?)
 }
 
-/// The rows of `ids` that owe a reread: one statement, one lookup of the primary key for each id.
 pub(crate) fn owed_among(connection: &Connection, model: &str, ids: &[String]) -> Result<BTreeSet<String>, StoreError> {
     if ids.is_empty() { return Ok(BTreeSet::new()); }
     let mut statement = connection.prepare_cached(include_str!("sql/reread_owed_among.sql"))?;
@@ -68,7 +60,6 @@ pub(crate) fn owed_among(connection: &Connection, model: &str, ids: &[String]) -
 }
 
 impl super::Store {
-    /// The rows in debt a count or a local read depends on (D-393): the members of the counted window, or every row of the model for a read without a window. `None` for a read whose value rows tell it.
     pub(crate) fn owed_dependencies(&self, view: &crate::owners::read::deliveries::View) -> Result<Option<BTreeSet<String>>, super::db_error::CoreError> {
         use crate::owners::read::deliveries::Kind;
         use crate::owners::read::windows::WindowKind;
@@ -95,14 +86,12 @@ impl super::Store {
     }
 }
 
-/// Every row of the model that owes a reread.
 pub(crate) fn all_owed(connection: &Connection, model: &str) -> Result<BTreeSet<String>, StoreError> {
     let mut statement = connection.prepare_cached(include_str!("sql/reread_owed_model.sql"))?;
     let owed = statement.query_map([model], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<BTreeSet<String>>>()?;
     Ok(owed)
 }
 
-/// The members of a scope that owe a reread: the owed rows of the model joined to `scope_member` by its row index.
 fn members_owed(connection: &Connection, model: &str, scope: &str) -> Result<BTreeSet<String>, StoreError> {
     let mut statement = connection.prepare_cached(include_str!("sql/reread_owed_members.sql"))?;
     let owed = statement.query_map(params![model, scope], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<BTreeSet<String>>>()?;

@@ -252,7 +252,7 @@ impl Database {
         let Some(watched) = self.watched_by(id).filter(|watched| watched.ended.lock().unwrap().is_none()) else { return Err(DbError::Interrupted { detail: "the stream is gone".into() }) };
         if let ReadRequest::Entity { model, id, .. } = &watched.request {
             let spec = self.db.spec(model)?;
-            let relation = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One)).map(|relation| relation.name.clone()).ok_or_else(|| DbError::Invalid { detail: format!("{model} declares no node read") })?;
+            let relation = super::read::node_read(spec).map(|relation| relation.name.clone()).ok_or_else(|| DbError::Invalid { detail: format!("{model} declares no node read") })?;
             return self.node(watched.epoch, model.clone(), relation, id.clone(), true).await.map(drop);
         }
         let ReadRequest::List { query } = &watched.request else { return Err(DbError::Invalid { detail: "the stream has nothing to refresh".into() }) };
