@@ -139,26 +139,6 @@ scope.uploadStatus(staged).uploadStatus.collect { status -> preview.show(status.
 
 ## 10. After 6.31.1
 
-- An event `changed_by ..., via: :node` rereads the row that a list, a counter or a local read shows. Remove a poll, a separate reader of the row and a `via: :observed` that you added only to refresh the tiles of a list.
-
-```swift
-// no change: the list shows the new value of the row after the event
-```
-
-```kotlin
-// no change: the list shows the new value of the row after the event
-```
-
-- On iOS a file goes up in parts in the app, as on Android. The PUT in a background `URLSession` is off: the app adds no call to `application(_:handleEventsForBackgroundURLSession:completionHandler:)` and changes no `beginBackgroundTask` around uploads. Android changes nothing. See [upload with the app in the background](files.md#upload-with-the-app-in-the-background).
-
-```swift
-// iOS: no change, keep the beginBackgroundTask around uploads.
-```
-
-```kotlin
-// Android: no change, the upload job runs the PUT.
-```
-
 - The upload status `cancelled` and the wait reason `offline` are removed: the core never set them. Remove their branch from the `switch` or `when`, and read "no network" from `NetworkStatus`.
 
 ```swift
@@ -195,6 +175,16 @@ val removed = staged.discard()
 // Android: no change.
 ```
 
+- An event `changed_by ..., via: :node` rereads the row that a list, a counter or a local read shows. Remove a poll, a separate reader of the row and a `via: :observed` that you added only to refresh the tiles of a list.
+
+```swift
+// no change: the list shows the new value of the row after the event
+```
+
+```kotlin
+// no change: the list shows the new value of the row after the event
+```
+
 - `commit` of a staged upload during a step of the library waits for the step instead of throwing `InFlight`, and `commit` of an upload that is being removed throws `NotFound`. Remove a repeat of `commit` after `InFlight`, and handle `NotFound` as the end of the upload.
 
 ```swift
@@ -205,6 +195,10 @@ let receipt = try await staged.commit(values, variables)
 val receipt = staged.commit(values, variables)
 ```
 
+- `discard` right after `commit` returns `true` when the upload is removed with its row and `false` when the final mutation already left and the row stays. It does not throw `InFlight`: remove a repeat after it.
+- A batch upload with one key twice in the call fails with `Invalid` that names the key, not with `InFlight`. Fix the call.
 - A video with `mirror` set goes up mirrored on iOS also when the source needs no re-encode. The app changes nothing.
 - A custom `Preparer` that reports a video rotation outside 0, 90, 180 or 270 gets `prepare_failed` with the reason `failed`, and the copy of the source stays. Report the turn as one of the four values.
 - The first open after the update rebuilds the cache of the server models because the cache format changed. The app sees the server data load again once. Local models, queued operations, the session and uploads stay. The app changes nothing.
+- A call or a load made before the first network value of the system waits for it instead of failing with `Offline`. A call that waits 30 seconds for that value fails with a network error, not with `Offline`. Remove a retry on `Offline` at start. The app changes nothing else.
+- `discard` and `cancelUpload` of a failed upload that is being replaced no longer throw `InFlight`: remove a repeat after it. The command applies to the upload the key keeps: the new one when the replacement is confirmed, the failed one when it is refused.

@@ -189,7 +189,7 @@ Later changes to the same record wait behind a `failed` change and are sent afte
 ## Online and offline
 
 Opening starts network monitoring on both platforms. Kotlin requires an Android `Context` as the first argument. The bindings hand one observer object of the platform to the core: it starts with the database and the core stops it before `close` returns. Each OS value (network path, app foreground, power saving mode) goes to the core as one input. An app calls nothing for them.
-Mutations, uploads and loads read the same core flag. While the network is away, changes and uploads wait, and a load or refresh fails with `Offline`. When the network returns, waiting changes and uploads are sent by themselves and open lists that failed on the network read again once.
+Mutations, uploads and loads read the same core flag. While the network is away, changes and uploads wait, and a load or refresh fails with `Offline`. Before the first network value of the system they wait for it. When the network returns, waiting changes and uploads are sent by themselves and open lists that failed on the network read again once.
 
 ### Network status
 

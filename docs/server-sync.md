@@ -380,7 +380,7 @@ Upload steps cap delays at 15 seconds with 50% jitter and preserve their attempt
 An explicit outbox backoff keeps its configured seed and delays.
 Clock drives retry waits, upload deadlines, subscription debounce and socket deadlines.
 Offline requests wait for online without making HTTP attempts or running retry timers.
-`refresh()`, `loadMore()` and `readNode(force: true)` return `Offline` at once without the network. Other loads wait for it. When connectivity disappears during an in-flight request or retry wait, the request is cancelled and the load waits for the network and starts again when it returns.
+`refresh()`, `loadMore()` and `readNode(force: true)` return `Offline` at once without the network. Before the first network value of the system they wait for it. Other loads wait for the network. When connectivity disappears during an in-flight request or retry wait, the request is cancelled and the load waits for the network and starts again when it returns.
 Callers of the same load share one request. Cancelling the caller that runs it does not fail the others: the first waiting caller sends the request again and the rest keep waiting for it.
 Bootstrap receives Connectivity before a database exists and waits for online before its first HTTP attempt.
 No timer runs without a failed request awaiting another attempt.
@@ -652,7 +652,7 @@ println(code.url)
 - Required inputs remain required. Nullable fields use `GraphQLNullable`: omitted by default, explicit null, or a supplied value. Lists preserve every dimension and element nullability.
 - A required input field with a schema default can be omitted. Nullable fields with defaults still distinguish omission from explicit null.
 - `parameter :kind, WidgetKind` and `attribute :kind, WidgetKind` name a schema enum. It becomes a typed enum with an `unknown` case, in inputs too (see [models](models.md#enums)). A custom scalar needs a `scalar` line (see [models](models.md#custom-scalars)). The `JSON` scalar uses `JSONValue` in Swift and `JsonElement` in Kotlin.
-- The call does not enter the outbox and returns Offline when started offline.
+- The call does not enter the outbox and returns Offline when started offline. Before the first network value of the system the call waits for it and fails with a network error after 30 seconds.
 - Encrypted calls follow the [retry policy](#retries). A numbered mutation stores Pending before HTTP, including for a standalone operation.
 - Cancelling a standalone encrypted mutation preserves Pending and leaves its result unconfirmed.
 - Plain standalone calls return transport failures and GraphQL errors directly.

@@ -5,7 +5,7 @@
 ### Changed
 
 - Switch off the PUT in a background session on iOS: `DB.handleBackgroundEvents` returns `false`.
-- Rebuild the server cache on the first open after the update: the cache format changed. Queued operations, the session and uploads stay.
+- Rebuild the server cache on the first open: queued operations, session and uploads stay.
 
 ### Fixed
 
@@ -16,6 +16,11 @@
 - Mirror a video on iOS that needs no re-encode when `mirror` is set.
 - Refuse a video probe with a rotation outside 0, 90, 180, 270 as `prepare_failed`.
 - Reread a row that a list shows after a `changed_by` event of its `node`.
+- Wait for the first network value instead of failing a call with `Offline`.
+- Mark parent lists stale by the `newer` order when a named child is destroyed.
+- Keep the multipart abort owed across a restart after an invalid upload id write.
+- Apply discard and cancelUpload sent during a replacement to the upload the key keeps.
+- Refuse a key twice in one batch upload call with `Invalid`, not `InFlight`.
 
 ## 6.32.0 - 2026-11-13
 

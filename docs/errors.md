@@ -14,7 +14,7 @@ Every call of the library fails with one typed error: `DbError` in Swift and `Db
 | `Invalid` | An argument or a declaration is wrong: a `limit` of 0, a load call without a relation, a second reader of a stream, an unreadable upload file, `encrypted` without credentials. The database also refuses data it cannot store with `Invalid`, and `detail` carries its reason. |
 | `NotFound` | The row, the operation or the model does not exist. `upload` on a missing row is accepted: the answer of its mutation writes the row. |
 | `AlreadyExists` | A `create` with an id that exists (`model`, `id`). |
-| `Offline` | The network is away and the call fails at once instead of waiting. |
+| `Offline` | The network is away and the call fails at once instead of waiting. Before the first network value of the system the call waits. |
 | `Network`, `Http` | The request failed on the network, or the server answered with a status, for example 403 (`Http` carries `status`). A redirect is never followed and is reported as `Http`. |
 | `RequestTooLarge` | The request exceeds the local limit (`size`, `limit`). |
 | `ResponseTooLarge` | The answer exceeds the limit (`limit`): 16 MiB for a GraphQL answer, 64 KiB for the answer of a file upload. The platform stops reading at the limit. A read or an upload fails without a retry. A sent mutation counts as an unknown outcome and repeats with the same request id. When the retries end, the operation fails with `kind` `response_too_large` and `responseLimit`. |
