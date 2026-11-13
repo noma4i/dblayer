@@ -1088,6 +1088,12 @@ impl StateOwner for Transfers {
     type Input = TransferInput;
     type Effect = TransferEffect;
 
+    #[cfg(test)]
+    fn diagnostic(state: &TransferState) -> Option<String> {
+        let transfers: Vec<String> = state.transfers.values().map(|transfer| format!("{}:{:?}:{}:retry={}:in_flight={}:next={:?}:upload_id={}", transfer.transfer_id, transfer.stage, transfer.key, transfer.waiting_retry, transfer.in_flight, transfer.next_step, transfer.upload_id.is_some())).collect();
+        Some(format!("phase={:?}, transfers={transfers:?}, orphans={}, minted_debts={}, owed={}, retrying={}", state.phase, state.orphans.len(), state.minted.len(), state.orphan_owed.len(), state.retrying.len()))
+    }
+
     fn step(state: &mut TransferState, input: TransferInput, now: Time) -> Effects<Self> {
         let mut fx: Fx = Vec::new();
         if let TransferInput::EpochStarted(started) = &input {

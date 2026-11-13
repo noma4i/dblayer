@@ -603,7 +603,7 @@ impl StateOwner for Deliveries {
 
     #[cfg(test)]
     fn diagnostic(state: &DeliveriesState) -> Option<String> {
-        let queues: Vec<String> = state.streams.iter().filter(|(_, machine)| machine.view.kind == Kind::Operations).map(|(id, machine)| format!("{id:?}: stage={:?}, read_id={}, read_inflight={}, read_seen={}, read_position={}, journal={}, operations={}, waiting_pull={}", machine.stage, machine.read_id, machine.read_inflight, machine.read_seen, machine.read_position, machine.journal.len(), machine.operations.as_ref().map_or_else(|| "none".to_string(), |items| items.len().to_string()), machine.waiting.is_some())).collect();
+        let queues: Vec<String> = state.streams.iter().filter(|(_, machine)| machine.view.kind == Kind::Operations).map(|(id, machine)| format!("{id:?}: stage={:?}, read_id={}, read_inflight={}, read_seen={}, read_position={}, journal={}, operations={}, waiting_pull={}, items=[{}]", machine.stage, machine.read_id, machine.read_inflight, machine.read_seen, machine.read_position, machine.journal.len(), machine.operations.as_ref().map_or_else(|| "none".to_string(), |items| items.len().to_string()), machine.waiting.is_some(), machine.operations.iter().flatten().map(|item| format!("{}:{:?}:upload={}", item.seq, item.status, item.upload.is_some())).collect::<Vec<_>>().join(", "))).collect();
         Some(format!("revision={}, operation streams [{}]", state.revision, queues.join("; ")))
     }
 
