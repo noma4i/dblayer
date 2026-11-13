@@ -30,8 +30,8 @@ pub(super) enum Owed { New(CommitResult), Raised }
 /// What pays the debt of a row (store.md "долг строки"): the one list of the rules.
 #[derive(Clone, Copy)]
 pub(super) enum Release {
-    /// A load landed: it pays only when the request was issued at `Some(revision)` not older than the debt.
-    Landing(Option<i64>),
+    /// A load landed: it pays only when the request was issued at this revision, not older than the debt.
+    Landing(i64),
     /// A payload of a later event of the row.
     Event,
     /// The row is gone.
@@ -39,11 +39,11 @@ pub(super) enum Release {
 }
 
 impl Release {
-    /// The answer of a mutation and the local writes pay nothing.
+    /// The answer of a mutation, the local writes and a batch of rows without the request of a load pay nothing.
     pub(super) fn of(source: crate::schema::RowSource, request_base: Option<i64>) -> Option<Release> {
         use crate::schema::RowSource;
         match source {
-            RowSource::Page | RowSource::NodeReread => Some(Release::Landing(request_base)),
+            RowSource::Page | RowSource::NodeReread => request_base.map(Release::Landing),
             RowSource::Event => Some(Release::Event),
             RowSource::Response | RowSource::Create | RowSource::Local | RowSource::Derived => None,
         }
@@ -51,7 +51,7 @@ impl Release {
 }
 
 pub(super) fn release(connection: &Connection, model: &str, id: &str, release: Release) -> Result<bool, StoreError> {
-    let base = match release { Release::Landing(base) => base, Release::Event | Release::Deleted => None };
+    let base = match release { Release::Landing(base) => Some(base), Release::Event | Release::Deleted => None };
     Ok(connection.execute(include_str!("sql/reread_owed_delete.sql"), params![model, id, base])? > 0)
 }
 

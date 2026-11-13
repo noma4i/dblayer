@@ -146,17 +146,40 @@ fn feed_event_debt_survives_restart() {
     assert!(db.window_saved("Chat", "list", &params).unwrap().expect("the list is saved").stale, "the saved list still owes the reread");
 }
 
-/// store_owed_kept_by_an_answer_older_than_the_event: a load issued before the event does not pay the debt of the event, the next load does.
+/// store_owed_kept_by_an_answer_older_than_the_event: a load issued before the event does not pay the debt of the event, the next load does, for the node and for the page of a list; a write without the request of a load pays nothing.
 #[test]
 fn store_owed_kept_by_an_answer_older_than_the_event() {
-    let db = open();
-    let issued = db.revision_seq().unwrap();
-    owe(&db, 1, "c1");
-    let row = || RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "old answer"}).to_string() };
-    land_node_at(&db, 2, "c1", vec![row()], issued);
-    assert!(owed(&db, "c1"), "the answer is older than the event");
-    land_node_at(&db, 3, "c1", Vec::new(), issued);
-    assert!(owed(&db, "c1"), "a null answer of an older request pays nothing");
-    land_node(&db, 4, "c1", vec![row()]);
-    assert!(!owed(&db, "c1"), "the next load pays");
+    let row = || RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "answer"}).to_string() };
+    let page = |db: &Arc<Store>, batch: u64, base_revision: i64| {
+        let key = WindowKey::nodes("Chat", &["c1"]);
+        let op = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row()], related: Vec::new(), total: None, base_revision };
+        write_as(db, batch, BatchAuthor::Window, Vec::new(), vec![op]);
+    };
+    let node = |db: &Arc<Store>, batch: u64, base_revision: i64| land_node_at(db, batch, "c1", vec![row()], base_revision);
+    type Land = Box<dyn Fn(&Arc<Store>, u64, i64)>;
+    let paths: [(&str, Land); 2] = [("node", Box::new(node)), ("page", Box::new(page))];
+    for (path, land) in paths {
+        let db = open();
+        let issued = db.revision_seq().unwrap();
+        owe(&db, 1, "c1");
+        land(&db, 2, issued);
+        assert!(owed(&db, "c1"), "{path}: the answer is older than the event");
+        if path == "node" {
+            land_node_at(&db, 3, "c1", Vec::new(), issued);
+            assert!(owed(&db, "c1"), "a null answer of an older request pays nothing");
+        }
+        land(&db, 4, db.revision_seq().unwrap());
+        assert!(!owed(&db, "c1"), "{path}: the next load pays");
+    }
+    let local = |db: &Arc<Store>| write_as(db, 2, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::LocalRows { model: "Chat".into(), rows: vec![row()] }]);
+    let fields = |db: &Arc<Store>| write_as(db, 2, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::LocalFields { model: "Chat".into(), row_id: "c1".into(), values: json!({"title": "local"}).to_string() }]);
+    let response = |db: &Arc<Store>| write_as(db, 2, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "Chat".into(), rows: vec![row()] }]);
+    type Write = Box<dyn Fn(&Arc<Store>) -> crate::store::batch_write::BatchWritten>;
+    let writes: [(&str, Write); 3] = [("local rows", Box::new(local)), ("local fields", Box::new(fields)), ("response", Box::new(response))];
+    for (path, write) in writes {
+        let db = open();
+        owe(&db, 1, "c1");
+        write(&db);
+        assert!(owed(&db, "c1"), "{path}: a write without the request of a load keeps the debt");
+    }
 }
