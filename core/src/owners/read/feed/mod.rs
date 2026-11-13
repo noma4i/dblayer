@@ -144,11 +144,14 @@ struct Connection {
     id: ConnectionId,
     protocol: Protocol,
     pong: Option<u64>,
-    last_sent: Time,
+    last_sent: Option<Time>,
     pong_due: Option<Time>,
 }
 
 impl Connection {
+    /// A connection in its handshake: nothing sent on it yet.
+    fn handshake(id: ConnectionId) -> Self { Self { id, protocol: Protocol::Handshake, pong: None, last_sent: None, pong_due: None } }
+
     fn goodbye(&self) -> bool { matches!(self.protocol, Protocol::Established { .. }) }
 }
 

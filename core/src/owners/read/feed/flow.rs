@@ -168,7 +168,7 @@ impl FeedState {
     pub(super) fn keepalive(&mut self, connection: ConnectionId, counter: u64, now: Time, fx: &mut Vec<Fx>) {
         if self.mode != Mode::Live || self.active_connection() != Some(connection) { return; }
         let Some(found) = self.active.as_mut() else { return };
-        if found.pong.is_some() || now.0.saturating_sub(found.last_sent.0) < KEEPALIVE.as_millis() as u64 || !matches!(found.protocol, Protocol::Established { send_counter, .. } if send_counter == counter) { return; }
+        if found.pong.is_some() || found.last_sent.is_none_or(|sent| now.0.saturating_sub(sent.0) < KEEPALIVE.as_millis() as u64) || !matches!(found.protocol, Protocol::Established { send_counter, .. } if send_counter == counter) { return; }
         Self::seal(found, Outgoing::Ping { ts: now.0 }, fx);
         found.pong = Some(counter);
         found.pong_due = Some(Time(now.0.saturating_add(PONG_DEADLINE.as_millis() as u64)));
@@ -226,7 +226,7 @@ impl FeedState {
             return;
         }
         if let Some(found) = self.opening.as_mut() {
-            *found = Connection { id: connection, protocol: Protocol::Handshake, pong: None, last_sent: Time(0), pong_due: None };
+            *found = Connection::handshake(connection);
         }
         fx.push(Fx::Run(FeedEffect::Connect { connection }));
         fx.push(Fx::HandshakeDeadline { connection });

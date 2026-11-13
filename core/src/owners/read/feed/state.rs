@@ -4,7 +4,7 @@ impl FeedState {
     pub(super) fn frames_sent(&mut self, now: Time, fx: &[Fx]) {
         for effect in fx {
             if let Fx::Run(FeedEffect::Seal { connection, .. }) = effect {
-                if let Some(found) = self.connection_mut(*connection) { found.last_sent = now; }
+                if let Some(found) = self.connection_mut(*connection) { found.last_sent = Some(now); }
             }
         }
     }
@@ -138,7 +138,7 @@ impl FeedState {
     pub(super) fn fresh_connection(&mut self) -> Connection {
         let id = self.next_connection;
         self.next_connection += 1;
-        Connection { id, protocol: Protocol::Handshake, pong: None, last_sent: Time(0), pong_due: None }
+        Connection::handshake(id)
     }
 
     /// Transport `Subscribe(want)` on a new connection.
