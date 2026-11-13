@@ -150,6 +150,7 @@ pub(super) fn timed_stand() -> (super::upload_stand::Stand, std::sync::Arc<crate
 pub(super) async fn advancing<T>(clock: &crate::ffi::TestClock, work: impl Future<Output = T>) -> T {
     tokio::pin!(work);
     let mut armed = clock.armed();
+    clock.advance(60_000);
     loop {
         tokio::select! {
             result = &mut work => return result,

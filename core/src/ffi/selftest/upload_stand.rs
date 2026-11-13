@@ -143,17 +143,21 @@ impl FakeHttp for ScriptedHttp {
         let Some(operation) = request["body"]["operationName"].as_str().map(str::to_string) else { return self.session.post(path, body, purpose).await };
         self.script.calls.lock().unwrap().push(Call { operation: operation.clone(), pair: (request["requestId"].as_str().unwrap_or_default().to_string(), request["sequence"].as_i64()), variables: request["body"]["variables"].clone(), purpose, full: request["body"]["query"].is_string() });
         let contract_request = Request::from_wire("upload", &request);
-        let admission = self.script.contract.lock().unwrap().admit(&contract_request);
+        let (admission, taken) = {
+            let mut contract = self.script.contract.lock().unwrap();
+            let admission = contract.admit(&contract_request);
+            let taken = if matches!(admission, Admission::Fresh) {
+                let taken = contract.take(&operation);
+                if let Some(known) = taken.as_ref().and_then(settled_of) { contract.settle(&contract_request, known); }
+                taken
+            } else { None };
+            (admission, taken)
+        };
         let mut answer = match admission {
             Admission::Stored(stored) => Some(stored),
             Admission::TwoBodies => panic!("the pair {} went with two bodies", contract_request.request_id),
             Admission::Refused(refusal) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, None, refusal) }),
-            Admission::Fresh => {
-                let mut contract = self.script.contract.lock().unwrap();
-                let taken = contract.take(&operation);
-                if let Some(known) = taken.as_ref().and_then(settled_of) { contract.settle(&contract_request, known); }
-                taken
-            }
+            Admission::Fresh => taken,
         };
         loop {
             match answer {

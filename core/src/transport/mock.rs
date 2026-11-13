@@ -211,13 +211,18 @@ impl MockTransport {
     async fn reply(&self, kind: RecordedKind, request: GraphQLRequest) -> Result<Response, TransportError> {
         self.record(kind, &request);
         let pair = request.wire.map(|wire| Request::from_wire(&format!("{:?}", wire.author), &json!({ "requestId": wire.request_id.to_string(), "sequence": null, "body": { "operationName": request.operation_name, "variables": request.variables, "query": request.document } })));
-        let repeated = pair.as_ref().and_then(|pair| match self.lock().contract.admit(pair) {
-            Admission::Stored(reply) => Some(reply),
-            Admission::TwoBodies => panic!("the pair {} went with two bodies: {} {}", pair.request_id, request.operation_name, request.variables),
-            Admission::Refused(_) | Admission::Fresh => None,
-        });
-        let responder = self.lock().responder.clone();
-        let reply = repeated.or_else(|| {
+        let (repeated, responder, queued) = {
+            let mut state = self.lock();
+            let repeated = pair.as_ref().and_then(|pair| match state.contract.admit(pair) {
+                Admission::Stored(reply) => Some(reply),
+                Admission::TwoBodies => panic!("the pair {} went with two bodies: {} {}", pair.request_id, request.operation_name, request.variables),
+                Admission::Refused(_) | Admission::Fresh => None,
+            });
+            let responder = state.responder.clone();
+            let queued = if repeated.is_none() && responder.is_none() { state.contract.take(&request.operation_name) } else { None };
+            (repeated, responder, queued)
+        };
+        let reply = repeated.or(queued).or_else(|| {
             let answered = responder.and_then(|answer| answer(&request));
             answered.or_else(|| self.lock().contract.take(&request.operation_name))
         });
