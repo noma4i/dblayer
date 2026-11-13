@@ -9,6 +9,10 @@
 - batchProgress in uploads: the share of the whole uploadBatch on each of its records.
 - dimensions on an upload operation: the row gets the width and height of the uploaded file.
 
+### Fixed
+
+- Wait for the reconnect backoff when the cable drops again before any data.
+
 ## 6.34.1 - 2026-11-14
 
 ### Fixed

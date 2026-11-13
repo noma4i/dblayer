@@ -113,8 +113,12 @@ impl FeedState {
                 self.active = None;
                 self.gap_seq = Some(self.online_seq);
                 self.mode = Mode::Opening { gap: true };
-                self.attempts = 0;
-                self.open_connection(fx);
+                if self.attempts > 0 {
+                    self.wait_resubscribe(fx);
+                } else {
+                    self.attempts = 1;
+                    self.open_connection(fx);
+                }
                 self.stale_lost(&lost, fx);
             }
             _ => {}

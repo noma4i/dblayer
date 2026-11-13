@@ -336,6 +336,7 @@ fn feed_live_dropped() {
     twin.step(chat("c1"));
     assert_eq!(twin.step(Input::Dropped { to: To::Active }), [Effect::Commit, Effect::Commit, Effect::Connect]);
     assert!(matches!(twin.state().mode(), f::Mode::Opening { gap: true }));
+    assert_eq!(twin.state().attempts(), 1, "the first drop after data reconnects at once and counts the attempt");
     let mut ended = live();
     assert_eq!(ended.step(Input::Ended { to: To::Active }), [Effect::Commit, Effect::Connect]);
 }

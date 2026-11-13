@@ -32,6 +32,11 @@ fn feed_prop_no_tight_reconnect() {
         assert_eq!(twin.step(Input::Resubscribe { to: To::Opening }), [Effect::Connect], "a Connect goes only when the scheduled resubscribe fires");
     }
     twin.step(Input::HandshakeDone);
+    let dropped = twin.step(Input::Dropped { to: To::Active });
+    assert!(dropped.contains(&Effect::ScheduleResubscribe) && !dropped.contains(&Effect::Connect), "a live connection that drops before any data reconnects by Backoff: {dropped:?}");
+    assert_eq!(twin.state().attempts(), 4, "the drop before data bumps the attempts");
+    assert_eq!(twin.step(Input::Resubscribe { to: To::Opening }), [Effect::Connect]);
+    twin.step(Input::HandshakeDone);
     assert_eq!(twin.step(chat("c1")), [Effect::ScheduleTick], "the live feed takes data again");
     assert_eq!(twin.state().attempts(), 0, "data resets the attempts, not a reconnect");
 

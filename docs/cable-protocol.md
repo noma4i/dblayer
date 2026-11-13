@@ -129,6 +129,7 @@ Other active subscriptions keep using their connection when one subscription is 
 
 An authenticated `closing` still closes the connection as requested by the peer.
 The documented session-ending close values below keep their meaning. Other valid close values use normal reconnect backoff when subscriptions remain.
+A connection that drops after it delivered data reconnects at once. A connection that drops again before any new data waits for the reconnect backoff.
 The code-shape check is shared by error codes and closing reasons, so new server vocabulary needs no client enumeration update.
 
 | Subscription | Handling |
