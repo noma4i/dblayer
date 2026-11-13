@@ -13,9 +13,9 @@ use super::ref_window::Phase;
 use super::ref_window::{Effect, Failure, Goal, Input, Marker3, Read, Reject, Result3, PRELOAD};
 use crate::owners::contract::{Committed, EpochStarted, ErrorClass, Online, RejectReason, Rejected, RequestError};
 use crate::owners::contract::WindowPhase as OwnerPhase;
-use crate::spec::support::{new_log, number_after, snapshot, take, Discard, Emitted, Landing, Log, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
+use crate::spec::support::{new_log, number_after, snapshot, take, Discard, Emitted, Log, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
 use crate::owners::read::deliveries::Deliveries;
-use crate::owners::store::{RowValue, StoreInput, StoreWriter};
+use crate::owners::store::{StoreInput, StoreWriter};
 use crate::owners::read::windows::{self as w, AnswerPage, StaleKeys, WindowEffect, WindowKey, WindowKind, WindowOutcome, WindowStage, Windows, WindowsEffect, WindowsPeers};
 use crate::runtime::{explore, Address, Back, Cause as Ended, DetScheduler, Effect as RuntimeEffect, EffectRunner, Effects, EpochStamp, Limits, Outbound, StateOwner, Time};
 
@@ -135,7 +135,6 @@ struct Twin {
     /// The id of the last batch the owner sent to the Store.
     batch: Option<u64>,
     revision: i64,
-    generation: u64,
     pin_revision: Arc<AtomicU64>,
     online_seq: u64,
     /// The time of the next step: it only grows, the owner never sees the clock go back.
@@ -187,7 +186,7 @@ impl Twin {
         let (held, hold) = (reads.held.clone(), reads.hold.clone());
         let addr = add_windows(&mut det, &log, state, reads, pin_revision.clone());
         det.start_epoch(EPOCH);
-        Self { det, addr, log, flight: None, batch: None, revision: 10, generation: 0, pin_revision, online_seq: 0, now: NOW, held, hold, commit: String::new(), outcomes: Vec::new(), last_outcomes: Vec::new() }
+        Self { det, addr, log, flight: None, batch: None, revision: 10, pin_revision, online_seq: 0, now: NOW, held, hold, commit: String::new(), outcomes: Vec::new(), last_outcomes: Vec::new() }
     }
 
     fn state(&self) -> &w::WindowsState { inner(&self.det, self.addr) }
@@ -243,7 +242,6 @@ impl Twin {
             Input::Committed { request, revision } => self.post(w::WindowsInput::Committed(Committed { batch: *request, revision: *revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() })),
             Input::Rejected { request, reason } => {
                 let reason = match reason {
-                    Reject::StaleGeneration => RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), self.generation)].into() },
                     Reject::NoSession => RejectReason::NoSession,
                     Reject::Closed => RejectReason::Closed,
                     Reject::Storage => RejectReason::Storage("disk".into()),

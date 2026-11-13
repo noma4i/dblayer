@@ -8,7 +8,7 @@ use crate::store::Store;
 const KEY: &str = "moments:m1:upload";
 
 fn write(db: &Store, ops: Vec<StoreOp>) {
-    let batch = StoreBatch { author: BatchAuthor::Transfer, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
+    let batch = StoreBatch { author: BatchAuthor::Transfer, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), rows: Vec::new(), intents: 0, credential: None, ops };
     db.write_batch(&batch, db.files(), None).unwrap();
 }
 
@@ -68,7 +68,7 @@ fn the_outcome_of_a_cycle_is_shown_before_the_transfer_writes_its_row() {
         let notices = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let sink = notices.clone();
         db.on_commit(move |notice| sink.lock().unwrap().push(notice)).unwrap();
-        let batch = StoreBatch { author: BatchAuthor::Outbox, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::TransferOutcome { transfer_id: 2, cycle_id: 1, outcome: outcome.clone() }] };
+        let batch = StoreBatch { author: BatchAuthor::Outbox, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::TransferOutcome { transfer_id: 2, cycle_id: 1, outcome: outcome.clone() }] };
         db.write_batch(&batch, db.files(), None).unwrap();
         let sync = crate::store::sync_state::read_sync(&db.lock().connection, "moments", &["m1".to_string()]).unwrap();
         let shown = sync.get("m1").and_then(|info| info.uploads.get("upload")).map(|info| (format!("{:?}", info.status).to_lowercase(), info.error.as_ref().map(|error| error.message.clone()).unwrap_or_default()));

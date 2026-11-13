@@ -30,7 +30,6 @@ pub(in super::super) enum Failure {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in super::super) enum Reject {
-    StaleGeneration,
     NoSession,
     Closed,
     Storage,

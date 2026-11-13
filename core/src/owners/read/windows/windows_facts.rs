@@ -6,8 +6,6 @@ pub(super) struct Facts {
     pub(super) online: Option<bool>,
     pub(super) online_seq: u64,
     pub(super) load_seq: std::cell::Cell<u64>,
-    pub(super) base_generation: u64,
-    pub(super) generations: BTreeMap<String, u64>,
     pub(super) dependency_models: BTreeSet<String>,
     pub(super) interest: BTreeSet<InterestId>,
     /// Interests that load the window again each time the network returns.
@@ -126,9 +124,6 @@ impl Facts {
 
     pub(super) fn emit(&self, emit: Emit) { self.fx.borrow_mut().push(emit); }
 
-    /// The generation of every model when the request leaves: the answer may name models the window did not know before.
-    pub(super) fn basis(&self) -> GenerationsAtIssue { GenerationsAtIssue { base: self.base_generation, generations: self.generations.clone() } }
-
     /// P-WIN-32: the value of the window from the stage (`loading` = a request in flight or landing), the outcome and the rows.
     pub(super) fn load_state(&self, loading: bool) -> WindowState {
         let phase = match &self.outcome {
@@ -210,7 +205,7 @@ impl Facts {
     /// A load of the first page of a media window starts with a check of its marker; every other load asks for a page.
     pub(super) fn issue(&self, request: RequestId, attempt: u32, page: u32, force: bool) -> Load {
         self.load_seq.set(self.online_seq);
-        let load = Load::issued(request, attempt, page, force, self.basis());
+        let load = Load::issued(request, attempt, page, force);
         if !(self.media && page == 1) { return load; }
         let up_to = self.marker.as_ref().map_or(0, |marker| marker.sequence);
         let stale = self.stale_marked.take() || self.stale_owed.get();
@@ -239,9 +234,6 @@ impl Facts {
 
     /// The chain ends: its rows and its marker land in 1 batch, or only the marker when the rows stay.
     pub(super) fn land_chain(&mut self, load: &mut Load, chain: &Chain, marker: Marker, keep_rows: bool) -> Outcome<WinState> {
-        let related = chain.rows.related.iter().map(|(model, _)| model.clone());
-        let models: BTreeSet<String> = self.dependency_models.iter().cloned().chain(chain.models.iter().cloned()).chain(related).collect();
-        let basis = crate::owners::store::basis_for(models.iter().map(|model| (model.clone(), load.basis.of(model))));
         let members = if keep_rows { self.members } else { chain.base + i64::try_from(chain.ids.len()).unwrap_or(i64::MAX) };
         let mut page = AnswerPage::new(1, chain.ids.clone(), None);
         page.payload = chain.rows.clone();
@@ -252,7 +244,7 @@ impl Facts {
         self.page_count = landed_tail(self.page_count, number, replace_all, self.local_order || self.media).0;
         let marked = std::mem::take(&mut load.marked);
         let source = Self::page_source(marked);
-        self.emit(Emit::Commit { landed_at: self.answered_at, request: load.request, basis, page, number, replace_all, base_revision: self.request_base.get(), marker: Some(marker.clone()), keep_rows, source });
+        self.emit(Emit::Commit { landed_at: self.answered_at, request: load.request, page, number, replace_all, base_revision: self.request_base.get(), marker: Some(marker.clone()), keep_rows, source });
         self.landing_marker = Some((marker, members, !keep_rows));
         let cursor = if keep_rows { self.cursor.clone() } else { None };
         Transition(WinState::landing(Landing { request: load.request, page: number, cursor, rows: keep_rows && self.has_rows || !chain.ids.is_empty(), models: chain.models.clone(), marked }))

@@ -208,19 +208,14 @@ pub(super) fn event_input(model: &str, payload: &str) -> FeedInput { FeedInput::
 pub(super) fn rig(debounce_ms: u64, frames: Vec<FeedInput>) -> DetScheduler {
     let mut det = DetScheduler::new(1);
     let log: Log<Saw> = new_log();
-    let post_generation = Arc::new(AtomicU64::new(0));
     let feed_slot = Address::<Feed>::new(FEED);
     let noted = log.clone();
     det.add::<StoreStub<Feed>>("store", StoreStubState {
         to: feed_slot,
-        generation: post_generation.clone(),
         revision: 0,
-        only: Some("Post"),
         committed: FeedInput::Committed,
-        rejected: FeedInput::Rejected,
         note: Box::new(move |landing| {
-            let (Landing::Landed { rows, .. } | Landing::Rejected { rows, .. }) = landing;
-            noted.lock().unwrap_or_else(PoisonError::into_inner).push(Saw::Verdict { rows });
+            noted.lock().unwrap_or_else(PoisonError::into_inner).push(Saw::Verdict { rows: landing.rows });
         }),
     }, Silent);
     det.add::<Sink<Windows>>("windows", new_log(), Discard);

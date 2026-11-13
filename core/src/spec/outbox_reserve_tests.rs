@@ -344,18 +344,6 @@ fn out_group_member_removal_rejected() {
     group_sending(&mut twin, group);
     twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
     let first = twin.stores[0].0;
-    let membership = StoreOp::IntentOrigin { op_id: group, origin: IntentOrigin::TransferGroup { batch_id: 9, transfer_ids: vec![11] } };
-    let resent = twin.reject_batch(first, RReason::StaleGeneration);
-    assert_eq!(
-        (twin.stores.len(), twin.stores[0].0 != first, twin.store_ops.contains(&membership), twin.store_ops.contains(&StoreOp::RemoveUploadByTransferId { transfer_id: 12 })),
-        (1, true, true, true),
-        "StaleGeneration resends the same membership batch on a new generation: {:?} {resent:?}", twin.store_ops);
-
-    let mut twin = Twin::new();
-    let group = group_on_rows(&mut twin, "b", Policy::Rollback);
-    group_sending(&mut twin, group);
-    twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
-    let first = twin.stores[0].0;
     twin.reject_batch(first, RReason::Storage);
     assert_eq!(
         (twin.stores.is_empty(), has_op!(twin, StoreOp::TransferOutcome { outcome: OutboxOutcome::Discarded, .. }), twin.stage(group)),

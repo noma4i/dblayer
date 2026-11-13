@@ -4,8 +4,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::rc::Rc;
-use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, PoisonError};
+use std::sync::PoisonError;
 
 use super::feed_words::{Counter, Effect, Input, Kind, Obs, Reject, Reread, To};
 use crate::owners::contract::{BatchId, Committed, ConnectionId, EpochEnded, EpochStarted, Online, RejectReason, Rejected};
@@ -13,7 +12,7 @@ use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
 use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, Frame, FramedEvent, Outgoing, Protocol, ProtocolReason};
 use crate::owners::read::windows::{StaleKeys, WindowKey, Windows};
 use crate::owners::store::StoreWriter;
-use crate::spec::support::{new_log, number_after, snapshot, take, text_after, Discard, Emitted, Landing, Log, NoEffect, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
+use crate::spec::support::{new_log, number_after, snapshot, take, text_after, Discard, Emitted, Log, NoEffect, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
 use crate::runtime::{explore, Address, Back, Cause as Ended, DetScheduler, Effects, EffectRunner, Epoch, EpochStamp, Limits, StateOwner, Time};
 
 const EPOCH: u64 = 1;
@@ -148,7 +147,6 @@ impl Twin {
 
     fn reject_reason(reason: &Reject) -> RejectReason {
         match reason {
-            Reject::StaleGeneration(models) => RejectReason::StaleGeneration { models: models.clone(), generations: models.iter().cloned().map(|model| (model, 4)).collect() },
             Reject::Storage => RejectReason::Storage("disk".into()),
             Reject::Invalid => RejectReason::Invalid(String::new()),
             Reject::NoSession => RejectReason::NoSession,

@@ -7,14 +7,6 @@ fn feed_created() {
     twin.post(FeedInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(7), generation: 4 }));
     let requests = take(&twin.log);
     assert!(requests.iter().any(|entry| matches!(entry, Emitted::Run(FeedEffect::SnapshotRequest { epoch: EPOCH }))), "the step of EpochStarted asks Network for the snapshot of Feed: {requests:?}");
-    twin.post(FeedInput::Online { online: Online(true), online_seq: 1 });
-    twin.step(plus("Chat"));
-    twin.step(Input::HandshakeDone);
-    take(&twin.log);
-    twin.step(chat("c1"));
-    twin.step(Input::Tick);
-    let sent = &twin.history;
-    assert!(sent.iter().any(|entry| matches!(entry, Emitted::Send { to: STORE, input } if input.contains("basis: {\"Chat\": 4}"))), "the basis of an event is the generation of the epoch: {sent:?}");
 }
 
 #[test]
@@ -254,19 +246,6 @@ fn data_sets_missing_parent() {
 }
 
 #[test]
-fn feed_live_rejected_generation() {
-    let mut twin = live();
-    twin.step(plus("Post"));
-    twin.step(Input::HandshakeDone);
-    twin.step(chat("c1"));
-    twin.step(event(To::Active, "Post", "p1"));
-    twin.step(Input::Tick);
-    let effects = twin.step(Input::Rejected(Reject::StaleGeneration(names(&["Chat"]))));
-    assert_eq!(effects, [Effect::Commit, Effect::Stale { model: "Chat".into(), all: true }, Effect::Commit], "the lost event has its own debt batch, the events of the other models land in a new batch");
-    twin.step(Input::Committed);
-}
-
-#[test]
 fn feed_live_rejected_storage() {
     let mut twin = live_immediate();
     twin.step(chat("c1"));
@@ -298,7 +277,7 @@ fn feed_refused_event_is_lost_alone() {
 
 #[test]
 fn feed_dropped_gap_batches_reject_independently() {
-    for (rejected, reason) in [(0, Reject::Storage), (1, Reject::Storage), (1, Reject::StaleGeneration(names(&["Chat"])))] {
+    for (rejected, reason) in [(0, Reject::Storage), (1, Reject::Storage)] {
         let mut twin = live();
         twin.step(chat("c1"));
         twin.step(Input::Dropped { to: To::Active });
@@ -310,19 +289,12 @@ fn feed_dropped_gap_batches_reject_independently() {
             twin.step(Input::Committed);
             assert!(twin.shown.iter().any(|observation| matches!(observation, Obs::Lost { .. })));
         } else {
-            if matches!(reason, Reject::Storage) {
-                assert!(effects.is_empty());
-                let retry = twin.step(Input::StrayBatch);
-                assert_eq!(retry, [Effect::Commit]);
-            } else {
-                assert_eq!(effects, [Effect::Commit]);
-            }
+            assert!(effects.is_empty());
+            let retry = twin.step(Input::StrayBatch);
+            assert_eq!(retry, [Effect::Commit]);
             let batches: Vec<_> = twin.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } if input.contains("MarkStale") => Some(input), _ => None }).collect();
             assert_eq!(batches.len(), 1);
             assert!(batches[0].contains("Chat") && !batches[0].contains("c1"), "retry must retain the debt: {batches:?}");
-            if matches!(reason, Reject::StaleGeneration(_)) {
-                assert!(batches[0].contains("basis: {\"Chat\": 4}"), "retry uses the returned generation: {batches:?}");
-            }
             twin.step(Input::Committed);
             assert!(twin.shown.iter().any(|observation| matches!(observation, Obs::Event { payload, .. } if payload == "c1")));
             twin.step(Input::Committed);

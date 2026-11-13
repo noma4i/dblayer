@@ -35,8 +35,6 @@ impl FeedState {
             gap_seq: None,
             channel_attempts: BTreeMap::new(),
             slots: BTreeMap::new(),
-            generation: BTreeMap::new(),
-            base_generation: 0,
             position: BTreeMap::new(),
             ledger: BTreeMap::new(),
             held: Vec::new(),
@@ -131,8 +129,6 @@ impl FeedState {
 
     pub(super) fn debounce_of(&self, model: &str) -> u64 { self.debounce.get(model).copied().unwrap_or(0) }
 
-    pub(super) fn generation_of(&self, model: &str) -> u64 { self.generation.get(model).copied().unwrap_or(self.base_generation) }
-
     pub(super) fn is_online(&self) -> bool { self.online == Some(true) }
 
     pub(super) fn fresh_connection(&mut self) -> Connection {
@@ -196,8 +192,7 @@ impl FeedState {
         let position = self.position(&event.model) + 1;
         self.position.insert(event.model.clone(), position);
         self.ledger.entry(event.model.clone()).or_insert_with(Ledger::new).slots.insert(position, Slot::Pending);
-        let basis = self.generation_of(&event.model);
-        FeedEvent { model: event.model, payload: event.payload, reread: event.reread, basis, position, refused: event.refused }
+        FeedEvent { model: event.model, payload: event.payload, reread: event.reread, position, refused: event.refused }
     }
 
     pub(super) fn mark_lost(&mut self, events: &[FeedEvent], fx: &mut Vec<Fx>) -> Vec<String> {
@@ -258,25 +253,10 @@ impl FeedState {
         if models.is_empty() { return; }
         let batch = self.next_batch;
         self.next_batch += 1;
-        let basis = models.iter().map(|model| (model.clone(), self.generation_of(model))).collect();
         self.landing.push((batch, Vec::new()));
         self.gap_landing.insert(batch, models.clone());
         let kept = models.iter().flat_map(|model| self.kept.get(model).into_iter().flatten().map(|relation| (model.clone(), relation.clone()))).collect();
-        fx.push(Fx::CommitGap { batch, models, basis, kept });
-    }
-
-    /// One batch per equal basis, in the order the bases first appear.
-    pub(super) fn commit_by_basis(&mut self, events: Vec<FeedEvent>, fx: &mut Vec<Fx>) {
-        let mut groups: Vec<(u64, Vec<FeedEvent>)> = Vec::new();
-        for event in events {
-            match groups.iter_mut().find(|(basis, _)| *basis == event.basis) {
-                Some((_, group)) => group.push(event),
-                None => groups.push((event.basis, vec![event])),
-            }
-        }
-        for (_, group) in groups {
-            self.commit(group, fx);
-        }
+        fx.push(Fx::CommitGap { batch, models, kept });
     }
 
     pub(super) fn flush_pending(&mut self, fx: &mut Vec<Fx>) {
@@ -285,7 +265,7 @@ impl FeedState {
         }
         let events = std::mem::take(&mut self.pending);
         fx.push(Fx::CancelDebounce);
-        self.commit_by_basis(events, fx);
+        self.commit(events, fx);
     }
 
     pub(super) fn observed(&mut self, batch: BatchId, payloads: Vec<String>) {
@@ -306,10 +286,6 @@ impl FeedState {
         let events = self.landing.remove(at).1;
         if let Some(models) = self.gap_landing.remove(&batch) {
             match rejected {
-                Some(RejectReason::StaleGeneration { generations, .. }) => {
-                    self.generation.extend(generations);
-                    self.commit_gap(models, fx);
-                }
                 Some(RejectReason::Storage(_)) => self.gap_retry.push(models),
                 Some(RejectReason::Invalid(_)) => Self::stale_all(&models, fx),
                 Some(RejectReason::NoSession | RejectReason::Closed) => self.end(false, fx),
@@ -327,15 +303,6 @@ impl FeedState {
                     Self::stale_all(&lost_models, fx);
                 }
                 self.land(landed.into_iter().map(|(_, event)| event).collect(), fx);
-            }
-            Some(RejectReason::StaleGeneration { models, .. }) => {
-                let (lost, rest): (Vec<FeedEvent>, Vec<FeedEvent>) = events.into_iter().partition(|event| models.contains(&event.model));
-                let lost_models = self.mark_lost(&lost, fx);
-                Self::stale_all(&lost_models, fx);
-                if !rest.is_empty() {
-                    let rest = rest.into_iter().map(|event| FeedEvent { basis: self.generation_of(&event.model), ..event }).collect();
-                    self.commit_by_basis(rest, fx);
-                }
             }
             Some(RejectReason::Storage(_) | RejectReason::Invalid(_)) => {
                 let lost_models = self.mark_lost(&events, fx);
@@ -466,7 +433,7 @@ impl FeedState {
         if let Some(after_ms) = scheduled {
             fx.push(Fx::Debounce { after_ms });
         }
-        self.commit_by_basis(now, fx);
+        if !now.is_empty() { self.commit(now, fx); }
     }
 
     pub(super) fn ready(&mut self, connection: ConnectionId, fx: &mut Vec<Fx>) {

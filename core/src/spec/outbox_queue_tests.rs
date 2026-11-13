@@ -205,7 +205,6 @@ fn out_waits_for_the_first_online_value() {
 
 #[derive(Clone, Copy, Debug)]
 enum Answer {
-    Stale(usize),
     Commit(usize),
     Storage(usize),
 }
@@ -229,13 +228,7 @@ fn out_prop_operations_leave_in_submit_order() {
     orders(&mut vec![0, 1, 2], 0, &mut perms);
     let mut scripts: Vec<(Vec<Answer>, Option<usize>)> = Vec::new();
     for perm in &perms {
-        for stale in 0..8usize {
-            let stale_ops: Vec<usize> = perm.iter().copied().filter(|op| stale >> op & 1 == 1).collect();
-            let first: Vec<Answer> = stale_ops.iter().map(|op| Answer::Stale(*op)).chain(perm.iter().map(|op| Answer::Commit(*op))).collect();
-            let mixed: Vec<Answer> = perm.iter().flat_map(|op| if stale >> op & 1 == 1 { vec![Answer::Stale(*op), Answer::Commit(*op)] } else { vec![Answer::Commit(*op)] }).collect();
-            scripts.push((first, None));
-            scripts.push((mixed, None));
-        }
+        scripts.push((perm.iter().map(|op| Answer::Commit(*op)).collect(), None));
         for refused in 0..3 {
             let refusing: Vec<Answer> = perm.iter().map(|op| if *op == refused { Answer::Storage(*op) } else { Answer::Commit(*op) }).collect();
             scripts.push((refusing, Some(refused)));
@@ -247,7 +240,6 @@ fn out_prop_operations_leave_in_submit_order() {
         let mut left: Vec<OpId> = Vec::new();
         for answer in &script {
             let effects = match *answer {
-                Answer::Stale(op) => twin.rejected(ids[op], RReason::StaleGeneration),
                 Answer::Commit(op) => twin.committed(ids[op]),
                 Answer::Storage(op) => twin.rejected(ids[op], RReason::Storage),
             };

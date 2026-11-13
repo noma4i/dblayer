@@ -87,7 +87,7 @@ impl SessionState {
             if self.external_revoked.remove(&rejected.batch).is_some() {
                 self.phase = phase;
                 match rejected.reason {
-                    RejectReason::Storage(_) | RejectReason::Invalid(_) | RejectReason::StaleGeneration { .. } => fx.push(SessionEffect::ExecutorFailed),
+                    RejectReason::Storage(_) | RejectReason::Invalid(_) => fx.push(SessionEffect::ExecutorFailed),
                     RejectReason::NoSession | RejectReason::Closed => {}
                 }
                 return;
@@ -592,7 +592,6 @@ impl SessionState {
                     self.write_refused(fx);
                 }
                 RejectReason::NoSession | RejectReason::Closed => self.phase = SessionPhase::Persisting { pending, batch, writing },
-                RejectReason::StaleGeneration { .. } => { self.phase = SessionPhase::Persisting { pending, batch, writing }; fx.push(SessionEffect::ExecutorFailed); }
             },
             (SessionPhase::Persisting { pending, batch, writing: false }, SessionInput::Tick) => {
                 fx.push(SessionEffect::CommitPending { batch, epoch: pending.epoch, pending: pending.clone(), session: self.write_session });
@@ -663,7 +662,6 @@ impl SessionState {
                     self.write_refused(fx);
                 }
                 RejectReason::NoSession | RejectReason::Closed => self.phase = SessionPhase::Landing { pending, batch, writing, answer, identity, sequence, server_ended },
-                RejectReason::StaleGeneration { .. } => { self.phase = SessionPhase::Landing { pending, batch, writing, answer, identity, sequence, server_ended }; fx.push(SessionEffect::ExecutorFailed); }
             },
             (SessionPhase::Landing { pending, batch, writing: false, answer, identity, sequence, server_ended }, SessionInput::Tick) => {
                 self.land(pending, answer, identity, sequence, server_ended, fx);

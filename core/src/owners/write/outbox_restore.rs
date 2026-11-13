@@ -91,7 +91,7 @@ impl OutboxState {
         let batch = self.next_batch;
         self.next_batch += 1;
         let ops = request_ids.into_iter().map(|request_id| crate::owners::store::StoreOp::RemoveAnswer { request_id }).collect();
-        self.commit(batch, std::collections::BTreeMap::new(), ops, 0, fx);
+        self.commit(batch, ops, 0, fx);
     }
 
     pub(super) fn restored_failed(&mut self, op_id: OpId, error: String, fx: &mut Effects<Outbox>) {
@@ -194,7 +194,6 @@ impl OutboxState {
             held @ (OutboxInput::Retry { .. } | OutboxInput::RetryTransfer { .. } | OutboxInput::Discard { .. } | OutboxInput::DiscardTransfer { .. } | OutboxInput::Outcome { .. }) => self.held.push(held),
             OutboxInput::Online(Online(on)) => self.online = Some(on),
             OutboxInput::EpochStarted(started) => {
-                self.base_generation = started.generation;
                 fx.push(Effect::Run(OutboxEffect::Started { epoch: started.epoch }));
                 fx.push(Effect::Run(OutboxEffect::SnapshotRequest { epoch: started.epoch }));
             }

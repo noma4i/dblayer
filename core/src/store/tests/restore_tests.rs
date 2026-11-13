@@ -86,7 +86,7 @@ fn store_commit_control_restart() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("control.sqlite");
     let batch = |id: u64, ops: Vec<crate::owners::store::StoreOp>| crate::owners::store::StoreBatch {
-        author: crate::owners::contract::BatchAuthor::Transfer, id, stamp: crate::runtime::EpochStamp::Control, basis: std::collections::BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops,
+        author: crate::owners::contract::BatchAuthor::Transfer, id, stamp: crate::runtime::EpochStamp::Control, rows: Vec::new(), intents: 0, credential: None, ops,
     };
     {
         let store = crate::store::Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();

@@ -95,7 +95,7 @@ fn data_orders_real_row_around_the_create_answer_and_the_file() {
 }
 
 fn reset_batch(reset: &crate::owners::store::EphemeralReset) -> StoreBatch {
-    StoreBatch { author: BatchAuthor::Outbox, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::ResetEphemeral { model: reset.model.clone(), row_id: reset.row_id.clone(), field: reset.field.clone(), position: reset.position }] }
+    StoreBatch { author: BatchAuthor::Outbox, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::ResetEphemeral { model: reset.model.clone(), row_id: reset.row_id.clone(), field: reset.field.clone(), position: reset.position }] }
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn data_orders_ephemeral_write_against_destroy_and_erase() {
                     Remove if erase => { db.erase_account(db.generation().next(), false).unwrap(); }
                     Remove => {
                         let delete = json!({"op": "delete", "id": "m1"}).to_string();
-                        let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("moments".into(), delete)], intents: 0, credential: None, ops: Vec::new() };
+                        let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), rows: vec![("moments".into(), delete)], intents: 0, credential: None, ops: Vec::new() };
                         db.write_batch(&batch, db.files(), None).unwrap();
                     }
                     Return => put(&db, "moments", json!({"id": "m1", "userId": "u1"})),

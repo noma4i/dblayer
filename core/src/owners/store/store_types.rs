@@ -238,7 +238,6 @@ pub struct StoreBatch {
     pub author: BatchAuthor,
     pub id: BatchId,
     pub stamp: crate::runtime::EpochStamp,
-    pub basis: BTreeMap<String, u64>,
     pub rows: Vec<(String, String)>,
     /// Number of intents the batch writes (operations of the queue, `encrypted_*`, transfers).
     pub intents: u64,

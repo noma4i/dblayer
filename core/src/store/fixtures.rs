@@ -208,7 +208,7 @@ impl Store {
     }
 
     pub(crate) fn write_queue_ops_with_pin(&self, ops: &[crate::owners::store::StoreOp], min_pin_revision: Option<u64>) -> Result<super::batch_write::BatchWritten, super::StoreError> {
-        let batch = crate::owners::store::StoreBatch { author: crate::owners::contract::BatchAuthor::Outbox, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: ops.to_vec() };
+        let batch = crate::owners::store::StoreBatch { author: crate::owners::contract::BatchAuthor::Outbox, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), rows: Vec::new(), intents: 0, credential: None, ops: ops.to_vec() };
         self.write_batch(&batch, self.files(), min_pin_revision)
     }
 }
@@ -216,7 +216,7 @@ impl Store {
 impl Store {
     /// Lands feed events the way the owner Feed hands them to Store.
     pub(crate) fn land_events_with_pin(&self, events: &[(String, String)], min_pin_revision: Option<u64>) -> Result<super::batch_write::BatchWritten, super::StoreError> {
-        let batch = crate::owners::store::StoreBatch { author: crate::owners::contract::BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: events.to_vec(), intents: 0, credential: None, ops: Vec::new() };
+        let batch = crate::owners::store::StoreBatch { author: crate::owners::contract::BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), rows: events.to_vec(), intents: 0, credential: None, ops: Vec::new() };
         self.write_batch(&batch, self.files(), min_pin_revision)
     }
 }

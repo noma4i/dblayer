@@ -30,17 +30,6 @@ fn win_phase_after_last_interest_left() {
     {
         let mut twin = Twin::new();
         twin.watch();
-        twin.respond(None);
-        twin.step(Input::InterestMinus { id: STREAM });
-        let request = twin.ref_landing();
-        twin.step(Input::Rejected { request, reason: Reject::StaleGeneration });
-        assert_eq!(twin.stage(), Some(WindowStage::Idle));
-        offline_watch(&mut twin);
-        assert_eq!(twin.load_state().phase, OwnerPhase::Idle, "a window that never landed is not loading");
-    }
-    {
-        let mut twin = Twin::new();
-        twin.watch();
         twin.fail(Failure::Permanent);
         assert!(twin.load_state().error.is_some());
         twin.step(Input::InterestMinus { id: STREAM });

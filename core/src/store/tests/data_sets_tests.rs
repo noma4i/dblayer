@@ -11,7 +11,7 @@ use crate::store::Store;
 use super::sets_reference_tests::{by_id, Sets};
 
 pub(super) fn write_as(db: &Arc<Store>, id: u64, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) -> crate::store::batch_write::BatchWritten {
-    let batch = StoreBatch { author, id, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops };
+    let batch = StoreBatch { author, id, stamp: crate::runtime::EpochStamp::Epoch(1), rows, intents: 0, credential: None, ops };
     db.write_batch(&batch, db.files(), None).unwrap()
 }
 
@@ -66,7 +66,7 @@ pub(super) fn intent_hiding(db: &Arc<Store>, op_id: u64, model: &str, row_id: &s
 fn data_sets_missing_parent_store() {
     let db = Arc::new(Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     let event = json!({"op": "upsert", "id": "m1", "row": {"id": "m1", "chatId": "c9", "body": "m1", "createdAt": 1}}).to_string();
-    let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("messages".into(), event)], intents: 0, credential: None, ops: Vec::new() };
+    let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), rows: vec![("messages".into(), event)], intents: 0, credential: None, ops: Vec::new() };
     let written = db.write_batch(&batch, db.files(), None).unwrap();
     assert_eq!(written.stale_parents, ["chats".to_string()], "the parent row is not in the base");
     assert!(db.read(&["chats"], |reader| reader.point("chats", "c9")).unwrap().is_none(), "no parent row is made");

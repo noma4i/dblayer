@@ -10,7 +10,7 @@ pub(super) struct Window {
 
 pub(super) struct Opening {
     pub(super) read_id: u64,
-    pub(super) basis: u64,
+    pub(super) generation: u64,
     pub(super) held: Vec<Ev>,
 }
 
@@ -20,22 +20,19 @@ pub(super) struct WindowBasis {
     pub(super) online: Option<bool>,
     pub(super) online_seq: u64,
     pub(super) saving: bool,
-    pub(super) base_generation: u64,
-    pub(super) generations: BTreeMap<String, u64>,
+    pub(super) generation: u64,
 }
 
 impl Window {
     pub(super) fn new(model: String, basis: WindowBasis, (max_pages, members_complete, lifetime, media, local_order, reads_node): (u32, bool, (i64, i64), bool, bool, bool), read_id: u64, ids: (&mut RequestIds, &mut u32), now: i64) -> Self {
-        let WindowBasis { epoch, online, online_seq, saving, base_generation, generations } = basis;
-        let opening = Some(Opening { read_id, basis: generations.get(&model).copied().unwrap_or(base_generation), held: Vec::new() });
+        let WindowBasis { epoch, online, online_seq, saving, generation } = basis;
+        let opening = Some(Opening { read_id, generation, held: Vec::new() });
         let facts = Facts {
             dependency_models: BTreeSet::from([model]),
             epoch,
             online,
             online_seq,
             load_seq: std::cell::Cell::new(0),
-            base_generation,
-            generations,
             interest: BTreeSet::new(),
             reload: BTreeSet::new(),
             dropped: false,
@@ -101,7 +98,7 @@ impl Window {
     /// The saved window arrived: the machine takes it if its generation matches, then runs the held inputs in order.
     pub(super) fn opened(&mut self, saved: Option<SavedWindow>, ids: (&mut RequestIds, &mut u32), now: i64) -> Vec<Emit> {
         let Some(opening) = self.opening.take() else { return Vec::new() };
-        let saved = saved.filter(|saved| saved.generation == opening.basis);
+        let saved = saved.filter(|saved| saved.generation == opening.generation);
         let (request_ids, next_attempt) = ids;
         let mut effects = self.run(Ev::Saved(saved), (&mut *request_ids, &mut *next_attempt), now);
         for held in opening.held {
@@ -204,14 +201,13 @@ pub type HasMedia = Arc<dyn Fn(&WindowKey) -> bool + Send + Sync>;
 /// Whether the `.dbl` declares `refresh: foreground` for the relation of a key.
 pub type OnForeground = Arc<dyn Fn(&WindowKey) -> bool + Send + Sync>;
 
-/// The state of the owner: the fields the machines read (`online`, `generation[m]`), the keys declared `preload` and the machines.
+/// The state of the owner: the fields the machines read (`online`, `generation`), the keys declared `preload` and the machines.
 pub struct WindowsState {
     pub(super) epoch: Epoch,
     pub(super) online: Option<bool>,
     pub(super) online_seq: u64,
     pub(super) saving: bool,
-    pub(super) generations: BTreeMap<String, u64>,
-    pub(super) base_generation: u64,
+    pub(super) generation: u64,
     pub(super) preload: Vec<WindowKey>,
     pub(super) operations_awaited: bool,
     pub(super) identity: bool,
@@ -249,7 +245,7 @@ pub struct WindowsPeers {
 impl WindowsState {
     /// `online` is the value of the first addressed `Online`, `None` before it.
     pub fn new(epoch: Epoch, online: Option<bool>, peers: WindowsPeers) -> Self {
-        Self { epoch, online, online_seq: 0, saving: false, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), operations_awaited: false, identity: false, ended: None, sources: BTreeSet::new(), request_ids: RequestIds::Process, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), local_order: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers, held_nowait: Vec::new(), reserved: BTreeSet::new(), held_loads: BTreeMap::new(), held_leaves: Vec::new() }
+        Self { epoch, online, online_seq: 0, saving: false, generation: 0, preload: Vec::new(), operations_awaited: false, identity: false, ended: None, sources: BTreeSet::new(), request_ids: RequestIds::Process, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), local_order: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers, held_nowait: Vec::new(), reserved: BTreeSet::new(), held_loads: BTreeMap::new(), held_leaves: Vec::new() }
     }
 
     #[cfg(test)]
@@ -334,7 +330,7 @@ impl WindowsState {
 
     fn create(&mut self, key: &WindowKey, read_id: u64, now: i64) {
         let ids = (&mut self.request_ids, &mut self.next_attempt);
-        let window = Window::new(key.model.clone(), WindowBasis { epoch: self.epoch, online: self.online, online_seq: self.online_seq, saving: self.saving, base_generation: self.base_generation, generations: self.generations.clone() }, ((self.max_pages)(key), (self.members_complete)(key), (self.lifetimes)(key), (self.media)(key), (self.local_order)(key), key.reads_node()), read_id, ids, now);
+        let window = Window::new(key.model.clone(), WindowBasis { epoch: self.epoch, online: self.online, online_seq: self.online_seq, saving: self.saving, generation: self.generation }, ((self.max_pages)(key), (self.members_complete)(key), (self.lifetimes)(key), (self.media)(key), (self.local_order)(key), key.reads_node()), read_id, ids, now);
         self.windows.insert(key.clone(), window);
     }
 }
@@ -357,7 +353,7 @@ impl Windows {
                 Emit::Run(effect) => out.push(Effect::Run(WindowsEffect::Window { key: key.clone(), effect })),
                 Emit::Pin { epoch, request } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Pin { epoch, request_id: request }))),
                 Emit::Unpin { request } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Unpin { request_id: request }))),
-                Emit::Commit { landed_at, request, basis, page, number, replace_all, base_revision, marker, keep_rows, source } => {
+                Emit::Commit { landed_at, request, page, number, replace_all, base_revision, marker, keep_rows, source } => {
                     let mut ops = Vec::new();
                     if !keep_rows {
                         ops.push(StoreOp::Window { landed_at, key: key.name.clone(), model: key.model.clone(), page: number, replace_all, cursor: page.cursor.clone(), roots: page.payload.roots.clone(), related: page.payload.related.clone(), total: page.payload.total, base_revision, source });
@@ -365,7 +361,7 @@ impl Windows {
                     if let Some(marker) = marker {
                         ops.push(StoreOp::WindowMarker { landed_at: (number == 1).then_some(landed_at), key: key.name.clone(), model: key.model.clone(), marker });
                     }
-                    let batch = StoreBatch { author: BatchAuthor::Window, id: request, stamp: crate::runtime::EpochStamp::Epoch(epoch), basis, rows: Vec::new(), intents: 0, credential: None, ops };
+                    let batch = StoreBatch { author: BatchAuthor::Window, id: request, stamp: crate::runtime::EpochStamp::Epoch(epoch), rows: Vec::new(), intents: 0, credential: None, ops };
                     out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(batch))));
                 }
                 Emit::Retry { request, attempt, class } => {
@@ -619,8 +615,7 @@ impl StateOwner for Windows {
             }
             WindowsInput::EpochStarted(started) => {
                 state.epoch = started.epoch;
-                state.base_generation = started.generation;
-                state.generations.clear();
+                state.generation = started.generation;
                 state.windows.clear();
                 state.online = None;
                 state.online_seq = 0;

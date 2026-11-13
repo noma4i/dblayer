@@ -99,8 +99,7 @@ fn world() -> World {
         Arc::new(|_| super::transfer::CachedBlob::Miss),
     );
     let mut det = DetScheduler::new(13);
-    let generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let store_stub = StoreStubState { to: Address::<Transfers>::new(2), generation, revision: 0, only: None, committed: TransferInput::Committed, rejected: TransferInput::Rejected, note: Box::new(|_| {}) };
+    let store_stub = StoreStubState { to: Address::<Transfers>::new(2), revision: 0, committed: TransferInput::Committed, note: Box::new(|_| {}) };
     let store = Address::new(det.add::<StoreStub<Transfers>>("store", store_stub, crate::spec::support::Silent).index());
     let (outbox, _) = peer(&mut det, "outbox");
     let transfers = det.add::<Transfers>("transfers", TransferState::new(EPOCH, 2, TransferPeers { store, outbox, rounds: None }), executor);

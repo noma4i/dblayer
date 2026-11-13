@@ -133,7 +133,6 @@ pub(super) fn end_cause(reason: &RejectReason) -> crate::ffi::EndCause {
         RejectReason::NoSession => crate::ffi::EndCause::SessionEnded,
         RejectReason::Storage(error) => crate::ffi::EndCause::Storage { error: error.clone() },
         RejectReason::Invalid(detail) => crate::ffi::EndCause::Invalid { detail: detail.clone() },
-        RejectReason::StaleGeneration { .. } => crate::ffi::EndCause::Invalid { detail: format!("{reason:?}") },
     }
 }
 
@@ -246,7 +245,7 @@ pub enum OutboxInput {
     /// The id a temporary id has after its `create` landed (the same id before).
     Resolve { model: String, row: String, reply: ReplyId },
     Online(Online),
-    /// The generation of every model at the start of the epoch.
+    /// The generation at the start of the epoch.
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
     Closing,

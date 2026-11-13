@@ -143,7 +143,7 @@ impl TransferState {
         *shown != Shown::Gone && transfer.stored_shown.is_some_and(|stored| stored != Self::columns_of(transfer, shown))
     }
 
-    /// P-XFER-50: a refused write of the shown value goes again after the backoff of its own timer (`Storage`) or at once with the named generations.
+    /// P-XFER-50: a refused write of the shown value goes again after the backoff of its own timer (`Storage`).
     fn shown_rejected(&mut self, pending: &Pending, reason: RejectReason, fx: &mut Fx) {
         let Some(&id) = pending.written.keys().next() else { return };
         match reason {
@@ -151,11 +151,6 @@ impl TransferState {
                 let Some(attempt) = self.storage_refused(id) else { return };
                 let timer = self.timer();
                 fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt: attempt.max(1), input: TransferInput::Tick { kind: if pending.kind == StoreKind::BatchShown { TransferTick::BatchShown { transfer_id: id } } else { TransferTick::Shown { transfer_id: id } } } });
-            }
-            RejectReason::StaleGeneration { generations, .. } => {
-                self.generations.extend(generations);
-                if pending.kind == StoreKind::BatchShown { return self.write_batch_share(id, fx); }
-                if let Some(shown) = self.transfers.get(&id).and_then(|transfer| transfer.last_shown.clone()) { self.show(id, shown, fx); }
             }
             RejectReason::Invalid(_) | RejectReason::NoSession | RejectReason::Closed => {}
         }
@@ -245,9 +240,6 @@ impl TransferState {
         }
     }
 
-    /// One Store batch for `ids`: a row of `sync_upload` per transfer, or its removal.
-    pub(super) fn store(&mut self, ids: &[TransferId], kind: StoreKind, fx: &mut Fx) { self.store_basis(ids, kind, BTreeMap::new(), fx); }
-
     /// The replacement of `new` does not happen: the replaced transfer is `Failed` again and Outbox ends the replacement.
     pub(super) fn restore_replaced(&mut self, new: TransferId, fx: &mut Fx) -> Option<TransferId> {
         let (old, _) = self.replacements.remove(&new)?;
@@ -265,10 +257,10 @@ impl TransferState {
         Some(old)
     }
 
-    /// The same batch again with the generations the Store named (`Rejected(StaleGeneration)`).
-    fn store_basis(&mut self, ids: &[TransferId], kind: StoreKind, basis: BTreeMap<String, u64>, fx: &mut Fx) {
+    /// One Store batch for `ids`: a row of `sync_upload` per transfer, or its removal.
+    pub(super) fn store(&mut self, ids: &[TransferId], kind: StoreKind, fx: &mut Fx) {
         if kind == StoreKind::BatchIntent {
-            return self.store_batch_intent(ids, basis, fx);
+            return self.store_batch_intent(ids, fx);
         }
         let leaving: Vec<TransferId> = if kind == StoreKind::Removed { ids.iter().copied().filter(|id| matches!(self.transfers.get(id).and_then(|transfer| transfer.removal.as_ref()), Some(Removal::Cancel))).collect() } else { Vec::new() };
         let numbers: Vec<StoreOp> = leaving.into_iter().flat_map(|id| self.renumber_after(id)).collect();
@@ -406,12 +398,7 @@ impl TransferState {
         self.next_batch += 1;
         self.pending.insert(id, Pending { ids: ids.to_vec(), kind, orphan: None, written });
         let intents = if kind == StoreKind::SyncUpload { ids.len() as u64 } else { 0 };
-        let mut batch = StoreBatch { author: BatchAuthor::Transfer, id, stamp: crate::runtime::EpochStamp::Epoch(self.epoch), basis, rows: Vec::new(), intents, credential: None, ops };
-        let entries = batch.models().into_iter().map(|model| {
-            let generation = batch.basis.get(&model).copied().or_else(|| self.generations.get(&model).copied()).unwrap_or(self.base_generation);
-            (model, generation)
-        }).chain(batch.basis.clone());
-        batch.basis = crate::owners::store::basis_for(entries);
+        let batch = StoreBatch { author: BatchAuthor::Transfer, id, stamp: crate::runtime::EpochStamp::Epoch(self.epoch), rows: Vec::new(), intents, credential: None, ops };
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
 
@@ -459,7 +446,7 @@ impl TransferState {
         let id = self.next_batch;
         self.next_batch += 1;
         self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::ControlOrphan, orphan: Some((upload_id.clone(), key.clone())), written: BTreeMap::new() });
-        let batch = StoreBatch { author: BatchAuthor::Transfer, id, stamp: crate::runtime::EpochStamp::Control, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::UploadOrphan { upload_id, key }] };
+        let batch = StoreBatch { author: BatchAuthor::Transfer, id, stamp: crate::runtime::EpochStamp::Control, rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::UploadOrphan { upload_id, key }] };
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
 
@@ -480,8 +467,7 @@ impl TransferState {
     pub(super) fn send_batch(&mut self, ops: Vec<StoreOp>, fx: &mut Fx) -> crate::owners::contract::BatchId {
         let id = self.next_batch;
         self.next_batch += 1;
-        let mut batch = StoreBatch { author: BatchAuthor::Transfer, id, stamp: crate::runtime::EpochStamp::Epoch(self.epoch), basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops };
-        batch.basis = crate::owners::store::basis_for(batch.models().into_iter().map(|model| (self.generations.get(&model).copied().unwrap_or(self.base_generation), model)).map(|(generation, model)| (model, generation)));
+        let batch = StoreBatch { author: BatchAuthor::Transfer, id, stamp: crate::runtime::EpochStamp::Epoch(self.epoch), rows: Vec::new(), intents: 0, credential: None, ops };
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
         id
     }
@@ -503,7 +489,7 @@ impl TransferState {
         let id = self.next_batch;
         self.next_batch += 1;
         self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::OrphanRemoved, orphan: Some((upload_id.clone(), key)), written: BTreeMap::new() });
-        let batch = StoreBatch { author: BatchAuthor::Transfer, id, stamp: crate::runtime::EpochStamp::Epoch(self.epoch), basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::RemoveOrphan { upload_id }] };
+        let batch = StoreBatch { author: BatchAuthor::Transfer, id, stamp: crate::runtime::EpochStamp::Epoch(self.epoch), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::RemoveOrphan { upload_id }] };
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
 
@@ -831,7 +817,7 @@ impl TransferState {
         let (ends, storage) = match &rejected.reason {
             RejectReason::Closed | RejectReason::NoSession => (true, None),
             RejectReason::Storage(detail) => (false, Some(detail.clone())),
-            RejectReason::StaleGeneration { .. } | RejectReason::Invalid(_) => (false, None),
+            RejectReason::Invalid(_) => (false, None),
         };
         #[cfg(test)]
         if let Some(detail) = &storage {
@@ -839,7 +825,7 @@ impl TransferState {
                 if let Some(transfer) = self.transfers.get_mut(id) { transfer.last_storage_refusal = Some(detail.clone()); }
             }
         }
-        if pending.kind == StoreKind::SyncUpload && !matches!(rejected.reason, RejectReason::StaleGeneration { .. }) {
+        if pending.kind == StoreKind::SyncUpload {
             for id in &pending.ids {
                 if let Some(old) = self.restore_replaced(*id, fx) {
                     run(fx, TransferEffect::DeleteFile { path: file_id(*id) });
@@ -861,7 +847,7 @@ impl TransferState {
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan) {
             let minted = self.debt_of(&pending).map(|(upload_id, key, _)| (upload_id, key));
             match &rejected.reason {
-                RejectReason::Storage(_) | RejectReason::StaleGeneration { .. } => self.owe_minted(&pending, true, fx),
+                RejectReason::Storage(_) => self.owe_minted(&pending, true, fx),
                 RejectReason::Invalid(_) => {
                     self.owe_minted(&pending, false, fx);
                     if let (StoreKind::UploadId, Some((upload_id, key))) = (pending.kind, minted) {
@@ -887,10 +873,6 @@ impl TransferState {
         let stage = pending.ids.first().and_then(|id| self.stage_of(*id));
         let persisting = matches!(stage, Some(TransferStage::PersistingCopy | TransferStage::PersistingAttempt | TransferStage::PersistingBatchIntent | TransferStage::PersistingRetry | TransferStage::PersistingPart | TransferStage::PersistingComplete | TransferStage::PersistingFailure | TransferStage::PersistingPrepared | TransferStage::Removing));
         match (&rejected.reason, persisting) {
-            (RejectReason::StaleGeneration { generations, .. }, _) if persisting || stage == Some(TransferStage::Accepting) => {
-                self.generations.extend(generations.clone());
-                return self.store_basis(&pending.ids, pending.kind, generations.clone(), fx);
-            }
             (RejectReason::Invalid(_), true) if stage == Some(TransferStage::Removing) && pending.kind == StoreKind::Removed => {}
             (RejectReason::Invalid(detail), true) => {
                 if stage == Some(TransferStage::PersistingCopy) && self.transfers.get(&pending.ids[0]).is_some_and(|transfer| transfer.supply_back.is_some()) {
@@ -921,7 +903,7 @@ impl TransferState {
                 self.start_in_order(now, fx);
                 return;
             }
-            (RejectReason::StaleGeneration { .. } | RejectReason::Invalid(_), _) | (RejectReason::NoSession | RejectReason::Closed | RejectReason::Storage(_), _) => {}
+            (RejectReason::Invalid(_), _) | (RejectReason::NoSession | RejectReason::Closed | RejectReason::Storage(_), _) => {}
         }
         match (stage, storage) {
             (Some(TransferStage::Accepting), _) => self.accepting_rejected(&pending.ids, rejected.reason, fx),
@@ -1044,7 +1026,7 @@ impl TransferState {
             TransferInput::Prepared { transfer_id, attempt_id, outcome } => self.prepared(now, transfer_id, attempt_id, outcome, fx),
             TransferInput::Online(Online(on)) => self.network_changed(now, Some(on), None, fx),
             TransferInput::PowerSaving(saving) => self.network_changed(now, None, Some(saving), fx),
-            TransferInput::EpochStarted(started) => { self.epoch = started.epoch; self.base_generation = started.generation; },
+            TransferInput::EpochStarted(started) => { self.epoch = started.epoch; },
             TransferInput::Tick { kind, .. } => self.tick(now, kind, fx),
             TransferInput::EpochEnded(ended) => self.epoch_ended(ended.cause, fx),
             TransferInput::Closing => self.close(fx),
@@ -1074,7 +1056,6 @@ impl TransferState {
             held @ (TransferInput::Cancel { .. } | TransferInput::SupplySource { .. } | TransferInput::Commit { .. } | TransferInput::StagedDimensions { .. } | TransferInput::SourceFailed { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. } | TransferInput::MutationOutcome { .. } | TransferInput::MutationOutcomes { .. }) => self.held.push(held),
             TransferInput::EpochStarted(started) => {
                 self.epoch = started.epoch;
-                self.base_generation = started.generation;
                 run(fx, TransferEffect::Started { epoch: started.epoch });
                 run(fx, TransferEffect::SnapshotRequest { epoch: started.epoch });
             }

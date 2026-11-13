@@ -9,7 +9,7 @@ use crate::store::fixtures::{all_specs, id, put, row};
 use crate::store::Store;
 
 fn write(db: &Arc<Store>, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) -> Result<super::batch_write::BatchWritten, super::StoreError> {
-    let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops };
+    let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), rows, intents: 0, credential: None, ops };
     db.write_batch(&batch, db.files(), None)
 }
 

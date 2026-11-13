@@ -1,5 +1,4 @@
 use crate::store::Store;
-use std::collections::BTreeMap;
 
 use crate::owners::contract::{BatchAuthor, EpochEnded};
 use crate::owners::store::{BootFound, Done, StoreBatch, StoreEffect, StoreInput, StoreState, StoreWriter, WriteDone};
@@ -16,7 +15,7 @@ fn state(revision: u64) -> StoreState {
 }
 
 fn batch(id: u64) -> StoreInput {
-    StoreInput::Commit(StoreBatch { author: BatchAuthor::Outbox, id, stamp: crate::runtime::EpochStamp::Epoch(0), basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: Vec::new() })
+    StoreInput::Commit(StoreBatch { author: BatchAuthor::Outbox, id, stamp: crate::runtime::EpochStamp::Epoch(0), rows: Vec::new(), intents: 0, credential: None, ops: Vec::new() })
 }
 
 fn pin(state: &mut StoreState, epoch: u64, request_id: u64) -> Vec<StoreEffect> {

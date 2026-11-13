@@ -233,26 +233,11 @@ impl OutboxState {
 
     pub(super) fn rejected(&mut self, now: u64, rejected: Rejected, fx: &mut Effects<Outbox>) {
         let Some(batch) = self.batches.remove(&rejected.batch) else { return };
-        let stale = match &rejected.reason {
-            RejectReason::StaleGeneration { generations, .. } => {
-                self.generation.extend(generations.clone());
-                true
-            }
-            RejectReason::NoSession | RejectReason::Storage(_) | RejectReason::Closed | RejectReason::Invalid(_) => false,
-        };
         match batch {
             Batch::Member { op_id } => self.member_rejected(now, op_id, rejected.reason, fx),
-            Batch::Write { reply, call, expire } => {
-                if stale {
-                    let generation = self.generation_of(&call.model);
-                    let id = self.next_batch;
-                    self.next_batch += 1;
-                    self.commit_write(id, &call, generation, fx);
-                    self.batches.insert(id, Batch::Write { reply, call, expire });
-                } else {
-                    Self::reply(fx, reply, OutboxAnswer::Err(Fault::of_reject(rejected.reason)));
-                    self.maybe_drained(fx);
-                }
+            Batch::Write { reply, .. } => {
+                Self::reply(fx, reply, OutboxAnswer::Err(Fault::of_reject(rejected.reason)));
+                self.maybe_drained(fx);
             }
             Batch::Operation { op_id, kind } => {
                 self.operation_rejected(now, op_id, kind, rejected.reason, fx);
@@ -281,7 +266,7 @@ impl OutboxState {
                 }
                 RejectReason::Storage(_) => self.storage_retry(op_id, fx),
                 RejectReason::Invalid(_) if kind == CommitKind::RemoveRow => self.discard_removed(now, op_id, fx),
-                RejectReason::Invalid(_) | RejectReason::StaleGeneration { .. } => self.remove_row_operation(op_id, fx),
+                RejectReason::Invalid(_) => self.remove_row_operation(op_id, fx),
             }
             return;
         }
@@ -298,7 +283,6 @@ impl OutboxState {
             return;
         }
         match reason {
-            RejectReason::StaleGeneration { .. } => self.store(op_id, kind, fx),
             RejectReason::Storage(_) if stage == Stage::Submitting => self.submit_refused(op_id, reason, fx),
             RejectReason::Storage(_) if stage == Stage::MarkingRetry => {
                 let transfer_ids = self.take_retry_uploads(op_id);

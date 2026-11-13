@@ -677,17 +677,6 @@ fn in_batch_stage(stage: St, transfer: bool) -> (Twin, OpId, CommitKind) {
 }
 
 #[test]
-fn out_stale_generation_resends_the_same_batch_with_the_new_generation() {
-    for stage in [St::Submitting, St::PersistingAttempt, St::Landing, St::RollingBack(RWhy::Rejected), St::MarkingFailed, St::MarkingRetry] {
-        let (mut twin, id, kind) = in_batch_stage(stage, false);
-        let original = twin.store_ops.clone();
-        let effects = twin.rejected(id, RReason::StaleGeneration);
-        assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: sent, generation, .. }] if *sent == kind && *generation == NEW_GENERATION), "{stage:?}: {effects:?}");
-        assert_eq!(twin.store_ops, original, "{stage:?}");
-    }
-}
-
-#[test]
 fn out_storage_refusal_sets_a_timer_and_the_timer_writes_the_same_batch_again() {
     for stage in [St::PersistingAttempt, St::MarkingFailed] {
         let (mut twin, id, kind) = in_batch_stage(stage, false);

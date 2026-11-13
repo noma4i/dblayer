@@ -248,7 +248,7 @@ fn created_window_membership_uses_the_committed_window() {
     let planned = db.plan_create("Moment", json!({"text":"created"}).as_object().unwrap().clone(), Default::default()).unwrap();
     let key = WindowKey::relation("Moment", "created", &Default::default());
     let commit = |author, ops| {
-        let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
+        let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), rows: Vec::new(), intents: 0, credential: None, ops };
         db.write_batch(&batch, db.files(), None).unwrap();
     };
     commit(BatchAuthor::Window, vec![StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0,
@@ -287,7 +287,7 @@ fn data_row_rules_and_membership_decide_the_window() {
         models[0].relations.push(selected);
         let db = Store::open_models(None, models, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
         let commit = |author, ops| {
-            let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
+            let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), rows: Vec::new(), intents: 0, credential: None, ops };
             db.write_batch(&batch, db.files(), None).unwrap();
         };
         for minimum in [5, 10] {
@@ -309,7 +309,7 @@ fn data_row_rules_and_membership_decide_the_window() {
         commit(BatchAuthor::LocalWrites, vec![StoreOp::LocalRows { model: "Moment".into(), rows: vec![row] }]);
         assert_eq!([!ids(5).is_empty(), !ids(10).is_empty()], [true, false]);
         let event = json!({"op":"upsert", "id":"m1", "row":{"id":"m1", "score":12}}).to_string();
-        let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("Moment".into(), event)], intents: 0, credential: None, ops: Vec::new() };
+        let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), rows: vec![("Moment".into(), event)], intents: 0, credential: None, ops: Vec::new() };
         db.write_batch(&batch, db.files(), None).unwrap();
         assert_eq!([!ids(5).is_empty(), !ids(10).is_empty()], [true, true]);
     }
@@ -336,7 +336,7 @@ fn data_row_rules_and_membership_decide_the_window() {
             let key = WindowKey::relation("Moment", "shelf", json!({"shelf":shelf}).as_object().unwrap());
             let row = RowValue { row_id: "m1".into(), values: json!({"id":"m1", "shelves":[shelf]}).to_string() };
             let page = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
-            let batch = StoreBatch { author: BatchAuthor::Window, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![page] };
+            let batch = StoreBatch { author: BatchAuthor::Window, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), rows: Vec::new(), intents: 0, credential: None, ops: vec![page] };
             db.write_batch(&batch, db.files(), None).unwrap();
             assert_eq!([json!(ids("A")), json!(ids("B"))], held, "after the page of window {shelf}");
         }
@@ -381,7 +381,7 @@ mod by_source {
 
         pub(super) fn commit(&self, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) {
             self.batch.set(self.batch.get() + 1);
-            let batch = StoreBatch { author, id: self.batch.get(), stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops };
+            let batch = StoreBatch { author, id: self.batch.get(), stamp: crate::runtime::EpochStamp::Epoch(1), rows, intents: 0, credential: None, ops };
             self.db.write_batch(&batch, self.db.files(), None).unwrap();
         }
 

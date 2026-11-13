@@ -16,7 +16,7 @@ pub(super) enum RWhy { Rejected, Discarded }
 pub(super) enum St { None, WaitingDeclaration, Submitting, Queued, PersistingAttempt, Sending, Landing, RollingBack(RWhy), MarkingFailed, MarkingRetry, Failed, Done }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RReason { StaleGeneration, NoSession, Storage }
+pub(super) enum RReason { NoSession, Storage }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Policy { Rollback, Keep }
@@ -56,7 +56,7 @@ pub(super) const OUTBOX_AT: usize = 3;
 /// the Session and Transfer (`Send`), read from the typed `Debug` form the `Spy` keeps. `Schedule` is a timer of the owner.
 #[derive(Clone, Debug)]
 pub(super) enum OutboxEffect {
-    Store { op_id: Option<OpId>, batch: u64, kind: CommitKind, generation: u64 },
+    Store { op_id: Option<OpId>, batch: u64, kind: CommitKind },
     Send { op_id: OpId, request_id: u64, sequence: u64 },
     CancelRequest,
     Reply { reply: ReplyId, answer: OutboxAnswer },
@@ -105,8 +105,7 @@ pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Optio
         Emitted::Send { to: STORE_AT, input } => {
             let kind = kind_in(&input);
             let op_id = matches!(kind, CommitKind::Intent | CommitKind::Attempt | CommitKind::Land | CommitKind::Rollback | CommitKind::ErrorMark | CommitKind::ClearMark | CommitKind::Requeue).then(|| number_after(&input, "op_id: ")).flatten();
-            let generation = number_after(&input, "\"Moment\": ").unwrap_or(0);
-            OutboxEffect::Store { op_id, batch: number_after(&input, "id: ")?, kind, generation }
+            OutboxEffect::Store { op_id, batch: number_after(&input, "id: ")?, kind }
         }
         Emitted::Send { to: SESSION_AT, input } if input.starts_with("Release") => return None,
         Emitted::Send { to: SESSION_AT, input } if input.starts_with("Cancel") => {
@@ -153,11 +152,9 @@ pub(super) const EPOCH: u64 = 1;
 pub(super) const SUBMIT_REPLY: ReplyId = 1;
 pub(super) const DISCARD_REPLY: ReplyId = 800;
 pub(super) const WAITER: ReplyId = 900;
-pub(super) const NEW_GENERATION: u64 = 5;
 
 pub(super) fn reject(reason: RReason) -> RejectReason {
     match reason {
-        RReason::StaleGeneration => RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), NEW_GENERATION)].into() },
         RReason::NoSession => RejectReason::NoSession,
         RReason::Storage => RejectReason::Storage("disk".into()),
     }

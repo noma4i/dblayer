@@ -20,12 +20,12 @@ fn store_clear_account_with_an_old_generation_fails() {
 }
 
 #[test]
-fn store_clear_account_raises_every_generation() {
+fn store_clear_account_raises_the_generation() {
     let mut twin = Twin::live();
     let actions = twin.clear_account(Cause::IdentityChanged, 4, true);
     assert!(actions.contains(&Action::Cleared { epoch_old: 1, erase_id: 1 }));
     assert!(actions.contains(&Action::BroadcastCommitted { revision: 1, all: true, tables: Default::default(), models: Default::default(), rows: None }));
-    assert_eq!((twin.state().generation("Moment"), twin.state().generation("Other")), (4, 4), "after ClearAccount every model has generation_new");
+    assert_eq!(twin.state().generation(), 4, "after ClearAccount the generation is generation_new");
 }
 
 /// `SessionReset` erases the encrypted tables, then clears the secret; `Cleared` waits for the secret.

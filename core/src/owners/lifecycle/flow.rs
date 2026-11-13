@@ -75,7 +75,7 @@ impl LifecycleState {
                     LifecyclePhase::Ending { epoch_old, cause: Cause::SessionReset, next: None, failed: false, erase_credential: false, erases }
                 } else {
                     let credential = erase_credential || cause == Cause::IdentityChanged;
-                    if let Some(account) = erases.iter_mut().rev().find(|erase| erase.kind == EraseKind::Account) {
+                    if let Some(account) = erases.last_mut() {
                         account.replies.extend(reply);
                     }
                     LifecyclePhase::Ending { epoch_old, cause, next: None, failed: false, erase_credential: credential, erases }
@@ -85,7 +85,7 @@ impl LifecycleState {
                 None => LifecyclePhase::Ending { epoch_old, cause, next, failed, erase_credential, erases },
                 Some(erase) if erase_credential => {
                     self.published.generation = self.published.generation.max(erase.target);
-                    let second = self.new_erase(EraseKind::Account, erase.replies);
+                    let second = self.new_erase(erase.replies);
                     fx.push(LifecycleEffect::ClearAccount { epoch_old, cause: Cause::SessionReset, generation_new: second.target, erase_id: second.id });
                     erases.push(second);
                     LifecyclePhase::Ending { epoch_old, cause: Cause::SessionReset, next, failed, erase_credential: false, erases }
@@ -108,23 +108,13 @@ impl LifecycleState {
                 None => LifecyclePhase::Ending { epoch_old, cause, next, failed, erase_credential, erases },
                 Some(erase) => {
                     reply_all(erase.replies, Err(LifecycleError::Storage), fx);
-                    if erase.kind == EraseKind::Account {
-                        self.published.state = PublishedState::EndingFailed;
-                        self.publish(Vec::new(), fx);
-                        LifecyclePhase::Ending { epoch_old, cause, next, failed: true, erase_credential, erases }
-                    } else {
-                        LifecyclePhase::Ending { epoch_old, cause, next, failed, erase_credential, erases }
-                    }
+                    self.published.state = PublishedState::EndingFailed;
+                    self.publish(Vec::new(), fx);
+                    LifecyclePhase::Ending { epoch_old, cause, next, failed: true, erase_credential, erases }
                 }
             },
-            (LifecyclePhase::Ending { epoch_old, cause, next, failed, erase_credential, mut erases }, LifecycleInput::ModelsCleared { erase_id, .. }) => {
-                if let Some(erase) = take_erase(&mut erases, erase_id) {
-                    reply_all(erase.replies, Ok(()), fx);
-                }
-                LifecyclePhase::Ending { epoch_old, cause, next, failed, erase_credential, erases }
-            }
             (LifecyclePhase::Ending { epoch_old, cause, next, failed, erase_credential, mut erases }, LifecycleInput::Online(true) | LifecycleInput::Foreground) => {
-                let retry = failed && !erases.iter().any(|erase| erase.kind == EraseKind::Account);
+                let retry = failed && erases.is_empty();
                 if retry {
                     self.erase_again(epoch_old, cause, Vec::new(), &mut erases, fx);
                 }
@@ -133,14 +123,14 @@ impl LifecycleState {
             (LifecyclePhase::Ending { erases, .. }, LifecycleInput::Close { reply }) => self.closing(erases, vec![reply], None, fx),
             (phase @ LifecyclePhase::Ending { .. }, _) => phase,
 
-            (LifecyclePhase::Closing { mut waiting, mut erases, mut close_replies, mut store_closing, mut store_closed, mut observers_stopped }, input @ (LifecycleInput::Drained(_) | LifecycleInput::Cleared { .. } | LifecycleInput::ModelsCleared { .. } | LifecycleInput::ClearFailed { .. } | LifecycleInput::StoreClosed | LifecycleInput::ObserversStopped | LifecycleInput::Close { .. })) => {
+            (LifecyclePhase::Closing { mut waiting, mut erases, mut close_replies, mut store_closing, mut store_closed, mut observers_stopped }, input @ (LifecycleInput::Drained(_) | LifecycleInput::Cleared { .. } | LifecycleInput::ClearFailed { .. } | LifecycleInput::StoreClosed | LifecycleInput::ObserversStopped | LifecycleInput::Close { .. })) => {
                 match input {
                     LifecycleInput::Drained(Drained { owner }) => {
                         if let Some(peer) = Peer::named(owner) {
                             waiting.remove(&peer);
                         }
                     }
-                    LifecycleInput::Cleared { erase_id } | LifecycleInput::ModelsCleared { erase_id, .. } => {
+                    LifecycleInput::Cleared { erase_id } => {
                         if let Some(erase) = take_erase(&mut erases, erase_id) {
                             reply_all(erase.replies, Ok(()), fx);
                         }
@@ -251,7 +241,7 @@ impl LifecycleState {
     fn erase_again(&mut self, epoch_old: Epoch, cause: Cause, replies: Vec<ReplyId>, erases: &mut Vec<Erase>, fx: &mut Vec<LifecycleEffect>) {
         self.published.state = PublishedState::Ending;
         self.publish(Vec::new(), fx);
-        let erase = self.new_erase(EraseKind::Account, replies);
+        let erase = self.new_erase(replies);
         fx.push(LifecycleEffect::ClearAccount { epoch_old, cause, generation_new: erase.target, erase_id: erase.id });
         erases.push(erase);
     }

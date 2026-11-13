@@ -1,6 +1,4 @@
 //! Owner `LocalWrites` inside the Outbox actor: local writes, file copies, ephemeral expiry and `Drained`.
-use std::collections::{BTreeMap};
-
 use super::outbox::{Batch, LocalCall, Outbox, OutboxState};
 use super::outbox_types::*;
 
@@ -37,14 +35,13 @@ impl OutboxState {
             LocalWriteKind::SetEphemeral { expire_after: Some(after) } => Some(Time(now.0 + after)),
             _ => None,
         };
-        let generation = self.generation_of(&call.model);
         let batch = self.next_batch;
         self.next_batch += 1;
-        self.commit_write(batch, &call, generation, fx);
+        self.commit_write(batch, &call, fx);
         self.batches.insert(batch, Batch::Write { reply, call: Box::new(call), expire });
     }
 
-    pub(super) fn commit_write(&self, batch: BatchId, call: &LocalCall, generation: u64, fx: &mut Effects<Outbox>) {
+    pub(super) fn commit_write(&self, batch: BatchId, call: &LocalCall, fx: &mut Effects<Outbox>) {
         let LocalCall { model, kind, row, values } = call;
         let rows = vec![RowValue { row_id: row.into(), values: values.into() }];
         let op = match kind {
@@ -60,7 +57,7 @@ impl OutboxState {
             LocalWriteKind::AttachCopy { .. } => vec![op, StoreOp::Show { model: model.into(), row_id: row.into() }],
             _ => vec![op],
         };
-        self.commit(batch, BTreeMap::from([(model.into(), generation)]), ops, 0, fx);
+        self.commit(batch, ops, 0, fx);
     }
 
     pub(super) fn expire(&mut self, model: String, row: String, due: Time, fx: &mut Effects<Outbox>) {
@@ -70,7 +67,7 @@ impl OutboxState {
         self.ephemeral.remove(&row);
         let batch = self.next_batch;
         self.next_batch += 1;
-        self.commit(batch, BTreeMap::new(), vec![StoreOp::RemoveRows { model, ids: vec![row] }], 0, fx);
+        self.commit(batch, vec![StoreOp::RemoveRows { model, ids: vec![row] }], 0, fx);
     }
 
     pub(super) fn arm_expiry(&mut self, model: String, row: String, revision: u64, deadline: u64, fx: &mut Effects<Outbox>) {
@@ -96,7 +93,7 @@ impl OutboxState {
         self.resets.remove(&key);
         let batch = self.next_batch;
         self.next_batch += 1;
-        self.commit(batch, BTreeMap::new(), vec![StoreOp::ResetEphemeral { model: reset.model, row_id: reset.row_id, field: reset.field, position: reset.position }], 0, fx);
+        self.commit(batch, vec![StoreOp::ResetEphemeral { model: reset.model, row_id: reset.row_id, field: reset.field, position: reset.position }], 0, fx);
     }
 
     pub(super) fn disarm_expiry(&mut self, model: &str, row: &str, fx: &mut Effects<Outbox>) {
@@ -108,7 +105,7 @@ impl OutboxState {
         self.expiry.remove(&(model.clone(), row.clone()));
         let batch = self.next_batch;
         self.next_batch += 1;
-        self.commit(batch, BTreeMap::new(), vec![StoreOp::ExpireRow { model, row_id: row, write_revision: revision }], 0, fx);
+        self.commit(batch, vec![StoreOp::ExpireRow { model, row_id: row, write_revision: revision }], 0, fx);
     }
 
 }

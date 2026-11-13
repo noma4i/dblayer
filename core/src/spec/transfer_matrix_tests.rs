@@ -10,8 +10,6 @@ use crate::owners::write::transfer::{Shown, TransferAnswer, TransferId, Transfer
 
 const KEY: &str = "Moment:r1:upload";
 
-fn stale() -> RejectReason { RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 5)].into() } }
-
 fn stage_in(name: &str, twin: &mut Twin) -> TransferId {
     match name {
         "PersistingCopy" => twin.persisting_copy(KEY, 2),
@@ -33,21 +31,6 @@ fn stage_in(name: &str, twin: &mut Twin) -> TransferId {
             id
         }
         other => panic!("{other}"),
-    }
-}
-
-#[test]
-fn xfer_persisting_stale_generation() {
-    for name in ["PersistingCopy", "PersistingRetry", "PersistingPart", "PersistingComplete", "PersistingFailure", "Removing"] {
-        let mut twin = Twin::new();
-        let id = stage_in(name, &mut twin);
-        let stage = twin.stage(id);
-        let out = twin.reject(stale());
-        assert_eq!(twin.stage(id), stage, "{name}");
-        assert_eq!((out.batches.len(), out.all_replies()), (1, 0), "{name}: the same batch goes again, nobody is answered");
-        assert_eq!(out.batches[0].basis, BTreeMap::from([("Moment".to_string(), 5)]), "{name}");
-        twin.commit();
-        assert_ne!(twin.stage(id), stage, "{name}: the repeated batch commits like the first");
     }
 }
 

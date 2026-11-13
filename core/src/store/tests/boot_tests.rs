@@ -502,7 +502,7 @@ fn a_format_change_keeps_the_data_of_the_app() {
     let open = || Store::open_models(Some(&path), models.clone(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     {
         let store = open();
-        let batch = |ops| crate::owners::store::StoreBatch { author: crate::owners::contract::BatchAuthor::LocalWrites, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
+        let batch = |ops| crate::owners::store::StoreBatch { author: crate::owners::contract::BatchAuthor::LocalWrites, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), rows: Vec::new(), intents: 0, credential: None, ops };
         store.write_batch(&batch(vec![crate::owners::store::StoreOp::Rows { model: "messages".into(), rows: vec![crate::owners::store::RowValue { row_id: "m1".into(), values: json!({"id": "m1", "chatId": "c1", "body": "server"}).to_string() }] }]), store.files(), None).unwrap();
         store.write_batch(&batch(vec![crate::owners::store::StoreOp::LocalRows { model: "notes".into(), rows: vec![crate::owners::store::RowValue { row_id: "n1".into(), values: json!({"id": "n1", "text": "keep"}).to_string() }] }]), store.files(), None).unwrap();
         store.write_batch(&batch(vec![crate::owners::store::StoreOp::LocalFields { model: "messages".into(), row_id: "m1".into(), values: json!({"draft": "mine"}).to_string() }]), store.files(), None).unwrap();

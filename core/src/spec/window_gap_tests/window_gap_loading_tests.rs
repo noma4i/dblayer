@@ -184,18 +184,6 @@ fn win_landing_stale_reread() {
         assert_eq!(twin.stage(), Some(WindowStage::Idle));
         assert_eq!(requests(&twin.call(9, Goal::First)), 1, "the window is not fresh any more");
     }
-    {
-        let mut twin = landing();
-        twin.watch();
-        assert_eq!(twin.step(Input::Rejected { request: 1, reason: Reject::StaleGeneration }), [Effect::Request { request: 2, attempt: 2, page: 1 }]);
-        assert_eq!(twin.stage(), Some(WindowStage::Loading));
-    }
-    {
-        let mut twin = landing();
-        twin.step(Input::Online(false));
-        assert!(twin.step(Input::Rejected { request: 1, reason: Reject::StaleGeneration }).is_empty());
-        assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-    }
 }
 
 

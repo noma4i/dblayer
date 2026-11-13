@@ -1,8 +1,8 @@
 use super::*;
-use crate::owners::store::{MemoryExpiry, RowValue, StoreOp};
+use crate::owners::store::{MemoryExpiry, StoreOp};
 
 fn bare_batch(author: BatchAuthor, id: u64, stamp: EpochStamp, ops: Vec<StoreOp>) -> StoreBatch {
-    StoreBatch { author, id, stamp, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops }
+    StoreBatch { author, id, stamp, rows: Vec::new(), intents: 0, credential: None, ops }
 }
 
 fn login_batch(id: u64, landing: bool) -> StoreBatch {
@@ -14,7 +14,7 @@ fn login_batch(id: u64, landing: bool) -> StoreBatch {
         let pending = PendingCall { request_id: 10, sequence: 1, class: OperationClass::Login, operation: "login".into(), path: "/login".into(), body: "{}".into(), document: None, credential: Some(42), purpose: 0, author: None, owner: None, epoch: 1, reply: Some(1) };
         vec![StoreOp::Pending { pending, credential_digest: digest.clone(), wire_id: "wire".into(), response_key: "key".into() }, StoreOp::Session { digest: Some(digest), sequence: Some(0) }]
     };
-    StoreBatch { author: BatchAuthor::Session, id, stamp: EpochStamp::Epoch(1), basis: BTreeMap::new(), rows: Vec::new(), intents: 1, credential: Some(42), ops }
+    StoreBatch { author: BatchAuthor::Session, id, stamp: EpochStamp::Epoch(1), rows: Vec::new(), intents: 1, credential: Some(42), ops }
 }
 
 fn login_rows(db: &crate::store::Store) -> (i64, Option<(String, i64)>) {
@@ -94,34 +94,6 @@ fn store_commit_while_writing_waits() {
 #[test]
 fn store_commit_of_another_epoch_is_refused() {
     assert_eq!(Twin::live().commit(7, &["a"]), vec![Action::Rejected { id: 1, reason: Reason::NoSession }]);
-}
-
-/// The batch of a stale generation never reaches SQLite, the fresh one is committed.
-#[test]
-fn store_commit_with_a_stale_generation_is_refused() {
-    let mut twin = Twin::live();
-    twin.clear_account(Cause::IdentityChanged, 3, true);
-    let mut batch = Batch::rows(1, vec![("Moment".into(), "a".into())]);
-    batch.basis.insert("Moment".into(), 2);
-    let actions = twin.commit_batch(batch, true);
-    assert_eq!(Twin::rejected(&actions), Some(Reason::StaleGeneration(vec!["Moment".into()])));
-    assert_eq!(twin.stale_writes, 0, "a stale batch never reaches SQLite");
-    let mut fresh = Batch::rows(1, vec![("Moment".into(), "a".into())]);
-    fresh.basis.insert("Moment".into(), 3);
-    assert!(twin.commit_batch(fresh, true).iter().any(|action| matches!(action, Action::Committed { .. })));
-}
-
-/// A batch with rows of a model needs a basis for it.
-#[test]
-fn store_commit_without_a_basis_is_invalid() {
-    let mut twin = Twin::live();
-    let actions = twin.commit_batch(Batch::rows(1, vec![("Moment".into(), "a".into())]), true);
-    assert_eq!(Twin::rejected(&actions), Some(Reason::Invalid));
-    assert_eq!(twin.state().revision(), 0);
-    let batch = bare_batch(BatchAuthor::Window, 2, EpochStamp::Epoch(1), vec![StoreOp::Rows { model: "Moment".into(), rows: vec![RowValue { row_id: "b".into(), values: "{}".into() }] }]);
-    let effects = twin.send(StoreInput::Commit(batch));
-    assert!(effects.iter().any(|effect| matches!(effect, StoreEffect::Reply { reply: StoreReply::Rejected(RejectReason::Invalid(text)), .. } if text == "the batch has no basis for a model of its rows")), "the refusal names its cause: {effects:?}");
-    assert!(!effects.iter().any(|effect| matches!(effect, StoreEffect::Write { .. })));
 }
 
 #[test]

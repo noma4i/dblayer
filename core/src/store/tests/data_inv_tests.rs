@@ -15,7 +15,7 @@ use crate::value::SortDirection;
 pub(super) fn open() -> Arc<Store> { Arc::new(Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap()) }
 
 pub(super) fn write(db: &Store, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) {
-    let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops };
+    let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), rows, intents: 0, credential: None, ops };
     db.write_batch(&batch, db.files(), None).unwrap();
 }
 
@@ -122,7 +122,7 @@ fn transfer_effects_cannot_append_to_a_ready_intent() {
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![intent(5)]);
     let StoreOp::Intent { op_id, model, row_id, action, payload, effects, .. } = intent(5) else { unreachable!() };
-    let batch = StoreBatch { author: BatchAuthor::Transfer, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Effects { created_at: 0, op_id, model, row_id, action, payload, effects }] };
+    let batch = StoreBatch { author: BatchAuthor::Transfer, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Effects { created_at: 0, op_id, model, row_id, action, payload, effects }] };
     assert!(db.write_batch(&batch, db.files(), None).is_err());
     assert_eq!(field(&db, "text"), json!("edit"));
 }
@@ -214,7 +214,7 @@ pub(super) fn ephemeral_specs() -> Vec<crate::schema::ModelSpec> {
 
 pub(super) fn set_typing(db: &Store, id: &str, on: bool) -> crate::store::batch_write::BatchWritten {
     let event = json!({"op": "ephemeral", "id": id, "values": {"typing": on}}).to_string();
-    let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("moments".into(), event)], intents: 0, credential: None, ops: Vec::new() };
+    let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), rows: vec![("moments".into(), event)], intents: 0, credential: None, ops: Vec::new() };
     db.write_batch(&batch, db.files(), None).unwrap()
 }
 

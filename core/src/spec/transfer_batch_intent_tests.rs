@@ -1,4 +1,4 @@
-//! Owner-level tests of the owner `Transfer`: `PersistingBatchIntent` (end of the session, stale basis, the close, the repeat of the write, ignored inputs) and mixed outcomes of a batch.
+//! Owner-level tests of the owner `Transfer`: `PersistingBatchIntent` (end of the session, the close, the repeat of the write, ignored inputs) and mixed outcomes of a batch.
 
 use super::transfer_harness::*;
 use crate::owners::contract::{Online, RejectReason, ReplyId};
@@ -41,17 +41,6 @@ fn xfer_batch_intent_ended() {
         }
         assert_eq!((out.submits(), out.writes(), out.steps().len(), out.completes()), (0, 0, 0, 0));
     }
-}
-
-#[test]
-fn xfer_batch_intent_stale() {
-    let (mut twin, ids) = persisting_joint();
-    let out = twin.reject(RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 7)].into() });
-    assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::PersistingBatchIntent));
-    assert_eq!((out.writes(), out.submits()), (1, 0));
-    assert_eq!(out.batches[0].basis.get("Moment"), Some(&7));
-    assert_eq!(out.batches[0].intents, 1);
-    assert_eq!(twin.commit().submit_ops().len(), 1);
 }
 
 #[test]

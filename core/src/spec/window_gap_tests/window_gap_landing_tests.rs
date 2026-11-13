@@ -1,17 +1,10 @@
 use super::*;
 
 
-/// A refused landing: NoSession and Closed end the window, Storage and Invalid fail the phase and reach the stream as Invalid without a new request, a stale generation leaves an unwatched window not fresh.
+/// A refused landing: NoSession and Closed end the window, Storage and Invalid fail the phase and reach the stream as Invalid without a new request.
 #[test]
 fn win_landing_refusal_by_reason() {
     {
-        {
-            let mut twin = landing();
-            twin.step(Input::InterestMinus { id: 1 });
-            assert!(twin.step(Input::Rejected { request: 1, reason: Reject::StaleGeneration }).is_empty());
-            assert_eq!(twin.stage(), Some(WindowStage::Idle));
-            assert_eq!(requests(&twin.call(9, Goal::First)), 1, "the window is not fresh any more");
-        }
         {
             for reason in [Reject::NoSession, Reject::Closed] {
                 let mut twin = landing();
@@ -230,8 +223,7 @@ fn win_wait_nodes() {
 pub(super) enum Seen {
     Requested(u64),
     Cancelled(u64),
-    Landed { request: u64, basis: u64, revision: i64 },
-    Rejected(u64),
+    Landed { request: u64, revision: i64 },
     Outcome(u32, WindowOutcome),
 }
 
@@ -259,16 +251,13 @@ impl EffectRunner<Spy<Windows>> for Executor {
     }
 }
 
-pub(super) type Shared = Rc<(Log<Seen>, Arc<AtomicU64>)>;
+pub(super) type Shared = Rc<Log<Seen>>;
 
 thread_local! {
     static SEEN: RefCell<Option<Shared>> = const { RefCell::new(None) };
 }
 
-pub(super) fn seen() -> (Log<Seen>, Arc<AtomicU64>) {
-    let shared = SEEN.with(|slot| slot.borrow().clone()).expect("a rig was built");
-    (shared.0.clone(), shared.1.clone())
-}
+pub(super) fn seen() -> Log<Seen> { (*SEEN.with(|slot| slot.borrow().clone()).expect("a rig was built")).clone() }
 
 pub(super) struct WindowStore;
 
@@ -296,20 +285,13 @@ impl StateOwner for WindowStore {
 pub(super) fn explore_rig() -> DetScheduler {
     let mut det = DetScheduler::new(1);
     let log = new_log();
-    let generation = Arc::new(AtomicU64::new(0));
     let windows_slot = Address::<Windows>::new(WINDOWS);
     let noted = log.clone();
     det.add::<WindowStore>("store", StoreStubState {
         to: windows_slot,
-        generation: generation.clone(),
         revision: 0,
-        only: None,
         committed: w::WindowsInput::Committed,
-        rejected: w::WindowsInput::Rejected,
-        note: Box::new(move |landing| noted.lock().unwrap_or_else(PoisonError::into_inner).push(match landing {
-            Landing::Landed { batch, basis, revision, .. } => Seen::Landed { request: batch, basis, revision },
-            Landing::Rejected { batch, .. } => Seen::Rejected(batch),
-        })),
+        note: Box::new(move |landing| noted.lock().unwrap_or_else(PoisonError::into_inner).push(Seen::Landed { request: landing.batch, revision: landing.revision })),
     }, Silent);
     det.add::<Sink<Deliveries>>("deliveries", new_log(), Discard);
     let windows = det.add::<Spy<Windows>>("windows", SpyState::new(w::WindowsState::new(EPOCH, Some(true), peers()), &new_log()), Executor { log: log.clone() });
@@ -322,7 +304,7 @@ pub(super) fn explore_rig() -> DetScheduler {
     for source in [callers, marks, network] {
         det.post(source, EpochStamp::Control, SourceInput::Go);
     }
-    SEEN.with(|slot| *slot.borrow_mut() = Some(Rc::new((log, generation))));
+    SEEN.with(|slot| *slot.borrow_mut() = Some(Rc::new(log)));
     det
 }
 
@@ -336,7 +318,7 @@ pub(super) fn open_requests(events: &[Seen]) -> usize {
             Seen::Requested(request) => {
                 open.insert(*request);
             }
-            Seen::Cancelled(request) | Seen::Rejected(request) => {
+            Seen::Cancelled(request) => {
                 open.remove(request);
             }
             Seen::Landed { request, .. } => {

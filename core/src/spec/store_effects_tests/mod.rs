@@ -13,13 +13,12 @@ const DISK: &str = "disk";
 #[derive(Clone, Debug, PartialEq)]
 struct Batch {
     epoch: u64,
-    basis: BTreeMap<String, u64>,
     rows: Vec<(String, String)>,
     intents: u64,
 }
 
 impl Batch {
-    fn rows(epoch: u64, rows: Vec<(String, String)>) -> Self { Self { epoch, basis: BTreeMap::new(), rows, intents: 0 } }
+    fn rows(epoch: u64, rows: Vec<(String, String)>) -> Self { Self { epoch, rows, intents: 0 } }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -40,7 +39,6 @@ enum Request {
 #[derive(Clone, Debug, PartialEq)]
 enum Reason {
     NoSession,
-    StaleGeneration(Vec<String>),
     Storage,
     Closed,
     Invalid,
@@ -86,7 +84,6 @@ fn action_of(effect: &StoreEffect) -> Option<Action> {
             id: *batch,
             reason: match reason {
                 RejectReason::NoSession => Reason::NoSession,
-                RejectReason::StaleGeneration { models, .. } => Reason::StaleGeneration(models.clone()),
                 RejectReason::Storage(_) => Reason::Storage,
                 RejectReason::Closed => Reason::Closed,
                 RejectReason::Invalid(_) => Reason::Invalid,
@@ -117,10 +114,8 @@ struct Twin {
     history: Vec<StoreEffect>,
     /// (epoch of the written batch, epoch of the Store) at each `Write`.
     written: Vec<(u64, u64)>,
-    /// A `Write` of a batch whose basis is older than the generation of a model, at the time of the write.
-    stale_writes: u64,
-    /// `model_generation[Moment]` after each request.
-    generations: Vec<u64>,
+    /// The generation after each request.
+    generation_history: Vec<u64>,
     /// Each request with the actions the owner gave.
     steps: Vec<(Request, Vec<Action>)>,
     batch: u64,
@@ -135,7 +130,7 @@ impl Twin {
         let mut det = DetScheduler::new(9);
         let log = new_log();
         let addr = det.add::<StoreWriter>("store", StoreState::new(), Recorder::<StoreWriter>::new(&log));
-        Self { det, addr, log, history: Vec::new(), written: Vec::new(), stale_writes: 0, generations: Vec::new(), steps: Vec::new(), batch: 0, committing: Default::default(), publication: 0, erase: 0 }
+        Self { det, addr, log, history: Vec::new(), written: Vec::new(), generation_history: Vec::new(), steps: Vec::new(), batch: 0, committing: Default::default(), publication: 0, erase: 0 }
     }
 
     /// An open store in the epoch 1 (`Published` saved).
@@ -169,8 +164,6 @@ impl Twin {
             StoreEffect::Write { batch, .. } => Some((match batch.stamp { EpochStamp::Epoch(stamped) => stamped, EpochStamp::Control => epoch }, epoch)),
             _ => None,
         }));
-        let stale = raw.iter().filter(|effect| matches!(effect, StoreEffect::Write { batch, .. } if batch.basis.iter().any(|(model, basis)| *basis < self.state().generation(model)))).count() as u64;
-        self.stale_writes += stale;
         self.history.extend(raw.iter().cloned());
         raw
     }
@@ -186,7 +179,7 @@ impl Twin {
 
     fn input_of(&self, request: &Request) -> StoreInput {
         match request.clone() {
-            Request::Commit { id, batch } => StoreInput::Commit(StoreBatch { author: BatchAuthor::Outbox, id, stamp: EpochStamp::Epoch(batch.epoch), basis: batch.basis, rows: batch.rows, intents: batch.intents, credential: None, ops: Vec::new() }),
+            Request::Commit { id, batch } => StoreInput::Commit(StoreBatch { author: BatchAuthor::Outbox, id, stamp: EpochStamp::Epoch(batch.epoch), rows: batch.rows, intents: batch.intents, credential: None, ops: Vec::new() }),
             Request::ClearAccount { epoch_old, cause, generation_new, erase_id } => StoreInput::ClearAccount { epoch_old, cause, generation_new, erase_id },
             Request::Published { publication_id, epoch, generation, active } => StoreInput::Published { publication_id, published: Published { epoch, identity: None, generation, state: if active { PublishedState::Session } else { PublishedState::Ending }, closed: false } },
             Request::EpochEnded { epoch } => StoreInput::EpochEnded(EpochEnded { epoch, cause: Cause::SessionReset }),
@@ -205,16 +198,14 @@ impl Twin {
         let raw = self.send(self.input_of(&request));
         let actions: Vec<Action> = raw.iter().filter_map(action_of).collect();
         self.steps.push((request, actions.clone()));
-        let generation = self.state().generation("Moment");
-        self.generations.push(generation);
+        let generation = self.state().generation();
+        self.generation_history.push(generation);
         actions
     }
 
     /// `Commit` with the answer of SQLite at once.
     fn commit(&mut self, epoch: u64, rows: &[&str]) -> Vec<Action> {
-        let mut batch = Batch::rows(epoch, rows.iter().map(|id| ("Moment".to_string(), id.to_string())).collect());
-        batch.basis.insert("Moment".into(), 0);
-        self.commit_batch(batch, true)
+        self.commit_batch(Batch::rows(epoch, rows.iter().map(|id| ("Moment".to_string(), id.to_string())).collect()), true)
     }
 
     fn commit_batch(&mut self, batch: Batch, sqlite_ok: bool) -> Vec<Action> {
@@ -270,12 +261,8 @@ impl Twin {
         actions.iter().find_map(|action| match action { Action::Rejected { reason, .. } => Some(reason.clone()), _ => None })
     }
 
-    /// A one-row batch of `Moment` for the epoch 1 with the basis 0.
-    fn moment_batch() -> Batch {
-        let mut batch = Batch::rows(1, vec![("Moment".into(), "a".into())]);
-        batch.basis.insert("Moment".into(), 0);
-        batch
-    }
+    /// A one-row batch of `Moment` for the epoch 1.
+    fn moment_batch() -> Batch { Batch::rows(1, vec![("Moment".into(), "a".into())]) }
 }
 
 mod store_boot_tests;

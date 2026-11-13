@@ -80,19 +80,6 @@ fn xfer_attempt_rejected() {
 }
 
 #[test]
-fn xfer_attempt_stale() {
-    let (mut twin, id) = ready(2);
-    twin.online(true);
-    let attempt = twin.attempt(id);
-    let out = twin.reject(RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 7)].into() });
-    assert_eq!(twin.stage(id), TransferStage::PersistingAttempt);
-    assert_eq!(out.rows()[0].0.attempts, 1);
-    assert_eq!(out.batches[0].basis.get("Moment"), Some(&7));
-    assert!(out.steps().is_empty());
-    assert_eq!(twin.commit().steps(), vec![(Some(1), attempt)]);
-}
-
-#[test]
 fn xfer_ready_start_complete() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 1);

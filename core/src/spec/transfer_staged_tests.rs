@@ -68,7 +68,7 @@ fn xfer_retry_source_marks_the_swap_in_the_row() {
 /// P-XFER-51: a refused write that clears the marker of the swap changes nothing: the next open finishes the swap and clears the marker (xfer_restored_staged_finishes_the_swap).
 #[test]
 fn xfer_staged_cleared_refusal_is_quiet() {
-    for reason in [RejectReason::Storage("disk".into()), RejectReason::Invalid("bad row".into()), RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".to_string(), 7)].into() }, RejectReason::NoSession, RejectReason::Closed] {
+    for reason in [RejectReason::Storage("disk".into()), RejectReason::Invalid("bad row".into()), RejectReason::NoSession, RejectReason::Closed] {
         let mut twin = Twin::new();
         let id = twin.failed(KEY);
         twin.retry(KEY, Some(fresh()));

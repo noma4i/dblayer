@@ -6,7 +6,7 @@ use super::*;
 fn win_prop_explored_invariants() {
     {
         let report = explore(explore_rig, LIMITS, |_| {
-            let (log, _) = seen();
+            let log = seen();
             let events = snapshot(&log);
             for id in [1u32, 2] {
                 let count = events.iter().filter(|event| matches!(event, Seen::Outcome(found, _) if *found == id)).count();
@@ -22,7 +22,7 @@ fn win_prop_explored_invariants() {
             if !det.ready().is_empty() {
                 return Ok(());
             }
-            let (log, _) = seen();
+            let log = seen();
             let events = snapshot(&log);
             let windows = det.state(Address::<Spy<Windows>>::new(WINDOWS)).map(|spy| &spy.inner).ok_or("no state")?;
             if windows.stage(&key()) == Some(WindowStage::Waiting) {
@@ -40,7 +40,7 @@ fn win_prop_explored_invariants() {
     }
     {
         let report = explore(explore_rig, LIMITS, |_| {
-            let (log, _) = seen();
+            let log = seen();
             let events = snapshot(&log);
             for (at, event) in events.iter().enumerate() {
                 if let Seen::Outcome(_, WindowOutcome::Loaded { revision, .. }) = event {
@@ -56,7 +56,7 @@ fn win_prop_explored_invariants() {
     }
     {
         let report = explore(explore_rig, LIMITS, |_| {
-            let (log, _) = seen();
+            let log = seen();
             let open = open_requests(&snapshot(&log));
             if open > 1 {
                 return Err(format!("{open} requests in the network"));
@@ -111,46 +111,6 @@ fn win_prop_stale_reload_once() {
     twin.respond(None);
     let last = twin.land();
     assert_eq!(requests(&last), 0);
-}
-
-/// The basis of a batch is the generation of the dictionary, names every model of the answer at the issue, and a reissue after a stale generation carries the generations of the refusal.
-#[test]
-fn win_basis_generations_of_the_batch() {
-    {
-        let mut twin = Twin::new();
-        twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 5 }));
-        twin.step(Input::Online(false));
-        twin.call(1, Goal::First);
-        assert_eq!(twin.stage(), Some(WindowStage::Waiting), "a machine created after Online(false) reads the field of the dictionary");
-        take(&twin.log);
-        twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
-        twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None) });
-        let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");
-        assert!(sent.contains("\"Moment\": 5"), "the basis is the generation of the dictionary: {sent}");
-    }
-    {
-        let mut twin = Twin::new();
-        twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 1 }));
-        twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
-        twin.call(1, Goal::First);
-        take(&twin.log);
-        let mut page = AnswerPage::new(1, vec!["r1".into()], None);
-        page.dependency_models = BTreeSet::from(["Moment".to_string(), "Chat".to_string()]);
-        page.payload.related = vec![("Chat".into(), RowValue { row_id: "c1".into(), values: "{}".into() })];
-        twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page });
-        let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");
-        assert!(sent.contains("\"Chat\": 1") && sent.contains("\"Moment\": 1"), "the generations of the issue: {sent}");
-    }
-    {
-        let mut twin = Twin::new();
-        twin.call(1, Goal::First);
-        twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None) });
-        twin.post(w::WindowsInput::Rejected(Rejected { batch: 1, reason: RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 3)].into() } }));
-        take(&twin.log);
-        twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None) });
-        let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");
-        assert!(sent.contains("\"Moment\": 3"), "the basis of the new request is the generation of the refusal: {sent}");
-    }
 }
 
 

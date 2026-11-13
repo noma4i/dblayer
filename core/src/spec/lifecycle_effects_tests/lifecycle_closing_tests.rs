@@ -220,7 +220,7 @@ fn life_traces_hand_each_erase_once() {
                     open.push(*generation_new);
                 }
             }
-            if matches!(input, LifecycleInput::Cleared { .. } | LifecycleInput::ModelsCleared { .. } | LifecycleInput::ClearFailed { .. }) {
+            if matches!(input, LifecycleInput::Cleared { .. } | LifecycleInput::ClearFailed { .. }) {
                 open.clear();
             }
         }

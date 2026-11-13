@@ -140,9 +140,7 @@ impl Facts {
                 let marked = std::mem::take(&mut load.marked);
                 let source = Self::page_source(marked);
                 self.page_count = landed_tail(self.page_count, load.page, self.replace_all, self.local_order || self.media).0;
-                let models: BTreeSet<&String> = self.dependency_models.iter().chain(&answer.dependency_models).chain(answer.payload.related.iter().map(|(model, _)| model)).collect();
-                let basis = crate::owners::store::basis_for(models.into_iter().map(|model| (model.clone(), load.basis.of(model))));
-                self.emit(Emit::Commit { landed_at: self.answered_at, request: load.request, basis, page: answer.clone(), number: load.page, replace_all: self.replace_all, base_revision: self.request_base.get(), marker: None, keep_rows: false, source });
+                self.emit(Emit::Commit { landed_at: self.answered_at, request: load.request, page: answer.clone(), number: load.page, replace_all: self.replace_all, base_revision: self.request_base.get(), marker: None, keep_rows: false, source });
                 Transition(WinState::landing(Landing { request: load.request, page: load.page, cursor: answer.cursor.clone(), rows: !answer.rows.is_empty(), models: answer.dependency_models.clone(), marked }))
             }
             Ev::Failure { request: got, attempt: got_attempt, error } if mine(got, got_attempt) => {
@@ -200,24 +198,13 @@ impl Facts {
             Ev::Committed { request: got, revision } if *got == landing.request => self.landed(context, landing.page, landing.cursor.clone(), landing.rows, &landing.models, *revision),
             Ev::Rejected { request: got, reason } if *got == landing.request => {
                 let returns_mark = match reason {
-                    RejectReason::StaleGeneration { .. } | RejectReason::Storage(_) | RejectReason::Invalid(_) => true,
+                    RejectReason::Storage(_) | RejectReason::Invalid(_) => true,
                     RejectReason::NoSession | RejectReason::Closed => false,
                 };
                 if landing.marked && returns_mark {
                     self.reread_by_event.set(true);
                 }
                 match reason {
-                    RejectReason::StaleGeneration { generations, .. } => {
-                        for (model, generation) in generations {
-                            self.generations.insert(model.clone(), *generation);
-                        }
-                        if self.watched() {
-                            self.begin(context, 1, false, false)
-                        } else {
-                            self.fresh = false;
-                            Transition(WinState::idle())
-                        }
-                    }
                     RejectReason::NoSession => {
                         self.end_cause = EndCause::SessionEnded;
                         self.finish(None)

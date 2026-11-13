@@ -20,7 +20,6 @@ fn win_orders_dictionary_fields() {
     for order in all {
         let mut twin = Twin::new();
         twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 5 }));
-        twin.generation = 5;
         let mut seen = Seen::default();
         for event in order.iter().copied() {
             run(&mut twin, &mut seen, event);
@@ -28,7 +27,6 @@ fn win_orders_dictionary_fields() {
         assert_eq!((twin.stage(), seen.flying()), (Some(WindowStage::Waiting), 0), "{order:?}: a window created or running when the field says offline waits");
         run(&mut twin, &mut seen, Ev::Online);
         settle(&mut twin, &mut seen);
-        assert!(twin.commit.contains(&format!("\"Moment\": {}", twin.generation)), "{order:?}: the basis is the generation of the dictionary: {}", twin.commit);
         assert_eq!(outcomes_of(&twin, 1), [Result3::Loaded], "{order:?}");
     }
 }
@@ -72,7 +70,6 @@ fn win_orders_open_load() {
             }
             settle(&mut twin, &mut seen);
             assert_eq!(seen.requests, 1, "{order:?}");
-            assert!(twin.commit.contains("\"Moment\": 0"), "{order:?}: the basis is the saved generation: {}", twin.commit);
             assert_eq!(outcomes_of(&twin, 1), [Result3::Loaded], "{order:?}: a landing, not a refusal");
             assert_eq!(twin.stage(), Some(WindowStage::Idle));
         }
@@ -217,7 +214,7 @@ fn win_prop_generation() {
                 _ => twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["old".into()], None) }),
             }
             let emitted = take(&twin.log);
-            batches.extend(sent_batches(&emitted).into_iter().filter(|batch| batch.contains("\"Moment\": 3")));
+            batches.extend(sent_batches(&emitted).into_iter().filter(|batch| batch.contains(&format!("stamp: Epoch({})", EPOCH + 1))));
             if let Some((_, request, attempt, ..)) = requests_of(emitted).into_iter().find(|found| found.1 != 1) {
                 fresh_request = Some((request, attempt));
             }
@@ -225,7 +222,7 @@ fn win_prop_generation() {
         let (request, attempt) = fresh_request.expect("the new epoch asked for its first page");
         twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH + 1), w::WindowsInput::Response { request, attempt, page: AnswerPage::new(1, vec!["new".into()], None) });
         twin.run();
-        batches.extend(sent_batches(&take(&twin.log)).into_iter().filter(|batch| batch.contains("\"Moment\": 3")));
+        batches.extend(sent_batches(&take(&twin.log)).into_iter().filter(|batch| batch.contains(&format!("stamp: Epoch({})", EPOCH + 1))));
         twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH + 1), w::WindowsInput::Committed(Committed { batch: request, revision: 30, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
         twin.run();
         let done = runs(take(&twin.log));
@@ -322,7 +319,7 @@ fn win_orders_nodes_answers() {
         for index in order.iter().copied() {
             let roots = answers[index].iter().map(|id| RowValue { row_id: (*id).into(), values: serde_json::json!({"id": id, "userId": "u1", "text": format!("served {id}")}).to_string() }).collect();
             let page = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name.clone(), model: key.model.clone(), page: 1, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
-            let batch = StoreBatch { author: BatchAuthor::Window, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![page] };
+            let batch = StoreBatch { author: BatchAuthor::Window, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), rows: Vec::new(), intents: 0, credential: None, ops: vec![page] };
             db.write_batch(&batch, db.files(), None).unwrap();
         }
         let ids: Vec<RowId> = asked.iter().map(|name| RowId::new(name).unwrap()).collect();

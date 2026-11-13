@@ -59,22 +59,6 @@ fn out_local_write_stale() {
     assert_eq!((answers(&effects, WRITE), kinds(&effects), effects.len()), (vec![OutboxAnswer::Err(Fault::NoSession)], Vec::<CommitKind>::new(), 1));
 }
 
-#[test]
-fn out_local_write_stale_generation() {
-    let mut twin = Twin::new();
-    twin.det.tick(Time(100));
-    twin.post(write(LocalWriteKind::SetLocal));
-    let original = twin.store_ops.clone();
-    assert_eq!(original.len(), 1);
-    let effects = twin.post(OutboxInput::Rejected(Rejected { batch: 1, reason: RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 2)].into() } }));
-    assert!(answers(&effects, WRITE).is_empty());
-    assert!(matches!(effects.as_slice(), [OutboxEffect::Store { kind: CommitKind::LocalWrite, generation: 2, .. }]));
-    assert_eq!(twin.store_ops, original);
-    let [OutboxEffect::Store { batch, .. }] = effects.as_slice() else { unreachable!() };
-    let committed = twin.post(OutboxInput::Committed(Committed { batch: *batch, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
-    assert_eq!(answers(&committed, WRITE), vec![OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
-}
-
 /// P-OUT-11: a stale expiry leaves the row of a later write.
 #[test]
 fn out_prop_expire_last_write() {
@@ -185,8 +169,7 @@ fn out_prop_local_write_orders() {
     #[derive(Clone, Copy, Debug, PartialEq)]
     enum Event { Write, Outcome, Closing, EpochEnded }
     use Event::*;
-    let stale = RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), NEW_GENERATION)].into() };
-    let outcomes: [Vec<(u64, Option<RejectReason>)>; 3] = [vec![(1, None)], vec![(1, Some(RejectReason::NoSession))], vec![(1, Some(stale)), (2, None)]];
+    let outcomes: [Vec<(u64, Option<RejectReason>)>; 2] = [vec![(1, None)], vec![(1, Some(RejectReason::NoSession))]];
     let orders: Vec<_> = crate::test_wait::permutations(&[Write, Outcome, Closing, EpochEnded]).into_iter().filter(|order| order.iter().position(|e| *e == Write) < order.iter().position(|e| *e == Outcome)).collect();
     assert_eq!(orders.len(), 12);
     for outcome in outcomes {
@@ -206,7 +189,7 @@ fn out_prop_local_write_orders() {
             let ended_first = order.iter().position(|e| *e == EpochEnded) < order.iter().position(|e| *e == Write);
             let want: Vec<OutboxAnswer> = if ended_first { Vec::new() } else if closed_first { vec![OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))] } else { vec![outcome.last().and_then(|(_, result)| result.clone()).map_or(OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }, |reason| OutboxAnswer::Err(crate::spec::support::refusal_of(reason)))] };
             assert_eq!(answers(&effects, WRITE), want, "{label}: exactly one answer, none from the owner for a write of an ended epoch (the runtime answers the caller NoSession)");
-            assert_eq!(kinds(&effects).len(), if closed_first || ended_first { 0 } else { 1 + outcome.iter().filter(|(_, result)| matches!(result, Some(RejectReason::StaleGeneration { .. }))).count() }, "{label}: one batch per attempt of the Store, none after Closing");
+            assert_eq!(kinds(&effects).len(), if closed_first || ended_first { 0 } else { 1 }, "{label}: one batch per attempt of the Store, none after Closing");
             assert_eq!(drained(&effects), 1, "{label}: Drained once");
         }
     }

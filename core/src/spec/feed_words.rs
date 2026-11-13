@@ -2,7 +2,6 @@
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Reject {
-    StaleGeneration(Vec<String>),
     Storage,
     Invalid,
     NoSession,

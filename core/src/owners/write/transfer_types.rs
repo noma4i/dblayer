@@ -692,8 +692,6 @@ pub(super) struct Pending {
 pub struct TransferState {
     pub(super) peers: TransferPeers,
     pub epoch: Epoch,
-    pub(super) base_generation: u64,
-    pub(super) generations: BTreeMap<String, u64>,
     pub online: Option<bool>,
     pub saving: bool,
     pub slots: u32,
@@ -754,8 +752,6 @@ impl TransferState {
         Self {
             peers,
             epoch,
-            base_generation: 0,
-            generations: BTreeMap::new(),
             online: None,
             saving: false,
             slots,

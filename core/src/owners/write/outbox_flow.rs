@@ -280,11 +280,10 @@ impl OutboxState {
         let Some(operation) = self.ops.get(&op_id) else { return };
         let OpSource::TransferGroup { batch_id, members } = &operation.op.origin else { return };
         let origin = crate::owners::store::IntentOrigin::TransferGroup { batch_id: *batch_id, transfer_ids: members.iter().filter(|other| other.transfer_id != member.transfer_id).map(|other| other.transfer_id).collect() };
-        let basis = std::collections::BTreeMap::from([(operation.op.model.clone(), self.generation_of(&operation.op.model))]);
         let batch = self.next_batch;
         self.next_batch += 1;
         self.batches.insert(batch, Batch::Member { op_id });
-        self.commit(batch, basis, vec![crate::owners::store::StoreOp::IntentOrigin { op_id, origin }, crate::owners::store::StoreOp::RemoveUploadByTransferId { transfer_id: member.transfer_id }, crate::owners::store::StoreOp::TransferOutcome { transfer_id: member.transfer_id, cycle_id: member.cycle_id, outcome: OutboxOutcome::Discarded }], 0, fx);
+        self.commit(batch, vec![crate::owners::store::StoreOp::IntentOrigin { op_id, origin }, crate::owners::store::StoreOp::RemoveUploadByTransferId { transfer_id: member.transfer_id }, crate::owners::store::StoreOp::TransferOutcome { transfer_id: member.transfer_id, cycle_id: member.cycle_id, outcome: OutboxOutcome::Discarded }], 0, fx);
     }
 
     pub(super) fn member_committed(&mut self, now: u64, op_id: OpId, fx: &mut Effects<Outbox>) {
@@ -308,10 +307,6 @@ impl OutboxState {
 
     pub(super) fn member_rejected(&mut self, now: u64, op_id: OpId, reason: RejectReason, fx: &mut Effects<Outbox>) {
         match &reason {
-            RejectReason::StaleGeneration { .. } => {
-                if let Some(pending) = self.member_removals.get_mut(&op_id) { pending.in_flight = false; }
-                return self.store_member(op_id, fx);
-            }
             RejectReason::NoSession | RejectReason::Closed => {
                 self.member_removals.remove(&op_id);
                 return self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);

@@ -46,17 +46,10 @@ impl Peer {
     fn named(name: &str) -> Option<Self> { ALL_OWNERS.into_iter().find(|peer| peer.name() == name) }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EraseKind {
-    Account,
-    Models,
-}
-
 /// An erase in the Store without an answer, with the waits bound to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Erase {
     pub id: EraseId,
-    pub kind: EraseKind,
     /// The generation reserved for this erase (`issued_generation` + 1 at the time of issue).
     pub target: u64,
     pub replies: Vec<ReplyId>,
@@ -127,7 +120,6 @@ pub enum LifecycleInput {
     SessionReset { reply: Option<ReplyId> },
     ServerEnded(ServerEnded),
     Cleared { erase_id: EraseId },
-    ModelsCleared { generation_new: u64, erase_id: EraseId },
     ClearFailed { erase_id: EraseId, error: String },
     Saved { publication_id: PublicationId },
     SaveFailed { publication_id: PublicationId, error: String },
@@ -264,11 +256,11 @@ impl LifecycleState {
         self.starting = self.starting.take().filter(|starting| starting.epoch > epoch);
     }
 
-    fn new_erase(&mut self, kind: EraseKind, replies: Vec<ReplyId>) -> Erase {
+    fn new_erase(&mut self, replies: Vec<ReplyId>) -> Erase {
         let id = self.next_erase;
         self.next_erase += 1;
         self.allocated = self.allocated.max(self.published.generation) + 1;
-        Erase { id, kind, target: self.allocated, replies }
+        Erase { id, target: self.allocated, replies }
     }
 
     fn closing(&mut self, erases: Vec<Erase>, close_replies: Vec<ReplyId>, end: Option<Epoch>, fx: &mut Vec<LifecycleEffect>) -> LifecyclePhase {
@@ -298,7 +290,7 @@ impl LifecycleState {
         fx.push(LifecycleEffect::EpochEnded { epoch, cause });
         self.published.state = PublishedState::Ending;
         self.publish(Vec::new(), fx);
-        let erase = self.new_erase(EraseKind::Account, replies);
+        let erase = self.new_erase(replies);
         fx.push(LifecycleEffect::ClearAccount { epoch_old: epoch, cause, generation_new: erase.target, erase_id: erase.id });
         erases.push(erase);
         self.phase = LifecyclePhase::Ending { epoch_old: epoch, cause, next, failed: false, erase_credential: false, erases };

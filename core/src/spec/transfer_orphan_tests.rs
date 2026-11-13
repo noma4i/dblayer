@@ -279,7 +279,7 @@ fn minted_due(twin: &mut Twin, upload_id: &str) -> Out {
 /// xfer_minted_write_storage (P-XFER-41, D-192): the Store refuses the write of the id of a live transfer. The debt stays and nothing is aborted.
 #[test]
 fn xfer_minted_write_storage() {
-    for reason in [RejectReason::Storage("disk".into()), RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 0)].into() }] {
+    for reason in [RejectReason::Storage("disk".into())] {
         let mut twin = Twin::new();
         let id = twin.uploading(KEY, 3);
         twin.online(false);
@@ -326,14 +326,14 @@ fn xfer_minted_write_invalid() {
 }
 
 /// xfer_minted_write_other_no_abort (K1, D-192, transfer.md:201, 459): the minted upload_id of a LIVE transfer
-/// is written to Store, and that write is Rejected(Invalid | StaleGeneration) while online. The upload_id is not
+/// is written to Store, and that write is Rejected(Invalid) while online. The upload_id is not
 /// an orphan yet: the transfer stays alive and the rewrite is scheduled. No abort may leave before the row says
 /// the upload is an orphan; the abort is owed only after a removal records it. Prod inserts the live id into
 /// orphans and sends the abort at once (send_orphans while online), deleting the server multipart of a transfer
 /// that keeps uploading.
 #[test]
 fn xfer_minted_write_other_no_abort() {
-    for (reason, timers) in [(RejectReason::Invalid(String::new()), 0), (RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".into(), 0)].into() }, 1)] {
+    for (reason, timers) in [(RejectReason::Invalid(String::new()), 0)] {
         let mut twin = Twin::new();
         let id = twin.uploading(KEY, 3);
         let out = minted(&mut twin, id, "u1");

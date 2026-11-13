@@ -103,7 +103,6 @@ pub struct CommittedBroadcast {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RejectReason {
     NoSession,
-    StaleGeneration { models: Vec<String>, generations: std::collections::BTreeMap<String, u64> },
     Storage(String),
     Closed,
     Invalid(String),

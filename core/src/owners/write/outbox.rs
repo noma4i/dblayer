@@ -51,9 +51,6 @@ pub struct OutboxState {
     pub epoch: Epoch,
     pub online: Option<bool>,
     /// The clock in milliseconds as the last `Tick` or `Submit` told it.
-    pub generation: BTreeMap<String, u64>,
-    /// The generation of the models without an entry in `generation`.
-    pub(super) base_generation: u64,
     pub ops: BTreeMap<OpId, QueuedOperation>,
     pub next_op: OpId,
     pub next_batch: BatchId,
@@ -114,8 +111,6 @@ impl OutboxState {
             peers,
             epoch,
             online: None,
-            generation: BTreeMap::new(),
-            base_generation: 0,
             ops: BTreeMap::new(),
             next_op: 1,
             next_batch: 1,
@@ -168,8 +163,6 @@ impl OutboxState {
     }
 
     pub fn stage_of(&self, op_id: OpId) -> Option<Stage> { self.ops.get(&op_id).map(|operation| operation.stage) }
-
-    pub(super) fn generation_of(&self, model: &str) -> u64 { self.generation.get(model).copied().unwrap_or(self.base_generation) }
 
     pub(super) fn addresses_row(operation: &QueuedOperation, model: &str, row: &str) -> bool {
         operation.op.model == model && match &operation.op.origin {
@@ -271,7 +264,7 @@ impl OutboxState {
     /// Session accepts only the `Mutate` of the held pair while it is held: every other operation waits for its owner.
     fn pair_held_by_other(&self, op_id: OpId) -> bool { self.ops.values().any(|other| other.op_id != op_id && other.pending_owned && !matches!(other.stage, Stage::Done | Stage::Failed)) || self.waiting.iter().any(|(waiting, (item, _))| *waiting != op_id && item.pending.is_some()) }
 
-    /// An operation with a smaller `seq` still writes its intent (or repeats it after `StaleGeneration`): the order of `Submit` is the order out.
+    /// An operation with a smaller `seq` still writes its intent: the order of `Submit` is the order out.
     fn earlier_submitting(&self, op_id: OpId) -> bool {
         let Some(sequence) = self.ops.get(&op_id).map(|operation| operation.sequence) else { return false };
         self.ops.values().any(|other| other.stage == Stage::Submitting && other.sequence < sequence)
@@ -362,7 +355,6 @@ impl OutboxState {
 
     pub(super) fn store(&mut self, op_id: OpId, kind: CommitKind, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get(&op_id) else { return };
-        let generation = self.generation_of(&operation.op.model);
         let attempt = StoreOp::Attempt { op_id, attempts: if kind == CommitKind::ClearMark { 1 } else { operation.attempts + 1 }, cycle_id: operation.cycle_id, cause: if kind == CommitKind::ClearMark { None } else { operation.cause } };
         let mut ops: Vec<StoreOp> = match kind {
             CommitKind::Intent => vec![StoreOp::Intent {
@@ -468,7 +460,6 @@ impl OutboxState {
             ops = earlier;
         }
         let intents = u64::from(kind == CommitKind::Intent);
-        let basis = BTreeMap::from([(operation.op.model.clone(), generation)]);
         for id in &dependents {
             if let Some(other) = self.ops.get_mut(id) {
                 other.stage = Stage::RollingBack(Why::Rejected);
@@ -480,16 +471,11 @@ impl OutboxState {
         let batch = self.next_batch;
         self.next_batch += 1;
         self.batches.insert(batch, Batch::Operation { op_id, kind });
-        self.commit(batch, basis, ops, intents, fx);
+        self.commit(batch, ops, intents, fx);
     }
 
-    pub(super) fn commit(&self, id: BatchId, basis: BTreeMap<String, u64>, ops: Vec<StoreOp>, intents: u64, fx: &mut Effects<Outbox>) {
-        let mut batch = StoreBatch { author: self.author, id, stamp: crate::runtime::EpochStamp::Epoch(self.epoch), basis, rows: Vec::new(), intents, credential: None, ops };
-        let entries = batch.models().into_iter().map(|model| {
-            let generation = batch.basis.get(&model).copied().unwrap_or_else(|| self.generation_of(&model));
-            (model, generation)
-        }).chain(batch.basis.clone());
-        batch.basis = crate::owners::store::basis_for(entries);
+    pub(super) fn commit(&self, id: BatchId, ops: Vec<StoreOp>, intents: u64, fx: &mut Effects<Outbox>) {
+        let batch = StoreBatch { author: self.author, id, stamp: crate::runtime::EpochStamp::Epoch(self.epoch), rows: Vec::new(), intents, credential: None, ops };
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
 
@@ -894,7 +880,7 @@ impl OutboxState {
             OutboxInput::WhenQuiet { .. } => {}
             OutboxInput::Online(Online(on)) => self.online_changed(now, on, fx),
             OutboxInput::ActivateEpoch(epoch) => self.begin_epoch(epoch),
-            OutboxInput::EpochStarted(started) => self.base_generation = started.generation,
+            OutboxInput::EpochStarted(_) => {}
             OutboxInput::EpochEnded(ended) => self.interrupt_all(crate::ffi::EndCause::of(ended.cause), fx),
             OutboxInput::Closing => {
                 self.interrupt_all(crate::ffi::EndCause::Closed, fx);

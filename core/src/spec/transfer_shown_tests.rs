@@ -55,19 +55,6 @@ fn xfer_show_storage_refusal_is_written_again() {
     assert_eq!(committed.shows(), live(out.stored_shows()), "Committed of the retry publishes the value");
 }
 
-/// P-XFER-50: a shown value refused for a moved generation is written again at once with the generations the Store named.
-#[test]
-fn xfer_show_stale_generation_is_written_again() {
-    let mut twin = Twin::new();
-    twin.uploading(KEY, 3);
-    twin.hold_shown = true;
-    let out = twin.online(false);
-    let moved = crate::owners::contract::RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".to_string(), 7)].into() };
-    let refused = twin.refuse_shown(out.shown_batches()[0], moved);
-    assert_eq!((refused.stored_shows(), refused.shows(), refused.timers), (out.stored_shows(), Vec::new(), 0), "the same value goes again at once: {refused:?}");
-    assert_eq!(refused.shown.iter().map(|batch| batch.basis.get("Moment").copied()).collect::<Vec<_>>(), vec![Some(7)], "with the generation the Store named");
-}
-
 /// P-XFER-50: a shown value refused as invalid data or after the end of the epoch is not written again.
 #[test]
 fn xfer_show_refusal_without_retry() {
@@ -86,7 +73,7 @@ fn xfer_show_refusal_without_retry() {
 #[test]
 fn xfer_round_error_refusal_is_quiet() {
     use crate::owners::contract::RejectReason;
-    for reason in [RejectReason::Storage("disk".into()), RejectReason::Invalid("bad row".into()), RejectReason::StaleGeneration { models: vec!["Moment".into()], generations: [("Moment".to_string(), 7)].into() }, RejectReason::NoSession, RejectReason::Closed] {
+    for reason in [RejectReason::Storage("disk".into()), RejectReason::Invalid("bad row".into()), RejectReason::NoSession, RejectReason::Closed] {
         let mut twin = Twin::new();
         let id = twin.uploading(KEY, 3);
         let denied = twin.post(TransferInput::RoundStatus { epoch: EPOCH, transfer_ids: vec![id], refused: Some("denied".into()) });

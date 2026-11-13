@@ -8,7 +8,7 @@ use crate::runtime::{Back, EffectRunner, EpochStamp};
 use crate::store::fixtures::booted;
 
 fn batch(author: BatchAuthor, rows: Vec<(&str, &str)>, ops: Vec<StoreOp>) -> StoreBatch {
-    StoreBatch { author, id: 1, stamp: EpochStamp::Control, basis: Default::default(), rows: rows.into_iter().map(|(model, text)| (model.to_string(), text.to_string())).collect(), intents: 0, credential: None, ops }
+    StoreBatch { author, id: 1, stamp: EpochStamp::Control, rows: rows.into_iter().map(|(model, text)| (model.to_string(), text.to_string())).collect(), intents: 0, credential: None, ops }
 }
 
 /// The places of the events refused alone, or the refusal of the batch.

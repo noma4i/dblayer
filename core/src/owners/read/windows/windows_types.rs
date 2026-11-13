@@ -175,7 +175,7 @@ pub(super) enum Emit {
     Run(WindowEffect),
     Pin { epoch: Epoch, request: RequestId },
     Unpin { request: RequestId },
-    Commit { landed_at: i64, request: RequestId, basis: BTreeMap<String, u64>, page: AnswerPage, number: u32, replace_all: bool, base_revision: i64, marker: Option<Marker>, keep_rows: bool, source: crate::schema::RowSource },
+    Commit { landed_at: i64, request: RequestId, page: AnswerPage, number: u32, replace_all: bool, base_revision: i64, marker: Option<Marker>, keep_rows: bool, source: crate::schema::RowSource },
     Retry { request: RequestId, attempt: u32, class: ErrorClass },
     CancelRetry { request: RequestId },
     Announce { streams: Vec<InterestId> },
@@ -389,7 +389,6 @@ pub struct Load {
     pub page: u32,
     pub force: bool,
     pub attempts: u32,
-    pub basis: GenerationsAtIssue,
     pub chain: Option<Chain>,
     pub confirms: u32,
     /// A request of this load took the reread mark of the window: its landing batch is a `NodeReread` (P-WIN-34).
@@ -398,18 +397,7 @@ pub struct Load {
 
 impl Load {
     /// A request that waits for its pin.
-    pub fn issued(request: RequestId, attempt: u32, page: u32, force: bool, basis: GenerationsAtIssue) -> Self {
-        Self { request, step: request, attempt, retry: false, pinning: true, page, force, attempts: 0, basis, chain: None, confirms: 0, marked: false }
+    pub fn issued(request: RequestId, attempt: u32, page: u32, force: bool) -> Self {
+        Self { request, step: request, attempt, retry: false, pinning: true, page, force, attempts: 0, chain: None, confirms: 0, marked: false }
     }
-}
-
-/// The generations of the models at the moment a request left.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GenerationsAtIssue {
-    pub(super) base: u64,
-    pub(super) generations: BTreeMap<String, u64>,
-}
-
-impl GenerationsAtIssue {
-    pub(super) fn of(&self, model: &str) -> u64 { self.generations.get(model).copied().unwrap_or(self.base) }
 }

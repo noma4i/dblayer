@@ -187,7 +187,7 @@ fn mark_stale_op_sets_stale_since_for_models_and_keys_in_the_batch_transaction()
         key
     };
     let write = |db: &Store, models: Vec<String>, keys: Vec<(String, String)>| {
-        let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::MarkStale { models, keys, kept: Vec::new() }] };
+        let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::MarkStale { models, keys, kept: Vec::new() }] };
         db.write_batch(&batch, db.files(), None).unwrap();
     };
     let fresh = || Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
@@ -216,7 +216,7 @@ fn stale_parents_mark_the_windows_of_the_parent_only_in_a_batch_of_the_feed() {
         db.save_window(&window(&chats)).unwrap();
         assert!(db.stale_window_keys().unwrap().is_empty());
         let row = RowValue { row_id: "m1".into(), values: serde_json::json!({"id": "m1", "chatId": "c9", "body": "m1", "createdAt": 1}).to_string() };
-        let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Rows { model: "messages".into(), rows: vec![row] }] };
+        let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Rows { model: "messages".into(), rows: vec![row] }] };
         let written = db.write_batch(&batch, db.files(), None).unwrap();
         assert_eq!(written.stale_parents, ["chats".to_string()], "{author:?}: the parent row is not in the base");
         assert_eq!(db.stale_window_keys().unwrap(), if marked { vec![chats] } else { Vec::new() }, "{author:?}");

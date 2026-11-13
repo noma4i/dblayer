@@ -37,7 +37,6 @@ pub(super) fn refused(fault: Fault, what: &str) -> DbError {
         Fault::Invalid => DbError::Invalid { detail: format!("{what}: the owner refused the call") },
         Fault::Copy(detail) => DbError::Copy { detail },
         Fault::Rejected(RejectReason::Storage(detail)) => DbError::Storage { detail },
-        Fault::Rejected(RejectReason::StaleGeneration { .. }) => DbError::Invalid { detail: format!("{what}: the write was refused") },
         Fault::Rejected(RejectReason::Invalid(detail)) => DbError::Invalid { detail: format!("{what}: {detail}") },
         Fault::Rejected(reason @ (RejectReason::NoSession | RejectReason::Closed)) => refused(Fault::of_reject(reason), what),
     }

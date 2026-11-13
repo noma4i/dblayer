@@ -50,14 +50,12 @@ pub struct FramedEvent {
     pub refused: bool,
 }
 
-/// An accepted event: its position is fixed when the frame arrives, its basis never changes.
+/// An accepted event: its position is fixed when the frame arrives.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FeedEvent {
     model: String,
     payload: String,
     reread: StaleKeys,
-    /// `model_generation` of the model when the frame arrived.
-    basis: u64,
     position: u64,
     refused: bool,
 }
@@ -207,7 +205,7 @@ enum Fx {
     CancelPong { connection: ConnectionId },
     Commit { batch: BatchId, events: Vec<FeedEvent> },
     Gap(Vec<String>),
-    CommitGap { batch: BatchId, models: Vec<String>, basis: BTreeMap<String, u64>, kept: Vec<(String, String)> },
+    CommitGap { batch: BatchId, models: Vec<String>, kept: Vec<(String, String)> },
     Stale { model: String, keys: StaleKeys, cause: StaleCause },
     Joined { id: SubscriptionId, position: u64 },
     /// `id` = `None`: every stream that wants the model.
@@ -331,8 +329,6 @@ pub struct FeedState {
     gap_seq: Option<u64>,
     channel_attempts: BTreeMap<Channel, u32>,
     slots: BTreeMap<Channel, u64>,
-    generation: BTreeMap<String, u64>,
-    base_generation: u64,
     position: BTreeMap<String, u64>,
     ledger: BTreeMap<String, Ledger>,
     held: Vec<FeedEvent>,
@@ -404,12 +400,11 @@ impl Feed {
 
     fn commit_batch(state: &FeedState, batch: BatchId, events: Vec<FeedEvent>) -> StoreBatch {
         let ops = Self::event_debt(&events);
-        let basis = crate::owners::store::basis_for(events.iter().map(|event| (event.model.clone(), event.basis)));
         let rows = events.into_iter().map(|event| {
             let observed = state.want.get(&event.model).is_some_and(|ids| ids.iter().any(|id| state.streams.contains(id)));
             (event.model, if observed { with_observe(&event.payload) } else { event.payload })
         }).collect();
-        StoreBatch { author: BatchAuthor::Feed, id: batch, stamp: crate::runtime::EpochStamp::Epoch(state.epoch), basis, rows, intents: 0, credential: None, ops }
+        StoreBatch { author: BatchAuthor::Feed, id: batch, stamp: crate::runtime::EpochStamp::Epoch(state.epoch), rows, intents: 0, credential: None, ops }
     }
 
     fn lower(state: &mut FeedState, mut fx: Vec<Fx>) -> Effects<Self> {
@@ -445,7 +440,7 @@ impl Feed {
                 Fx::CancelPong { connection } => out.push(Effect::Cancel(ScheduleId(PONG_SCHEDULE | connection))),
                 Fx::Commit { batch, events } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(Self::commit_batch(state, batch, events))))),
                 Fx::Gap(_) => {}
-                Fx::CommitGap { batch, models, basis, kept } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(StoreBatch { author: BatchAuthor::Feed, id: batch, stamp: crate::runtime::EpochStamp::Epoch(state.epoch), basis, rows: Vec::new(), intents: 0, credential: None, ops: vec![crate::owners::store::StoreOp::MarkStale { models, keys: Vec::new(), kept }] })))),
+                Fx::CommitGap { batch, models, kept } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(StoreBatch { author: BatchAuthor::Feed, id: batch, stamp: crate::runtime::EpochStamp::Epoch(state.epoch), rows: Vec::new(), intents: 0, credential: None, ops: vec![crate::owners::store::StoreOp::MarkStale { models, keys: Vec::new(), kept }] })))),
                 Fx::Stale { model, keys, cause } => out.push(Effect::Send(Outbound::new(peers.windows, WindowsInput::Stale { model, keys, cause }))),
                 Fx::Joined { id, position } => out.push(Effect::Send(Outbound::new(peers.deliveries, DeliveryInput::Joined { stream: id, position }))),
                 Fx::ModelReady { id: Some(id), .. } => out.push(Effect::Send(Outbound::new(peers.deliveries, DeliveryInput::ModelReady { stream: id }))),
@@ -510,7 +505,6 @@ impl StateOwner for Feed {
             FeedInput::ActivateEpoch(_) => {}
             FeedInput::EpochStarted(started) => {
                 state.epoch = started.epoch;
-                state.base_generation = started.generation;
                 fx.push(Fx::Run(FeedEffect::SnapshotRequest { epoch: started.epoch }));
             }
             FeedInput::EpochEnded(ended) => {

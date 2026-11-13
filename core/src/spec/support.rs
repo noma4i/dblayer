@@ -2,11 +2,10 @@
 
 use std::any::Any;
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use crate::owners::contract::{BatchId, Committed, RejectReason, Rejected};
+use crate::owners::contract::{BatchId, Committed, RejectReason};
 use crate::owners::store::{StoreBatch, StoreInput};
 use crate::runtime::{Address, Back, Cause, Control, Effect, EffectRunner, Effects, Epoch, EpochStamp, Outbound, ScheduleId, StateOwner};
 
@@ -223,23 +222,20 @@ impl<O: StateOwner> StateOwner for Sink<O> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Landing {
-    Landed { batch: BatchId, basis: u64, revision: i64, rows: usize },
-    Rejected { batch: BatchId, rows: usize },
+pub(crate) struct Landing {
+    pub batch: BatchId,
+    pub revision: i64,
+    pub rows: usize,
 }
 
-/// The Store for the property tests: a batch whose basis is older than the generation is rejected, any other lands at the next revision.
-/// The answer goes to `to` as `Committed` or `Rejected`; `note` sees every verdict in the order of the steps.
+/// The Store for the property tests: every batch lands at the next revision.
+/// The answer goes to `to` as `Committed`; `note` sees every verdict in the order of the steps.
 pub(crate) struct StoreStub<O: StateOwner>(PhantomData<fn() -> O>);
 
 pub(crate) struct StoreStubState<O: StateOwner> {
     pub to: Address<O>,
-    pub generation: Arc<AtomicU64>,
     pub revision: i64,
-    /// Only the generation of this model is compared with the basis of a batch; `None` = every model.
-    pub only: Option<&'static str>,
     pub committed: fn(Committed) -> O::Input,
-    pub rejected: fn(Rejected) -> O::Input,
     pub note: Box<dyn Fn(Landing) + Send>,
 }
 
@@ -252,15 +248,8 @@ impl<O: StateOwner> StateOwner for StoreStub<O> {
 
     fn step(state: &mut StoreStubState<O>, input: StoreInput, _now: crate::runtime::Time) -> Effects<Self> {
         let StoreInput::Commit(batch) = input else { return Vec::new() };
-        let current = state.generation.load(Ordering::SeqCst);
-        let stale: Vec<String> = batch.basis.iter().filter(|(model, basis)| **basis < current && state.only.is_none_or(|only| only == model.as_str())).map(|(model, _)| model.clone()).collect();
-        if !stale.is_empty() {
-            (state.note)(Landing::Rejected { batch: batch.id, rows: batch.rows.len() });
-            let rejected = Rejected { batch: batch.id, reason: RejectReason::StaleGeneration { generations: stale.iter().cloned().map(|model| (model, current)).collect(), models: stale } };
-            return vec![Effect::Send(Outbound::new(state.to, (state.rejected)(rejected)))];
-        }
         state.revision += 1;
-        (state.note)(Landing::Landed { batch: batch.id, basis: batch.basis.values().copied().min().unwrap_or(0), revision: state.revision, rows: batch.rows.len() });
+        (state.note)(Landing { batch: batch.id, revision: state.revision, rows: batch.rows.len() });
         let committed = Committed { batch: batch.id, revision: state.revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() };
         vec![Effect::Send(Outbound::new(state.to, (state.committed)(committed)))]
     }

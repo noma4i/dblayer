@@ -46,25 +46,6 @@ fn replacing() -> (Twin, TransferId, TransferId, Out) {
 fn finished_replacement(out: &Out, committed: bool) -> usize { out.outbox.iter().filter(|input| matches!(input, OutboxInput::FinishReplacement { committed: found, .. } if *found == committed)).count() }
 
 #[test]
-fn xfer_replace_stale_generation() {
-    let (mut twin, old, new, accept) = replacing();
-    let generations = std::collections::BTreeMap::from([("Message".to_string(), 7)]);
-    let out = twin.reject(RejectReason::StaleGeneration { models: vec!["Message".into()], generations: generations.clone() });
-    assert_eq!(out.all_replies(), 0, "the call of `upload` waits for the repeated batch");
-    assert_eq!(out.batches.len(), 1, "the accept batch goes again");
-    assert_eq!(out.batches[0].basis, generations);
-    assert_eq!((out.removed(), rolled_back(&out)), (vec![KEY.to_string()], vec![OP_ID]), "the repeated batch carries the prefix of the replacement");
-    assert_eq!(out.removed(), accept.removed());
-    assert_eq!(finished_replacement(&out, false), 0, "the replacement is not ended by the refusal");
-    refuses_calls(&mut twin, KEY);
-    let done = twin.commit();
-    assert_eq!(finished_replacement(&done, true), 1);
-    let (reply, outcome) = twin.outcome(old, 1);
-    assert_eq!(outcome.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded, None)]);
-    assert_eq!(twin.stage(new), TransferStage::Copying);
-}
-
-#[test]
 fn xfer_replace_rejected_invalid_keeps_failed() {
     let (mut twin, old, _, _) = replacing();
     let error = twin.t(old).error.clone().expect("the failure has a cause");

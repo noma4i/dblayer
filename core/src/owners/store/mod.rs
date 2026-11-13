@@ -13,8 +13,6 @@ use super::lifecycle::Identity;
 
 mod store_types;
 pub use store_types::*;
-mod store_basis;
-pub(crate) use store_basis::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StoreMode {
     Open,
@@ -44,9 +42,7 @@ pub struct StoreState {
     saved_generation: u64,
     saved_identity: Option<Identity>,
     saved_unowned_pending: bool,
-    generations: BTreeMap<String, u64>,
-    /// `model_generation[*]` of the models without an entry.
-    base_generation: u64,
+    generation: u64,
     writing: Option<StoreBatch>,
     io: VecDeque<Io>,
     next_io: u64,
@@ -67,8 +63,7 @@ impl StoreState {
             saved_generation: 0,
             saved_identity: None,
             saved_unowned_pending: false,
-            generations: BTreeMap::new(),
-            base_generation: 0,
+            generation: 0,
             writing: None,
             io: VecDeque::new(),
             next_io: 1,
@@ -87,15 +82,9 @@ impl StoreState {
 
     pub fn closing(&self) -> bool { self.closing }
 
-    pub fn generation(&self, model: &str) -> u64 { self.generations.get(model).copied().unwrap_or(self.base_generation) }
-
-    fn max_generation(&self) -> u64 { self.generations.values().copied().max().unwrap_or(0).max(self.base_generation) }
+    pub fn generation(&self) -> u64 { self.generation }
 
     fn busy(&self) -> bool { self.writing.is_some() || !self.io.is_empty() }
-
-    fn stale_models(&self, batch: &StoreBatch) -> Vec<String> {
-        batch.basis.iter().filter(|(model, basis)| **basis < self.generation(model)).map(|(model, _)| model.clone()).collect()
-    }
 }
 
 impl Default for StoreState {
@@ -182,8 +171,7 @@ impl StoreState {
     }
 
     fn wipe_account(&mut self, generation_new: u64) {
-        self.generations.clear();
-        self.base_generation = generation_new;
+        self.generation = generation_new;
     }
 
     fn apply(&mut self, input: StoreInput, fx: &mut Vec<StoreEffect>) {
@@ -218,12 +206,6 @@ impl StoreState {
                     }
                 } else if batch.stamp != crate::runtime::EpochStamp::Epoch(self.epoch) {
                     fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::NoSession) });
-                } else if batch.models().iter().any(|model| !batch.basis.contains_key(model)) {
-                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::Invalid("the batch has no basis for a model of its rows".into())) });
-                } else if !self.stale_models(&batch).is_empty() {
-                    let models = self.stale_models(&batch);
-                    let generations = batch.models().into_iter().map(|model| { let generation = self.generation(&model); (model, generation) }).collect();
-                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::StaleGeneration { models, generations }) });
                 } else {
                     self.writing = Some(batch.clone());
                     fx.push(StoreEffect::Write { batch, min_pin_revision: self.pins.values().map(|(_, revision)| *revision).min() });
@@ -265,7 +247,7 @@ impl StoreState {
             StoreInput::ClearAccount { epoch_old, cause, generation_new, erase_id } => {
                 if self.busy() {
                     self.deferred.push_back(StoreInput::ClearAccount { epoch_old, cause, generation_new, erase_id });
-                } else if generation_new <= self.max_generation() {
+                } else if generation_new <= self.generation {
                     fx.push(StoreEffect::ClearFailed { erase_id, error: "stale generation".into() });
                 } else {
                     let io_id = self.next_io;
@@ -362,8 +344,7 @@ impl StoreState {
                 self.saved_generation = saved_generation;
                 self.saved_identity = saved_identity;
                 self.saved_unowned_pending = saved_unowned_pending;
-                self.base_generation = saved_generation;
-                self.generations.clear();
+                self.generation = saved_generation;
                 fx.push(open(saved_epoch, saved_generation, saved_identity, saved_unowned_pending));
             }
             BootFound::ChangedModels { saved_epoch, saved_generation, saved_identity, saved_unowned_pending, revision } | BootFound::FormatChange { saved_epoch, saved_generation, saved_identity, saved_unowned_pending, revision } => {
@@ -372,8 +353,7 @@ impl StoreState {
                 self.saved_generation = saved_generation + 1;
                 self.saved_identity = saved_identity;
                 self.saved_unowned_pending = saved_unowned_pending;
-                self.base_generation = saved_generation + 1;
-                self.generations.clear();
+                self.generation = saved_generation + 1;
                 fx.push(StoreEffect::Prepare { format_change: true });
                 fx.push(open(saved_epoch, saved_generation + 1, saved_identity, saved_unowned_pending));
             }

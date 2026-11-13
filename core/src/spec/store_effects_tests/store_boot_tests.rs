@@ -16,7 +16,7 @@ fn store_boot_opens_lifecycle_with_the_saved_state() {
         let mut twin = Twin::new();
         let Some(StoreEffect::OpenLifecycle(opened)) = twin.boot(found.clone(), saved, false, revision) else { panic!("{found:?}: the boot opens Lifecycle") };
         assert_eq!((opened.saved_epoch, opened.saved_generation, opened.saved_identity), message, "{found:?}: the cache of a changed model set is erased in the Boot transaction, the generation grows");
-        assert_eq!((twin.state().generation("Moment"), twin.state().revision()), (generation, state_revision), "{found:?}");
+        assert_eq!((twin.state().generation(), twin.state().revision()), (generation, state_revision), "{found:?}");
     }
 }
 

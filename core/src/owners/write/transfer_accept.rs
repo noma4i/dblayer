@@ -429,10 +429,6 @@ impl TransferState {
         match reason {
             RejectReason::Storage(_) => self.backoff_restore(id, fx),
             RejectReason::Invalid(_) => self.staged_restored(id, fx),
-            RejectReason::StaleGeneration { generations, .. } => {
-                self.generations.extend(generations);
-                self.write_restored(id, fx);
-            }
             RejectReason::Closed | RejectReason::NoSession => self.interrupt(id, super::outbox_types::end_cause(&reason), fx),
         }
     }
