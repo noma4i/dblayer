@@ -402,14 +402,14 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             let id_param = if singleton { String::new() } else { "id: String, ".to_string() };
             let params = upload_args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, true), arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
             let params = if params.is_empty() { String::new() } else { format!(", {params}") };
-            writeln!(out, "    nonisolated(nonsending) public static func {method}({id_param}source: String{params}, in scope_: AccountScope) async throws -> MutationReceipt<Self> {{\n        {} variables_: [String: JSONValue] = [:]", if upload_args.is_empty() { "let" } else { "var" }).unwrap();
+            writeln!(out, "    nonisolated(nonsending) public static func {method}({id_param}source: String{params}, prepare: Prepare? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> MutationReceipt<Self> {{\n        {} variables_: [String: JSONValue] = [:]", if upload_args.is_empty() { "let" } else { "var" }).unwrap();
             for (arg, kind) in &upload_args {
                 if kind.ends_with('?') { writeln!(out, "        if let value = {printed} {{ variables_[\"{arg}\"] = try JSONValue.encode(value) }}", printed = identifier(arg, true)).unwrap(); }
                 else { writeln!(out, "        variables_[\"{arg}\"] = try JSONValue.encode({printed})", printed = identifier(arg, true)).unwrap(); }
             }
-            writeln!(out, "        return try await scope_.upload(Self.self, id: {}, action: \"{}\", UploadRequest(path: source, variables: variables_))\n    }}", if singleton { "\"singleton\"" } else { "id" }, action.name).unwrap();
+            writeln!(out, "        return try await scope_.upload(Self.self, id: {}, action: \"{}\", UploadRequest(path: source, variables: variables_, prepare: prepare, maxBytes: maxBytes))\n    }}", if singleton { "\"singleton\"" } else { "id" }, action.name).unwrap();
             writeln!(out, "    nonisolated(nonsending) public func {method}(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {{\n        try await scope_.upload(Self.self, id: id, action: \"{}\", request)\n    }}", action.name).unwrap();
-            writeln!(out, "    nonisolated(nonsending) public static func stage{}(source: String, in scope_: AccountScope) async throws -> StagedUpload<Self> {{\n        try await scope_.stage(Self.self, action: \"{}\", UploadRequest(path: source))\n    }}", upper_first(&method), action.name).unwrap();
+            writeln!(out, "    nonisolated(nonsending) public static func stage{}(source: String, prepare: Prepare? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> StagedUpload<Self> {{\n        try await scope_.stage(Self.self, action: \"{}\", UploadRequest(path: source, prepare: prepare, maxBytes: maxBytes))\n    }}", upper_first(&method), action.name).unwrap();
         }
         out.push_str("}\n\n");
         for action in model.actions.iter().filter(|action| (action.upload && action.batch.is_none()) || action.returns.is_some()) {
@@ -491,8 +491,8 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             let params = upload_args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
             let params = if params.is_empty() { String::new() } else { format!(", {params}") };
             let variables = upload_args.iter().map(|(arg, kind)| if kind.ends_with('?') { format!("if ({printed} != null) this.put(\"{arg}\", jsonValue({printed}))", printed = identifier(arg, false)) } else { format!("this.put(\"{arg}\", jsonValue({printed}))", printed = identifier(arg, false)) }).collect::<Vec<_>>().join("; ");
-            writeln!(out, "        suspend fun {method}({ACCOUNT}: AccountScope{id_param}, source: String{params}): MutationReceipt<{class}> =\n            {ACCOUNT}.upload(this, {}, \"{}\", UploadRequest(source, variables = buildJsonObject {{ {variables} }}))", if singleton { "\"singleton\"" } else { "id" }, action.name).unwrap();
-            writeln!(out, "        suspend fun stage{}({ACCOUNT}: AccountScope, source: String): StagedUpload<{class}> =\n            {ACCOUNT}.stage({class}, \"{}\", UploadRequest(source))", upper_first(&method), action.name).unwrap();
+            writeln!(out, "        suspend fun {method}({ACCOUNT}: AccountScope{id_param}, source: String{params}, prepare: Prepare? = null, maxBytes: ULong? = null): MutationReceipt<{class}> =\n            {ACCOUNT}.upload(this, {}, \"{}\", UploadRequest(source, variables = buildJsonObject {{ {variables} }}, prepare = prepare, maxBytes = maxBytes))", if singleton { "\"singleton\"" } else { "id" }, action.name).unwrap();
+            writeln!(out, "        suspend fun stage{}({ACCOUNT}: AccountScope, source: String, prepare: Prepare? = null, maxBytes: ULong? = null): StagedUpload<{class}> =\n            {ACCOUNT}.stage({class}, \"{}\", UploadRequest(source, prepare = prepare, maxBytes = maxBytes))", upper_first(&method), action.name).unwrap();
         }
         let fields = writable_fields(model);
         let create_fields = create_fields(model, &fields);

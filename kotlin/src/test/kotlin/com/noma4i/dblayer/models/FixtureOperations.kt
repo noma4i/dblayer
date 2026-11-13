@@ -46,10 +46,10 @@ data class Clip(
         fun createFileVariables(widgets: List<StickerWidgetInput>? = null): JsonObject = buildJsonObject {
             if (widgets != null) this.put("widgets", jsonValue(widgets))
         }
-        suspend fun createFile(account: AccountScope, id: String, source: String, widgets: List<StickerWidgetInput>? = null): MutationReceipt<Clip> =
-            account.upload(this, id, "create_file", UploadRequest(source, variables = buildJsonObject { if (widgets != null) this.put("widgets", jsonValue(widgets)) }))
-        suspend fun stageCreateFile(account: AccountScope, source: String): StagedUpload<Clip> =
-            account.stage(Clip, "create_file", UploadRequest(source))
+        suspend fun createFile(account: AccountScope, id: String, source: String, widgets: List<StickerWidgetInput>? = null, prepare: Prepare? = null, maxBytes: ULong? = null): MutationReceipt<Clip> =
+            account.upload(this, id, "create_file", UploadRequest(source, variables = buildJsonObject { if (widgets != null) this.put("widgets", jsonValue(widgets)) }, prepare = prepare, maxBytes = maxBytes))
+        suspend fun stageCreateFile(account: AccountScope, source: String, prepare: Prepare? = null, maxBytes: ULong? = null): StagedUpload<Clip> =
+            account.stage(Clip, "create_file", UploadRequest(source, prepare = prepare, maxBytes = maxBytes))
         suspend fun create(title: String? = null, account: AccountScope? = null): MutationReceipt<Clip> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 title?.let { this.put("title", jsonValue(it)) }

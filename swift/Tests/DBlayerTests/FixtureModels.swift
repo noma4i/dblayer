@@ -314,15 +314,15 @@ public struct Asset: DBModel {
         if let value = position { values_["position"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
     }
-    nonisolated(nonsending) public static func createFile(id: String, source: String, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
+    nonisolated(nonsending) public static func createFile(id: String, source: String, prepare: Prepare? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         let variables_: [String: JSONValue] = [:]
-        return try await scope_.upload(Self.self, id: id, action: "create_file", UploadRequest(path: source, variables: variables_))
+        return try await scope_.upload(Self.self, id: id, action: "create_file", UploadRequest(path: source, variables: variables_, prepare: prepare, maxBytes: maxBytes))
     }
     nonisolated(nonsending) public func createFile(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(Self.self, id: id, action: "create_file", request)
     }
-    nonisolated(nonsending) public static func stageCreateFile(source: String, in scope_: AccountScope) async throws -> StagedUpload<Self> {
-        try await scope_.stage(Self.self, action: "create_file", UploadRequest(path: source))
+    nonisolated(nonsending) public static func stageCreateFile(source: String, prepare: Prepare? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> StagedUpload<Self> {
+        try await scope_.stage(Self.self, action: "create_file", UploadRequest(path: source, prepare: prepare, maxBytes: maxBytes))
     }
 }
 
@@ -590,25 +590,25 @@ public struct Container: DBModel {
         public static let records = Association<Container, Record>("records")
         public static let lastRecord = Association<Container, Record>("lastRecord")
     }
-    nonisolated(nonsending) public static func createPhoto(id: String, source: String, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
+    nonisolated(nonsending) public static func createPhoto(id: String, source: String, prepare: Prepare? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         let variables_: [String: JSONValue] = [:]
-        return try await scope_.upload(Self.self, id: id, action: "create_photo", UploadRequest(path: source, variables: variables_))
+        return try await scope_.upload(Self.self, id: id, action: "create_photo", UploadRequest(path: source, variables: variables_, prepare: prepare, maxBytes: maxBytes))
     }
     nonisolated(nonsending) public func createPhoto(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(Self.self, id: id, action: "create_photo", request)
     }
-    nonisolated(nonsending) public static func stageCreatePhoto(source: String, in scope_: AccountScope) async throws -> StagedUpload<Self> {
-        try await scope_.stage(Self.self, action: "create_photo", UploadRequest(path: source))
+    nonisolated(nonsending) public static func stageCreatePhoto(source: String, prepare: Prepare? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> StagedUpload<Self> {
+        try await scope_.stage(Self.self, action: "create_photo", UploadRequest(path: source, prepare: prepare, maxBytes: maxBytes))
     }
-    nonisolated(nonsending) public static func updatePhoto(id: String, source: String, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
+    nonisolated(nonsending) public static func updatePhoto(id: String, source: String, prepare: Prepare? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         let variables_: [String: JSONValue] = [:]
-        return try await scope_.upload(Self.self, id: id, action: "update_photo", UploadRequest(path: source, variables: variables_))
+        return try await scope_.upload(Self.self, id: id, action: "update_photo", UploadRequest(path: source, variables: variables_, prepare: prepare, maxBytes: maxBytes))
     }
     nonisolated(nonsending) public func updatePhoto(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(Self.self, id: id, action: "update_photo", request)
     }
-    nonisolated(nonsending) public static func stageUpdatePhoto(source: String, in scope_: AccountScope) async throws -> StagedUpload<Self> {
-        try await scope_.stage(Self.self, action: "update_photo", UploadRequest(path: source))
+    nonisolated(nonsending) public static func stageUpdatePhoto(source: String, prepare: Prepare? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> StagedUpload<Self> {
+        try await scope_.stage(Self.self, action: "update_photo", UploadRequest(path: source, prepare: prepare, maxBytes: maxBytes))
     }
 }
 
@@ -1163,15 +1163,15 @@ public struct Moment: DBModel {
         let values_ = try JSONValue.readObject(#"{}"#)
         return try await self.act("share", values: values_, args: [:], in: scope_)
     }
-    nonisolated(nonsending) public static func uploadClip(id: String, source: String, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
+    nonisolated(nonsending) public static func uploadClip(id: String, source: String, prepare: Prepare? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         let variables_: [String: JSONValue] = [:]
-        return try await scope_.upload(Self.self, id: id, action: "upload_clip", UploadRequest(path: source, variables: variables_))
+        return try await scope_.upload(Self.self, id: id, action: "upload_clip", UploadRequest(path: source, variables: variables_, prepare: prepare, maxBytes: maxBytes))
     }
     nonisolated(nonsending) public func uploadClip(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(Self.self, id: id, action: "upload_clip", request)
     }
-    nonisolated(nonsending) public static func stageUploadClip(source: String, in scope_: AccountScope) async throws -> StagedUpload<Self> {
-        try await scope_.stage(Self.self, action: "upload_clip", UploadRequest(path: source))
+    nonisolated(nonsending) public static func stageUploadClip(source: String, prepare: Prepare? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> StagedUpload<Self> {
+        try await scope_.stage(Self.self, action: "upload_clip", UploadRequest(path: source, prepare: prepare, maxBytes: maxBytes))
     }
 }
 
@@ -1816,17 +1816,17 @@ public struct CurrentUser: DBSingleton {
         if let value = name { values_["name"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
     }
-    nonisolated(nonsending) public static func updatePhoto(source: String, keepOld: Bool? = nil, skipAssign: Bool? = nil, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
+    nonisolated(nonsending) public static func updatePhoto(source: String, keepOld: Bool? = nil, skipAssign: Bool? = nil, prepare: Prepare? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         var variables_: [String: JSONValue] = [:]
         if let value = keepOld { variables_["keepOld"] = try JSONValue.encode(value) }
         if let value = skipAssign { variables_["skipAssign"] = try JSONValue.encode(value) }
-        return try await scope_.upload(Self.self, id: "singleton", action: "update_photo", UploadRequest(path: source, variables: variables_))
+        return try await scope_.upload(Self.self, id: "singleton", action: "update_photo", UploadRequest(path: source, variables: variables_, prepare: prepare, maxBytes: maxBytes))
     }
     nonisolated(nonsending) public func updatePhoto(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(Self.self, id: id, action: "update_photo", request)
     }
-    nonisolated(nonsending) public static func stageUpdatePhoto(source: String, in scope_: AccountScope) async throws -> StagedUpload<Self> {
-        try await scope_.stage(Self.self, action: "update_photo", UploadRequest(path: source))
+    nonisolated(nonsending) public static func stageUpdatePhoto(source: String, prepare: Prepare? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> StagedUpload<Self> {
+        try await scope_.stage(Self.self, action: "update_photo", UploadRequest(path: source, prepare: prepare, maxBytes: maxBytes))
     }
 }
 

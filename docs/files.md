@@ -443,3 +443,5 @@ let confirmed = try await sent.confirmed()
 val sent = CurrentUser.updatePhoto(scope, source = path, createInitialMoment = true)
 val confirmed = sent.confirmed()
 ```
+
+The generated upload helpers and the `stage` helpers take `prepare` and `maxBytes` like `UploadRequest`.

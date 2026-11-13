@@ -5,6 +5,7 @@
 ### Added
 
 - recodeAboveBytes in the video limits: a smaller video is not encoded again.
+- prepare and maxBytes on the generated upload and stage helpers.
 
 ## 6.34.1 - 2026-11-14
 
