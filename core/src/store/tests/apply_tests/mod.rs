@@ -136,11 +136,11 @@ fn destroying_unknown_row_still_tombstones_it() {
 fn destroy_replaced_moves_membership_to_successor_without_tombstone() {
     let (store, _) = booted_store();
     let thread = scope("messages", "thread");
-    commit(&store, vec![upsert("messages", message("temp-1", "c1"))], vec![append(&thread, "temp-1", "k1")]);
+    commit(&store, vec![upsert("messages", message("temp-00000000-0000-0000-0000-310000000000", "c1"))], vec![append(&thread, "temp-00000000-0000-0000-0000-310000000000", "k1")]);
     let result = commit(
         &store,
         vec![
-            destroy("messages", "temp-1", DestroyReason::Replaced { by: id("m1") }),
+            destroy("messages", "temp-00000000-0000-0000-0000-310000000000", DestroyReason::Replaced { by: id("m1") }),
             upsert("messages", message("m1", "c1")),
         ],
         vec![],
@@ -149,9 +149,9 @@ fn destroy_replaced_moves_membership_to_successor_without_tombstone() {
         store.scope_members("messages", thread.key.as_str()).unwrap(),
         vec![("m1".to_string(), "k1".to_string())]
     );
-    assert!(!store.is_tombstoned("messages", "temp-1").unwrap());
+    assert!(!store.is_tombstoned("messages", "temp-00000000-0000-0000-0000-310000000000").unwrap());
     assert!(result.scopes.contains(&thread));
-    assert_eq!(result.replaced, vec![(crate::identity::RowRef::new(model("messages"), id("temp-1")), id("m1"))]);
+    assert_eq!(result.replaced, vec![(crate::identity::RowRef::new(model("messages"), id("temp-00000000-0000-0000-0000-310000000000")), id("m1"))]);
 }
 
 #[test]

@@ -18,7 +18,7 @@ fn inv_id_07_temp_ids_are_recognised_and_unique() {
     assert!(prefixed.as_str().starts_with("temp-message-"));
     assert_ne!(plain, RowId::generate_temp(None));
     assert!(!RowId::new("server-1").unwrap().is_temp());
-    assert!(RowId::new("temp-123").unwrap().is_temp());
+    assert!(!RowId::new("temp-123").unwrap().is_temp());
     let many: std::collections::BTreeSet<RowId> = (0..10_000).map(|_| RowId::generate_temp(None)).collect();
     assert_eq!(many.len(), 10_000);
     assert!(many.iter().all(RowId::is_temp));

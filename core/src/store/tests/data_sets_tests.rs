@@ -254,8 +254,8 @@ fn data_sets_recovered_at_open() {
     let path = directory.path().join("recovered.sqlite");
     {
         let db = with_confirmed_child(&path);
-        write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::LocalRows { model: "messages".into(), rows: vec![message("temp-1", 5)] }]);
-        assert_eq!(stored_sets(&db).id.as_deref(), Some("temp-1"), "the prediction moved the pointer before the process was killed");
+        write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::LocalRows { model: "messages".into(), rows: vec![message("temp-00000000-0000-0000-0000-310000000000", 5)] }]);
+        assert_eq!(stored_sets(&db).id.as_deref(), Some("temp-00000000-0000-0000-0000-310000000000"), "the prediction moved the pointer before the process was killed");
     }
     let db = reopened_at(&path);
     assert_eq!(temp_rows(&db), 0, "the open removed the row of the lost operation");
@@ -270,16 +270,16 @@ fn data_sets_recovered_at_open_returned() {
     let path = directory.path().join("returned.sqlite");
     {
         let db = with_confirmed_child(&path);
-        intent_creating(&db, 7, &message("temp-2", 6));
-        assert_eq!(stored_sets(&db).id.as_deref(), Some("temp-2"), "the operation predicts the child");
-        crate::store::fixtures::exec(&db, "DELETE FROM row_messages WHERE id = 'temp-2'");
-        crate::store::fixtures::exec(&db, "UPDATE op SET temp_id = 'temp-2' WHERE seq = 7");
+        intent_creating(&db, 7, &message("temp-00000000-0000-0000-0000-320000000000", 6));
+        assert_eq!(stored_sets(&db).id.as_deref(), Some("temp-00000000-0000-0000-0000-320000000000"), "the operation predicts the child");
+        crate::store::fixtures::exec(&db, "DELETE FROM row_messages WHERE id = 'temp-00000000-0000-0000-0000-320000000000'");
+        crate::store::fixtures::exec(&db, "UPDATE op SET temp_id = 'temp-00000000-0000-0000-0000-320000000000' WHERE seq = 7");
         write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "chats".into(), rows: vec![parent_value(json!({"lastMessageId": "m1", "lastMessageAt": 1}))] }]);
         assert_eq!(stored_sets(&db).id.as_deref(), Some("m1"), "the parent counts the children that are stored");
     }
     let db = reopened_at(&path);
     assert_eq!(temp_rows(&db), 1, "the open returned the row of the open operation");
-    assert_eq!(stored_sets(&db), shown("temp-2", 6, None, "temp-2"), "the fields of the parent count the returned child");
+    assert_eq!(stored_sets(&db), shown("temp-00000000-0000-0000-0000-320000000000", 6, None, "temp-00000000-0000-0000-0000-320000000000"), "the fields of the parent count the returned child");
 }
 
 pub(super) fn parent_operation(db: &Arc<Store>, op_id: u64, action: &str, row: &RowValue) {
@@ -305,8 +305,8 @@ fn data_sets_destroy_marks_the_parent_stale_only_for_the_sql_winner() {
         ("the winner with NULLs", &nulls, "m2", true, "m1"),
         ("a child with the newer time and no number", &nulls, "m3", false, "m2"),
         ("a child with the lower number", &nulls, "m4", false, "m2"),
-        ("a confirmed child with the larger id behind a temporary one", &[("zz", 5, None), ("temp-1", 5, None)], "zz", false, "temp-1"),
-        ("the temporary winner", &[("zz", 5, None), ("temp-1", 5, None)], "temp-1", true, "zz"),
+        ("a confirmed child with the larger id behind a temporary one", &[("zz", 5, None), ("temp-00000000-0000-0000-0000-310000000000", 5, None)], "zz", false, "temp-00000000-0000-0000-0000-310000000000"),
+        ("the temporary winner", &[("zz", 5, None), ("temp-00000000-0000-0000-0000-310000000000", 5, None)], "temp-00000000-0000-0000-0000-310000000000", true, "zz"),
         ("the larger number beyond 2^53 before the id", large, "6", true, "7"),
         ("the smaller number beyond 2^53 behind the larger id", large, "7", false, "6"),
     ];

@@ -179,12 +179,12 @@ fn store_relevant_version_includes_deferred_parent() {
     let mut work = Work::new(2);
     work.put(0, "r0", "root");
     work.notices.lock().unwrap().clear();
-    let deferred = d::Deferred { temps: vec![(model(1), "temp-1".into())], rebind: d::Rebind::new(|| None) };
+    let deferred = d::Deferred { temps: vec![(model(1), "temp-00000000-0000-0000-0000-310000000000".into())], rebind: d::Rebind::new(|| None) };
     let read = work.step(DeliveryInput::Open { stream: 1, view: view(0), epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: Some(deferred) }).pop().unwrap();
     let done = work.answer(read);
     work.feed(done);
     work.pull(1);
-    work.put(1, "temp-1", "parent");
+    work.put(1, "temp-00000000-0000-0000-0000-310000000000", "parent");
     let notice = work.notices.lock().unwrap().pop().unwrap();
     let revision = i64::try_from(notice.revision).unwrap();
     let read = work.step(DeliveryInput::Committed(notice.for_deliveries())).pop().expect("the deferred parent wakes the stream");

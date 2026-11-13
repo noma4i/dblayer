@@ -32,14 +32,14 @@ fn object(text: &str) -> serde_json::Map<String, serde_json::Value> { serde_json
 #[test]
 fn out_sending_response_batch_items() {
     let waiting = vec![
-        ("temp-a".to_string(), object(r#"{"clientKey":"a"}"#)),
-        ("temp-b".to_string(), object(r#"{"clientKey":"b"}"#)),
-        ("temp-c".to_string(), object(r#"{"clientKey":"c"}"#)),
-        ("temp-d".to_string(), object(r#"{"clientKey":"c"}"#)),
+        ("temp-00000000-0000-0000-0000-610000000000".to_string(), object(r#"{"clientKey":"a"}"#)),
+        ("temp-00000000-0000-0000-0000-620000000000".to_string(), object(r#"{"clientKey":"b"}"#)),
+        ("temp-00000000-0000-0000-0000-630000000000".to_string(), object(r#"{"clientKey":"c"}"#)),
+        ("temp-00000000-0000-0000-0000-640000000000".to_string(), object(r#"{"clientKey":"c"}"#)),
     ];
     let correlate = vec!["clientKey".to_string()];
     let answer = vec![object(r#"{"id":"2","clientKey":"b"}"#), object(r#"{"id":"1","clientKey":"a"}"#), object(r#"{"id":"3","clientKey":"c"}"#), object(r#"{"id":"9","clientKey":"zz"}"#)];
-    assert_eq!(pair_by_key(&correlate, &waiting, &answer), vec![("temp-b".to_string(), "2".to_string()), ("temp-a".to_string(), "1".to_string())]);
+    assert_eq!(pair_by_key(&correlate, &waiting, &answer), vec![("temp-00000000-0000-0000-0000-620000000000".to_string(), "2".to_string()), ("temp-00000000-0000-0000-0000-610000000000".to_string(), "1".to_string())]);
 }
 
 #[test]

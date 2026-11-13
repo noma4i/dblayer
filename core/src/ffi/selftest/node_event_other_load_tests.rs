@@ -145,3 +145,14 @@ async fn a_lost_subscription_rereads_the_rows_with_open_readers() {
     }
     assert_eq!(table, vec![(false, 1, Some(false)), (true, 1, Some(false))], "(the server closes the cable, node requests after the reconnect, value of the reader)");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_id_that_only_starts_with_temp_is_read_from_the_server() {
+    let world = World::new("server", "A", true);
+    let (database, _, _) = open(world.clone()).await;
+    let epoch = database.session_epoch();
+    world.answer_with("PresenceNode", json!({"data":{"node":{"__typename":"Presence","id":"temp-report","online":true}}}));
+    let row = bound(database.node(epoch, "Presence".into(), "node".into(), "temp-report".into(), true)).await.unwrap();
+    assert_eq!((world.count("PresenceNode"), row.map(|row| row.id)), (1, Some("temp-report".to_string())));
+    bound(database.close_database()).await.unwrap();
+}

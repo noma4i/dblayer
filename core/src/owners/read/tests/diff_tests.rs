@@ -69,16 +69,16 @@ fn a_changed_related_row_marks_the_parent_updated() {
 
 #[test]
 fn a_replaced_pair_is_neither_removed_nor_inserted() {
-    let diff = Diff::between(&entries(&[("temp-1", 1), ("b", 1)]), &entries(&[("r1", 2), ("b", 1)]), &[(id("temp-1"), id("r1"))]);
-    assert_eq!(diff.replaced, vec![(id("temp-1"), id("r1"))]);
+    let diff = Diff::between(&entries(&[("temp-00000000-0000-0000-0000-310000000000", 1), ("b", 1)]), &entries(&[("r1", 2), ("b", 1)]), &[(id("temp-00000000-0000-0000-0000-310000000000"), id("r1"))]);
+    assert_eq!(diff.replaced, vec![(id("temp-00000000-0000-0000-0000-310000000000"), id("r1"))]);
     assert!(diff.inserted.is_empty() && diff.removed.is_empty() && diff.updated.is_empty() && diff.moved.is_empty());
 }
 
 #[test]
 fn a_replaced_pair_without_the_new_row_is_ignored() {
-    let diff = Diff::between(&entries(&[("temp-1", 1)]), &entries(&[("z", 1)]), &[(id("temp-1"), id("r1"))]);
+    let diff = Diff::between(&entries(&[("temp-00000000-0000-0000-0000-310000000000", 1)]), &entries(&[("z", 1)]), &[(id("temp-00000000-0000-0000-0000-310000000000"), id("r1"))]);
     assert!(diff.replaced.is_empty());
-    assert_eq!(diff.removed, ids(&["temp-1"]));
+    assert_eq!(diff.removed, ids(&["temp-00000000-0000-0000-0000-310000000000"]));
     assert_eq!(diff.inserted, ids(&["z"]));
 }
 

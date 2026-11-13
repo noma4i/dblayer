@@ -62,11 +62,11 @@ fn remove_pair_and_remove_row_delete_only_their_files() {
 #[test]
 fn move_row_hands_files_to_the_new_id_and_replaces_a_clash() {
     let connection = connection();
-    put(&connection, &record("f1", "temp-1", "media", Location::Table, b"1")).unwrap();
+    put(&connection, &record("f1", "temp-00000000-0000-0000-0000-310000000000", "media", Location::Table, b"1")).unwrap();
     put(&connection, &record("f2", "m9", "media", Location::Table, b"2")).unwrap();
-    assert_eq!(move_row(&connection, "moments", "temp-1", "m9").unwrap(), 1);
+    assert_eq!(move_row(&connection, "moments", "temp-00000000-0000-0000-0000-310000000000", "m9").unwrap(), 1);
     assert_eq!(find(&connection, "moments", "m9", "media").unwrap().unwrap().id, "f1");
-    assert_eq!(find(&connection, "moments", "temp-1", "media").unwrap(), None);
+    assert_eq!(find(&connection, "moments", "temp-00000000-0000-0000-0000-310000000000", "media").unwrap(), None);
 }
 
 #[test]

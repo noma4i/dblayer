@@ -521,11 +521,11 @@ fn a_format_change_keeps_the_fate_of_the_temporary_ids() {
     let path = directory.path().join("a.sqlite");
     {
         let (store, _) = reopen(&path, &[messages_spec()]);
-        exec(&store, "INSERT INTO row_alias (model, temp, real) VALUES ('messages', 'temp-landed', 'm7'), ('messages', 'temp-ended', NULL); UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
+        exec(&store, "INSERT INTO row_alias (model, temp, real) VALUES ('messages', 'temp-00000000-0000-0000-0000-6c616e646564', 'm7'), ('messages', 'temp-00000000-0000-0000-0000-656e64656400', NULL); UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
     }
     let (store, report) = reopen(&path, &[messages_spec()]);
     assert_eq!(report.recreated, Some(crate::store::ddl::RecreateReason::CoreFormat));
-    let resolved: Vec<String> = ["temp-landed", "temp-ended"].iter().map(|id| store.resolve("messages", &crate::identity::RowId::new(id).unwrap()).unwrap().as_str().to_string()).collect();
+    let resolved: Vec<String> = ["temp-00000000-0000-0000-0000-6c616e646564", "temp-00000000-0000-0000-0000-656e64656400"].iter().map(|id| store.resolve("messages", &crate::identity::RowId::new(id).unwrap()).unwrap().as_str().to_string()).collect();
     let restore = store.read_restore().unwrap();
-    assert_eq!((resolved, restore.aliases.into_iter().collect::<Vec<_>>(), restore.ended_temps.into_iter().collect::<Vec<_>>()), (vec!["m7".to_string(), "temp-ended".to_string()], vec![(("messages".to_string(), "temp-landed".to_string()), "m7".to_string())], vec!["temp-ended".to_string()]));
+    assert_eq!((resolved, restore.aliases.into_iter().collect::<Vec<_>>(), restore.ended_temps.into_iter().collect::<Vec<_>>()), (vec!["m7".to_string(), "temp-00000000-0000-0000-0000-656e64656400".to_string()], vec![(("messages".to_string(), "temp-00000000-0000-0000-0000-6c616e646564".to_string()), "m7".to_string())], vec!["temp-00000000-0000-0000-0000-656e64656400".to_string()]));
 }

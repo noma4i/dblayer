@@ -81,11 +81,11 @@ fn destroying_a_row_deletes_its_files_unless_a_local_destroy_holds_them() {
 #[test]
 fn replacing_a_row_hands_its_files_to_the_new_id() {
     let (store, _) = booted_store();
-    store.commit(with_files(vec![upsert("messages", message("temp-1", "c1"))], vec![FileOp::Put(file("f1", "temp-1", "media", b"x"))])).unwrap();
-    let ops = vec![destroy("messages", "temp-1", DestroyReason::Replaced { by: id("m7") }), upsert("messages", message("m7", "c1"))];
+    store.commit(with_files(vec![upsert("messages", message("temp-00000000-0000-0000-0000-310000000000", "c1"))], vec![FileOp::Put(file("f1", "temp-00000000-0000-0000-0000-310000000000", "media", b"x"))])).unwrap();
+    let ops = vec![destroy("messages", "temp-00000000-0000-0000-0000-310000000000", DestroyReason::Replaced { by: id("m7") }), upsert("messages", message("m7", "c1"))];
     store.commit(envelope(ops, vec![])).unwrap();
     assert_eq!(stored(&store, "m7", "media").unwrap().id, "f1");
-    assert!(stored(&store, "temp-1", "media").is_none());
+    assert!(stored(&store, "temp-00000000-0000-0000-0000-310000000000", "media").is_none());
 }
 
 #[test]

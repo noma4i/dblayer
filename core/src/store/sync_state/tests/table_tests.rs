@@ -66,12 +66,12 @@ fn recompute_writes_a_row_for_an_open_operation_and_reports_the_change_once() {
 #[test]
 fn recompute_removes_the_row_when_no_operation_is_open() {
     let connection = database();
-    let seq = insert(&connection, "moments:create", "pending", r#"["temp-1"]"#, r#"{"id":"temp-1"}"#);
-    let wanted = keys(&[key("moments", "temp-1")]);
+    let seq = insert(&connection, "moments:create", "pending", r#"["temp-00000000-0000-0000-0000-310000000000"]"#, r#"{"id":"temp-00000000-0000-0000-0000-310000000000"}"#);
+    let wanted = keys(&[key("moments", "temp-00000000-0000-0000-0000-310000000000")]);
     recompute_sync(&connection, &wanted).unwrap();
     connection.execute("DELETE FROM op WHERE seq = ?1", [seq]).unwrap();
     assert_eq!(recompute_sync(&connection, &wanted).unwrap(), wanted);
-    assert_eq!(info(&connection, "moments", "temp-1"), None);
+    assert_eq!(info(&connection, "moments", "temp-00000000-0000-0000-0000-310000000000"), None);
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn recompute_only_touches_the_asked_keys() {
 
 #[test]
 fn operation_with_a_temp_id_and_row_ids_gives_one_row_for_each_distinct_id() {
-    assert_eq!(operation_keys("moments:create", &[crate::identity::RowId::new("temp-1").unwrap()], crate::identity::RowId::new("temp-1").ok().as_ref()), [key("moments", "temp-1")]);
+    assert_eq!(operation_keys("moments:create", &[crate::identity::RowId::new("temp-00000000-0000-0000-0000-310000000000").unwrap()], crate::identity::RowId::new("temp-00000000-0000-0000-0000-310000000000").ok().as_ref()), [key("moments", "temp-00000000-0000-0000-0000-310000000000")]);
     assert!(operation_keys("broken", &[crate::identity::RowId::new("a").unwrap()], None).is_empty());
 }
 

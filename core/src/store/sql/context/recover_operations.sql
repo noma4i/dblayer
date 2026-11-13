@@ -1,1 +1,1 @@
-SELECT id FROM {table} WHERE id LIKE '{}%'
+SELECT id FROM {table} WHERE NOT ({flag})

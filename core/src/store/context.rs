@@ -178,7 +178,7 @@ fn recover_operations(store: &Store, models: &[ModelSpec], restore_rows: bool) -
         let mut open_row_ids: HashSet<RowRef> = HashSet::new();
         for spec in models {
             let table = table_name(spec.key.as_str());
-            let mut statement = inner.connection.prepare(&format!(include_str!("sql/context/recover_operations.sql"), crate::identity::TEMP_ID_PREFIX, table = table))?;
+            let mut statement = inner.connection.prepare(&format!(include_str!("sql/context/recover_operations.sql"), flag = crate::identity::permanent_row_flag("id"), table = table))?;
             let ids = statement.query_map([], |row| row.get::<_, String>(0))?;
             for id in ids {
                 temp_rows.insert(RowRef::new(spec.key.clone(), crate::store::operation::stored_row_id(&id?)?));

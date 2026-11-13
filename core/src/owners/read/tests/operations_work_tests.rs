@@ -117,16 +117,16 @@ fn alias_work(size: usize) -> usize {
     let db = Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     for index in 0..size {
         crate::store::fixtures::put(&db, "moments", json!({"id":format!("r{index}"), "userId":"u1"}));
-        db.lock().connection.execute("INSERT INTO row_alias (model, temp, real) VALUES (?1, ?2, ?3)", rusqlite::params!["moments", format!("temp-{index}"), format!("r{index}")]).unwrap();
+        db.lock().connection.execute("INSERT INTO row_alias (model, temp, real) VALUES (?1, ?2, ?3)", rusqlite::params!["moments", format!("temp-00000000-0000-0000-0000-{index:012}"), format!("r{index}")]).unwrap();
     }
-    db.replaced().log_replaced(1, (0..4097).map(|index| ("moments".into(), RowId::new(&format!("temp-log-{index}")).unwrap(), RowId::new(&format!("log-{index}")).unwrap())));
+    db.replaced().log_replaced(1, (0..4097).map(|index| ("moments".into(), RowId::new(&format!("temp-00000000-0000-0000-0001-{index:012}")).unwrap(), RowId::new(&format!("log-{index}")).unwrap())));
     SQL.with(|count| count.set(0));
     db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT, Some(count_sql));
     let query = crate::store::query::Query::new("moments");
     let (_, _, _, _, replaced) = db.read_view(&query, false, 0, 0, None, None, &crate::store::fixtures::list_view(&query), (0, 0)).unwrap();
     db.lock().connection.trace_v2(rusqlite::trace::TraceEventCodes::empty(), None);
     assert_eq!(replaced.len(), size);
-    assert!(replaced.iter().any(|(temp, real)| temp.as_str() == "temp-0" && real.as_str() == "r0"));
+    assert!(replaced.iter().any(|(temp, real)| temp.as_str() == "temp-00000000-0000-0000-0000-000000000000" && real.as_str() == "r0"));
     SQL.with(|count| count.get())
 }
 

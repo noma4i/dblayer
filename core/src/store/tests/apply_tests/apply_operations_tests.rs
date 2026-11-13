@@ -5,8 +5,8 @@ pub(super) fn record(seq: Option<i64>, status: OperationStatus, dedupe: Option<&
         seq,
         action_key: "messages:send".into(),
         status,
-        row_ids: vec![id("temp-1")],
-        temp_id: Some(id("temp-1")),
+        row_ids: vec![id("temp-00000000-0000-0000-0000-310000000000")],
+        temp_id: Some(id("temp-00000000-0000-0000-0000-310000000000")),
         input: json!({"body": "hi"}),
         base_revision: None,
         created_at: 5,
@@ -143,19 +143,19 @@ pub(super) fn synced_rows(result: &crate::store::CommitResult) -> Vec<(String, R
 fn begin_writes_row_sync_in_the_same_commit_and_reports_the_row_as_synced_when_it_has_no_entity_change() {
     let (store, _) = booted_store();
     let result = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))]);
-    assert_eq!(sync_row(&store, "temp-1"), Some("pending:0".into()));
-    assert_eq!(synced_rows(&result), [("temp-1".to_string(), RowChangeKind::Synced)]);
+    assert_eq!(sync_row(&store, "temp-00000000-0000-0000-0000-310000000000"), Some("pending:0".into()));
+    assert_eq!(synced_rows(&result), [("temp-00000000-0000-0000-0000-310000000000".to_string(), RowChangeKind::Synced)]);
     assert!(result.scopes.is_empty());
 }
 
 #[test]
 fn begin_with_an_entity_change_reports_the_row_once_with_its_own_kind() {
     let (store, _) = booted_store();
-    let mut mixed = envelope(vec![upsert("messages", message("temp-1", "c1"))], vec![]);
+    let mut mixed = envelope(vec![upsert("messages", message("temp-00000000-0000-0000-0000-310000000000", "c1"))], vec![]);
     mixed.operation_transitions = vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))];
     let result = store.commit(mixed).unwrap();
-    assert_eq!(synced_rows(&result), [("temp-1".to_string(), RowChangeKind::Inserted)]);
-    assert_eq!(sync_row(&store, "temp-1"), Some("pending:0".into()));
+    assert_eq!(synced_rows(&result), [("temp-00000000-0000-0000-0000-310000000000".to_string(), RowChangeKind::Inserted)]);
+    assert_eq!(sync_row(&store, "temp-00000000-0000-0000-0000-310000000000"), Some("pending:0".into()));
     assert_eq!((result.revision, count(&store, "SELECT COUNT(*) FROM row_messages"), count(&store, "SELECT COUNT(*) FROM op")), (Some(1), 1, 1));
 }
 
@@ -168,10 +168,10 @@ fn inv_op_12_start_fail_and_retry_rewrite_row_sync_and_each_commit_reports_the_r
     transitions(&store, vec![OperationTransition::Attempt { seq, attempts: 1, cycle_id: 1, cause: None }]);
     let failure = OperationFailure::new(FailureKind::Server, "http 503");
     let failed = transitions(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: failure.clone() }]);
-    assert_eq!((sync_row(&store, "temp-1"), synced_rows(&failed).len()), (Some("failed:1".into()), 1));
-    assert_eq!(text(&store, "SELECT error_kind || ':' || error_message FROM row_sync WHERE row_id = 'temp-1'"), Some("server:http 503".to_string()));
+    assert_eq!((sync_row(&store, "temp-00000000-0000-0000-0000-310000000000"), synced_rows(&failed).len()), (Some("failed:1".into()), 1));
+    assert_eq!(text(&store, "SELECT error_kind || ':' || error_message FROM row_sync WHERE row_id = 'temp-00000000-0000-0000-0000-310000000000'"), Some("server:http 503".to_string()));
     transitions(&store, vec![OperationTransition::Retry { seq }]);
-    assert_eq!(sync_row(&store, "temp-1"), Some("pending:0".into()));
+    assert_eq!(sync_row(&store, "temp-00000000-0000-0000-0000-310000000000"), Some("pending:0".into()));
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE error_kind IS NULL AND status = 'pending'"), 1);
 }
 
@@ -181,9 +181,9 @@ fn closing_the_operation_removes_row_sync_and_reports_the_row() {
     let begun = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))]);
     let seq = *begun.operations.iter().next().unwrap();
     let closed = transitions(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Committed }]);
-    assert_eq!(sync_row(&store, "temp-1"), None);
+    assert_eq!(sync_row(&store, "temp-00000000-0000-0000-0000-310000000000"), None);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
-    assert_eq!(synced_rows(&closed), [("temp-1".to_string(), RowChangeKind::Synced)]);
+    assert_eq!(synced_rows(&closed), [("temp-00000000-0000-0000-0000-310000000000".to_string(), RowChangeKind::Synced)]);
 }
 
 #[test]
@@ -195,7 +195,7 @@ fn retargeting_an_operation_moves_row_sync_to_the_new_id() {
     moved.row_ids = vec![id("m7")];
     moved.temp_id = None;
     let result = transitions(&store, vec![OperationTransition::Begin(Box::new(moved))]);
-    assert_eq!((sync_row(&store, "temp-1"), sync_row(&store, "m7")), (None, Some("pending:0".into())));
+    assert_eq!((sync_row(&store, "temp-00000000-0000-0000-0000-310000000000"), sync_row(&store, "m7")), (None, Some("pending:0".into())));
     assert_eq!(result.rows.len(), 2);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
 }

@@ -167,7 +167,7 @@ fn data_orders_ephemeral_write_against_destroy_and_erase() {
 
 #[test]
 fn data_orders_equal_keys_in_every_insertion_order() {
-    let ids = ["b", "a", "temp-9", "temp-1", "c"];
+    let ids = ["b", "a", "temp-00000000-0000-0000-0000-390000000000", "temp-00000000-0000-0000-0000-310000000000", "c"];
     let orders = permutations(&ids);
     assert_eq!(orders.len(), 120);
     for order in orders {
@@ -175,7 +175,7 @@ fn data_orders_equal_keys_in_every_insertion_order() {
         for id in &order { put(&db, "moments", json!({"id": id, "userId": "u1", "text": "same"})); }
         let ordered = Query { order: vec![Order::new("text", SortDirection::Asc)], ..Query::new("moments") };
         let found: Vec<String> = db.query(&ordered).unwrap().iter().map(|row| row.get("id").and_then(Value::as_str).unwrap().to_string()).collect();
-        assert_eq!(found, ["temp-1", "temp-9", "a", "b", "c"], "insertion order {order:?}");
+        assert_eq!(found, ["temp-00000000-0000-0000-0000-310000000000", "temp-00000000-0000-0000-0000-390000000000", "a", "b", "c"], "insertion order {order:?}");
     }
 }
 

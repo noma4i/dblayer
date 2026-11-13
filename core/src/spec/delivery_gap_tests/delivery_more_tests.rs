@@ -8,13 +8,13 @@ fn dlv_count_temp_swap() {
     let resolved = Arc::new(AtomicBool::new(false));
     let ready = resolved.clone();
     let mut temporary = view(Kind::Count);
-    temporary.subject = "temp-parent".into();
+    temporary.subject = "temp-00000000-0000-0000-0000-706172656e74".into();
     let mut real = temporary.clone();
     real.subject = "server-parent".into();
     real.window.name = "server-parent-window".into();
     temporary.remote = false;
     let rebound = real.clone();
-    let deferred = d::Deferred { temps: vec![(temporary.model.clone(), "temp-parent".into())], rebind: d::Rebind::new(move || ready.load(Ordering::SeqCst).then(|| rebound.clone())) };
+    let deferred = d::Deferred { temps: vec![(temporary.model.clone(), "temp-00000000-0000-0000-0000-706172656e74".into())], rebind: d::Rebind::new(move || ready.load(Ordering::SeqCst).then(|| rebound.clone())) };
     twin.post(d::DeliveryInput::Open { stream: STREAM, view: temporary, epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: Some(deferred) });
     let first = Twin::modelled(take(&twin.log));
     assert!(!first.contains(&Effect::InterestPlus), "the temporary id must not open a window");

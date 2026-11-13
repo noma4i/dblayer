@@ -26,7 +26,7 @@ fn dlv_deferred_alias_after_log_evicted() {
     let mut landed = Vec::new();
     let mut swaps = Vec::new();
     for i in 0..4097 {
-        let temp = format!("temp-{i}");
+        let temp = format!("temp-00000000-0000-0000-0000-{i:012}");
         let real = format!("real-{i}");
         initial.push(("moments".into(), json!({"id":temp, "userId":"u1"}).to_string()));
         landed.push(("moments".into(), json!({"id":real, "userId":"u1"}).to_string()));
@@ -39,19 +39,19 @@ fn dlv_deferred_alias_after_log_evicted() {
     for query in [Query::new("moments").filtered(Where::equal("id", json!("real-0"))), Query::new("moments")] {
         let (_, _, _, view, replaced) = db.read_view(&query, false, baseline, baseline, None, None, &crate::store::fixtures::list_view(&query), (baseline, 0)).unwrap();
         assert!(matches!(view, crate::store::lookup::ViewRead::Rows(ref rows, _) if rows.iter().any(|(id, _, _)| id == "real-0")), "the view must contain the real row");
-        assert!(replaced.iter().any(|(temp, real)| temp.as_str() == "temp-0" && real.as_str() == "real-0"), "evicted swap must remain visible: {replaced:?}");
+        assert!(replaced.iter().any(|(temp, real)| temp.as_str() == "temp-00000000-0000-0000-0000-000000000000" && real.as_str() == "real-0"), "evicted swap must remain visible: {replaced:?}");
     }
 }
 
 #[test]
 fn dlv_swap_same_id_other_model() {
     let db = open();
-    write(&db, BatchAuthor::Outbox, vec![("moments".into(), json!({"id":"temp-1", "userId":"u1"}).to_string()), ("users".into(), json!({"id":"temp-1"}).to_string())], vec![]);
+    write(&db, BatchAuthor::Outbox, vec![("moments".into(), json!({"id":"temp-00000000-0000-0000-0000-310000000000", "userId":"u1"}).to_string()), ("users".into(), json!({"id":"temp-00000000-0000-0000-0000-310000000000"}).to_string())], vec![]);
     let query = Query::new("users");
     let baseline = db.read_view(&query, false, 0, 0, None, None, &crate::store::fixtures::list_view(&query), (0, 0)).unwrap().0;
-    write(&db, BatchAuthor::Outbox, vec![("moments".into(), json!({"id":"real-1", "userId":"u1"}).to_string())], vec![StoreOp::Swap { model: "moments".into(), temp: "temp-1".into(), real: "real-1".into() }]);
+    write(&db, BatchAuthor::Outbox, vec![("moments".into(), json!({"id":"real-1", "userId":"u1"}).to_string())], vec![StoreOp::Swap { model: "moments".into(), temp: "temp-00000000-0000-0000-0000-310000000000".into(), real: "real-1".into() }]);
     let (_, _, _, view, replaced) = db.read_view(&query, false, baseline, baseline, None, None, &crate::store::fixtures::list_view(&query), (baseline, 0)).unwrap();
-    assert!(matches!(view, crate::store::lookup::ViewRead::Rows(ref rows, _) if rows.iter().any(|(id, _, _)| id == "temp-1")), "the other model keeps its row");
+    assert!(matches!(view, crate::store::lookup::ViewRead::Rows(ref rows, _) if rows.iter().any(|(id, _, _)| id == "temp-00000000-0000-0000-0000-310000000000")), "the other model keeps its row");
     assert!(replaced.is_empty(), "another model's alias must not be returned: {replaced:?}");
 }
 
@@ -406,16 +406,17 @@ fn inv_row_07_fsck_quarantines_temp_rows_without_an_operation_and_keeps_the_othe
     let kept = crate::identity::RowId::generate_temp(None).to_string();
     {
         let db = Arc::new(Store::open_models(Some(&path), all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
-        put(&db, "moments", json!({"id": "temp-orphan", "userId": "u1", "text": "orphan"}));
+        put(&db, "moments", json!({"id": "temp-00000000-0000-0000-0000-6f727068616e", "userId": "u1", "text": "orphan"}));
         put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "server row"}));
+        put(&db, "moments", json!({"id": "temp-report", "userId": "u1", "text": "server row with a temp- prefix"}));
         let values = json!({"id": kept, "userId": "u1", "text": "queued"}).to_string();
         let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: kept.clone(), values }], ..Default::default() };
         write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id: 1, model: "moments".into(), row_id: kept.clone(), action: "create".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
     }
     let db = Arc::new(Store::open_models(Some(&path), all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     let present = |id: &str| db.read(&["moments"], |reader| reader.point("moments", id)).unwrap().is_some();
-    assert!(!present("temp-orphan"), "a temp row without an operation goes");
-    assert!(present("m1") && present(&kept), "the server row and the row of a queued create stay");
+    assert!(!present("temp-00000000-0000-0000-0000-6f727068616e"), "a temp row without an operation goes");
+    assert!(present("m1") && present("temp-report") && present(&kept), "the server rows and the row of a queued create stay");
     let quarantined: i64 = db.lock().connection.query_row("SELECT COUNT(*) FROM quarantine WHERE reason = 'orphan-temp-row'", [], |row| row.get(0)).unwrap();
     assert_eq!(quarantined, 1);
 }

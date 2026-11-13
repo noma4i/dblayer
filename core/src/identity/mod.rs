@@ -7,10 +7,6 @@ use serde::{Deserialize, Serialize, Serializer};
 
 pub const TEMP_ID_PREFIX: &str = "temp-";
 
-pub fn is_temp_id(id: &str) -> bool {
-    id.starts_with(TEMP_ID_PREFIX)
-}
-
 /// Calls `visit` on every string of `value`, on any depth.
 pub fn walk_strings(value: &mut serde_json::Value, visit: &mut dyn FnMut(&mut String)) {
     match value {
@@ -22,19 +18,21 @@ pub fn walk_strings(value: &mut serde_json::Value, visit: &mut dyn FnMut(&mut St
 }
 
 /// A free value is a temporary id only in the form `RowId::generate_temp` issues: `temp-`, an optional model prefix, a UUID of 36 characters.
-pub fn is_issued_temp_id(text: &str) -> bool {
+pub fn is_temp_id(text: &str) -> bool {
     let Some(uuid) = text.strip_prefix(TEMP_ID_PREFIX).and_then(|rest| rest.len().checked_sub(36).and_then(|from| rest.get(from..))) else { return false };
     uuid.bytes().enumerate().all(|(at, byte)| if matches!(at, 8 | 13 | 18 | 23) { byte == b'-' } else { byte.is_ascii_hexdigit() })
 }
 
 /// Calls `visit` on every string of `value`, on any depth, that is an issued temporary id.
 pub fn walk_temp_ids(value: &mut serde_json::Value, visit: &mut dyn FnMut(&mut String)) {
-    walk_strings(value, &mut |text| if is_issued_temp_id(text) { visit(text) });
+    walk_strings(value, &mut |text| if is_temp_id(text) { visit(text) });
 }
 
-/// 0 for a temporary id: equal order values put it before the permanent rows, as `db::ranked::OrderKey` does. The generated indexes carry the same expression, so an `ORDER BY` with it stays index-served.
+/// 0 for a temporary id in the issued form of `is_temp_id`: equal order values put it before the permanent rows, as `db::ranked::OrderKey` does. The generated indexes carry the same expression, so an `ORDER BY` with it stays index-served.
 pub fn permanent_row_flag(column: &str) -> String {
-    format!("substr({column}, 1, {}) <> '{TEMP_ID_PREFIX}'", TEMP_ID_PREFIX.len())
+    let h4 = "[0-9A-Fa-f]".repeat(4);
+    let (h8, h12) = ("[0-9A-Fa-f]".repeat(8), "[0-9A-Fa-f]".repeat(12));
+    format!("NOT ({column} GLOB '{TEMP_ID_PREFIX}*' AND length({column}) >= 41 AND substr({column}, -36) GLOB '{h8}-{h4}-{h4}-{h4}-{h12}')")
 }
 
 const ID_WIDTH: usize = 20;

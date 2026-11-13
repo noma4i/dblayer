@@ -227,8 +227,8 @@ fn store_owed_kept_by_a_local_write() {
         write_as(db, 3, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::DetachFile { model: "Chat".into(), row_id: "c1".into(), field: "media".into() }]);
     };
     let swap = |db: &Arc<Store>| {
-        put(db, "Chat", json!({"id": "temp-1", "title": "t"}));
-        write_as(db, 2, BatchAuthor::Outbox, vec![("Chat".into(), json!({"id": "c1", "title": "t"}).to_string())], vec![StoreOp::Swap { model: "Chat".into(), temp: "temp-1".into(), real: "c1".into() }]);
+        put(db, "Chat", json!({"id": "temp-00000000-0000-0000-0000-310000000000", "title": "t"}));
+        write_as(db, 2, BatchAuthor::Outbox, vec![("Chat".into(), json!({"id": "c1", "title": "t"}).to_string())], vec![StoreOp::Swap { model: "Chat".into(), temp: "temp-00000000-0000-0000-0000-310000000000".into(), real: "c1".into() }]);
     };
     type Write = Box<dyn Fn(&Arc<Store>)>;
     let writes: [(&str, Write); 3] = [("attach", Box::new(|db: &Arc<Store>| attach(db))), ("detach", Box::new(detach)), ("swap", Box::new(swap))];
