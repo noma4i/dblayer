@@ -19,6 +19,9 @@ pub(crate) const CARRIED_MANIFEST_KEYS: [&str; 6] = ["saved_epoch", "saved_gener
 /// The tables a format change moves into the new layout (`store_boot_format_change`).
 pub(crate) const CARRIED_TABLES: [&str; 18] = ["op", "op_transfer", "transfer_outcome", "op_row", "op_value", "op_error", "encrypted_session", "encrypted_pending", "encrypted_answer", "sync_upload", "sync_upload_part", "sync_upload_prepare", "sync_upload_prepare_step", "local_pending", "restore_failed", "upload_orphan", "sync_upload_batch", "row_alias"];
 
+/// How long a connection of the Store waits for a lock of the file before SQLite answers busy.
+pub(crate) const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
+
 pub const SERVICE_COLUMNS: [&str; 3] = ["id", "revision", "born_rev"];
 
 const FINGERPRINT_PREFIX: &str = "fingerprint:";
@@ -218,6 +221,7 @@ pub fn models_statements(models: &[ModelSpec]) -> Vec<String> {
 }
 
 pub fn prepare_connection(connection: &Connection) -> Result<(), DdlError> {
+    connection.busy_timeout(LOCK_WAIT)?;
     connection.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
     connection.pragma_update(None, "synchronous", "NORMAL")?;
     connection.pragma_update(None, "foreign_keys", "OFF")?;

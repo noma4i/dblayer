@@ -41,6 +41,7 @@ impl Readers {
         for _ in 0..2 {
             let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
             connection.pragma_update(None, "query_only", true)?;
+            connection.busy_timeout(super::ddl::LOCK_WAIT)?;
             connections.push(Mutex::new(connection));
         }
         let idle = Mutex::new((0..connections.len()).collect());
