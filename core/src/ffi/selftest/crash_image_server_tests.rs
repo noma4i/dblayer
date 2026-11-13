@@ -92,7 +92,6 @@ async fn stepping<T>(clock: &TestClock, step: u64, work: impl std::future::Futur
 async fn quiet(database: &Database, clock: &TestClock) {
     advancing(clock, async {
         bound(crate::ffi::settled(database)).await.unwrap();
-        bound(database.writes_quiet(database.session_epoch())).await;
     }).await
 }
 

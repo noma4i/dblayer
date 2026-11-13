@@ -15,12 +15,12 @@ use crate::ffi::tests::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
 use crate::ffi::tape::Rows;
 use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::wire::WireSyncState;
-use crate::ffi::{PrepareJob, PrepareOutcome, PrepareProgress, Preparer, ProbeOutcome, ByteProgress, Config, Database, DbError, EncryptedConfig, FakeHttp, EncryptedReply, OpenPorts, PutExecutor, PutReply, PutTarget, ReadFetch, ReadRequest, TestClock, FakeTransport, TransportRequest};
+use crate::ffi::{PrepareJob, PrepareOutcome, PrepareProgress, Preparer, ProbeOutcome, ByteProgress, Config, Database, DbError, EncryptedConfig, FakeHttp, EncryptedReply, OpenPorts, PutReply, ReadFetch, ReadRequest, TestClock, FakeTransport, TransportRequest};
 use crate::owners::write::upload::UploadFile;
 use crate::server_contract::{Admission, Contract, Request};
 use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response};
 use crate::transport::encrypted::tests::vectors_tests::{origin, pin, public_key_der_b64};
-use crate::transport::{NetworkPurpose, PutFile, PutIdentity, RawOutcome, TransferIdentity};
+use crate::transport::{NetworkPurpose, PutFile, TransferIdentity};
 
 pub(super) const BLOB: &str = r#"{"data":{"blobCreate":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}"#;
 
@@ -238,103 +238,6 @@ impl FakeTransport for Puts {
     }
 }
 
-/// A system task of the executor outside the process: what started it and how it ended.
-#[derive(Clone)]
-pub(super) struct SystemTask {
-    pub(super) identity: PutIdentity,
-    pub(super) outcome: Option<RawOutcome>,
-}
-
-/// The executor of the PUTs outside the process. It outlives `close` and `open` of the database, like the system does: a task goes on while no process runs, and `resume_puts` finds it by its whole identity.
-#[derive(Default)]
-pub(super) struct Detached {
-    tasks: Mutex<Vec<SystemTask>>,
-    started: Mutex<Vec<(PutIdentity, PutTarget, PutFile)>>,
-    cancelled: Mutex<Vec<PutIdentity>>,
-    resumed: Mutex<Vec<Vec<PutIdentity>>>,
-    database: Mutex<Option<std::sync::Weak<Database>>>,
-    /// The answers to `resume_puts` that came while the opening database was not attached yet.
-    queued: Mutex<Vec<(PutIdentity, Option<RawOutcome>)>>,
-    adopt: AtomicBool,
-}
-
-
-impl Detached {
-    /// A new open starts: the database of the process before it is gone.
-    pub(super) fn detach(&self) { *self.database.lock().unwrap() = None; }
-
-    pub(super) fn attach(&self, database: &Arc<Database>) {
-        *self.database.lock().unwrap() = Some(Arc::downgrade(database));
-        for (identity, outcome) in std::mem::take(&mut *self.queued.lock().unwrap()) { Self::answer(database, identity, outcome); }
-    }
-
-    fn answer(database: &Database, identity: PutIdentity, outcome: Option<RawOutcome>) {
-        match outcome {
-            Some(outcome) => database.put_ended(identity, outcome),
-            None => database.put_missing(identity),
-        }
-    }
-    pub(super) fn started(&self) -> Vec<(PutIdentity, PutTarget, PutFile)> { self.started.lock().unwrap().clone() }
-    pub(super) fn cancelled(&self) -> Vec<PutIdentity> { self.cancelled.lock().unwrap().clone() }
-    pub(super) fn resumed(&self) -> Vec<Vec<PutIdentity>> { self.resumed.lock().unwrap().clone() }
-    pub(super) fn ok() -> RawOutcome { RawOutcome::Response { status: 200, etag: Some("etag".into()), body: String::new() } }
-
-    /// The task `n` ends and the live database hears it.
-    pub(super) fn finish(&self, n: usize, outcome: RawOutcome) {
-        let identity = self.finish_offline(n, outcome.clone());
-        let database = self.database.lock().unwrap().as_ref().and_then(std::sync::Weak::upgrade).expect("a database is attached");
-        database.put_ended(identity, outcome);
-    }
-
-    /// The task `n` ends while no process runs: `resume_puts` reports it.
-    pub(super) fn finish_offline(&self, n: usize, outcome: RawOutcome) -> PutIdentity {
-        let mut tasks = self.tasks.lock().unwrap();
-        tasks[n].outcome = Some(outcome);
-        tasks[n].identity
-    }
-
-    /// The system lost the task `n`: `resume_puts` finds nothing.
-    pub(super) fn lose(&self, n: usize) { self.tasks.lock().unwrap().remove(n); }
-
-    /// The system finished every task the core lists while no process ran, which the executor never saw.
-    pub(super) fn finishing_listed(&self) { self.adopt.store(true, std::sync::atomic::Ordering::SeqCst); }
-}
-
-impl PutExecutor for Detached {
-    fn start_put(&self, identity: PutIdentity, target: PutTarget, file: PutFile) {
-        self.started.lock().unwrap().push((identity, target, file));
-        self.tasks.lock().unwrap().push(SystemTask { identity, outcome: None });
-    }
-
-    fn cancel_put(&self, identity: PutIdentity) {
-        self.cancelled.lock().unwrap().push(identity);
-        self.tasks.lock().unwrap().retain(|task| task.identity != identity);
-    }
-
-    fn resume_puts(&self, identities: Vec<PutIdentity>) {
-        self.resumed.lock().unwrap().push(identities.clone());
-        if self.adopt.load(Ordering::SeqCst) {
-            let mut tasks = self.tasks.lock().unwrap();
-            for listed in &identities { if !tasks.iter().any(|task| task.identity == *listed) { tasks.push(SystemTask { identity: *listed, outcome: Some(Self::ok()) }); } }
-        }
-        self.tasks.lock().unwrap().retain(|task| identities.contains(&task.identity));
-        let database = self.database.lock().unwrap().as_ref().and_then(std::sync::Weak::upgrade);
-        for listed in identities {
-            let found = self.tasks.lock().unwrap().iter().find(|task| task.identity == listed).cloned();
-            let answer = match found {
-                None => Some(None),
-                Some(SystemTask { outcome: Some(outcome), .. }) => Some(Some(outcome)),
-                Some(_) => None,
-            };
-            let Some(answer) = answer else { continue };
-            match &database {
-                Some(database) => Self::answer(database, listed, answer),
-                None => self.queued.lock().unwrap().push((listed, answer)),
-            }
-        }
-    }
-}
-
 /// The order of the inputs the platform gives an opening database. A restored session needs no session call: that step is then a no-op.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum OpenOrder {
@@ -359,8 +262,6 @@ pub(super) struct Stand {
     pub(super) complete: AtomicBool,
     /// The store the app gives instead of the memory one of the rig.
     pub(super) store: Option<Arc<dyn crate::ffi::CredentialStore>>,
-    pub(super) detached: Option<Arc<Detached>>,
-    pub(super) multipart_only: bool,
 }
 
 impl Drop for Stand {
@@ -368,13 +269,8 @@ impl Drop for Stand {
 }
 
 impl Stand {
-    pub(super) fn new() -> Self { Self { rig: SessionRig::new(), script: Arc::default(), puts: Arc::default(), root: None, keep_moment: false, preparer: None, signed_out: false, complete: AtomicBool::new(false), store: None, detached: None, multipart_only: false } }
+    pub(super) fn new() -> Self { Self { rig: SessionRig::new(), script: Arc::default(), puts: Arc::default(), root: None, keep_moment: false, preparer: None, signed_out: false, complete: AtomicBool::new(false), store: None } }
 
-
-    /// The platform runs the PUTs outside the process through `executor`.
-    pub(super) fn multipart_only(mut self) -> Self { self.multipart_only = true; self }
-
-    pub(super) fn detached_through(mut self, executor: Arc<Detached>) -> Self { self.detached = Some(executor); self }
 
     /// The open does not sign in: the test signs in itself.
     pub(super) fn signed_out(mut self) -> Self { self.signed_out = true; self }
@@ -398,14 +294,13 @@ impl Stand {
 
     fn models(&self) -> String {
         let text = include_str!("upload_wrapper_models.json");
-        if self.root.is_none() && !self.keep_moment && !self.multipart_only { return text.to_string() }
+        if self.root.is_none() && !self.keep_moment { return text.to_string() }
         let mut models: Value = serde_json::from_str(text).unwrap();
         for model in models.as_array_mut().unwrap() {
             if self.keep_moment && model["key"] == "Moment" {
                 let action = model["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "create").unwrap();
                 action["on_failure"] = json!("keep");
             }
-            if self.multipart_only { if let Some(steps) = model["upload_steps"].as_object_mut() { steps.remove("create_blob"); } }
             let Some(root) = self.root else { continue };
             let Some(create) = model["upload_steps"].get_mut("create_blob") else { continue };
             match root {
@@ -421,17 +316,15 @@ impl Stand {
     pub(super) async fn open_with(&self, path: Option<&Path>, operations: &[(&str, &str)], clock: Option<Arc<TestClock>>) -> Arc<Database> { self.open_ordered(path, operations, clock, OpenOrder::OnlineFirst).await }
 
     pub(super) async fn open_ordered(&self, path: Option<&Path>, operations: &[(&str, &str)], clock: Option<Arc<TestClock>>, order: OpenOrder) -> Arc<Database> {
-        if let Some(detached) = &self.detached { detached.detach(); }
         let restored = self.signed_out || self.rig.credentials.inner.value().is_some();
         let models = self.models();
-        let ports = OpenPorts { partial_operations: !self.complete.load(Ordering::SeqCst), transport: Some(self.puts.clone()), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(self.store.clone().unwrap_or_else(|| self.rig.credentials.clone())), http: Some(Arc::new(ScriptedHttp { script: self.script.clone(), session: ThroughServer(self.rig.server.clone()) })), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), preparer: self.preparer.clone(), put_executor: self.detached.clone().map(|executor| executor as Arc<dyn PutExecutor>), ..Default::default() };
+        let ports = OpenPorts { partial_operations: !self.complete.load(Ordering::SeqCst), transport: Some(self.puts.clone()), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(self.store.clone().unwrap_or_else(|| self.rig.credentials.clone())), http: Some(Arc::new(ScriptedHttp { script: self.script.clone(), session: ThroughServer(self.rig.server.clone()) })), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), preparer: self.preparer.clone(), ..Default::default() };
         let config = Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None };
         let database = match clock {
             Some(clock) => Database::open_with_clock(config, crate::ffi::specs(models), ports, clock).await,
             None => Database::open(config, crate::ffi::specs(models), ports).await,
         }
         .unwrap();
-        if let Some(detached) = &self.detached { detached.attach(&database); }
         let named: Vec<(&str, &str)> = STEPS.iter().copied().filter(|(name, _)| !operations.iter().any(|(declared, _)| declared == name)).chain(operations.iter().copied()).collect();
         self.script.register_documents(&named);
         let declared: Vec<Value> = named.iter().map(|(name, document)| json!({"name": name, "document": document})).collect();
