@@ -6,7 +6,7 @@ import Testing
 extension BridgeProbeTests {
 struct EnumTests {
   private func open() async throws -> Database {
-    try await openDatabase(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: nil)
+    try await openDatabase(config: Config(path: nil), modelsJson: modelsJSON, transport: nil)
   }
 
   @Test

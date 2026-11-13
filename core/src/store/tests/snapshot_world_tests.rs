@@ -136,7 +136,7 @@ pub(super) struct World {
 }
 
 fn open() -> Arc<Store> {
-    Arc::new(Store::open_models(None, snapshot_specs(), None, Arc::new(ManualClock::new(Duration::from_millis(1_000_000)))).unwrap())
+    Arc::new(Store::open_models(None, snapshot_specs(), Arc::new(ManualClock::new(Duration::from_millis(1_000_000)))).unwrap())
 }
 
 fn value_of(cell: ValueRef<'_>) -> Value {

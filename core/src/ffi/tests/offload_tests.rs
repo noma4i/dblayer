@@ -78,7 +78,7 @@ type FileCall = Box<dyn FnOnce(std::sync::Arc<super::Database>) -> std::pin::Pin
 /// A database with a local model that owns a file field and one row of it: the file calls reach the file work instead of failing at the model check.
 async fn files_rig() -> (std::sync::Arc<super::Database>, String) {
     let spec = crate::schema::ModelSpec { storage: crate::schema::Storage::Local, ..crate::schema::ModelSpec::new("Files", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::file("photo").nullable()]) };
-    let database = super::Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![spec]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap();
+    let database = super::Database::open(crate::ffi::Config { path: None }, crate::ffi::specs(serde_json::to_string(&vec![spec]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap();
     let row = database.create(database.session_epoch(), "Files".into(), "{}".into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;
     (database, row)
 }

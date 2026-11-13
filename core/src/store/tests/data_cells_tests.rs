@@ -25,7 +25,7 @@ fn text(db: &Store) -> Value {
 #[test]
 fn data_server_revision_drops_older() {
     let spec = ModelSpec { server_revision: Some("rev".into()), ..ModelSpec::new("docs", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("rev", ScalarKind::Int).optional(), FieldSpec::scalar("text", ScalarKind::Str).optional()]) };
-    let db = Arc::new(Store::open_models(None, vec![spec], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+    let db = Arc::new(Store::open_models(None, vec![spec], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     let rows = |row: RowValue| vec![StoreOp::Rows { model: "docs".into(), rows: vec![row] }];
     write(&db, BatchAuthor::Outbox, Vec::new(), rows(doc(5, "first")));
     assert_eq!(text(&db), json!("first"), "no stored revision: the first version lands");
@@ -47,7 +47,7 @@ fn data_server_revision_drops_older() {
 }
 
 fn open_moments() -> Arc<Store> {
-    let db = Arc::new(Store::open_models(None, crate::store::fixtures::all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+    let db = Arc::new(Store::open_models(None, crate::store::fixtures::all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     crate::store::fixtures::put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
     crate::store::fixtures::put(&db, "vibes", json!({"id": "m1", "momentId": "m1", "kind": "like"}));
     db
@@ -170,7 +170,7 @@ fn feed_event_touch_parent_once() {
         association.sets.clear();
         association.newer.clear();
     }
-    let db = Arc::new(Store::open_models(None, specs, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+    let db = Arc::new(Store::open_models(None, specs, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     crate::store::fixtures::put(&db, "chats", json!({"id": "c1"}));
     let revision_of = |id: &str| db.read(&["chats"], |reader| Ok(reader.stored_row("chats", id)?.map(|row| row.revision))).unwrap();
     let before = revision_of("c1");
@@ -195,7 +195,7 @@ unsafe extern "C" fn count_batch_reads(kind: u32, context: *mut std::ffi::c_void
 fn feed_batch_select_work() {
     let measure = |size: usize| {
         let spec = ModelSpec::new("docs", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
-        let db = Arc::new(Store::open_models(None, vec![spec], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+        let db = Arc::new(Store::open_models(None, vec![spec], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
         let events = (0..size).map(|i| ("docs".into(), json!({"op":"upsert", "id":format!("d{i}"), "row":{"id":format!("d{i}"), "text":"value"}, "observe":true}).to_string())).collect();
         let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: events, intents: 0, credential: None, ops: Vec::new() };
         let mut count = 0usize;
@@ -224,7 +224,7 @@ fn store_read_intents_distinguishes_local_and_server_tombstones() {
             }
         }
     }
-    let db = Arc::new(Store::open_models(None, specs, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+    let db = Arc::new(Store::open_models(None, specs, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     for (model, value) in [
         ("moments", json!({"id":"m1","userId":"u1","text":"parent"})),
         ("vibes", json!({"id":"v1","momentId":"m1","kind":"like"})),

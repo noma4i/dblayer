@@ -9,7 +9,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func theFirstFrameOfAWarmStreamArrivesOffTheCallingThreadWithTheCachedRows() async throws {
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: MockTransport())
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: MockTransport())
     let ann = try await User.create(name: "Ann").optimisticValue!
     let seats = [try await Presence.create(userId: ann.id, room: "r").optimisticValue!, try await Presence.create(userId: ann.id, room: "r").optimisticValue!]
     let stream = try DB.account().stream(Presence.where(.equal("room", .string("r"))))

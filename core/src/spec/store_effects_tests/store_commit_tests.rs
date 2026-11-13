@@ -28,7 +28,7 @@ fn login_rows(db: &crate::store::Store) -> (i64, Option<(String, i64)>) {
 fn login_after_epoch_end(persist_first: bool) {
     let mut twin = Twin::live();
     let clock = std::sync::Arc::new(crate::runtime::ManualClock::default());
-    let db = crate::store::Store::open_models(None, Vec::new(), None, clock).unwrap();
+    let db = crate::store::Store::open_models(None, Vec::new(), clock).unwrap();
     if persist_first {
         let batch = login_batch(10, false);
         let effects = twin.send(StoreInput::Commit(batch.clone()));

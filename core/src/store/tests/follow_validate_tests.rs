@@ -15,7 +15,7 @@ fn open(removed_by: bool) -> Arc<Store> {
         let vibes = specs.iter_mut().find(|spec| spec.key.as_str() == "vibes").unwrap();
         vibes.removed_by.push(RemovedBy { model: "moments".into(), matches: [("momentId".to_string(), "id".to_string())].into() });
     }
-    Arc::new(Store::open_models(None, specs, None, Arc::new(crate::runtime::SystemClock)).unwrap())
+    Arc::new(Store::open_models(None, specs, Arc::new(crate::runtime::SystemClock)).unwrap())
 }
 
 fn snapshot(store: &Store) -> (i64, i64, i64, i64) {

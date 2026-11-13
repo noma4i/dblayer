@@ -7,7 +7,7 @@ use crate::value::ScalarKind;
 async fn notes() -> Arc<Database> {
     let mut model = ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str), FieldSpec::scalar("note", ScalarKind::Str).nullable()]);
     model.storage = Storage::Local;
-    Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap()
+    Database::open(Config { path: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap()
 }
 
 /// out_local_noop_snapshot (P-OUT-37, D-190): a no-op write answers with the row and the revision of one snapshot, and its revision does not grow.

@@ -106,7 +106,7 @@ fn data_orders_ephemeral_write_row_and_clock() {
     let orders: Vec<_> = permutations(&[Row, Write, Clock]).into_iter().filter(|order| order.iter().position(|e| *e == Write) < order.iter().position(|e| *e == Clock)).collect();
     assert_eq!(orders.len(), 3);
     for order in orders {
-        let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+        let db = Arc::new(Store::open_models(None, ephemeral_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
         let (mut row, mut written, mut clocked) = (false, None, false);
         let mut positions = Vec::new();
         for event in &order {
@@ -144,7 +144,7 @@ fn data_orders_ephemeral_write_against_destroy_and_erase() {
     assert_eq!(orders.len(), 3);
     for erase in [false, true] {
         for order in &orders {
-            let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+            let db = Arc::new(Store::open_models(None, ephemeral_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
             put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
             for event in order {
                 match event {

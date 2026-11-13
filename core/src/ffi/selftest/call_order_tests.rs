@@ -194,7 +194,7 @@ async fn bridge_call_place_never_holds_the_next() {
 async fn bridge_call_after_a_dropped_call_enters_after_its_cancel() {
     let mut note = crate::schema::ModelSpec::new("Note", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id)]);
     note.storage = crate::schema::Storage::Local;
-    let database = Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![note]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap();
+    let database = Database::open(crate::ffi::Config { path: None }, crate::ffi::specs(serde_json::to_string(&vec![note]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap();
     let stream = database.subscribe_values(database.session_epoch(), crate::ffi::ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
     assert!(matches!(crate::test_wait::within(stream.pull_next()).await, Some(crate::ffi::ReadValue::Snapshot { .. })));
     let mut pending = Box::pin(stream.pull_next());

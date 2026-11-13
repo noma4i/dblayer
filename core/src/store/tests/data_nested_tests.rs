@@ -30,7 +30,7 @@ fn notes() -> Store {
         ],
     );
     spec.actions.push(ActionDeclaration::new("touch", RootShape::Upsert));
-    let db = Store::open_models(None, vec![spec], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let db = Store::open_models(None, vec![spec], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     crate::store::fixtures::put(&db, "notes", json!({"id": "n1", "title": "kept"}));
     db
 }

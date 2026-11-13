@@ -2,12 +2,11 @@ use std::collections::BTreeMap;
 
 use rusqlite::params;
 
-use crate::store::ddl::{create_model_tables, fingerprint_key, manifest_stamp, manifest_verify, models_statements, rebuild_cache_tables, table_name, ManifestVerdict};
+use crate::store::ddl::{create_model_tables, fingerprint_key, manifest_stamp, manifest_verify, models_statements, table_name, ManifestVerdict};
 use crate::schema::ModelSpec;
 
 use super::reset::{
-    clear_intent, current_fingerprints, finish_interrupted_reset, models_to_reset, restore_local_values, stash_local_values, wipe_all_cache,
-    wipe_model_cache, write_intent,
+    current_fingerprints, finish_interrupted_reset, models_to_reset, restore_local_values, stash_local_values, wipe_model_cache,
 };
 use super::tombstones::{prune_tombstones, TombstoneRetention};
 use super::{ModelInfo, Store, StoreError};
@@ -23,11 +22,10 @@ pub struct BootReport {
 }
 
 impl Store {
-    pub fn boot(&self, models: &[ModelSpec], data_version: Option<&str>) -> Result<BootReport, StoreError> {
+    pub fn boot(&self, models: &[ModelSpec]) -> Result<BootReport, StoreError> {
         let mut reading_models = self.models.write().unwrap_or_else(|error| error.into_inner());
         let mut inner = self.lock();
         inner.ready = false;
-        inner.data_version = data_version.map(str::to_string);
         inner.models = std::sync::Arc::new(models.iter().map(|spec| (spec.key.as_str().to_string(), ModelInfo::new(spec))).collect());
         *reading_models = inner.models.clone();
         let mut migrated_reset = None;
@@ -59,7 +57,7 @@ impl Store {
             }
             restore_local_values(&transaction, &stash)?;
             crate::store::plan::op_effect::rebuild_open_effects(&transaction, &inner.models)?;
-            manifest_stamp(&transaction, data_version, &fingerprints)?;
+            manifest_stamp(&transaction, &fingerprints)?;
             transaction.commit()?;
             recreated = Some(reason);
             rebuilt = true;
@@ -70,7 +68,7 @@ impl Store {
 
         let finished_interrupted_reset = finish_interrupted_reset(&mut inner)?;
         let fingerprints: BTreeMap<String, String> = current_fingerprints(&inner)?;
-        let verdict = if rebuilt { ManifestVerdict::Fresh } else { manifest_verify(&inner.connection, data_version, &fingerprints)? };
+        let verdict = if rebuilt { ManifestVerdict::Fresh } else { manifest_verify(&inner.connection, &fingerprints)? };
         let now = inner.now_ms();
 
         let migrated = migrated_reset.is_some();
@@ -79,7 +77,7 @@ impl Store {
             ManifestVerdict::Fresh | ManifestVerdict::Match => {
                 create_model_tables(&inner.connection, models)?;
                 let transaction = inner.connection.unchecked_transaction()?;
-                manifest_stamp(&transaction, data_version, &fingerprints)?;
+                manifest_stamp(&transaction, &fingerprints)?;
                 transaction.commit()?;
             }
             ManifestVerdict::CacheOnly { models: changed } => {
@@ -96,23 +94,9 @@ impl Store {
                 transaction.commit()?;
                 create_model_tables(&inner.connection, models)?;
                 let transaction = inner.connection.unchecked_transaction()?;
-                manifest_stamp(&transaction, data_version, &fingerprints)?;
+                manifest_stamp(&transaction, &fingerprints)?;
                 transaction.commit()?;
                 reset_models = reset;
-            }
-            ManifestVerdict::Mismatch => {
-                write_intent(&inner.connection, "mismatched", now)?;
-                let transaction = inner.connection.unchecked_transaction()?;
-                wipe_all_cache(&transaction, true, true)?;
-                reset_models = models.iter().filter(|spec| !spec.is_memory()).map(|spec| spec.key.as_str().to_string()).collect();
-                rebuild_cache_tables(&transaction)?;
-                transaction.execute(include_str!("sql/boot/boot_delete_manifest_2.sql"), [])?;
-                transaction.commit()?;
-                create_model_tables(&inner.connection, models)?;
-                let transaction = inner.connection.unchecked_transaction()?;
-                manifest_stamp(&transaction, data_version, &fingerprints)?;
-                clear_intent(&transaction)?;
-                transaction.commit()?;
             }
         } }
 

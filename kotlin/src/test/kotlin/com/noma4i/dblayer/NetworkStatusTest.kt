@@ -10,7 +10,7 @@ class NetworkStatusTest {
     /** net_status_first_value, net_status_change: the platform value is the public value and each collector gets a change once. */
     @Test
     fun net_status_kotlinCollectorsGetTheFirstValueAndEachChange() = bounded {
-        openSignedOffline(Config(null, null), modelsJSON)
+        openSignedOffline(Config(null), modelsJSON)
         val status = NetworkStatus(org.robolectric.RuntimeEnvironment.getApplication())
         osNetwork(false)
         assertEquals(false, status.isOnline)

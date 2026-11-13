@@ -140,7 +140,7 @@ suspend fun openSigned(config: Config, modelsJson: String, transport: Transport?
 /** The same session stand on a clock that only `advance` moves. The platform reports online at open unless `onlineAtOpen` is false: then the sign-in sets online after the operations. */
 @OptIn(DBlayerTestingApi::class)
 suspend fun openSignedClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = null, startMillis: Long = System.currentTimeMillis(), onlineAtOpen: Boolean = true, observers: PlatformObserver? = null, preparer: Preparer? = ScriptedPreparer()): TestClock {
-    val credential = credentialOf(Config(path, null))
+    val credential = credentialOf(Config(path))
     val server = SealedServer(contract = credential.contract, answer = bridgeToTransport(transport))
     server.registerDocuments(withSessionProfile(withUploadSteps(operations, modelsJson)))
     transport.cable = EncryptedCablePeer(server)

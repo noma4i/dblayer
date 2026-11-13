@@ -10,7 +10,7 @@ const SPEC: &str = include_str!("../../../tests/corpus/matrix/removed_by.spec.js
 async fn removed_by_removes_the_matching_rows_when_the_named_row_lands() {
     let spec: serde_json::Value = serde_json::from_str(SPEC).unwrap();
     let directory = tempfile::tempdir().unwrap();
-    let config = Config { path: Some(directory.path().join("removed.sqlite").to_string_lossy().into()), data_version: None };
+    let config = Config { path: Some(directory.path().join("removed.sqlite").to_string_lossy().into()) };
     let database = Database::open(config, crate::ffi::specs(spec["models"].to_string()), OpenPorts::default()).await.unwrap();
     let epoch = database.session_epoch();
     let mut marks = Vec::new();

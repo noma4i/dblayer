@@ -30,7 +30,7 @@ fn chat_spec() -> ModelSpec {
 }
 
 fn open() -> Arc<Store> {
-    let db = Arc::new(Store::open_models(None, vec![chat_spec()], None, Arc::new(crate::runtime::SystemClock)).unwrap());
+    let db = Arc::new(Store::open_models(None, vec![chat_spec()], Arc::new(crate::runtime::SystemClock)).unwrap());
     put(&db, "Chat", json!({"id": "c1", "title": "t"}));
     db
 }
@@ -131,14 +131,14 @@ fn feed_event_debt_survives_restart() {
     let list = WindowKey::relation("Chat", "list", &[("list".to_string(), json!("PRIMARY"))].into_iter().collect());
     let params: serde_json::Map<String, serde_json::Value> = [("list".to_string(), json!("PRIMARY"))].into_iter().collect();
     {
-        let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], None, Arc::new(crate::runtime::SystemClock)).unwrap());
+        let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], Arc::new(crate::runtime::SystemClock)).unwrap());
         put(&db, "Chat", json!({"id": "c1", "title": "t"}));
         let op = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: list.name.clone(), model: list.model.clone(), page: 1, replace_all: false, cursor: None, roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
         write_as(&db, 1, BatchAuthor::Window, Vec::new(), vec![op]);
         assert!(!db.window_saved("Chat", "list", &params).unwrap().expect("the list is saved").stale);
         write_as(&db, 2, BatchAuthor::Feed, Vec::new(), vec![StoreOp::OweReread { model: "Chat".into(), id: "c1".into(), relation: "node".into() }, StoreOp::MarkStale { models: Vec::new(), keys: vec![("Chat".into(), list.name.clone())], kept: Vec::new() }]);
     }
-    let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], None, Arc::new(crate::runtime::SystemClock)).unwrap());
+    let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], Arc::new(crate::runtime::SystemClock)).unwrap());
     assert!(owed(&db, "c1"), "the row still owes the reread");
     assert!(db.window_saved("Chat", "list", &params).unwrap().expect("the list is saved").stale, "the saved list still owes the reread");
 }
@@ -241,14 +241,14 @@ fn store_owed_kept_by_a_local_write() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     {
-        let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], None, Arc::new(crate::runtime::SystemClock)).unwrap());
+        let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], Arc::new(crate::runtime::SystemClock)).unwrap());
         put(&db, "Chat", json!({"id": "c1", "title": "t"}));
         owe(&db, 1, "c1");
         let effects = IntentEffects { rows: vec![EffectRow { model: "Chat".into(), row_id: "c1".into(), values: json!({"id": "c1", "title": "edit"}).to_string() }], ..Default::default() };
         let intent = StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id: 7, model: "Chat".into(), row_id: "c1".into(), action: "update".into(), payload: "{}".into(), effects, origin: IntentOrigin::Api };
         write_as(&db, 2, BatchAuthor::Outbox, Vec::new(), vec![intent]);
     }
-    let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], None, Arc::new(crate::runtime::SystemClock)).unwrap());
+    let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], Arc::new(crate::runtime::SystemClock)).unwrap());
     assert!(owed(&db, "c1"), "open: the rows rebuilt from the outbox keep the debt");
 }
 
@@ -258,14 +258,14 @@ fn store_owed_goes_with_the_model_cache() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     {
-        let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], None, Arc::new(crate::runtime::SystemClock)).unwrap());
+        let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], Arc::new(crate::runtime::SystemClock)).unwrap());
         put(&db, "Chat", json!({"id": "c1", "title": "t"}));
         owe(&db, 1, "c1");
         assert!(owed(&db, "c1"));
     }
     let mut changed = chat_spec();
     changed.fields.push(FieldSpec::scalar("extra", ScalarKind::Str).optional());
-    let db = Arc::new(Store::open_models(Some(path.as_path()), vec![changed], None, Arc::new(crate::runtime::SystemClock)).unwrap());
+    let db = Arc::new(Store::open_models(Some(path.as_path()), vec![changed], Arc::new(crate::runtime::SystemClock)).unwrap());
     write_as(&db, 2, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::LocalRows { model: "Chat".into(), rows: vec![RowValue { row_id: "c1".into(), values: json!({"id": "c1", "title": "t"}).to_string() }] }]);
     assert!(!owed(&db, "c1"), "the row created after the wipe owes nothing");
 }

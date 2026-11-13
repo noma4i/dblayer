@@ -35,7 +35,7 @@ class StagedUploadTest {
         try {
             enqueueStagedSteps(transport)
             enqueueCommitSteps(transport)
-            openSigned(Config(null, null), modelsJSON, transport, operations = STAGED_OPERATIONS)
+            openSigned(Config(null), modelsJSON, transport, operations = STAGED_OPERATIONS)
             val scope = AccountScope.current()
             val staged = scope.stage(Moment, "upload_clip", UploadRequest(file.path))
             assertEquals("upload_clip", staged.action)
@@ -58,7 +58,7 @@ class StagedUploadTest {
         try {
             enqueueStagedSteps(transport)
             transport.enqueue("AbortMultipart", """{"data":{"abortMultipart":{"ok":true}}}""")
-            openSigned(Config(null, null), modelsJSON, transport, operations = STAGED_OPERATIONS)
+            openSigned(Config(null), modelsJSON, transport, operations = STAGED_OPERATIONS)
             val scope = AccountScope.current()
             val staged = scope.stage(Moment, "upload_clip", UploadRequest(file.path))
             assertTrue(untilHeld(scope, staged))

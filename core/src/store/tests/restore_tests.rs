@@ -58,7 +58,7 @@ fn store_discard_restore_failed() {
 /// lifecycle.md:519 (D-280): the held abort pair of a multipart debt survives a restart with its Orphan owner.
 #[test]
 fn store_pending_orphan_owner_round_trip() {
-    let db = crate::store::Store::open_models(None, Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let db = crate::store::Store::open_models(None, Vec::new(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     let pending = crate::store::session_state::Pending { credential_digest: "d".into(), request_id: "r".into(), response_key: "k".into(), sequence: 7, path: "/p".into(), body: "{}".into(), document: None, owner: Some(crate::transport::RequestOwner::Orphan { upload_id: "u1".into() }), purpose: crate::transport::NetworkPurpose::Transfer, req_id: 11 };
     let inner = db.lock();
     crate::store::session_state::start(&inner.connection, "d").unwrap();
@@ -69,7 +69,7 @@ fn store_pending_orphan_owner_round_trip() {
 /// store.md store_read_intents_held_orphan (D-280): the restore snapshot names the upload of the abort pair Session holds; without an Orphan pending it names none.
 #[test]
 fn store_read_intents_held_orphan() {
-    let db = crate::store::Store::open_models(None, Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let db = crate::store::Store::open_models(None, Vec::new(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     assert_eq!(db.read_restore().unwrap().held_orphan, None, "no pending, no held pair");
     let pending = crate::store::session_state::Pending { credential_digest: "d".into(), request_id: "r".into(), response_key: "k".into(), sequence: 7, path: "/p".into(), body: "{}".into(), document: None, owner: Some(crate::transport::RequestOwner::Orphan { upload_id: "u9".into() }), purpose: crate::transport::NetworkPurpose::Transfer, req_id: 11 };
     {
@@ -90,13 +90,13 @@ fn store_commit_control_restart() {
     };
     {
         let store = crate::store::Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-        store.boot(&[super::fixtures::messages_spec(), super::fixtures::items_spec()], None).unwrap();
+        store.boot(&[super::fixtures::messages_spec(), super::fixtures::items_spec()]).unwrap();
         store.mark_ready();
         let first = batch(1, vec![StoreOp::UploadOrphan { upload_id: "u1".into(), key: "Moment:r1:upload".into() }]);
         store.write_batch(&first, store.files(), None).unwrap();
     }
     let reopened = crate::store::Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-    reopened.boot(&[super::fixtures::messages_spec(), super::fixtures::items_spec()], None).unwrap();
+    reopened.boot(&[super::fixtures::messages_spec(), super::fixtures::items_spec()]).unwrap();
     reopened.mark_ready();
     assert_eq!(reopened.read_restore().unwrap().orphans, vec![("u1".to_string(), "Moment:r1:upload".to_string())], "the debt of the abort survives the restart with its key");
 

@@ -62,7 +62,7 @@ impl Client {
 }
 
 pub(crate) fn memory_db() -> Arc<Store> {
-    Arc::new(Store::open_models(None, Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap())
+    Arc::new(Store::open_models(None, Vec::new(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap())
 }
 
 

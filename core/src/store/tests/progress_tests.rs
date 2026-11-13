@@ -27,7 +27,7 @@ fn upload(index: u64, confirmed: u32) -> UploadRow {
 }
 
 fn steps_of_one_confirmed_part(open: u64) -> usize {
-    let db = Arc::new(Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+    let db = Arc::new(Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     for index in 0..open {
         let row = format!("m{index}");
         put(&db, "moments", json!({"id": row, "userId": "u1", "text": "old"}));

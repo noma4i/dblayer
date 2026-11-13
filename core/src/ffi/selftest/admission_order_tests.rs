@@ -31,7 +31,7 @@ async fn files_database(path: &Path) -> (Arc<Database>, u64, String) {
     let mut spec = crate::schema::ModelSpec::new("Files", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::file("photo").nullable(), local]);
     spec.storage = crate::schema::Storage::Local;
     let models = serde_json::to_string(&vec![spec]).unwrap();
-    let config = crate::ffi::Config { path: Some(path.to_string_lossy().into()), data_version: None };
+    let config = crate::ffi::Config { path: Some(path.to_string_lossy().into()) };
     let database = Database::open(config, crate::ffi::specs(models), crate::ffi::OpenPorts::default()).await.unwrap();
     let epoch = database.session_epoch();
     let row = database.create(epoch, "Files".into(), "{}".into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;

@@ -13,7 +13,7 @@ async fn net_first_value_gives_one_reaction() {
     let mut table = Vec::new();
     for first_is_false in [false, true] {
         let directory = tempfile::tempdir().unwrap();
-        let config = || Config { path: Some(directory.path().join("cache.sqlite").to_string_lossy().into_owned()), data_version: None };
+        let config = || Config { path: Some(directory.path().join("cache.sqlite").to_string_lossy().into_owned()) };
         let world = World::new("server", "A", true);
         let switch = Switchable::new(Some(world.clone()), false);
         let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();

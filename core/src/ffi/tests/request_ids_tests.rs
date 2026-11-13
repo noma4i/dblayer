@@ -13,7 +13,7 @@ async fn life(transport: &Arc<MockTransport>, clock: Arc<dyn Clock>) -> Arc<Data
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
     model.relations.push(relation("feed", "5.minutes"));
     let wired = transport.clone();
-    let database = Database::start_with(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), clock, move |db, _| {
+    let database = Database::start_with(Config { path: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), clock, move |db, _| {
         super::signed_session_tests::signed_session(db);
         Ok(super::database::Wiring { transport: Some(wired), encrypted: None, cable: None, seal: None })
     }).unwrap();
@@ -86,7 +86,7 @@ async fn wire_prop_retry_progress_one_source() {
         ..Default::default()
     };
     let spec = super::sealed_errors_tests::moment_spec();
-    let database = Database::open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![spec]).unwrap()), ports, clock.clone()).await.unwrap();
+    let database = Database::open_with_clock(Config { path: None }, crate::ffi::specs(serde_json::to_string(&vec![spec]).unwrap()), ports, clock.clone()).await.unwrap();
     database.register_operations(OPERATIONS_WITH_UPLOADS.into()).await.unwrap();
     database.set_online(true).await.unwrap();
     database.session_call("social".into(), super::session_guards_tests::SOCIAL_BODY.into()).await.unwrap();

@@ -39,7 +39,7 @@ extension BridgeProbeTests {
   func aSourceIsSentAsIsAndRefusedAboveItsLimit() async throws {
     let transport = RecordingPutTransport()
     enqueueUpload(transport)
-    _ = try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: uploadOperations)
+    _ = try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport, operations: uploadOperations)
     let file = try source("abcdef")
     defer { try? FileManager.default.removeItem(at: file) }
     let sent = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path, prepare: .image(edit: PhotoEdit(maxSize: nil, enlarge: false, crop: nil, outputSize: nil, mirror: false, rotationDegrees: 0)))))
@@ -58,7 +58,7 @@ extension BridgeProbeTests {
   func aDeviceThatCannotDecodeShowsTheReasonOfTheFailure() async throws {
     let transport = RecordingPutTransport()
     enqueueUpload(transport)
-    _ = try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: uploadOperations, preparer: ScriptedPreparer(outcome: .cannotDecode(message: "no decoder")))
+    _ = try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport, operations: uploadOperations, preparer: ScriptedPreparer(outcome: .cannotDecode(message: "no decoder")))
     let file = try source("abcdef")
     defer { try? FileManager.default.removeItem(at: file) }
     let sent = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path, prepare: .video(mirror: true))))

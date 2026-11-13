@@ -9,7 +9,7 @@ struct BridgeProbeTests {
 
   @Test
   func aSearchPassesWholeWordsToTheCore() async throws {
-    try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
+    try await openSignedOffline(config: Config(path: nil), modelsJson: modelsJSON)
     _ = try await Moment.create(text: "hello world", in: DB.account()).optimisticValue!
     _ = try await Moment.create(text: "hel", in: DB.account()).optimisticValue!
     let whole = Cursor(try await Query<Moment>().search("hel", wholeWords: true).live.stream())
@@ -18,7 +18,7 @@ struct BridgeProbeTests {
 
   @Test
   func writesReachTypedLiveRows() async throws {
-    try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
+    try await openSignedOffline(config: Config(path: nil), modelsJson: modelsJSON)
     let changes = Cursor(try await Moment.recent.live.stream())
     #expect(await changes.next()?.isEmpty == true)
     let moment = try await Moment.create(text: "m", in: DB.account()).optimisticValue!
@@ -35,7 +35,7 @@ struct BridgeProbeTests {
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","text":"m","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
     transport.enqueue("UpdateMoment", reply: #"{"data":{"updateMoment":{"__typename":"Moment","id":"1","uuid":"a","text":"edited","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     transport.enqueue("DeleteMoment", reply: #"{"data":{"deleteMoment":{"id":"1"}}}"#)
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
     try await registerStandOperations(DB.database, defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment($id: ID!, $text: String) { updateMoment(id: $id, text: $text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment($id: ID!) { deleteMoment(id: $id) { id } }"}]"#)
     let changes = Cursor(try await Moment.recent.live.stream())
     try await Moment.feed.load()
@@ -53,7 +53,7 @@ struct BridgeProbeTests {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","text":"m","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
     transport.enqueue("UpdateMoment", reply: #"{"data":{"updateMoment":{"__typename":"Moment","id":"1","uuid":"a","text":"edited","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
     try await registerStandOperations(DB.database, defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment($id: ID!, $text: String) { updateMoment(id: $id, text: $text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment($id: ID!) { deleteMoment(id: $id) { id } }"}]"#)
     let changes = Cursor(try await Moment.recent.live.stream())
     try await Moment.feed.load()
@@ -73,7 +73,7 @@ struct BridgeProbeTests {
   func loadRequestsOnlyAWindowThatIsNotFreshAndKeepsNoSubscription() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
     try await registerStandOperations(DB.database, defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
     let before = try await DB.subscriptionCensus()
 
@@ -91,7 +91,7 @@ struct BridgeProbeTests {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
     transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
     try await registerStandOperations(DB.database, defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
     let list = Projected<Moment>(try AccountScope().stream(Moment.feed))
 
@@ -113,7 +113,7 @@ struct BridgeProbeTests {
   func feedLoadsFromTheTransportIntoLiveRowsAndReportsItsState() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"totalCount":9}}}"#)
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
     try await registerStandOperations(DB.database, defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
 
     let list = Projected<Moment>(try AccountScope().stream(Moment.feed))
@@ -132,7 +132,7 @@ struct BridgeProbeTests {
   func theOutcomeOfASentCreateCarriesTheServerId() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
     try await registerStandOperations(DB.database, defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
 
     let sent = try await Moment.create(text: "hello", media: nil, in: DB.account())
@@ -144,7 +144,7 @@ struct BridgeProbeTests {
   func parallelOutcomeReadsOfOneReceiptAllGetTheServerId() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
     try await registerStandOperations(DB.database, defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
 
     let sent = try await Moment.create(text: "hello", media: nil, in: DB.account())
@@ -160,7 +160,7 @@ struct BridgeProbeTests {
   func aCreateSendsItsArgsAndTheRowNeverStoresThem() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateRecord", reply: #"{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c","authorId":"u1","text":"hi","createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
     try await registerStandOperations(DB.database, defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt } }"}]"#)
 
     let confirmed = try await Record.create(containerId: "c", authorId: "u1", text: "hi", attachedUserId: "42", signedId: "blob-1", in: DB.account()).confirmed()
@@ -172,7 +172,7 @@ struct BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aCreateReadsTwoDeclaredLocalSources() async throws {
     let transport = MockTransport()
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
     transport.enqueue("CreateRecord", reply: #"{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c","authorId":"u1","text":"hi","createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     try await registerStandOperations(DB.database, defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt } }"},{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"},{"name":"CurrentRegionQuery","document":"query CurrentRegionQuery { region { id name } }"}]"#)
     transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":{"id":"u1","name":"Ann"}}}"#)
@@ -190,7 +190,7 @@ struct BridgeProbeTests {
     transport.enqueue("CreateBlob", reply: #"{"data":{"blobCreate":{"url":"https://s3/x","headers":{},"signedId":"sid","blobId":"b1"}}}"#)
     transport.enqueuePut("https://s3/x")
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"CreateBlob","document":"mutation CreateBlob($filename: String!, $contentType: String!, $byteSize: Int!, $checksum: String!) { createBlob(filename: $filename, contentType: $contentType, byteSize: $byteSize, checksum: $checksum) { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"CreateBlob","document":"mutation CreateBlob($filename: String!, $contentType: String!, $byteSize: Int!, $checksum: String!) { createBlob(filename: $filename, contentType: $contentType, byteSize: $byteSize, checksum: $checksum) { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
     let file = FileManager.default.temporaryDirectory.appending(path: "clip-\(UUID().uuidString).mp4")
     try Data("abcdef".utf8).write(to: file)
 
@@ -208,7 +208,7 @@ struct BridgeProbeTests {
 
   private func openWithAMoment(_ transport: MockTransport) async throws -> Moment {
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
     try await registerStandOperations(DB.database, defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"},{"name":"ShareMoment","document":"mutation ShareMoment($momentId: ID!) { shareMoment(momentId: $momentId) { moment { id uuid likedByMe media createdAt } successMessage copies } }"}]"#)
     let id = try #require(await Moment.create(text: "hello", media: nil, in: DB.account()).confirmed().value).id
     return try #require(await Moment.find(id).current())

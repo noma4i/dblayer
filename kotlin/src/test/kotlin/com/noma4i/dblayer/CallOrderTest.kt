@@ -25,7 +25,7 @@ class CallOrderTest {
     fun callsStartedWithoutWaitingReachTheTransportInTheOrderTheyStarted() = bounded {
         val transport = MockTransport()
         transport.respondWith("CreateMoment") { """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""" }
-        openSigned(Config(null, null), modelsJSON, transport, SEND_MOMENT, onlineAtOpen = true)
+        openSigned(Config(null), modelsJSON, transport, SEND_MOMENT, onlineAtOpen = true)
         val screen = CoroutineScope(SupervisorJob() + caller)
         try {
             val account = AccountScope.current()

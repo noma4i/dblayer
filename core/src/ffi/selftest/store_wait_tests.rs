@@ -6,7 +6,7 @@ async fn stand() -> (std::sync::Arc<Database>, u64, String, tempfile::TempDir) {
     let mut spec = crate::schema::ModelSpec::new("Files", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::file("photo").nullable()]);
     spec.storage = crate::schema::Storage::Local;
     let models = serde_json::to_string(&vec![spec]).unwrap();
-    let config = Config { path: Some(path.to_string_lossy().into()), data_version: None };
+    let config = Config { path: Some(path.to_string_lossy().into()) };
     let db = Database::open(config, crate::ffi::specs(models), crate::ffi::OpenPorts::default()).await.unwrap();
     let epoch = db.session_epoch();
     let id = db.create(epoch, "Files".into(), "{}".into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;

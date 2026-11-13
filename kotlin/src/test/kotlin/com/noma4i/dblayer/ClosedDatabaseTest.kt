@@ -17,7 +17,7 @@ class ClosedDatabaseTest {
 
     @Test
     fun twoConcurrentClosesBothSucceedAndThenTheCoreAnswersClosed() = bounded {
-        openSignedOffline(Config(null, null), modelsJSON)
+        openSignedOffline(Config(null), modelsJSON)
         val closes = List(2) { async(Dispatchers.Default) { runCatching { DBlayer.close() } } }
         val results = awaitWithin("both closes to return") { closes.awaitAll() }
         for (result in results) {
@@ -50,7 +50,7 @@ class ClosedDatabaseTest {
         }
         closeForCleanup()
         assertTrue(refusal { OpenDatabase().opened() } is DbException.NotOpen)
-        openSignedOffline(Config(null, null), modelsJSON)
+        openSignedOffline(Config(null), modelsJSON)
         DBlayer.close()
         val afterClose = entries()
         assertEquals(List(7) { "closed" }, (0..6).map { afterClose[it] })

@@ -47,7 +47,7 @@ pub(super) fn chat(db: &Store) -> Value {
 }
 
 pub(super) fn open() -> Arc<Store> {
-    let db = Arc::new(Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+    let db = Arc::new(Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     put(&db, "chats", json!({"id": "c1", "title": "t"}));
     db
 }
@@ -64,7 +64,7 @@ pub(super) fn intent_hiding(db: &Arc<Store>, op_id: u64, model: &str, row_id: &s
 
 #[test]
 fn data_sets_missing_parent_store() {
-    let db = Arc::new(Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+    let db = Arc::new(Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     let event = json!({"op": "upsert", "id": "m1", "row": {"id": "m1", "chatId": "c9", "body": "m1", "createdAt": 1}}).to_string();
     let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: vec![("messages".into(), event)], intents: 0, credential: None, ops: Vec::new() };
     let written = db.write_batch(&batch, db.files(), None).unwrap();
@@ -231,7 +231,7 @@ fn parent_value(fields: Value) -> RowValue {
 }
 
 fn reopened_at(path: &std::path::Path) -> Arc<Store> {
-    Arc::new(Store::open_models(Some(path), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap())
+    Arc::new(Store::open_models(Some(path), all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap())
 }
 
 fn temp_rows(db: &Store) -> i64 {

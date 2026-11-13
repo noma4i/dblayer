@@ -45,7 +45,7 @@ class LoadAllCancellationTest {
     @Test
     fun cancellingTheLastLoadInterestCancelsTheRequest() = bounded {
         val transport = PageTransport(cancelAt = 1)
-        openSigned(Config(null, null), modelsJSON, transport)
+        openSigned(Config(null), modelsJSON, transport)
         val def = buildJsonObject { put("name", JsonPrimitive("ContainerMembers")); put("document", JsonPrimitive(document)) }
         registerStandOperations(DBlayer.database, JsonArray(listOf(def)).toString())
         val held = transport.mock.hold("ContainerMembers", page(0))
@@ -66,7 +66,7 @@ class LoadAllCancellationTest {
     @Test
     fun cancellingTheCallerOfLoadAllStopsTheTransportCalls() = bounded {
         val transport = PageTransport()
-        openSigned(Config(null, null), modelsJSON, transport)
+        openSigned(Config(null), modelsJSON, transport)
         val def = buildJsonObject { put("name", JsonPrimitive("ContainerMembers")); put("document", JsonPrimitive(document)) }
         registerStandOperations(DBlayer.database, JsonArray(listOf(def)).toString())
         repeat(5) { transport.mock.enqueue("ContainerMembers", page(it)) }

@@ -33,7 +33,7 @@ fn ports(db: std::sync::Arc<Store>, transport: Arc<MockTransport>) -> Ports {
 
 fn moments_spec() -> ModelSpec { ModelSpec::new("moments", vec![FieldSpec::scalar("id", ScalarKind::Id)]) }
 
-pub(in super::super) fn open(path: &std::path::Path) -> Arc<Store> { Store::open_models(Some(path), vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap() }
+pub(in super::super) fn open(path: &std::path::Path) -> Arc<Store> { Store::open_models(Some(path), vec![moments_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap() }
 
 fn session_row(db: &Store) {
     let inner = db.lock();
@@ -117,7 +117,7 @@ async fn life_open_session_continues_the_saved_epoch() {
 /// call_run, call_run_offline, call_run_stale: the answer of the transport, offline refusal and the epoch rule.
 #[tokio::test(flavor = "multi_thread")]
 async fn call_run_answers_by_epoch_and_network() {
-    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new(), false);
@@ -143,7 +143,7 @@ async fn call_awaiting_snapshot_keeps_document() {
     use crate::runtime::{DetScheduler, EpochStamp};
     const ORIGINAL: &str = "query Op { original }";
     for replacement in [Some(("query Op { changed }".to_string(), "changed".to_string())), None] {
-        let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
+        let db = Store::open_models(None, vec![moments_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
         let transport = Arc::new(MockTransport::new());
         let documents = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let seen = documents.clone();
@@ -195,7 +195,7 @@ async fn call_mutate_plain_goes_through_epoch_gate() {
         }
         async fn put(&self, _: PutRequest) -> Result<PutReply, TransportError> { unreachable!() }
     }
-    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
     let mock = Arc::new(MockTransport::new());
     let held = Arc::new(HeldMutation { entered: tokio::sync::Notify::new(), release: tokio::sync::Notify::new(), calls: AtomicUsize::new(0) });
     let mut setup = ports(db, mock);
@@ -226,7 +226,7 @@ async fn call_mutate_plain_goes_through_epoch_gate() {
 #[tokio::test(flavor = "multi_thread")]
 async fn life_session_reset_erases_the_credential_and_identity_change_keeps_it() {
     let transport = Arc::new(MockTransport::new());
-    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     session_row(&db);
     let life = start(&db, &transport).await;
     assert_eq!(life.published().identity, Some(IDENTITY));
@@ -238,7 +238,7 @@ async fn life_session_reset_erases_the_credential_and_identity_change_keeps_it()
     assert!(db.revision_seq().unwrap() > revision, "the clearing is a commit");
     closed(&life).await;
 
-    let other = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
+    let other = Store::open_models(None, vec![moments_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     session_row(&other);
     let life = start(&other, &transport).await;
     life.credential_committed(2);
@@ -273,7 +273,7 @@ async fn a_loaded_page_lands_through_the_store_and_the_caller_hears_loaded() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db.sqlite");
     let transport = Arc::new(MockTransport::new());
-    let db = Store::open_models(Some(&path), vec![paged_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(Some(&path), vec![paged_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     session_row(&db);
     transport.enqueue("Mine", MockReply::data(json!({"mine": {"edges": [{"node": {"id": "m1", "userId": "u1", "text": "one"}}, {"node": {"id": "m2", "userId": "u1", "text": "two"}}], "pageInfo": {"hasNextPage": false, "endCursor": null}}})));
     let mut setup = ports(db.clone(), transport.clone());
@@ -305,7 +305,7 @@ async fn net_open_power_saving() {
     use crate::owners::network::NetworkInput;
     use std::sync::Mutex;
     let slot = crate::ffi::OpenDatabase::new();
-    let config = crate::ffi::Config { path: None, data_version: None };
+    let config = crate::ffi::Config { path: None };
     let options = crate::ffi::OpenOptions::default();
     let transport = Arc::new(crate::ffi::tests::database_tests::Plain);
     struct Saving;
@@ -328,7 +328,7 @@ async fn net_open_power_saving() {
 /// net_prop_connectivity_not_database: after the open only `SetOnline` changes the `online` of the owners.
 #[tokio::test(flavor = "multi_thread")]
 async fn net_prop_connectivity_not_database() {
-    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new(), false);
@@ -343,7 +343,7 @@ async fn net_prop_connectivity_not_database() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn net_prop_no_request_before_snapshot() {
-    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     life.register_operations(vec![("Op".into(), crate::owners::calls::CallKind::Query)], Vec::new(), false);
@@ -363,7 +363,7 @@ async fn network_events_reach_the_listeners_with_the_snapshot_of_the_epoch() {
     use crate::owners::contract::NetworkEvent;
     use crate::owners::lifecycle::Peer;
     use std::sync::Mutex;
-    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     life.barrier();
@@ -408,7 +408,7 @@ async fn a_snapshot_of_a_past_epoch_reaches_no_receiver() {
     use crate::owners::lifecycle::Peer;
     use crate::owners::network::NetworkInput;
     use std::sync::Mutex;
-    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     let heard: Arc<Mutex<Vec<NetworkEvent>>> = Arc::default();
@@ -427,7 +427,7 @@ async fn a_snapshot_of_a_past_epoch_reaches_no_receiver() {
 async fn the_rows_of_a_batch_land_through_the_common_path() {
     use crate::owners::contract::BatchAuthor;
     use crate::owners::store::{StoreBatch, StoreInput, StoreReply};
-    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -452,7 +452,7 @@ async fn the_rows_of_a_batch_land_through_the_common_path() {
 async fn a_committed_batch_is_broadcast_to_every_subscriber() {
     use crate::owners::contract::{BatchAuthor, Models};
     use crate::owners::store::{StoreBatch, StoreInput, StoreReply};
-    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     let (replies, reply) = std::sync::mpsc::channel();
@@ -476,7 +476,7 @@ async fn a_committed_batch_is_broadcast_to_every_subscriber() {
 async fn an_unreadable_queue_is_reported_for_outbox_and_open_still_ends() {
     use crate::owners::lifecycle::Peer;
     let transport = Arc::new(MockTransport::new());
-    let db = Store::open_models(None, vec![moments_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, vec![moments_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     session_row(&db);
     {
         let inner = db.lock();
@@ -542,7 +542,7 @@ async fn life_open_starts_observers() {
     }
     let started = Arc::new(AtomicUsize::new(0));
     let slot = crate::ffi::OpenDatabase::new();
-    let config = crate::ffi::Config { path: None, data_version: None };
+    let config = crate::ffi::Config { path: None };
     let transport = Arc::new(crate::ffi::tests::database_tests::Plain);
     let ports = crate::ffi::OpenPorts { transport: Some(transport), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
     let database = slot.open(config, crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenOptions::default(), ports, Some(Arc::new(Counting(started.clone())))).await.unwrap();

@@ -106,7 +106,7 @@ async fn open_models_with_http(models: String, path: String, server: Arc<Server>
     let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: EncryptedOperationClass::Authenticated });
     let ports = OpenPorts { partial_operations: true, transport: Some(Arc::new(Wire(server.clone()))), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials))), http: Some(http), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
-    let db = within(Database::open_with_clock(Config { path: Some(path), data_version: None }, crate::ffi::specs(models), ports, clock.clone())).await.unwrap();
+    let db = within(Database::open_with_clock(Config { path: Some(path) }, crate::ffi::specs(models), ports, clock.clone())).await.unwrap();
     db.register_operations(OPERATIONS.into()).await.unwrap();
     db.set_online(true).await.unwrap();
     if !signed { within(db.session_call("login_link".into(), json!({"account":"A"}).to_string())).await.unwrap(); }
@@ -244,7 +244,7 @@ fn created_window_membership_uses_the_committed_window() {
 
     let mut models: Vec<crate::schema::ModelSpec> = serde_json::from_str(&moment_models(OnFailure::Rollback)).unwrap();
     models[0].relations.push(relation("created", true, false));
-    let db = Store::open_models(None, models, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let db = Store::open_models(None, models, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     let planned = db.plan_create("Moment", json!({"text":"created"}).as_object().unwrap().clone(), Default::default()).unwrap();
     let key = WindowKey::relation("Moment", "created", &Default::default());
     let commit = |author, ops| {
@@ -285,7 +285,7 @@ fn data_row_rules_and_membership_decide_the_window() {
         selected.scalar_types.insert("minimum".into(), ScalarKind::Int);
         selected.row_rules.push(RowRule { field: "score".into(), test: RowTest::GreaterThan { parameter: "minimum".into() } });
         models[0].relations.push(selected);
-        let db = Store::open_models(None, models, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+        let db = Store::open_models(None, models, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
         let commit = |author, ops| {
             let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
             db.write_batch(&batch, db.files(), None).unwrap();
@@ -327,7 +327,7 @@ fn data_row_rules_and_membership_decide_the_window() {
         shelf.text_params.push("shelf".into());
         shelf.membership.insert("shelf".into(), Membership::Contains("shelves".into()));
         models[0].relations.push(shelf);
-        let db = Store::open_models(None, models, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+        let db = Store::open_models(None, models, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
         let ids = |shelf: &str| {
             let query = db.remote_relation_query("Moment", "shelf", json!({"shelf":shelf}).as_object().unwrap()).unwrap().unwrap();
             db.query(&query).unwrap().into_iter().map(|row| row.get("id").unwrap().clone()).collect::<Vec<_>>()
@@ -376,7 +376,7 @@ mod by_source {
 
     impl Bench {
         pub(super) fn open(models: Vec<crate::schema::ModelSpec>) -> Bench {
-            Bench { db: Store::open_models(None, models, None, Arc::new(crate::runtime::SystemClock)).unwrap(), batch: Cell::new(0) }
+            Bench { db: Store::open_models(None, models, Arc::new(crate::runtime::SystemClock)).unwrap(), batch: Cell::new(0) }
         }
 
         pub(super) fn commit(&self, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) {

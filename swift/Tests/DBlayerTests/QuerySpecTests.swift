@@ -28,7 +28,7 @@ extension BridgeProbeTests {
   }
 
   @Test @MainActor func aStreamWithoutARelationRefusesToLoad() async throws {
-    try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
+    try await openSignedOffline(config: Config(path: nil), modelsJson: modelsJSON)
     let stream = try DB.account().stream(Query<Moment>())
     await expectDbError("Invalid") { try await stream.refresh() }
     await expectDbError("Invalid") { try await stream.loadMore() }

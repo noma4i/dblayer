@@ -14,7 +14,7 @@ struct CallOrderTests {
   func callsStartedWithoutWaitingReachTheTransportInTheOrderTheyStarted() async throws {
     let transport = MockTransport()
     transport.respondWith("CreateMoment") { _ in #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"# }
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
     try await registerStandOperations(DB.database, defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
     let account = try DB.account()
     let names = (0..<12).map { String(format: "call-%02d", $0) }

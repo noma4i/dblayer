@@ -42,7 +42,7 @@ class QuerySpecTest {
 
     @Test
     fun aStreamWithoutARelationRefusesToLoad() = bounded {
-        openSignedOffline(Config(null, null), modelsJSON)
+        openSignedOffline(Config(null), modelsJSON)
         val stream = AccountScope.current().stream(Query("Moment", Moment))
         try { stream.refresh(); fail("refresh has to refuse") } catch (_: DbException.Invalid) {}
         try { stream.loadMore(); fail("loadMore has to refuse") } catch (_: DbException.Invalid) {}

@@ -227,7 +227,7 @@ pub(super) fn listed_messages_store() -> Store {
     });
     spec.relations.push(thread);
     let (store, _) = booted_store();
-    store.boot(&[spec, items_spec()], None).unwrap();
+    store.boot(&[spec, items_spec()]).unwrap();
     store
 }
 

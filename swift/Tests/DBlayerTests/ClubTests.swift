@@ -125,7 +125,7 @@ extension BridgeProbeTests {
   @MainActor
   static func openClubSession(_ transport: any Transport, models: String = modelsJSON, subscription: String? = nil) async throws {
     let defs = subscription.map { String(clubDefs.dropLast()) + ",\($0)]" } ?? clubDefs
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: models, transport: transport, operations: defs)
+    try await openSigned(config: Config(path: nil), modelsJson: models, transport: transport, operations: defs)
   }
 
 }

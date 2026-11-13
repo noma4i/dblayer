@@ -10,7 +10,7 @@ async fn store_wait_url() {
     let mut spec = crate::schema::ModelSpec::new("Files", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::file("photo").nullable(), local]);
     spec.storage = crate::schema::Storage::Local;
     let models = serde_json::to_string(&vec![spec]).unwrap();
-    let config = Config { path: Some(path.to_string_lossy().into()), data_version: None };
+    let config = Config { path: Some(path.to_string_lossy().into()) };
     let db = Database::open(config, crate::ffi::specs(models), crate::ffi::OpenPorts::default()).await.unwrap();
     let epoch = db.session_epoch();
     let id = db.create(epoch, "Files".into(), "{}".into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;
@@ -37,7 +37,7 @@ async fn file_attach_detach() {
     let mut spec = crate::schema::ModelSpec::new("Files", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::file("photo").nullable()]);
     spec.storage = crate::schema::Storage::Local;
     let models = serde_json::to_string(&vec![spec]).unwrap();
-    let config = || Config { path: Some(path.to_string_lossy().into()), data_version: None };
+    let config = || Config { path: Some(path.to_string_lossy().into()) };
     let db = Database::open(config(), crate::ffi::specs(models.clone()), crate::ffi::OpenPorts::default()).await.unwrap();
     let epoch = db.session_epoch();
     let first = db.create(epoch, "Files".into(), "{}".into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;
@@ -75,7 +75,7 @@ async fn file_attach_url_bytes() {
     let path = directory.path().join("files.sqlite");
     let mut spec = crate::schema::ModelSpec::new("Files", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::file("photo").nullable()]);
     spec.storage = crate::schema::Storage::Local;
-    let db = Database::open(Config { path: Some(path.to_string_lossy().into()), data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![spec]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap();
+    let db = Database::open(Config { path: Some(path.to_string_lossy().into()) }, crate::ffi::specs(serde_json::to_string(&vec![spec]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap();
     let epoch = db.session_epoch();
     let id = db.create(epoch, "Files".into(), "{}".into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;
     for size in [0usize, 256 * 1024, 256 * 1024 + 1, 2 * 1024 * 1024] {
@@ -99,7 +99,7 @@ async fn out_local_attach_missing_row() {
     let mut spec = crate::schema::ModelSpec::new("Files", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::file("photo").nullable()]);
     spec.storage = crate::schema::Storage::Local;
     let models = serde_json::to_string(&vec![spec]).unwrap();
-    let config = Config { path: Some(directory.path().join("files.sqlite").to_string_lossy().into()), data_version: None };
+    let config = Config { path: Some(directory.path().join("files.sqlite").to_string_lossy().into()) };
     let db = Database::open(config, crate::ffi::specs(models), crate::ffi::OpenPorts::default()).await.unwrap();
     let epoch = db.session_epoch();
     let source = directory.path().join("source");

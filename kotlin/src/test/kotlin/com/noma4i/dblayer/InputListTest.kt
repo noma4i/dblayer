@@ -24,7 +24,7 @@ class InputListTest {
     private suspend fun rig(reply: String): MockTransport {
         val transport = MockTransport()
         transport.enqueue("WidgetsSend", reply)
-        openSigned(Config(null, null), modelsJSON, transport)
+        openSigned(Config(null), modelsJSON, transport)
         registerStandOperations(DBlayer.database, """[{"name":"WidgetsSend","document":"mutation WidgetsSend(${'$'}widgets: [StickerWidgetInput!]) { widgetsSend(widgets: ${'$'}widgets) { id } }"}]""")
         return transport
     }

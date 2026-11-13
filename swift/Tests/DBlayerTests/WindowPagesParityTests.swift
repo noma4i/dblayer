@@ -24,7 +24,7 @@ extension BridgeProbeTests {
       default: return nil
       }
     }
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
     try await registerStandOperations(DB.database, defsJson: JSONValue.array([.object(["name": .string("ContainerThread"), "document": .string(document)])]).text)
     let held = Projected<Record>(try DB.account().stream(Record.thread("c1")))
     await eventually("first page") { held.rows.count == 25 && held.state?.settled == true }

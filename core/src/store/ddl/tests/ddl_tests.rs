@@ -287,13 +287,13 @@ fn membership_changes_and_swapped_bindings_change_the_fingerprint() {
     assert_ne!(original, fingerprint(&node));
 }
 
-fn verdict(writes: &[(&str, &str)], data_version: Option<&str>, fingerprints: &[(&str, &str)]) -> ManifestVerdict {
+fn verdict(writes: &[(&str, &str)], fingerprints: &[(&str, &str)]) -> ManifestVerdict {
     let connection = core_connection();
     for (key, value) in writes {
         manifest_write(&connection, key, value).unwrap();
     }
     let fingerprints = fingerprints.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-    manifest_verify(&connection, data_version, &fingerprints).unwrap()
+    manifest_verify(&connection, &fingerprints).unwrap()
 }
 
 #[test]
@@ -301,39 +301,42 @@ fn manifest_write_and_read_round_trip() {
     let connection = core_connection();
 
     manifest_write(&connection, FORMAT_VERSION_KEY, "1").unwrap();
-    manifest_write(&connection, DATA_VERSION_KEY, "schema-a").unwrap();
     manifest_write(&connection, REVISION_SEQ_KEY, "42").unwrap();
     manifest_write(&connection, REVISION_SEQ_KEY, "43").unwrap();
 
     assert_eq!(manifest_read(&connection, FORMAT_VERSION_KEY).unwrap(), Some("1".to_string()));
-    assert_eq!(manifest_read(&connection, DATA_VERSION_KEY).unwrap(), Some("schema-a".to_string()));
     assert_eq!(manifest_read(&connection, REVISION_SEQ_KEY).unwrap(), Some("43".to_string()));
     assert_eq!(fingerprint_key("message"), "fingerprint:message");
 }
 
 #[test]
-fn missing_format_format_mismatch_and_data_version_mismatch_are_mismatched() {
-    let missing_format = verdict(&[("fingerprint:message", "message-v1")], None, &[]);
-    let format_mismatch = verdict(&[(FORMAT_VERSION_KEY, "0")], None, &[]);
+fn a_changed_or_missing_format_recreates_the_base() {
     let format = format_version();
-    let data_mismatch = verdict(&[(FORMAT_VERSION_KEY, format.as_str()), (DATA_VERSION_KEY, "a")], Some("b"), &[]);
-
-    assert_eq!(missing_format, ManifestVerdict::Mismatch);
-    assert_eq!(format_mismatch, ManifestVerdict::Mismatch);
-    assert_eq!(data_mismatch, ManifestVerdict::Mismatch);
+    let cases: [(&str, &[(&str, &str)], bool, Option<RecreateReason>); 5] = [
+        ("empty base", &[], false, None),
+        ("same format", &[(FORMAT_VERSION_KEY, format.as_str())], false, None),
+        ("other format", &[(FORMAT_VERSION_KEY, "0")], false, Some(RecreateReason::CoreFormat)),
+        ("no format key", &[("fingerprint:message", "message-v1")], false, Some(RecreateReason::CoreFormat)),
+        ("empty manifest over cached rows", &[], true, Some(RecreateReason::CoreFormat)),
+    ];
+    for (case, writes, cached, expected) in cases {
+        let connection = core_connection();
+        for (key, value) in writes { manifest_write(&connection, key, value).unwrap(); }
+        if cached { connection.execute("insert into tombstone (model, id, seq, deleted_at) values ('m', '1', 1, 0)", []).unwrap(); }
+        assert_eq!(recreate_reason(&connection).unwrap(), expected, "{case}");
+    }
 }
 
 #[test]
 fn empty_database_is_fresh_and_fingerprint_mismatch_touches_one_model() {
     let format = format_version();
-    let fresh = verdict(&[], None, &[]);
+    let fresh = verdict(&[], &[]);
     let cache_only = verdict(
         &[(FORMAT_VERSION_KEY, format.as_str()), ("fingerprint:message", "x"), ("fingerprint:chat", "y")],
-        None,
         &[("message", "z"), ("chat", "y")],
     );
-    let removed = verdict(&[(FORMAT_VERSION_KEY, format.as_str()), ("fingerprint:gone", "x")], None, &[]);
-    let added = verdict(&[(FORMAT_VERSION_KEY, format.as_str())], None, &[("new", "x")]);
+    let removed = verdict(&[(FORMAT_VERSION_KEY, format.as_str()), ("fingerprint:gone", "x")], &[]);
+    let added = verdict(&[(FORMAT_VERSION_KEY, format.as_str())], &[("new", "x")]);
 
     assert_eq!(fresh, ManifestVerdict::Fresh);
     assert_eq!(cache_only, ManifestVerdict::CacheOnly { models: vec!["message".to_string()] });
@@ -342,22 +345,13 @@ fn empty_database_is_fresh_and_fingerprint_mismatch_touches_one_model() {
 }
 
 #[test]
-fn empty_manifest_with_cached_rows_is_mismatched() {
-    let connection = core_connection();
-    connection.execute("insert into tombstone (model, id, seq, deleted_at) values ('m', '1', 1, 0)", []).unwrap();
-
-    assert_eq!(manifest_verify(&connection, None, &BTreeMap::new()).unwrap(), ManifestVerdict::Mismatch);
-}
-
-#[test]
 fn stamp_makes_matching_manifest_matching() {
     let connection = core_connection();
     let fingerprints = BTreeMap::from([("messages".to_string(), "fp1".to_string())]);
 
-    manifest_stamp(&connection, Some("v1"), &fingerprints).unwrap();
+    manifest_stamp(&connection, &fingerprints).unwrap();
 
-    assert_eq!(manifest_verify(&connection, Some("v1"), &fingerprints).unwrap(), ManifestVerdict::Match);
-    assert_eq!(manifest_verify(&connection, Some("v2"), &fingerprints).unwrap(), ManifestVerdict::Mismatch);
+    assert_eq!(manifest_verify(&connection, &fingerprints).unwrap(), ManifestVerdict::Match);
 }
 
 #[test]
@@ -366,9 +360,9 @@ fn repeated_stamp_does_not_add_manifest_rows() {
     let fingerprints = BTreeMap::from([("messages".to_string(), "fp1".to_string())]);
     let count = |connection: &Connection| connection.query_row("select count(*) from manifest", [], |row| row.get::<_, i64>(0)).unwrap();
 
-    manifest_stamp(&connection, Some("v1"), &fingerprints).unwrap();
+    manifest_stamp(&connection, &fingerprints).unwrap();
     let first = count(&connection);
-    manifest_stamp(&connection, Some("v1"), &fingerprints).unwrap();
+    manifest_stamp(&connection, &fingerprints).unwrap();
 
     assert_eq!(count(&connection), first);
 }

@@ -13,7 +13,6 @@ use crate::value::ScalarKind;
 pub const SCHEMA_VERSION: i64 = 2;
 
 pub const FORMAT_VERSION_KEY: &str = "format_version";
-pub const DATA_VERSION_KEY: &str = "data_version";
 pub const REVISION_SEQ_KEY: &str = "revision_seq";
 pub(crate) const TRANSFER_ID_KEY: &str = "transfer_id";
 pub(crate) const CARRIED_MANIFEST_KEYS: [&str; 6] = ["saved_epoch", "saved_generation", REVISION_SEQ_KEY, TRANSFER_ID_KEY, "resume_answer_outcome", "resume_answer_detail"];
@@ -63,7 +62,6 @@ pub enum ManifestVerdict {
     Fresh,
     Match,
     CacheOnly { models: Vec<String> },
-    Mismatch,
 }
 
 
@@ -247,8 +245,12 @@ pub fn recreate_reason(connection: &Connection) -> Result<Option<RecreateReason>
         return Ok(Some(RecreateReason::SchemaVersion));
     }
     let has_manifest: bool = connection.query_row(include_str!("../sql/ddl/recreate_reason_2.sql"), [], |row| row.get(0))?;
-    if has_manifest && manifest_read(connection, FORMAT_VERSION_KEY)?.is_some_and(|stored| stored != format_version()) {
-        return Ok(Some(RecreateReason::CoreFormat));
+    if has_manifest {
+        let stored = manifest_read(connection, FORMAT_VERSION_KEY)?;
+        let fresh = connection.prepare(include_str!("../sql/ddl/manifest_verify.sql"))?.query([])?.next()?.is_none() && cache_is_empty(connection)?;
+        if stored.as_deref() != Some(format_version().as_str()) && !fresh {
+            return Ok(Some(RecreateReason::CoreFormat));
+        }
     }
     Ok(None)
 }
@@ -258,16 +260,6 @@ const STORED_VALUE_FORMAT: &str = "dates are UTC text with milliseconds; rows ar
 pub fn format_version() -> String {
     let text = [CORE_STATEMENTS.as_slice(), CACHE_STATEMENTS.as_slice(), &[STORED_VALUE_FORMAT]].concat().join("\n");
     Sha256::digest(text.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-pub fn rebuild_cache_tables(connection: &Connection) -> Result<(), DdlError> {
-    for table in CACHE_TABLES {
-        connection.execute_batch(&format!(include_str!("../sql/ddl/rebuild_cache_tables.sql"), table = table))?;
-    }
-    for statement in CACHE_STATEMENTS {
-        connection.execute_batch(statement)?;
-    }
-    Ok(())
 }
 
 pub fn create_model_tables(connection: &Connection, models: &[ModelSpec]) -> Result<(), DdlError> {
@@ -351,10 +343,8 @@ pub fn manifest_write(connection: &Connection, key: &str, value: &str) -> Result
 
 pub fn manifest_stamp(
     connection: &Connection,
-    data_version: Option<&str>,
     fingerprints: &BTreeMap<String, String>,
 ) -> Result<(), DdlError> {
-    manifest_write(connection, DATA_VERSION_KEY, data_version.unwrap_or(""))?;
     for (model, fingerprint) in fingerprints {
         manifest_write(connection, &fingerprint_key(model), fingerprint)?;
     }
@@ -374,7 +364,6 @@ fn cache_is_empty(connection: &Connection) -> Result<bool, DdlError> {
 
 pub fn manifest_verify(
     connection: &Connection,
-    data_version: Option<&str>,
     fingerprints: &BTreeMap<String, String>,
 ) -> Result<ManifestVerdict, DdlError> {
     let mut statement = connection.prepare(include_str!("../sql/ddl/manifest_verify.sql"))?;
@@ -383,13 +372,6 @@ pub fn manifest_verify(
 
     if values.is_empty() && cache_is_empty(connection)? {
         return Ok(ManifestVerdict::Fresh);
-    }
-    if values.get(FORMAT_VERSION_KEY).map(String::as_str) != Some(format_version().as_str()) {
-        return Ok(ManifestVerdict::Mismatch);
-    }
-    let stored_data_version = values.get(DATA_VERSION_KEY).map_or("", String::as_str);
-    if stored_data_version != data_version.unwrap_or("") {
-        return Ok(ManifestVerdict::Mismatch);
     }
 
     let stored: BTreeMap<&str, &str> = values

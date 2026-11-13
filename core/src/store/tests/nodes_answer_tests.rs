@@ -12,7 +12,7 @@ use crate::store::fixtures::{all_specs, put};
 use crate::store::Store;
 
 fn open() -> Arc<Store> {
-    let db = Arc::new(Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+    let db = Arc::new(Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     for id in ["m1", "m2", "m3"] {
         put(&db, "moments", json!({"id": id, "userId": "u1", "text": format!("cached {id}")}));
     }

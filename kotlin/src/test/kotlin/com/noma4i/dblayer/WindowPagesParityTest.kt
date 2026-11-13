@@ -30,7 +30,7 @@ class WindowPagesParityTest {
                 else -> null
             }
         }
-        openSigned(Config(null, null), modelsJSON, transport)
+        openSigned(Config(null), modelsJSON, transport)
         val definition = kotlinx.serialization.json.JsonArray(listOf(kotlinx.serialization.json.buildJsonObject {
             put("name", kotlinx.serialization.json.JsonPrimitive("ContainerThread"))
             put("document", kotlinx.serialization.json.JsonPrimitive(document))

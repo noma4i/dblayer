@@ -27,7 +27,7 @@ class BridgeProbeTest {
         transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","text":"m","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
         transport.enqueue("UpdateMoment", """{"data":{"updateMoment":{"__typename":"Moment","id":"1","uuid":"a","text":"edited","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
         transport.enqueue("DeleteMoment", """{"data":{"deleteMoment":{"id":"1"}}}""")
-        openSigned(Config(null, null), modelsJSON, transport)
+        openSigned(Config(null), modelsJSON, transport)
         registerStandOperations(DBlayer.database, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment(${'$'}id: ID!, ${'$'}text: String) { updateMoment(id: ${'$'}id, text: ${'$'}text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment(${'$'}id: ID!) { deleteMoment(id: ${'$'}id) { id } }"}]""")
         val scope = CoroutineScope(SupervisorJob())
         val deliveries = java.util.concurrent.CopyOnWriteArrayList<List<String?>>()
@@ -51,7 +51,7 @@ class BridgeProbeTest {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request"))
         transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request"))
-        openSigned(Config(null, null), modelsJSON, transport)
+        openSigned(Config(null), modelsJSON, transport)
         registerStandOperations(DBlayer.database, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
 
         val thrown = runCatching { Moment.feed.refresh() }.exceptionOrNull()
@@ -65,7 +65,7 @@ class BridgeProbeTest {
     fun feedLoadsFromTheTransportIntoLiveRowsAndReportsItsState() = bounded {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"totalCount":9}}}""")
-        openSigned(Config(null, null), modelsJSON, transport)
+        openSigned(Config(null), modelsJSON, transport)
         registerStandOperations(DBlayer.database, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
 
         val listScope = CoroutineScope(SupervisorJob())

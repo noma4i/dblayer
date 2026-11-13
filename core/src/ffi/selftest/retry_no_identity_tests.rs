@@ -18,7 +18,7 @@ fn code(result: &Result<(), DbError>) -> &'static str {
 async fn opened() -> Arc<Database> {
     let spec = crate::schema::ModelSpec::new("Moment", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id)]);
     let models = serde_json::to_string(&vec![spec]).unwrap();
-    let config = Config { path: None, data_version: None };
+    let config = Config { path: None };
     Database::open(config, crate::ffi::specs(models), OpenPorts::default()).await.unwrap()
 }
 

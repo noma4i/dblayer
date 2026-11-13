@@ -38,7 +38,7 @@ class EventPayloadTest {
 
     private suspend fun checkOrder(screen: CoroutineScope, eventsFirst: Boolean) {
         val transport = MockTransport()
-        openSigned(Config(null, null), modelsJSON, transport, """[{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"ChatNode","document":"query ChatNode { node { ... on Chat { id title revision lists } } }"},{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } message { id text chatId } } } }"}]""")
+        openSigned(Config(null), modelsJSON, transport, """[{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"ChatNode","document":"query ChatNode { node { ... on Chat { id title revision lists } } }"},{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } message { id text chatId } } } }"}]""")
         val scope = AccountScope.current()
         var streams: Pair<Channel<ModelEventItem<Chat>>, Channel<ModelEventItem<Message>>>? = null
         if (eventsFirst) streams = opened(screen, scope)

@@ -339,7 +339,7 @@ impl Stand {
         let restored = self.signed_out || self.rig.credentials.inner.value().is_some();
         let models = self.models();
         let ports = OpenPorts { partial_operations: !self.complete.load(Ordering::SeqCst), transport: Some(self.puts.clone()), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(self.store.clone().unwrap_or_else(|| self.rig.credentials.clone())), http: Some(Arc::new(ScriptedHttp { script: self.script.clone(), session: ThroughServer(self.rig.server.clone()) })), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), preparer: self.preparer.clone(), ..Default::default() };
-        let config = Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None };
+        let config = Config { path: path.map(|path| path.to_string_lossy().into_owned()) };
         let database = match clock {
             Some(clock) => Database::open_with_clock(config, crate::ffi::specs(models), ports, clock).await,
             None => Database::open(config, crate::ffi::specs(models), ports).await,

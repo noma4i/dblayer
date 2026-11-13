@@ -15,7 +15,7 @@ fn store_without_newer() -> Arc<Store> {
         }
         spec
     }).collect();
-    let db = Arc::new(Store::open_models(None, specs, None, Arc::new(crate::runtime::SystemClock)).unwrap());
+    let db = Arc::new(Store::open_models(None, specs, Arc::new(crate::runtime::SystemClock)).unwrap());
     put(&db, "chats", json!({"id": "c1", "title": "t"}));
     db
 }

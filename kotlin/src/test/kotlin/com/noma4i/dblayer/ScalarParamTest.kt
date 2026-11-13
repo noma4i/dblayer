@@ -28,7 +28,7 @@ class ScalarParamTest {
     @Test
     fun aTypedScopeParamReachesTheServerAsANumber() = bounded {
         val transport = MockTransport()
-        openSigned(Config(null, null), modelsJSON, transport)
+        openSigned(Config(null), modelsJSON, transport)
         registerStandOperations(DBlayer.database, """[{"name":"tailSince","document":"$document"}]""")
         transport.enqueue("tailSince", """{"data":{"tailSince":{"edges":[{"cursor":"c1","node":{"id":"t1","text":"a"}}],"pageInfo":{"hasNextPage":false,"endCursor":"c1"}}}}""")
         Tail.since("c1", afterSequence = 120L, pinned = false).refresh()

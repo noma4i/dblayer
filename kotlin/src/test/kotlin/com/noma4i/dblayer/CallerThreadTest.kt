@@ -44,7 +44,7 @@ class CallerThreadTest {
     @Test
     fun everyEntryDecodesTheModelOffTheCallerThread() = bounded {
         val transport = MockTransport()
-        openSigned(Config(null, null), modelsJSON, transport, """[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"},{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"}]""")
+        openSigned(Config(null), modelsJSON, transport, """[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"},{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"}]""")
         val screen = CoroutineScope(SupervisorJob() + caller)
         try {
             decoded.clear()

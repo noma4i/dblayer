@@ -48,7 +48,7 @@ class MediaPreloadTest {
             transport.enqueue("ChatMedia", whole("v2"))
             transport.enqueue("LikeMoment", """{"data":{"likeMoment":{"__typename":"MediaMessage","id":"v1","chatId":"c1","kind":"TEXT","mediaKind":"IMAGE","sequenceNumber":1}}}""")
             val definitions = """[{"name":"MediaMarker","document":"query MediaMarker(${'$'}chatId: ID!, ${'$'}upToSequence: Int!) { node(id: ${'$'}chatId) { mediaLibrary(upToSequence: ${'$'}upToSequence) { revision visualCount audioCount giftCount latestSequence } } }"},{"name":"MediaTail","document":"query MediaTail(${'$'}chatId: ID!, ${'$'}afterSequence: Int!, ${'$'}first: Int, ${'$'}after: String) { node(id: ${'$'}chatId) { messages(afterSequence: ${'$'}afterSequence, first: ${'$'}first, after: ${'$'}after) { edges { cursor node { id chatId kind mediaKind sequenceNumber } } pageInfo { hasNextPage endCursor } } } }"},{"name":"LikeMoment","document":"mutation LikeMoment(${'$'}momentId: ID!) { likeMoment(momentId: ${'$'}momentId) { id chatId kind mediaKind sequenceNumber } }"}]"""
-            openSigned(Config(null, null), specs(updated), transport, definitions.dropLast(1) + """,{"name":"ChatMedia","document":"${ChatMedia.document}"}]""")
+            openSigned(Config(null), specs(updated), transport, definitions.dropLast(1) + """,{"name":"ChatMedia","document":"${ChatMedia.document}"}]""")
             val query = MediaMessage.visualMedia("c1")
             awaitWithin("the initial media load") { query.loadAll() }
             val row = query.read().single()

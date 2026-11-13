@@ -24,7 +24,7 @@ class FutureHandleTest {
     @Test
     fun bridge_prop_future_handle_cancelAndAnswerFromManyThreadsEndEveryWait() = bounded {
         val transport = MockTransport()
-        openSigned(Config(null, null), modelsJSON, transport)
+        openSigned(Config(null), modelsJSON, transport)
         val def = buildJsonObject { put("name", JsonPrimitive("ContainerMembers")); put("document", JsonPrimitive(document)) }
         registerStandOperations(DBlayer.database, JsonArray(listOf(def)).toString())
         val holds = (0 until 8).map { transport.hold("ContainerMembers", page(it)) }

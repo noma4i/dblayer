@@ -15,7 +15,7 @@ extension DB {
     let clock = TestClock(startMillis: UInt64(start.timeIntervalSince1970 * 1000))
     let definitions = operations.map { OperationDefinition(name: $0.operationName, document: $0.document) }
     do { try await DB.opener.opened().closeDatabase() } catch DbError.NotOpen(_) {}
-    let database = try await DB.opener.openWithClock(config: Config(path: path, dataVersion: nil), modelsJson: modelsJSON, ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: scriptedEndpoint, preparer: preparer, partialOperations: true), clock: clock, options: OpenOptions(operations: definitions), observers: observers ?? OnlineAtOpen())
+    let database = try await DB.opener.openWithClock(config: Config(path: path), modelsJson: modelsJSON, ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: scriptedEndpoint, preparer: preparer, partialOperations: true), clock: clock, options: OpenOptions(operations: definitions), observers: observers ?? OnlineAtOpen())
     await ChangePump.start(database)
     return clock
   }

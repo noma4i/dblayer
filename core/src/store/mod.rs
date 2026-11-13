@@ -121,7 +121,6 @@ pub(crate) struct Inner {
     pub generation: Generation,
     pub ready: bool,
     pub poison: Arc<Mutex<Option<String>>>,
-    pub data_version: Option<String>,
     pub counters: Counters,
 }
 
@@ -268,7 +267,6 @@ impl Store {
             generation: Generation::INITIAL,
             ready: false,
             poison: poison.clone(),
-            data_version: None,
             counters: Counters::default(),
         };
         Self {

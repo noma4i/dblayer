@@ -30,7 +30,7 @@ fn messages_spec() -> ModelSpec {
 
 fn store_with_messages() -> Store {
     let store = Store::open_in_memory(std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-    store.boot(&[messages_spec()], None).unwrap();
+    store.boot(&[messages_spec()]).unwrap();
     store.mark_ready();
     store
 }
@@ -128,7 +128,7 @@ fn a_union_inside_a_nested_object_and_an_array_element_is_stored_in_columns() {
     let mut spec = ModelSpec::new("screens", vec![FieldSpec::scalar("id", ScalarKind::Id), screen, items]);
     resolve_types(std::slice::from_mut(&mut spec));
     let store = Store::open_in_memory(std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-    store.boot(&[spec], None).unwrap();
+    store.boot(&[spec]).unwrap();
     store.mark_ready();
     let value = json!({
         "id": "s1",

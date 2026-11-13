@@ -183,7 +183,7 @@ impl crate::ffi::FakeTransport for CancelledLoadTransport {
 #[tokio::test(flavor = "multi_thread")]
 async fn cancelling_the_last_load_interest_cancels_the_request() {
     let transport = Arc::new(CancelledLoadTransport::default());
-    let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(crate::ffi::tests::lifecycle_tests::models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
+    let database = bound(Database::open(crate::ffi::Config { path: None }, crate::ffi::specs(crate::ffi::tests::lifecycle_tests::models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
     database.register_operations(json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string()).await.unwrap();
     database.set_online(true).await.unwrap();
     let request = database.begin_load(database.session_epoch(), "User".into(), Some("all".into()), "{}".into()).unwrap();
@@ -197,7 +197,7 @@ async fn cancelling_the_last_load_interest_cancels_the_request() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_last_load_interest_leaves_through_the_owner_after_the_earlier_registrations() {
     let transport = Arc::new(CancelledLoadTransport::default());
-    let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(crate::ffi::tests::lifecycle_tests::models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
+    let database = bound(Database::open(crate::ffi::Config { path: None }, crate::ffi::specs(crate::ffi::tests::lifecycle_tests::models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
     database.register_operations(json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string()).await.unwrap();
     database.set_online(true).await.unwrap();
     let request = database.begin_load(database.session_epoch(), "User".into(), Some("all".into()), "{}".into()).unwrap();
@@ -219,7 +219,7 @@ async fn the_last_load_interest_leaves_through_the_owner_after_the_earlier_regis
 async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     use super::rig_models::{plain_models, plain_operations};
     let directory = tempfile::tempdir().unwrap();
-    let config = crate::ffi::Config { path: Some(directory.path().join("cache.sqlite").to_string_lossy().into_owned()), data_version: None };
+    let config = crate::ffi::Config { path: Some(directory.path().join("cache.sqlite").to_string_lossy().into_owned()) };
     let opener = crate::ffi::OpenDatabase::new();
     let world_a = World::new("server", "A", true);
     let switch = Switchable::new(Some(world_a.clone()), false);

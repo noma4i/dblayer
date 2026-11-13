@@ -14,7 +14,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class EnumTest {
-    private suspend fun open() = openDatabase(Config(null, null), modelsJSON, null).also { adopt(it) }
+    private suspend fun open() = openDatabase(Config(null), modelsJSON, null).also { adopt(it) }
 
     @Test
     fun anUnknownValueDecodesWithoutLossAndEncodesBackAsItArrived() {

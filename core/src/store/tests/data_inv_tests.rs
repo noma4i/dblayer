@@ -12,7 +12,7 @@ use crate::store::fixtures::{all_specs, moments_spec, put, row};
 use crate::store::Store;
 use crate::value::SortDirection;
 
-pub(super) fn open() -> Arc<Store> { Arc::new(Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap()) }
+pub(super) fn open() -> Arc<Store> { Arc::new(Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap()) }
 
 pub(super) fn write(db: &Store, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) {
     let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows, intents: 0, credential: None, ops };
@@ -222,7 +222,7 @@ pub(super) fn typing(db: &Store, id: &str) -> Option<Value> { db.read(&["moments
 
 #[test]
 fn store_relevant_view_keeps_overlay_position_and_handles_eviction() {
-    let db = Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let db = Store::open_models(None, ephemeral_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     put(&db, "moments", json!({"id":"m1", "userId":"u1"}));
     let query = Query::new("moments");
     let view = crate::store::fixtures::list_view(&query);
@@ -249,20 +249,20 @@ fn inv_ephemeral_01_values_and_memory_rows_do_not_survive_a_restart() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("data.sqlite");
     {
-        let db = Store::open_models(Some(&path), ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
+        let db = Store::open_models(Some(&path), ephemeral_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
         put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
         put(&db, "presence", json!({"id": "p1"}));
         set_typing(&db, "m1", true);
         assert_eq!(typing(&db, "m1"), Some(json!(true)));
     }
-    let db = Store::open_models(Some(&path), ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
+    let db = Store::open_models(Some(&path), ephemeral_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
     assert_eq!(typing(&db, "m1"), Some(json!(false)), "the value is back to the default");
     assert!(db.read(&["presence"], |reader| reader.point("presence", "p1")).unwrap().is_none(), "the memory row is gone");
 }
 
 #[test]
 fn inv_ephemeral_08_values_for_rows_that_never_arrive_leave_no_memory_behind() {
-    let db = Arc::new(Store::open_models(None, ephemeral_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+    let db = Arc::new(Store::open_models(None, ephemeral_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     for index in 0..1500 { set_typing(&db, &format!("ghost{index}"), true); }
     let held = db.overlays.get(db.revision_seq().unwrap()).unwrap().values.len();
     assert!(held <= 1024, "{held} values for rows that never arrived stay in memory");
@@ -289,7 +289,7 @@ pub(super) fn attach(model_row: &str, bytes: Vec<u8>) -> StoreOp {
 #[test]
 fn inv_file_07_the_bytes_read_back_the_same_on_both_sides_of_the_storage_threshold() {
     let directory = tempfile::tempdir().unwrap();
-    let db = Store::open_models(Some(&directory.path().join("data.sqlite")), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
+    let db = Store::open_models(Some(&directory.path().join("data.sqlite")), all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
     put(&db, "moments", json!({"id": "m1", "userId": "u1"}));
     for size in [1usize, 256 * 1024, 256 * 1024 + 1, 600_000] {
         let bytes: Vec<u8> = (0..size).map(|index| (index % 251) as u8).collect();
@@ -314,7 +314,7 @@ fn paged_moments() -> Arc<Store> {
     });
     moments.relations.push(mine);
     let specs = all_specs().into_iter().map(|spec| if spec.key.as_str() == "moments" { moments.clone() } else { spec }).collect();
-    Arc::new(Store::open_models(None, specs, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap())
+    Arc::new(Store::open_models(None, specs, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap())
 }
 
 fn mine(user: &str) -> WindowKey { WindowKey::relation("moments", "mine", &row(json!({"userId": user}))) }
@@ -369,7 +369,7 @@ fn inv_id_08_one_matching_candidate_is_replaced_by_the_row_of_the_event_and_seve
     let mut create = ActionDeclaration::new("create", RootShape::Upsert);
     create.correlate = vec!["userId".into(), "text".into()];
     specs.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap().actions.push(create);
-    let db = Arc::new(Store::open_models(None, specs, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+    let db = Arc::new(Store::open_models(None, specs, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     let gone = |temp: &str| db.read(&["moments"], |reader| reader.point("moments", temp)).unwrap().is_none();
     let single = sent_create(&db, 1, "one");
     event_row(&db, "m1", "one");
@@ -391,14 +391,14 @@ fn inv_row_07_fsck_quarantines_temp_rows_without_an_operation_and_keeps_the_othe
     let path = directory.path().join("db.sqlite");
     let kept = crate::identity::RowId::generate_temp(None).to_string();
     {
-        let db = Arc::new(Store::open_models(Some(&path), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+        let db = Arc::new(Store::open_models(Some(&path), all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
         put(&db, "moments", json!({"id": "temp-orphan", "userId": "u1", "text": "orphan"}));
         put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "server row"}));
         let values = json!({"id": kept, "userId": "u1", "text": "queued"}).to_string();
         let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: kept.clone(), values }], ..Default::default() };
         write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id: 1, model: "moments".into(), row_id: kept.clone(), action: "create".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
     }
-    let db = Arc::new(Store::open_models(Some(&path), all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+    let db = Arc::new(Store::open_models(Some(&path), all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     let present = |id: &str| db.read(&["moments"], |reader| reader.point("moments", id)).unwrap().is_some();
     assert!(!present("temp-orphan"), "a temp row without an operation goes");
     assert!(present("m1") && present(&kept), "the server row and the row of a queued create stay");
@@ -412,7 +412,7 @@ fn candidates_of_one_event_row(unrelated: u64) -> usize {
     let mut create = ActionDeclaration::new("create", RootShape::Upsert);
     create.correlate = vec!["userId".into(), "text".into()];
     specs.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap().actions.push(create);
-    let db = Arc::new(Store::open_models(None, specs, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+    let db = Arc::new(Store::open_models(None, specs, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     for op_id in 0..unrelated {
         let intent = StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id: 100 + op_id, model: "users".into(), row_id: format!("u{op_id}"), action: "edit".into(), payload: "{}".into(), effects: IntentEffects::default(), origin: crate::owners::store::IntentOrigin::Api };
         write(&db, BatchAuthor::Outbox, Vec::new(), vec![intent]);

@@ -10,7 +10,7 @@ fn win_store_landed_at_uses_response_time() {
     use std::sync::Arc;
     use std::time::Duration;
     let clock = Arc::new(crate::runtime::ManualClock::new(Duration::from_millis(100)));
-    let db = Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], None, clock.clone()).unwrap();
+    let db = Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], clock.clone()).unwrap();
     let params = serde_json::json!({"chatId":"c1"}).as_object().unwrap().clone();
     let key = WindowKey::relation("messages", "thread", &params);
     let page = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 100, key: key.name.clone(), model: key.model.clone(), page: 1, replace_all: false, cursor: None, roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
@@ -38,7 +38,7 @@ fn win_page_cover_to_end_server_order_only() {
     for local_order in [false, true] {
         let mut spec = crate::schema_fixtures::messages_spec(false);
         if !local_order { spec.relations[0].sort = Sort::ServerOrder; }
-        let db = Store::open_models(None, vec![spec], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+        let db = Store::open_models(None, vec![spec], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
         let params = json!({"chatId":"c1"}).as_object().unwrap().clone();
         let key = WindowKey::relation("messages", "thread", &params);
         let scope = db.spec("messages").unwrap().selection_key("thread", &params).unwrap();
@@ -67,7 +67,7 @@ fn store_ordered_page_open_interval() {
         (vec![("old", 2)], vec![("new", 2)], 1, None, vec!["new"]),
         (vec![("old", 2)], vec![("new", 2)], 2, None, vec!["new", "old"]),
     ] {
-        let db = Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+        let db = Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
         let params = json!({"chatId":"c1"}).as_object().unwrap().clone();
         let key = WindowKey::relation("messages", "thread", &params);
         let scope = db.spec("messages").unwrap().selection_key("thread", &params).unwrap();
@@ -190,7 +190,7 @@ fn mark_stale_op_sets_stale_since_for_models_and_keys_in_the_batch_transaction()
         let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::MarkStale { models, keys, kept: Vec::new() }] };
         db.write_batch(&batch, db.files(), None).unwrap();
     };
-    let fresh = || Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let fresh = || Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     let db = fresh();
     let (first, second) = (land(&db, "c1"), land(&db, "c2"));
     write(&db, Vec::new(), vec![(first.model.clone(), first.name.clone())]);
@@ -211,7 +211,7 @@ fn stale_parents_mark_the_windows_of_the_parent_only_in_a_batch_of_the_feed() {
     use crate::owners::contract::BatchAuthor;
     use crate::owners::store::{RowValue, StoreBatch, StoreOp};
     for (author, marked) in [(BatchAuthor::Feed, true), (BatchAuthor::Outbox, false)] {
-        let db = Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+        let db = Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
         let chats = key("chats", "list", "1");
         db.save_window(&window(&chats)).unwrap();
         assert!(db.stale_window_keys().unwrap().is_empty());
@@ -237,7 +237,7 @@ fn win_page_admission_query_work() {
     use crate::owners::store::{RowValue, StoreOp};
     use serde_json::json;
     let measure = |size: usize| {
-        let db = Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+        let db = Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
         let params = json!({"chatId":"c1"}).as_object().unwrap().clone();
         let key = WindowKey::relation("messages", "thread", &params);
         let roots = (0..size).map(|i| RowValue { row_id: format!("m{i}"), values: json!({"id":format!("m{i}"),"chatId":"c1","sequenceNumber":i}).to_string() }).collect();
@@ -267,7 +267,7 @@ fn win_page_tombstone_query_work() {
     use crate::owners::store::{RowValue, StoreOp};
     use serde_json::json;
     let measure = |size: usize| {
-        let db = Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+        let db = Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
         let params = json!({"chatId":"c1"}).as_object().unwrap().clone();
         let key = WindowKey::relation("messages", "thread", &params);
         let roots = (0..size).map(|i| RowValue { row_id: format!("m{i}"), values: json!({"id":format!("m{i}"),"chatId":"c1","sequenceNumber":i}).to_string() }).collect();

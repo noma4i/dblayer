@@ -20,7 +20,7 @@ class ModelEventsTest {
 
     private suspend fun openNoticeRig(): MockTransport {
         val transport = MockTransport()
-        openSigned(Config(null, null), schema("ChatActionSignal"), transport, """[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]""")
+        openSigned(Config(null), schema("ChatActionSignal"), transport, """[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]""")
         return transport
     }
 
@@ -85,7 +85,7 @@ class ModelEventsTest {
     @Test
     fun dlv_reader_cancel_keeps_other_collector_kotlin() = bounded {
         val transport = MockTransport()
-        openSigned(Config(null, null), modelsJSON, transport, """[{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"}]""")
+        openSigned(Config(null), modelsJSON, transport, """[{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"}]""")
         val failures = java.util.concurrent.CopyOnWriteArrayList<Throwable>()
         val screen = CoroutineScope(SupervisorJob() + Dispatchers.Default + kotlinx.coroutines.CoroutineExceptionHandler { _, error -> failures.add(error) })
         try {

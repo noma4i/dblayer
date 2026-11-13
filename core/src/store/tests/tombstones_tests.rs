@@ -75,7 +75,7 @@ fn store_landing_keeps_tombstone() {
     let answer = || vec![StoreOp::Rows { model: "messages".into(), rows: vec![RowValue { row_id: "m1".into(), values: json!({"id": "m1", "chatId": "c1", "body": "back"}).to_string() }] }];
     let point = |store: &Store| store.read(&[], |reader| reader.point("messages", "m1")).unwrap();
 
-    let store = Store::open_models(Some(path.as_path()), vec![messages_spec(), items_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let store = Store::open_models(Some(path.as_path()), vec![messages_spec(), items_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     put(&store, "messages", json!({"id": "m1", "chatId": "c1", "body": "hi"}));
     assert!(point(&store).is_some(), "the server row is stored");
 
@@ -88,7 +88,7 @@ fn store_landing_keeps_tombstone() {
     assert!(point(&store).is_none(), "an operation-answer landing without a base revision keeps the tombstone");
 
     drop(store);
-    let store = Store::open_models(Some(path.as_path()), vec![messages_spec(), items_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let store = Store::open_models(Some(path.as_path()), vec![messages_spec(), items_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     assert!(point(&store).is_none(), "the row stays absent after close and open");
 
     let patch = row(json!({"id": "m1", "chatId": "c1", "body": "back"}));

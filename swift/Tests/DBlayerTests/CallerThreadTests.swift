@@ -55,7 +55,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func everyEntryDecodesTheModelOffTheMainActor() async throws {
     let transport = MockTransport()
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"},{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"},{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
     DecoderThreads.shared.clear()
 
     transport.enqueue("ChatList", reply: #"{"data":{"chats":[{"__typename":"Chat","id":"c1","title":"t","revision":1,"lists":["SECONDARY"]}]}}"#)

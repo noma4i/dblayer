@@ -32,7 +32,7 @@ extension BridgeProbeTests {
     enqueueStagedSteps(transport)
     transport.enqueue("CompleteMultipart", reply: #"{"data":{"completeMultipart":{"signedId":"sid","blobId":"b1"}}}"#)
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    _ = try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: stagedOperations)
+    _ = try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport, operations: stagedOperations)
     let file = try stagedFile()
     defer { try? FileManager.default.removeItem(at: file) }
     let scope = try DB.account()
@@ -53,7 +53,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     enqueueStagedSteps(transport)
     transport.enqueue("AbortMultipart", reply: #"{"data":{"abortMultipart":{"ok":true}}}"#)
-    _ = try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: stagedOperations)
+    _ = try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport, operations: stagedOperations)
     let file = try stagedFile()
     defer { try? FileManager.default.removeItem(at: file) }
     let scope = try DB.account()

@@ -10,7 +10,7 @@ class NetworkPathTest {
     /** bridge_network_path: the kind and the change of the `Network` object reach `path`, `isOnline` and `flow` as the same values. */
     @Test
     fun bridge_network_path_kotlinCarriesThePathAndTheChangeOfNetwork() = bounded {
-        openSignedOffline(Config(null, null), modelsJSON)
+        openSignedOffline(Config(null), modelsJSON)
         val status = NetworkStatus(org.robolectric.RuntimeEnvironment.getApplication())
         osNetwork(true, android.net.NetworkCapabilities.TRANSPORT_WIFI)
         val reader = status.subscribe()

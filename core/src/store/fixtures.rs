@@ -37,7 +37,7 @@ pub fn items_spec() -> ModelSpec {
 pub fn booted_store() -> (Store, Arc<ManualClock>) {
     let clock = Arc::new(ManualClock::new(Duration::from_millis(1_000_000)));
     let store = Store::open_in_memory(clock.clone()).unwrap();
-    store.boot(&[messages_spec(), items_spec()], None).unwrap();
+    store.boot(&[messages_spec(), items_spec()]).unwrap();
     store.mark_ready();
     (store, clock)
 }
@@ -180,7 +180,7 @@ pub fn all_specs() -> Vec<ModelSpec> {
 }
 
 pub fn booted() -> Arc<Store> {
-    let db = Arc::new(Store::open_models(None, all_specs(), None, Arc::new(ManualClock::new(Duration::from_millis(1_000_000)))).unwrap());
+    let db = Arc::new(Store::open_models(None, all_specs(), Arc::new(ManualClock::new(Duration::from_millis(1_000_000)))).unwrap());
     db
 }
 

@@ -25,7 +25,7 @@ fn nullable_relation_membership_moves_to_null_and_back() {
     let (named, null) = (target(json!("a")), target(json!(null)));
     let clock = std::sync::Arc::new(crate::runtime::ManualClock::new(std::time::Duration::from_millis(1_000_000)));
     let store = Store::open_in_memory(clock).unwrap();
-    store.boot(&[spec], None).unwrap();
+    store.boot(&[spec]).unwrap();
     store.mark_ready();
     commit(&store, vec![upsert("notes", json!({"id":"n1", "folder":"a"}))], vec![append(&named, "n1", "a")]);
     for (value, expected_named, expected_null) in [(json!(null), 0, 1), (json!("a"), 1, 0)] {
@@ -273,7 +273,7 @@ fn second_apply_failure_poisons_reads_until_reset() {
     let directory = tempfile::tempdir().unwrap();
     let clock = std::sync::Arc::new(crate::runtime::ManualClock::new(std::time::Duration::from_millis(1_000_000)));
     for store in [Store::open_in_memory(clock.clone()).unwrap(), Store::open(&directory.path().join("failure.sqlite"), clock.clone()).unwrap()] {
-        store.boot(&[messages_spec(), items_spec()], None).unwrap();
+        store.boot(&[messages_spec(), items_spec()]).unwrap();
         exec(&store, "DROP TABLE row_messages");
         let error = store.commit(envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap_err();
         assert!(matches!(error, StoreError::Sqlite(_)));

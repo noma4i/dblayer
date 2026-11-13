@@ -11,7 +11,7 @@ use crate::value::ScalarKind;
 async fn open() -> Arc<Database> {
     let mut note = ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
     note.storage = Storage::Local;
-    Database::open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![note]).unwrap()), crate::ffi::OpenPorts::default(), TestClock::new(1_000_000)).await.unwrap()
+    Database::open_with_clock(Config { path: None }, crate::ffi::specs(serde_json::to_string(&vec![note]).unwrap()), crate::ffi::OpenPorts::default(), TestClock::new(1_000_000)).await.unwrap()
 }
 
 async fn next(stream: &ReadStream) -> ReadValue { crate::test_wait::within(stream.pull_next()).await.expect("a value") }

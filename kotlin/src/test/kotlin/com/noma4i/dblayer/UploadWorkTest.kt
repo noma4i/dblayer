@@ -99,7 +99,7 @@ class UploadWorkTest {
     fun twoStartCommandsWithDifferentIdentitiesReachTheOwnerBoth() = bounded {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         UploadNotifications.store(context, notification)
-        val database = openSigned(Config(null, null), modelsJSON, MockTransport())
+        val database = openSigned(Config(null), modelsJSON, MockTransport())
         val ended = java.util.concurrent.CopyOnWriteArrayList<UInt>()
         try {
             database.setRoundJobs(object : RoundJobsSink {
@@ -121,7 +121,7 @@ class UploadWorkTest {
     fun aLateEndJobOfAnOldRoundLeavesThePendingJobAndTheNetworkOfTheNewRound() = bounded {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         val scheduler = context.getSystemService(JobScheduler::class.java)
-        val database = openSigned(Config(null, null), modelsJSON, MockTransport())
+        val database = openSigned(Config(null), modelsJSON, MockTransport())
         try {
             val rounds = UploadRounds(context, database, UploadScheduler { _, _ -> null })
             UploadNetwork.requested(RoundJob(2uL, 8u, 1uL))
@@ -148,7 +148,7 @@ class UploadWorkTest {
         val directory = Files.createTempDirectory("accepted").toFile()
         try {
             val source = java.io.File(directory, "image.png").apply { writeText("image") }
-            val database = openSigned(Config(null, null), modelsJSON, MockTransport(), operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]""")
+            val database = openSigned(Config(null), modelsJSON, MockTransport(), operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]""")
             database.setOnline(false)
             database.setRoundJobs(UploadRounds(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, _ -> Refusal(RoundRefusal.JOB_REFUSED, "") }))
             fun batch(keys: IntRange) = keys.map { UploadItem(values = buildJsonObject { put("clientKey", "key-$it"); put("size", 2) }, path = source.path) }

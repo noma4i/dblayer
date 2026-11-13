@@ -38,7 +38,7 @@ async fn boundary_closed_call_precedence() {
 async fn call_refusal_order_table() {
     let mut model = crate::schema::ModelSpec::new("Note", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id)]);
     model.storage = crate::schema::Storage::Local;
-    let database = super::Database::open(super::Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), super::OpenPorts::default()).await.unwrap();
+    let database = super::Database::open(super::Config { path: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), super::OpenPorts::default()).await.unwrap();
     let receipt = database.create(database.session_epoch(), "Note".into(), "{}".into(), "{}".into()).await.unwrap();
     let epoch = database.session_epoch();
     let answers = [

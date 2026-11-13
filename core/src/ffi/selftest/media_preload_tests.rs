@@ -92,7 +92,7 @@ async fn preloads_and_three_media_loads_finish_on_empty_pages() {
     let operations = operations.as_array().unwrap().iter().map(|operation| crate::ffi::OperationDefinition { name: operation["name"].as_str().unwrap().into(), document: operation["document"].as_str().unwrap().into() }).collect();
     let options = OpenOptions { operations };
     let opener = OpenDatabase::new();
-    let database = within_secs(20, opener.open(Config { path: None, data_version: None }, crate::ffi::specs(models()), options, crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None)).await.unwrap();
+    let database = within_secs(20, opener.open(Config { path: None }, crate::ffi::specs(models()), options, crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None)).await.unwrap();
     database.set_online(true).await.unwrap();
     within_secs(20, transport.preload.notified()).await;
     let epoch = database.session_epoch();
@@ -155,7 +155,7 @@ impl crate::ffi::PlatformObserver for OnlineAtStart {
 async fn a_preload_asks_once_when_the_network_is_there_before_the_operations_are_declared() {
     let transport = Arc::new(MediaTransport::default());
     let operations = vec![crate::ffi::OperationDefinition { name: "PresenceOnline".into(), document: "query PresenceOnline { presenceOnline { id } }".into() }];
-    let database = within_secs(20, OpenDatabase::new().open(Config { path: None, data_version: None }, crate::ffi::specs(models()), OpenOptions { operations }, crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, Some(Arc::new(OnlineAtStart)))).await.unwrap();
+    let database = within_secs(20, OpenDatabase::new().open(Config { path: None }, crate::ffi::specs(models()), OpenOptions { operations }, crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, Some(Arc::new(OnlineAtStart)))).await.unwrap();
     within_secs(20, transport.preload.notified()).await;
     within_secs(20, database.close_database()).await.unwrap();
     assert_eq!(transport.requests.lock().unwrap().iter().filter(|request| request.operation_name == "PresenceOnline").count(), 1);

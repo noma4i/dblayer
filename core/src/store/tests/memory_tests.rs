@@ -14,7 +14,7 @@ fn models() -> [ModelSpec; 2] {
 
 fn reopen(path: &std::path::Path) -> Store {
     let store = Store::open(path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-    store.boot(&models(), None).unwrap();
+    store.boot(&models()).unwrap();
     store
 }
 
@@ -32,7 +32,7 @@ fn seed(store: &Store) {
 #[test]
 fn store_prop_memory_model_tables() {
     let store = Store::open_in_memory(std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-    store.boot(&models(), None).unwrap();
+    store.boot(&models()).unwrap();
     seed(&store);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM sqlite_temp_master WHERE name = 'row_presence'"), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM sqlite_master WHERE name = 'row_presence'"), 0);
@@ -67,7 +67,7 @@ fn memory_rows_and_their_cache_tables_do_not_survive_a_restart() {
 #[test]
 fn clearing_the_account_empties_memory_tables_too() {
     let store = Store::open_in_memory(std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-    store.boot(&models(), None).unwrap();
+    store.boot(&models()).unwrap();
     seed(&store);
     store.erase_account(store.generation().next(), false).unwrap();
     assert_eq!(store.row_count("presence").unwrap(), 0);

@@ -83,7 +83,7 @@ class RecordParityTest {
 
     @Test
     fun bridge_prop_record_parity_everyScalarKindKeepsItsValueThroughCreateExplicitNoneAndUpdate() = bounded(60_000) {
-        openSigned(Config(null, null), modelsJSON, null)
+        openSigned(Config(null), modelsJSON, null)
         for ((label, values) in probeCases) {
             val created = create(values).optimisticValue!!
             expectParity(created.id, created, values, "create: $label")
@@ -99,7 +99,7 @@ class RecordParityTest {
     /** The core keeps one zero: a negative zero is stored and read as the positive one, on both platforms (value_tests.rs number_edge_cases_normalize). */
     @Test
     fun bridge_prop_record_parity_aNegativeZeroIsStoredAsThePositiveZero() = bounded {
-        openSigned(Config(null, null), modelsJSON, null)
+        openSigned(Config(null), modelsJSON, null)
         val created = create(Values(ratio = -0.0)).optimisticValue!!
         assertEquals(0.0.toRawBits(), created.ratio!!.toRawBits())
         assertEquals(0.0.toRawBits(), ScalarProbe.find(created.id).current()!!.ratio!!.toRawBits())
@@ -107,7 +107,7 @@ class RecordParityTest {
 
     @Test
     fun bridge_prop_record_parity_aFileKeepsItsSizeNameMimeAndDigestThroughAttachReadRowAndSnapshot() = bounded(60_000) {
-        openSigned(Config(null, null), modelsJSON, null)
+        openSigned(Config(null), modelsJSON, null)
         val probe = create(Values()).optimisticValue!!
         assertNull(probe.file(ScalarProbe.file))
         for (case in fileCases) {
@@ -137,7 +137,7 @@ class RecordParityTest {
         )
         for (case in cases) {
             val transport = MockTransport()
-            openSigned(Config(null, null), modelsJSON, transport)
+            openSigned(Config(null), modelsJSON, transport)
             registerStandOperations(DBlayer.database, failureOperations)
             case.failure?.let { transport.enqueue("CreateMoment", it) }
             val refused = withTimeout(5000) { Moment.create(text = case.text, media = null, account = AccountScope.current()).refusal() }

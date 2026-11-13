@@ -38,7 +38,7 @@ async fn a_window_subscribes_its_channel_with_the_variables_of_the_window() {
     let (subscribed, mut subscriptions) = mpsc::unbounded_channel();
     let (closed, _closes) = mpsc::unbounded_channel();
     let peer = Arc::new(Peer::new(config.clone(), subscribed, closed));
-    let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(page_models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(peer.clone()), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+    let database = Database::open(Config { path: None }, crate::ffi::specs(page_models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(peer.clone()), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     database.register_operations(json!([{"name":"ScreenPageUpdated", "document":"subscription ScreenPageUpdated($slug: String!) { screenPageUpdated(slug: $slug) { id slug } }", "rootPath":"screenPageUpdated"}]).to_string()).await.unwrap();
     database.set_online(true).await.unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();

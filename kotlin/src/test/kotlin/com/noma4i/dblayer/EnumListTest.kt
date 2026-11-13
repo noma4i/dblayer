@@ -9,7 +9,7 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class EnumListTest {
-    private suspend fun open() = openSignedOffline(Config(null, null), modelsJSON, """[{"name":"CreateContainer","document":"mutation CreateContainer(${'$'}title: String, ${'$'}shelves: [String!]) { createContainer(title: ${'$'}title, shelves: ${'$'}shelves) { id title shelves } }"}]""")
+    private suspend fun open() = openSignedOffline(Config(null), modelsJSON, """[{"name":"CreateContainer","document":"mutation CreateContainer(${'$'}title: String, ${'$'}shelves: [String!]) { createContainer(title: ${'$'}title, shelves: ${'$'}shelves) { id title shelves } }"}]""")
 
     @Test
     fun theTypedApiWritesAListOfEnumValuesAndAnAbsentListReadsAsNull() = bounded {

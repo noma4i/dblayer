@@ -174,7 +174,7 @@ public func openSigned(config: Config, modelsJson: String, transport: Transport?
 /// The same session stand on a clock that only `advance(by:)` moves. The platform reports online at open unless `onlineAtOpen` is false: then the sign-in sets online after the operations.
 @MainActor @discardableResult
 public func openSignedClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = nil, startingAt start: Date = Date(), observers: (any PlatformObserver)? = nil, onlineAtOpen: Bool = true, preparer: Preparer? = ScriptedPreparer()) async throws -> TestClock {
-  let held = path.map { credential(of: Config(path: $0, dataVersion: nil)) } ?? HeldCredential()
+  let held = path.map { credential(of: Config(path: $0)) } ?? HeldCredential()
   let server = try SealedServer(contract: held.contract, bridge: bridgeToTransport(transport))
   try server.registerDocuments(withSessionProfile(withUploadSteps(operations, models: modelsJson)))
   transport.cable = EncryptedCablePeer(server: server)

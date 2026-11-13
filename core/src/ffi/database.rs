@@ -162,7 +162,7 @@ pub(super) fn start_observer(observer: Arc<dyn super::PlatformObserver>, sink: A
 }
 
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]
-pub struct Config { pub path: Option<String>, pub data_version: Option<String> }
+pub struct Config { pub path: Option<String> }
 
 #[derive(uniffi::Record)]
 pub struct SubscriptionCensus { pub observed_queries: u64, pub subscriptions: u64, pub retained_observers: u64, pub refused_events: u64 }
@@ -223,7 +223,7 @@ impl Database {
         let returns: Arc<HashMap<String, FieldSpec>> = Arc::new(operations.into_iter().map(|operation| (operation.name, operation.returns)).collect());
         let uploads = upload_steps_of(&models)?;
         let keys: Vec<String> = models.iter().map(|model| model.key.to_string()).collect();
-        let db = Arc::new(Store::open_models(config.path.as_deref().map(Path::new), models, config.data_version.as_deref(), clock.clone())?);
+        let db = Arc::new(Store::open_models(config.path.as_deref().map(Path::new), models, clock.clone())?);
         let Wiring { transport, encrypted, cable, seal } = wire(&db, &clock)?;
         let reads = crate::owners::read::ReadOperations::default();
         let jobs: Arc<super::upload_rounds::RoundJobsSlot> = Arc::default();

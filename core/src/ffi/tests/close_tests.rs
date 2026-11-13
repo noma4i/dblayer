@@ -11,7 +11,7 @@ use crate::test_wait::settled;
 use crate::transport::MockTransport;
 use crate::value::ScalarKind;
 
-fn config() -> Config { Config { path: None, data_version: None } }
+fn config() -> Config { Config { path: None } }
 
 async fn local_notes() -> Arc<Database> {
     let mut model = ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);

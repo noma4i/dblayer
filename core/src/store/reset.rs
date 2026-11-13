@@ -4,7 +4,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
 use crate::store::ddl::{fingerprint, fts_tables, manifest_stamp, manifest_write, FieldPlan, REVISION_SEQ_KEY};
-use crate::store::files::{clear_all, clear_model, clear_unheld};
+use crate::store::files::{clear_all, clear_model};
 use crate::identity::ListKey;
 use crate::store::nodes::read_trees;
 use crate::store::operation::{delete_operation, quarantine_add, read_value, QuarantineReason};
@@ -137,7 +137,7 @@ pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String
     Ok(())
 }
 
-pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool, keep_intents: bool) -> Result<(), StoreError> {
+pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool) -> Result<(), StoreError> {
     for name in fts_tables(connection)? {
         connection.execute_batch(&format!("{} {name}", if drop_tables { include_str!("sql/reset/wipe_model_cache_drop_table_if.sql") } else { include_str!("sql/reset/wipe_model_cache_delete_from.sql") }))?;
     }
@@ -149,14 +149,9 @@ pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool, keep_in
         }
     }
     connection.execute_batch(include_str!("sql/reset/wipe_all_cache_delete_scope_member.sql"))?;
-    if keep_intents {
-        connection.execute_batch(include_str!("sql/reset/wipe_all_cache_delete_sync_action.sql"))?;
-        clear_unheld(connection, None)?;
-    } else {
-        connection.execute_batch(include_str!("sql/reset/clear_row_alias.sql"))?;
-        clear_sync(connection, None)?;
-        clear_all(connection)?;
-    }
+    connection.execute_batch(include_str!("sql/reset/clear_row_alias.sql"))?;
+    clear_sync(connection, None)?;
+    clear_all(connection)?;
     Ok(())
 }
 
@@ -258,17 +253,15 @@ pub(crate) fn current_fingerprints(inner: &Inner) -> Result<BTreeMap<String, Str
 
 pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreError> {
     let Some(mode) = pending_intent(&inner.connection)? else { return Ok(false) };
-    if !matches!(mode.as_str(), "mismatched" | "account" | "session_end") {
+    if !matches!(mode.as_str(), "account" | "session_end") {
         return Err(StoreError::Constraint(format!("unknown reset intent mode: {mode}")));
     }
     let transaction = inner.connection.unchecked_transaction()?;
-    let keep_intents = mode == "mismatched";
-    wipe_all_cache(&transaction, true, keep_intents)?;
-    if !keep_intents { retire_operations(&transaction, None, None)?; }
+    wipe_all_cache(&transaction, true)?;
+    retire_operations(&transaction, None, None)?;
     if mode == "session_end" { transaction.execute_batch(include_str!("sql/reset/erase_account.sql"))?; }
-    if !keep_intents { session_state::remove_resume_answer(&transaction)?; }
-    let data_version = inner.data_version.clone();
-    manifest_stamp(&transaction, data_version.as_deref(), &current_fingerprints(inner)?)?;
+    session_state::remove_resume_answer(&transaction)?;
+    manifest_stamp(&transaction, &current_fingerprints(inner)?)?;
     clear_intent(&transaction)?;
     transaction.commit()?;
     Ok(true)
@@ -323,13 +316,13 @@ impl Store {
         let now = inner.now_ms();
         write_intent(&inner.connection, if erase_encrypted { "session_end" } else { "account" }, now)?;
         let transaction = inner.connection.unchecked_transaction()?;
-        wipe_all_cache(&transaction, false, false)?;
+        wipe_all_cache(&transaction, false)?;
         retire_operations(&transaction, None, None)?;
         session_state::remove_resume_answer(&transaction)?;
         if erase_encrypted {
             transaction.execute_batch(include_str!("sql/reset/erase_account.sql"))?;
         }
-        manifest_stamp(&transaction, inner.data_version.as_deref(), &current_fingerprints(&inner)?)?;
+        manifest_stamp(&transaction, &current_fingerprints(&inner)?)?;
         let revision = bump_revision(&transaction)?;
         clear_intent(&transaction)?;
         let mut snapshot = self.overlays.next(revision - 1, true).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;

@@ -49,7 +49,7 @@ async fn sess_prop_cut_before_transport() {
         let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
         let server = FakeServer::new(clock.clone());
         let slot = Arc::new(HoldSlot::default());
-        let db = Store::open_models(None, Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
+        let db = Store::open_models(None, Vec::new(), std::sync::Arc::new(crate::runtime::SystemClock)).map(Arc::new).unwrap();
         let client = Client::new(&crate::transport::encrypted::tests::protocol_tests::config(), server.clone(), slot.clone(), db, clock, Arc::new(crate::transport::MockTransport::new())).unwrap();
         let life = client.start_owners();
         within(life.set_online(true, crate::ffi::next_stamp()).wait()).await;

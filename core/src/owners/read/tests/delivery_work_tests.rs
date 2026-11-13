@@ -51,7 +51,7 @@ struct Work {
 
 impl Work {
     fn new(models: usize) -> Self {
-        let db = Arc::new(Store::open_models(None, (0..models).map(spec).collect(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
+        let db = Arc::new(Store::open_models(None, (0..models).map(spec).collect(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
         let notices = Arc::new(Mutex::new(Vec::new()));
         let sink = notices.clone();
         db.on_commit(move |notice| sink.lock().unwrap().push(notice)).unwrap();

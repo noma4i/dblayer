@@ -49,7 +49,7 @@ class NestedTypesTest {
 }
 
 class CellDecoderTest {
-    private suspend fun open() = openDatabase(Config(null, null), modelsJSON, null)
+    private suspend fun open() = openDatabase(Config(null), modelsJSON, null)
 
     private fun withoutUnknownKeys(value: JsonElement): JsonElement = when (value) {
         is JsonObject -> JsonObject(value.filterKeys { it != "unknown" }.mapValues { withoutUnknownKeys(it.value) })

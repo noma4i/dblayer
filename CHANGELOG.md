@@ -9,6 +9,10 @@
 - Keep the order of calls started one after another when the device is under load.
 - Find a row by its temporary id while the answer of its create lands.
 
+### Removed
+
+- dataVersion of Config: the format of the database follows its declarations.
+
 ## 6.35.0 - 2026-11-14
 
 ### Added

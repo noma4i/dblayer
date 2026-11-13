@@ -28,7 +28,7 @@ fn shown(shown: Shown, sent: u32, total: u32, attempts: u32) -> StoreOp { StoreO
 
 #[test]
 fn a_shown_value_writes_the_whole_shown_columns_and_keeps_the_durable_ones() {
-    let db = Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let db = Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     write(&db, vec![StoreOp::Upload { row: row(), kind: UploadKind::SyncUpload }]);
     assert_eq!(columns(&db), ("queued".into(), "prepare".into(), None, 1, 3, 2, None));
     write(&db, vec![shown(Shown::Uploading { progress: 66 }, 2, 3, 3)]);
@@ -43,7 +43,7 @@ fn a_shown_value_writes_the_whole_shown_columns_and_keeps_the_durable_ones() {
 
 #[test]
 fn the_staged_marker_is_written_with_the_row_and_cleared_by_its_own_op() {
-    let db = Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let db = Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     let staged = |db: &Store| db.lock().connection.query_row("SELECT COALESCE(staged, 0) FROM sync_upload WHERE model = 'moments' AND row_id = 'm1' AND action = 'upload'", [], |found| found.get::<_, i64>(0)).unwrap();
     write(&db, vec![StoreOp::Upload { row: UploadRow { staged: true, ..row() }, kind: UploadKind::SyncUpload }]);
     assert_eq!(staged(&db), 1);
@@ -62,7 +62,7 @@ fn the_outcome_of_a_cycle_is_shown_before_the_transfer_writes_its_row() {
         (OutboxOutcome::Discarded, None),
     ];
     for (outcome, expected) in cases {
-        let db = Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+        let db = Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
         crate::store::fixtures::put(&db, "moments", serde_json::json!({"id": "m1", "userId": null}));
         write(&db, vec![StoreOp::Upload { row: row(), kind: UploadKind::SyncUpload }, shown(Shown::Uploading { progress: 66 }, 2, 3, 3)]);
         let notices = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));

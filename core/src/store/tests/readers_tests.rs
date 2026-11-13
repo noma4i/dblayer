@@ -8,7 +8,7 @@ use crate::test_wait::{join_within, recv_within};
 fn store_read_snapshot_waits_for_commit_journal() {
     let directory = tempfile::tempdir().unwrap();
     let store = Arc::new(Store::open(&directory.path().join("journal.sqlite"), Arc::new(crate::runtime::SystemClock)).unwrap());
-    store.boot(&[messages_spec()], None).unwrap();
+    store.boot(&[messages_spec()]).unwrap();
     store.mark_ready();
     let before = store.revision_seq().unwrap();
     store.context.changed.start(before);
@@ -33,7 +33,7 @@ fn inv_conc_07_disk_read_finishes_while_writer_has_uncommitted_changes() {
     let store = Arc::new(Store::open(&directory.path().join("reads.sqlite"), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     let mut presence = items_spec();
     presence.storage = crate::schema::Storage::Memory;
-    store.boot(&[messages_spec(), presence], None).unwrap();
+    store.boot(&[messages_spec(), presence]).unwrap();
     store.commit(envelope(&store, vec![upsert("messages", message("m1", "before"))], vec![])).unwrap();
     let writer = store.lock();
     let transaction = writer.connection.unchecked_transaction().unwrap();

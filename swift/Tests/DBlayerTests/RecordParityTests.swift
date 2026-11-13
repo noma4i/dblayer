@@ -91,7 +91,7 @@ extension BridgeProbeTests {
 
   @Test(.timeLimit(.minutes(1)))
   func bridge_prop_record_parity_everyScalarKindKeepsItsValueThroughCreateExplicitNoneAndUpdate() async throws {
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: nil)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: nil)
     for (label, values) in probeCases {
       let created = try #require(try await create(values).optimisticValue)
       try await expectParity(created.id, created, values, "create: \(label)")
@@ -107,7 +107,7 @@ extension BridgeProbeTests {
   /// The core keeps one zero: a negative zero is stored and read as the positive one, on both platforms (value_tests.rs number_edge_cases_normalize).
   @Test(.timeLimit(.minutes(1)))
   func bridge_prop_record_parity_aNegativeZeroIsStoredAsThePositiveZero() async throws {
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: nil)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: nil)
     let created = try #require(try await create(ProbeValues(ratio: -0.0)).optimisticValue)
     #expect(created.ratio?.bitPattern == 0.0.bitPattern)
     #expect(try await ScalarProbe.find(created.id).current()?.ratio?.bitPattern == 0.0.bitPattern)
@@ -115,7 +115,7 @@ extension BridgeProbeTests {
 
   @Test(.timeLimit(.minutes(1)))
   func bridge_prop_record_parity_aFileKeepsItsSizeNameMimeAndDigestThroughAttachReadRowAndSnapshot() async throws {
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: nil)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: nil)
     let probe = try #require(try await create(ProbeValues()).optimisticValue)
     #expect(try await probe.file(.file) == nil)
     for (label, bytes, name, mime) in fileCases {
@@ -143,7 +143,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)), arguments: refusalCases)
   func bridge_prop_record_parity_aRefusalKeepsTheSessionCodeTheRequestSizeAndTheLimitOrTheirAbsence(_ refusal: RefusalCase) async throws {
     let transport = MockTransport()
-    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
     try await registerStandOperations(DB.database, defsJson: failureOperations)
     if let failure = refusal.failure { transport.enqueue("CreateMoment", failure: failure) }
     let refused = try await Moment.create(text: refusal.text, media: nil, in: DB.account()).refusal()

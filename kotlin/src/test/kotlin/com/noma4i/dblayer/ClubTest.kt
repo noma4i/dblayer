@@ -131,7 +131,7 @@ class ClubTest {
 
     private suspend fun openClubSession(transport: Transport, models: String = modelsJSON, subscription: String? = null) {
         val defs = if (subscription == null) CLUB_DEFS else CLUB_DEFS.dropLast(1) + "," + subscription + "]"
-        openSigned(Config(null, null), models, transport, defs)
+        openSigned(Config(null), models, transport, defs)
     }
 
     private suspend fun club(id: String) = Query("Club", Club).readRow(id)!!

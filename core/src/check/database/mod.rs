@@ -320,7 +320,7 @@ impl DatabaseSut {
             self.clock = TestClock::new(self.clock_now);
             self.back = 0;
         }
-        let config = Config { path, data_version: None };
+        let config = Config { path };
         let transport: Arc<dyn crate::ffi::Transport> = self.mock.clone();
         let (encrypted, credentials, http): EncryptedParts = if encrypted {
             (Some(self.encrypted_config()), Some(self.credentials.clone()), Some(self.mock.clone()))

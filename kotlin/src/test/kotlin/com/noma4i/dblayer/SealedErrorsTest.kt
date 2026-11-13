@@ -10,7 +10,7 @@ import org.junit.Test
 
 class SealedErrorsTest {
     @Test fun modelRetriesPropagateErrorsToTheirCaller() = bounded {
-        openSignedOffline(Config(null, null), modelsJSON)
+        openSignedOffline(Config(null), modelsJSON)
         val row = Moment.create(text = "saved", account = AccountScope.current()).optimisticValue!!
         DBlayer.close()
         org.junit.Assert.assertTrue(runCatching { row.retry(null) }.exceptionOrNull() is DbException.Closed)
@@ -32,7 +32,7 @@ class SealedErrorsTest {
     fun aSessionCodeArrivesTypedThroughALoadAnOperationCallAndAMutationOutcome() = bounded {
         for (code in codes) {
             val transport = MockTransport()
-            openSigned(Config(null, null), modelsJSON, transport)
+            openSigned(Config(null), modelsJSON, transport)
             registerStandOperations(DBlayer.database, operations)
             val failure = DbException.Session(code, code.name)
 

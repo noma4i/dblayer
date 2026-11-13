@@ -1,7 +1,7 @@
 use super::*;
 use crate::ffi::ConfigCode;
 
-fn config() -> Config { Config { path: None, data_version: None } }
+fn config() -> Config { Config { path: None } }
 fn options() -> OpenOptions { OpenOptions::default() }
 async fn open(slot: &OpenDatabase) -> Result<Arc<Database>, DbError> {
     slot.open(config(), crate::ffi::EMPTY_SPECS.into(), options(), crate::ffi::OpenPorts::default(), None).await

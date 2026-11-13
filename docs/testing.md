@@ -100,13 +100,13 @@ DBlayer.sessionCall<LoginLink, JsonElement>("login_link", LoginLink(account = "A
 ```swift
 let transport = MockTransport()
 transport.enqueue("MomentsFeed", reply: feedJSON)
-try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: feedOperations)
+try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport, operations: feedOperations)
 ```
 
 ```kotlin
 val transport = MockTransport()
 transport.enqueue("MomentsFeed", feedJson)
-openSigned(Config(null, null), modelsJSON, transport, operations = feedOperations)
+openSigned(Config(null), modelsJSON, transport, operations = feedOperations)
 ```
 
 ```swift
@@ -210,12 +210,12 @@ Typical scenarios to cover:
 
 The Swift and Kotlin lanes compile the generated models of the library fixtures with warnings treated as errors (`FixtureModelsCompileTests`, `:fixture-models-check`).
 
-| Check                                          | Command                                    |
-| ---------------------------------------------- | ------------------------------------------ |
-| Rust core and generator                        | `cargo test`                               |
-| Everything, including Swift and Kotlin         | `bash scripts/check_dblayer.sh`            |
-| Android R8 release and optimized JVM FFI calls | `gradle -p kotlin/r8-check probe`          |
-| Touched directories only                       | `bash scripts/check_dblayer.sh --fast`     |
+| Check                                          | Command                                |
+| ---------------------------------------------- | -------------------------------------- |
+| Rust core and generator                        | `cargo test`                           |
+| Everything, including Swift and Kotlin         | `bash scripts/check_dblayer.sh`        |
+| Android R8 release and optimized JVM FFI calls | `gradle -p kotlin/r8-check probe`      |
+| Touched directories only                       | `bash scripts/check_dblayer.sh --fast` |
 
 | Duplicate mechanisms and names | `bash scripts/check_zoo.sh` |
 | Docs reference real paths | `bash scripts/check_docs.sh` |

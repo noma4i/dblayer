@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 fn store_with_screens() -> Store {
     let store = Store::open_in_memory(std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-    store.boot(&[screens_spec()], None).unwrap();
+    store.boot(&[screens_spec()]).unwrap();
     store.mark_ready();
     store
 }

@@ -57,7 +57,7 @@ class OperationQueueTest {
         transport.enqueue("UpdateMoment", """{"errors":[{"message":"refused","extensions":{"code":"FORBIDDEN"}}]}""")
         val held = transport.hold("UpdateMoment", QUEUE_UPDATED.replace("edited", "second"))
         try {
-            openSigned(Config(null, null), specs(momentsKeepingUpdates()), transport)
+            openSigned(Config(null), specs(momentsKeepingUpdates()), transport)
             registerStandOperations(DBlayer.database, QUEUE_DEFS)
             Moment.feed.load()
             val moment = awaitWithin("the loaded moment") { Moment.recent.live.flow.first { it.isNotEmpty() } }.first()
@@ -87,7 +87,7 @@ class OperationQueueTest {
     fun theStatusAndQueueStreamsEndWithTheCauseOfTheCore() = bounded {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", QUEUE_FEED)
-        openSigned(Config(null, null), modelsJSON, transport)
+        openSigned(Config(null), modelsJSON, transport)
         registerStandOperations(DBlayer.database, QUEUE_DEFS)
         Moment.feed.load()
         val moment = withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.first()

@@ -145,7 +145,7 @@ fn feed_dropped_stale_survives_crash() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("feed.sqlite");
     let models = vec![crate::schema::ModelSpec::new("Chat", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id)])];
-    let store = crate::store::Store::open_models(Some(&path), models.clone(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let store = crate::store::Store::open_models(Some(&path), models.clone(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     let key = crate::identity::ListKey::compose(&["Chat", "thread", "c1"]).as_str().to_string();
     let window = crate::store::WindowRecord { key: key.clone(), cursor: None, anchor: None, has_next: false, total: None, pages: 1, issued: 0, applied: 0, generation: 0 };
     store.save_window(&window).unwrap();
@@ -160,7 +160,7 @@ fn feed_dropped_stale_survives_crash() {
     let batch = batches.iter().find(|batch| batch.ops.iter().any(|op| matches!(op, crate::owners::store::StoreOp::MarkStale { models, .. } if models.iter().any(|model| model == "Chat")))).expect("channel loss must commit the stale debt");
     store.write_batch(batch, store.files(), None).unwrap();
     drop(store);
-    let reopened = crate::store::Store::open_models(Some(&path), models, None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let reopened = crate::store::Store::open_models(Some(&path), models, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     assert!(reopened.window_freshness(&key).unwrap().unwrap().stale_since.is_some(), "the stale debt must survive reopen");
 }
 

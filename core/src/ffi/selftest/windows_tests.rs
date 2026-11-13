@@ -44,7 +44,7 @@ async fn open_pages_limited(max_pages: Option<u32>) -> (Arc<Database>, Arc<Pages
     });
     model.relations.push(feed);
     let pages = Arc::new(Pages { queries: AtomicUsize::new(0), gates: Mutex::new(HashMap::new()) });
-    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(pages.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000), crate::ffi::OpenOptions::default(), None).await.unwrap();
+    let database = OpenDatabase::new().open_with_clock(Config { path: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(pages.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000), crate::ffi::OpenOptions::default(), None).await.unwrap();
     database.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).await.unwrap();
     database.set_online(true).await.unwrap();
     (database, pages)
@@ -176,7 +176,7 @@ fn presence() -> ModelSpec {
 async fn memory_expiry_follows_the_last_write() {
     let models = vec![presence()];
     let clock = TestClock::new(1_000_000);
-    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&models).unwrap()), crate::ffi::OpenPorts::default(), clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
+    let database = OpenDatabase::new().open_with_clock(Config { path: None }, crate::ffi::specs(serde_json::to_string(&models).unwrap()), crate::ffi::OpenPorts::default(), clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
 
     bound(database.create(database.session_epoch(), "presence".into(), r#"{"id":"p1","room":"a"}"#.into(), "{}".into())).await.unwrap();
     clock.advance(29_000);
@@ -193,7 +193,7 @@ async fn data_destroy_of_a_gone_memory_row_is_a_success() {
     let note = ModelSpec::new("note", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     let models = vec![presence(), note];
     let clock = TestClock::new(1_000_000);
-    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&models).unwrap()), crate::ffi::OpenPorts::default(), clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
+    let database = OpenDatabase::new().open_with_clock(Config { path: None }, crate::ffi::specs(serde_json::to_string(&models).unwrap()), crate::ffi::OpenPorts::default(), clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
     bound(database.create(database.session_epoch(), "presence".into(), r#"{"id":"p1","room":"a"}"#.into(), "{}".into())).await.unwrap();
     assert!(database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).await.unwrap().is_some());
     clock.advance(30_000);

@@ -21,7 +21,7 @@ class ContainerMembersTest {
     @Test
     fun containerMembersPassesArgumentsAndDecodesTypedSnapshots() = bounded {
         val transport = MockTransport()
-        openSigned(Config(null, null), modelsJSON, transport)
+        openSigned(Config(null), modelsJSON, transport)
         val def = buildJsonObject { put("name", JsonPrimitive("ContainerMembers")); put("document", JsonPrimitive(document)) }
         registerStandOperations(DBlayer.database, JsonArray(listOf(def)).toString())
         transport.enqueue("ContainerMembers", page("a0", true))

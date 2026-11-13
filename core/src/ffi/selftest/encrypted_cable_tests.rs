@@ -39,7 +39,7 @@ async fn feed_prop_census_from_owners() {
     let (subscribed, mut subscriptions) = mpsc::unbounded_channel();
     let (closed, mut closes) = mpsc::unbounded_channel();
     let peer = Arc::new(Peer::new(config.clone(), subscribed, closed));
-    let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(peer), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+    let database = Database::open(Config { path: None }, crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(peer), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}]"#.into()).await.unwrap();
     database.set_online(true).await.unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
@@ -63,7 +63,7 @@ async fn an_old_encrypted_cable_cannot_deliver_into_the_next_account() {
     let (subscribed, mut subscriptions) = mpsc::unbounded_channel();
     let (closed, mut closes) = mpsc::unbounded_channel();
     let peer = Arc::new(Peer::new(config.clone(), subscribed, closed));
-    let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(peer.clone()), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+    let database = Database::open(Config { path: None }, crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(peer.clone()), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}]"#.into()).await.unwrap();
     database.set_online(true).await.unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();

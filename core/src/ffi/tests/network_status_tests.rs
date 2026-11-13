@@ -39,7 +39,7 @@ fn config() -> EncryptedConfig { EncryptedConfig { origin: origin().into(), serv
 
 async fn open_database(rig: &Rig) -> Arc<Database> {
     let ports = OpenPorts { partial_operations: true, transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(config()), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
-    within(Database::open(Config { path: None, data_version: None }, crate::ffi::EMPTY_SPECS.to_string(), ports)).await.unwrap()
+    within(Database::open(Config { path: None }, crate::ffi::EMPTY_SPECS.to_string(), ports)).await.unwrap()
 }
 
 async fn platform(target: &str) -> Platform {

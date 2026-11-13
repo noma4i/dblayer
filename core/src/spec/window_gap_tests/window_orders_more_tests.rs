@@ -315,7 +315,7 @@ fn win_orders_nodes_answers() {
     let all = orders(&[0usize, 1, 2], &[]);
     assert_eq!(all.len(), 6);
     for order in all {
-        let db = Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+        let db = Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
         for id in asked {
             put(&db, "moments", serde_json::json!({"id": id, "userId": "u1", "text": format!("cached {id}")}));
         }

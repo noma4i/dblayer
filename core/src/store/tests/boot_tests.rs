@@ -21,9 +21,9 @@ fn seed(store: &Store) {
     );
 }
 
-fn reopen(path: &std::path::Path, models: &[ModelSpec], data_version: Option<&str>) -> (Store, BootReport) {
+fn reopen(path: &std::path::Path, models: &[ModelSpec]) -> (Store, BootReport) {
     let store = Store::open(path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-    let report = store.boot(models, data_version).unwrap();
+    let report = store.boot(models).unwrap();
     (store, report)
 }
 
@@ -31,13 +31,13 @@ fn reopen(path: &std::path::Path, models: &[ModelSpec], data_version: Option<&st
 fn boot_creates_model_tables_and_ready_follows_mark_ready() {
     let store = Store::open_in_memory(std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     assert!(!store.table_exists("row_messages").unwrap());
-    let report = store.boot(&[messages_spec()], None).unwrap();
+    let report = store.boot(&[messages_spec()]).unwrap();
     assert_eq!(report.verdict, ManifestVerdict::Fresh);
     assert!(store.table_exists("row_messages").unwrap());
     assert!(!store.is_ready());
     store.mark_ready();
     assert!(store.is_ready());
-    store.boot(&[messages_spec()], None).unwrap();
+    store.boot(&[messages_spec()]).unwrap();
     assert!(!store.is_ready());
 }
 
@@ -47,10 +47,10 @@ fn second_boot_is_matching_and_keeps_data() {
     let path = directory.path().join("a.sqlite");
     let models = [messages_spec(), items_spec()];
     {
-        let (store, _) = reopen(&path, &models, Some("v1"));
+        let (store, _) = reopen(&path, &models);
         seed(&store);
     }
-    let (store, report) = reopen(&path, &models, Some("v1"));
+    let (store, report) = reopen(&path, &models);
     assert_eq!(report.verdict, ManifestVerdict::Match);
     assert_eq!(store.row_count("messages").unwrap(), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member"), 2);
@@ -61,7 +61,7 @@ fn fingerprint_change_clears_cache_and_keeps_intents() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     {
-        let (store, _) = reopen(&path, &[messages_spec(), items_spec()], None);
+        let (store, _) = reopen(&path, &[messages_spec(), items_spec()]);
         seed(&store);
         exec(&store, "INSERT INTO sync_upload (model, row_id, action, status, stage, sent, total, attempts, seq, source, transfer_id) VALUES ('messages', 'm1', 'upload', 'queued', 'prepare', 0, 1, 3, 7, 'source', 9)");
     }
@@ -75,7 +75,7 @@ fn fingerprint_change_clears_cache_and_keeps_intents() {
             FieldSpec::scalar("extra", ScalarKind::Str).optional(),
         ],
     );
-    let (store, report) = reopen(&path, &[changed, items_spec()], None);
+    let (store, report) = reopen(&path, &[changed, items_spec()]);
     assert_eq!(report.verdict, ManifestVerdict::CacheOnly { models: vec!["messages".into()] });
     assert_eq!(store.row_count("messages").unwrap(), 0);
     assert_eq!(store.row_count("items").unwrap(), 0);
@@ -96,10 +96,10 @@ fn renaming_a_relation_resets_every_server_model() {
     let mut renamed = messages_spec();
     renamed.relations.push(RelationSpec::new("timeline", &["chatId"]));
     {
-        let (store, _) = reopen(&path, &[first, items_spec()], None);
+        let (store, _) = reopen(&path, &[first, items_spec()]);
         seed(&store);
     }
-    let (store, report) = reopen(&path, &[renamed, items_spec()], None);
+    let (store, report) = reopen(&path, &[renamed, items_spec()]);
     assert_eq!(report.verdict, ManifestVerdict::CacheOnly { models: vec!["messages".into()] });
     assert_eq!(store.row_count("items").unwrap(), 0);
 }
@@ -109,10 +109,10 @@ fn added_model_clears_nothing() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     {
-        let (store, _) = reopen(&path, &[messages_spec()], None);
+        let (store, _) = reopen(&path, &[messages_spec()]);
         store.commit(envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap();
     }
-    let (store, report) = reopen(&path, &[messages_spec(), items_spec()], None);
+    let (store, report) = reopen(&path, &[messages_spec(), items_spec()]);
     assert_eq!(report.verdict, ManifestVerdict::Match);
     assert_eq!(store.row_count("messages").unwrap(), 1);
     assert_eq!(store.row_count("items").unwrap(), 0);
@@ -123,10 +123,10 @@ fn removed_model_clears_every_server_model_and_its_fingerprint() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     {
-        let (store, _) = reopen(&path, &[messages_spec(), items_spec()], None);
+        let (store, _) = reopen(&path, &[messages_spec(), items_spec()]);
         seed(&store);
     }
-    let (store, report) = reopen(&path, &[messages_spec()], None);
+    let (store, report) = reopen(&path, &[messages_spec()]);
     assert_eq!(report.verdict, ManifestVerdict::CacheOnly { models: vec!["items".into()] });
     assert!(!store.table_exists("row_items").unwrap());
     assert_eq!(count(&store, "SELECT COUNT(*) FROM manifest WHERE key = 'fingerprint:items'"), 0);
@@ -135,34 +135,20 @@ fn removed_model_clears_every_server_model_and_its_fingerprint() {
 }
 
 #[test]
-fn mismatched_manifests_wipe_cache_and_keep_operations() {
-    type Case = (&'static str, Option<&'static str>, Option<&'static str>, Option<&'static str>);
-    let cases: [Case; 2] = [
-        ("data version changed", Some("v1"), Some("v2"), None),
-        ("manifest missing", None, None, Some("DELETE FROM manifest")),
-    ];
-    for (case, before, after, tamper) in cases {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("a.sqlite");
-        let models = [messages_spec(), items_spec()];
-        {
-            let (store, _) = reopen(&path, &models, before);
-            seed(&store);
-            if let Some(sql) = tamper {
-                exec(&store, sql);
-            }
-        }
-        let (store, report) = reopen(&path, &models, after);
-        assert_eq!(report.verdict, ManifestVerdict::Mismatch, "{case}");
-        assert_eq!(store.row_count("messages").unwrap(), 0, "{case}: rows");
-        assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member"), 0, "{case}: membership");
-        assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1, "{case}: operations");
-        assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine"), 1, "{case}: quarantine");
-        assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine WHERE reason = 'schema-changed'"), 0, "{case}: operations stay out of quarantine");
-        if let Some(version) = after {
-            assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM manifest WHERE key = 'data_version' AND value = '{version}'")), 1, "{case}: stamped version");
-        }
+fn a_manifest_without_its_format_goes_through_the_format_change() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    let models = [messages_spec(), items_spec()];
+    {
+        let (store, _) = reopen(&path, &models);
+        seed(&store);
+        exec(&store, "DELETE FROM manifest");
     }
+    let (store, report) = reopen(&path, &models);
+    assert_eq!(report.recreated, Some(crate::store::ddl::RecreateReason::CoreFormat));
+    assert_eq!(store.row_count("messages").unwrap(), 0, "rows of the server cache");
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member"), 0, "membership of the server cache");
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1, "operations");
 }
 
 #[test]
@@ -171,12 +157,12 @@ fn store_boot_journal_unknown() {
     let path = directory.path().join("unknown.sqlite");
     let models = [messages_spec(), items_spec()];
     {
-        let (store, _) = reopen(&path, &models, None);
+        let (store, _) = reopen(&path, &models);
         seed(&store);
         exec(&store, "INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'unknown-end', 1)");
     }
     let store = Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-    let result = store.boot(&models, None);
+    let result = store.boot(&models);
     assert!(result.is_err(), "unknown end journal must fail open: {result:?}");
     assert_eq!(store.reset_intent().unwrap().as_deref(), Some("unknown-end"));
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 1);
@@ -189,12 +175,12 @@ fn store_boot_replay_end_storage_error() {
     let path = directory.path().join("failure.sqlite");
     let models = [messages_spec(), items_spec()];
     {
-        let (store, _) = reopen(&path, &models, None);
+        let (store, _) = reopen(&path, &models);
         seed(&store);
         exec(&store, "INSERT INTO encrypted_session (id, credential_digest, sequence) VALUES (1, '0000000000000001', 1); INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'session_end', 1); CREATE TRIGGER refuse_session_delete BEFORE DELETE ON encrypted_session BEGIN SELECT RAISE(ABORT, 'session delete refused'); END");
     }
     let store = Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-    assert!(store.boot(&models, None).is_err(), "the failed replay must fail open");
+    assert!(store.boot(&models).is_err(), "the failed replay must fail open");
     assert_eq!(store.reset_intent().unwrap().as_deref(), Some("session_end"));
     assert_eq!(count(&store, "SELECT COUNT(*) FROM encrypted_session"), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE action_key = 'messages:send'"), 1);
@@ -208,12 +194,12 @@ fn store_boot_replay_end() {
         let path = directory.path().join("end.sqlite");
         let models = [messages_spec(), items_spec()];
         {
-            let (store, _) = reopen(&path, &models, None);
+            let (store, _) = reopen(&path, &models);
             seed(&store);
             exec(&store, "INSERT INTO encrypted_session (id, credential_digest, sequence) VALUES (1, '0000000000000001', 1)");
             exec(&store, &format!("INSERT INTO reset_intent (id, mode, started_at) VALUES (1, '{mode}', 1)"));
         }
-        let (store, report) = reopen(&path, &models, None);
+        let (store, report) = reopen(&path, &models);
         assert!(report.finished_interrupted_reset, "{mode}");
         assert_eq!((store.row_count("messages").unwrap(), store.row_count("items").unwrap()), (0, 0), "{mode}");
         assert_eq!(count(&store, "SELECT COUNT(*) FROM encrypted_pending"), 0, "{mode}: pending");
@@ -224,31 +210,11 @@ fn store_boot_replay_end() {
 }
 
 #[test]
-fn store_boot_replay_reset() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("reset.sqlite");
-    let models = [messages_spec(), items_spec()];
-    {
-        let (store, _) = reopen(&path, &models, None);
-        seed(&store);
-        exec(&store, "INSERT INTO encrypted_session (id, credential_digest, sequence) VALUES (1, '0000000000000001', 1)");
-        exec(&store, "INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'mismatched', 1)");
-    }
-    let (store, report) = reopen(&path, &models, None);
-    assert!(report.finished_interrupted_reset);
-    assert_eq!(store.row_count("messages").unwrap(), 0);
-    assert_eq!(store.row_count("items").unwrap(), 0);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM encrypted_session"), 1);
-    assert_eq!(store.reset_intent().unwrap(), None);
-}
-
-#[test]
 fn boot_prunes_expired_tombstones() {
     let (store, clock) = booted_store();
     store.mark_tombstone("messages", "old", 1, 0).unwrap();
     clock.advance(std::time::Duration::from_millis(85_400_001));
-    let report = store.boot(&[messages_spec(), items_spec()], None).unwrap();
+    let report = store.boot(&[messages_spec(), items_spec()]).unwrap();
     assert_eq!(report.tombstone_drops, 1);
 }
 
@@ -263,7 +229,7 @@ fn boot_prunes_transfer_outcomes_older_than_seven_days() {
     clock.advance(std::time::Duration::from_millis(6 * 86_400_000));
     super::data_inv_tests::write(&store, BatchAuthor::Outbox, Vec::new(), vec![outcome(2), StoreOp::TransferOutcome { transfer_id: 1, cycle_id: 2, outcome: OutboxOutcome::Discarded }]);
     clock.advance(std::time::Duration::from_millis(86_400_001));
-    store.boot(&[messages_spec(), items_spec()], None).unwrap();
+    store.boot(&[messages_spec(), items_spec()]).unwrap();
     let restored = store.read_restore().unwrap().transfer_outcomes;
     assert_eq!(restored.keys().copied().collect::<Vec<_>>(), vec![1, 2], "only the old cycle goes at open");
     assert_eq!(restored.get(&1), Some(&[(2, OutboxOutcome::Discarded)].into()));
@@ -275,7 +241,7 @@ fn a_stale_core_table_shape_is_replaced_by_a_recreated_file() {
     let path = directory.path().join("a.sqlite");
     let models = [messages_spec()];
     {
-        let (store, _) = reopen(&path, &models, None);
+        let (store, _) = reopen(&path, &models);
         exec(
             &store,
             "DROP TABLE query_window; \
@@ -285,7 +251,7 @@ fn a_stale_core_table_shape_is_replaced_by_a_recreated_file() {
              UPDATE manifest SET value = '1' WHERE key = 'format_version'",
         );
     }
-    let (store, report) = reopen(&path, &models, None);
+    let (store, report) = reopen(&path, &models);
     assert_eq!(report.recreated, Some(crate::store::ddl::RecreateReason::CoreFormat));
     assert_eq!(report.verdict, ManifestVerdict::Fresh);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM pragma_table_info('query_window') WHERE name = 'total'"), 1);
@@ -298,10 +264,10 @@ fn open_recreates_a_missing_core_table() {
     let path = directory.path().join("a.sqlite");
     let models = [messages_spec()];
     {
-        let (store, _) = reopen(&path, &models, None);
+        let (store, _) = reopen(&path, &models);
         exec(&store, "DROP TABLE row_sync");
     }
-    let (store, _) = reopen(&path, &models, None);
+    let (store, _) = reopen(&path, &models);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_sync"), 0);
 }
 
@@ -340,12 +306,12 @@ fn store_prop_boot_any_layout() {
         let path = directory.path().join("a.sqlite");
         let models = [messages_spec()];
         {
-            let (store, _) = reopen(&path, &models, None);
+            let (store, _) = reopen(&path, &models);
             exec(&store, &format!("INSERT OR REPLACE INTO encrypted_session (id, credential_digest, sequence) VALUES (1, '{SESSION_DIGEST}', {sequence});"));
             exec(&store, plant);
             exec(&store, "UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
         }
-        let (store, report) = reopen(&path, &models, None);
+        let (store, report) = reopen(&path, &models);
         assert_eq!(report.recreated, Some(crate::store::ddl::RecreateReason::CoreFormat), "{case}");
         assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM encrypted_session WHERE credential_digest = '{SESSION_DIGEST}' AND sequence = {sequence}")), 1, "{case}: the session is kept");
         assert_eq!(count(&store, "SELECT COUNT(*) FROM encrypted_pending"), pending_rows, "{case}: pending rows");
@@ -358,7 +324,7 @@ fn store_prop_boot_any_layout() {
 }
 
 fn plant_old_layout(path: &std::path::Path, plant: &str) {
-    let (store, _) = reopen(path, &[messages_spec()], None);
+    let (store, _) = reopen(path, &[messages_spec()]);
     exec(&store, plant);
     exec(&store, "UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
 }
@@ -368,7 +334,7 @@ fn store_boot_layout_missing_column() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     plant_old_layout(&path, "DROP TABLE local_pending; CREATE TABLE local_pending (model TEXT NOT NULL, row_id TEXT NOT NULL, path TEXT NOT NULL, node INTEGER NOT NULL) STRICT; INSERT INTO local_pending VALUES ('messages', 'm1', 'body', 0);");
-    let (store, report) = reopen(&path, &[messages_spec()], None);
+    let (store, report) = reopen(&path, &[messages_spec()]);
     assert_eq!(report.dropped.len(), 1);
     assert_eq!((report.dropped[0].table.as_str(), report.dropped[0].reason), ("local_pending", "missing_column"));
     assert_eq!(count(&store, "SELECT COUNT(*) FROM local_pending"), 0);
@@ -389,7 +355,7 @@ fn store_boot_layout_mismatch_row() {
          DROP TABLE encrypted_session; CREATE TABLE encrypted_session (id INTEGER PRIMARY KEY, credential_digest TEXT NOT NULL, sequence TEXT NOT NULL);\
          INSERT INTO encrypted_session VALUES (1, 'd', 'not a number');",
     );
-    let (store, report) = reopen(&path, &[messages_spec()], None);
+    let (store, report) = reopen(&path, &[messages_spec()]);
     let mut dropped: Vec<_> = report.dropped.iter().map(|row| (row.table.as_str(), row.reason)).collect();
     dropped.sort_unstable();
     assert_eq!(dropped, vec![("encrypted_session", "type"), ("op", "constraint")]);
@@ -405,11 +371,11 @@ fn store_prop_boot_reopen() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     plant_old_layout(&path, "DROP TABLE local_pending; CREATE TABLE local_pending (model TEXT NOT NULL, row_id TEXT NOT NULL) STRICT; INSERT INTO local_pending VALUES ('messages', 'm1');");
-    let (first, report) = reopen(&path, &[messages_spec()], None);
+    let (first, report) = reopen(&path, &[messages_spec()]);
     assert_eq!(report.dropped.len(), 1);
     let before = failed_restore(&first);
     drop(first);
-    let (second, report) = reopen(&path, &[messages_spec()], None);
+    let (second, report) = reopen(&path, &[messages_spec()]);
     assert!(report.dropped.is_empty() && report.recreated.is_none());
     assert_eq!(failed_restore(&second), before, "the kept data does not move");
 }
@@ -419,12 +385,12 @@ fn store_prop_boot_keys() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     {
-        let (store, _) = reopen(&path, &[messages_spec()], None);
+        let (store, _) = reopen(&path, &[messages_spec()]);
         exec(&store, "INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, purpose, req_id) VALUES (1, 'd', 'req-1', 'k', 5, '/p', '{}', 0, 3);\
                       INSERT INTO manifest (key, value) VALUES ('saved_epoch', '9'), ('saved_generation', '4') ON CONFLICT(key) DO UPDATE SET value = excluded.value;\
                       UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
     }
-    let (store, report) = reopen(&path, &[messages_spec()], None);
+    let (store, report) = reopen(&path, &[messages_spec()]);
     assert!(report.recreated.is_some());
     assert_eq!(text(&store, "SELECT request_id FROM encrypted_pending").as_deref(), Some("req-1"));
     assert_eq!(count(&store, "SELECT sequence FROM encrypted_pending"), 5);
@@ -436,12 +402,12 @@ fn store_boot_corrupt_manifest_keeps_the_file_whole() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     {
-        let (store, _) = reopen(&path, &[messages_spec()], None);
+        let (store, _) = reopen(&path, &[messages_spec()]);
         exec(&store, "INSERT INTO manifest (key, value) VALUES ('saved_epoch', '-3') ON CONFLICT(key) DO UPDATE SET value = excluded.value;\
                       UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
     }
     let store = Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-    assert!(matches!(store.boot(&[messages_spec()], None), Err(StoreError::CorruptManifest(_))));
+    assert!(matches!(store.boot(&[messages_spec()]), Err(StoreError::CorruptManifest(_))));
     assert_eq!(text(&store, "SELECT value FROM manifest WHERE key = 'saved_epoch'").as_deref(), Some("-3"));
     assert_eq!(text(&store, "SELECT value FROM manifest WHERE key = 'format_version'").as_deref(), Some("old"));
 }
@@ -451,14 +417,14 @@ fn store_prop_boot_atomic() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     {
-        let (store, _) = reopen(&path, &[messages_spec()], None);
+        let (store, _) = reopen(&path, &[messages_spec()]);
         exec(&store, "INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, purpose, req_id) VALUES (1, 'd', 'req-1', 'k', 5, '/p', '{}', 0, 3);\
                       UPDATE manifest SET value = 'old' WHERE key = 'format_version';\
                       DROP TABLE row_messages;\
                       CREATE VIEW row_messages AS SELECT 1 AS id");
     }
     let store = Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-    assert!(matches!(store.boot(&[messages_spec()], None), Err(StoreError::Sqlite(_))), "the model table cannot be created over the view");
+    assert!(matches!(store.boot(&[messages_spec()]), Err(StoreError::Sqlite(_))), "the model table cannot be created over the view");
     assert_eq!(text(&store, "SELECT value FROM manifest WHERE key = 'format_version'").as_deref(), Some("old"), "the format is not stamped: the old base is whole");
     assert_eq!(text(&store, "SELECT request_id FROM encrypted_pending").as_deref(), Some("req-1"), "the kept intent stays where it was");
     assert_eq!(count(&store, "SELECT COUNT(*) FROM restore_failed"), 0, "nothing of the transfer is half done");
@@ -473,13 +439,13 @@ fn a_format_change_carries_the_transfer_rows_of_sync_upload_and_not_the_folded_o
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     {
-        let (store, _) = reopen(&path, &[messages_spec()], None);
+        let (store, _) = reopen(&path, &[messages_spec()]);
         exec(&store, &format!("DROP TABLE sync_upload; {PREVIOUS_UPLOAD_TABLE}; {PREVIOUS_UPLOAD_ERROR_TABLE}; \
             INSERT INTO sync_upload (model, row_id, action, status, stage, sent, total, attempts, seq, transfer_id, size) VALUES ('messages', 'm1', 'photo', 'uploading', 'part', 2, 5, 1, 7, 7, 40); \
             INSERT INTO sync_upload (model, row_id, action, status, stage, sent, total, attempts) VALUES ('messages', 'm2', 'photo', 'uploading', 'put', 10, 100, 0); \
             UPDATE manifest SET value = 'old' WHERE key = 'format_version'"));
     }
-    let (store, report) = reopen(&path, &[messages_spec()], None);
+    let (store, report) = reopen(&path, &[messages_spec()]);
     assert_eq!(report.recreated, Some(crate::store::ddl::RecreateReason::CoreFormat));
     assert_eq!(count(&store, "SELECT COUNT(*) FROM sync_upload WHERE row_id = 'm1' AND seq = 7 AND transfer_id = 7 AND sent = 2 AND total = 5 AND size = 40 AND status = 'uploading'"), 1, "the transfer row is carried with its values");
     assert_eq!(count(&store, "SELECT COUNT(*) FROM sync_upload WHERE row_id = 'm1' AND round_error IS NULL"), 1, "the carried row has the new column, empty");
@@ -493,7 +459,7 @@ fn a_format_change_carries_queued_operations_transfers_and_the_session_and_drops
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     {
-        let (store, _) = reopen(&path, &[messages_spec()], None);
+        let (store, _) = reopen(&path, &[messages_spec()]);
         exec(&store, "INSERT INTO op (action_key, status, created_at, since) VALUES ('messages:send', 'pending', 1, 1); \
             INSERT INTO encrypted_session (id, credential_digest, sequence) VALUES (1, 'digest', 41); \
             INSERT INTO sync_upload (model, row_id, action, status, stage, sent, total, attempts, seq, transfer_id) VALUES ('messages', 'm1', 'photo', 'uploading', 'part', 2, 5, 1, 7, 7); \
@@ -509,7 +475,7 @@ fn a_format_change_carries_queued_operations_transfers_and_the_session_and_drops
             INSERT INTO op_error (seq, item_position, node, parent, pos, name, kind, text) VALUES (1, -1, 0, 0, 0, 'detail', 4, 'refused'); \
             UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
     }
-    let (store, report) = reopen(&path, &[messages_spec()], None);
+    let (store, report) = reopen(&path, &[messages_spec()]);
     assert_eq!(report.recreated, Some(crate::store::ddl::RecreateReason::CoreFormat));
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE action_key = 'messages:send' AND status = 'pending'"), 1, "the queued operation is carried");
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op_value WHERE seq = 1 AND part = 'input' AND name = 'text' AND text = 'hello'"), 1, "the operation input is carried without the old item column");
@@ -533,7 +499,7 @@ fn a_format_change_keeps_the_data_of_the_app() {
     let mut messages = messages_spec();
     messages.fields.push(FieldSpec { merge: Some(crate::schema::MergeRule::Local), ..FieldSpec::scalar("draft", ScalarKind::Str).optional() });
     let models = vec![notes, messages];
-    let open = || Store::open_models(Some(&path), models.clone(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let open = || Store::open_models(Some(&path), models.clone(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     {
         let store = open();
         let batch = |ops| crate::owners::store::StoreBatch { author: crate::owners::contract::BatchAuthor::LocalWrites, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };

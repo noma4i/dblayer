@@ -106,7 +106,7 @@ pub(super) async fn feed_database_over(path: Option<String>, held: Arc<crate::ff
     });
     let clock = crate::ffi::TestClock::new(1_000_000);
     let transport = Arc::new(FeedTransport { cable, token, opened, clock: clock.clone() });
-    let database = bound(Database::open_with_clock(crate::ffi::Config { path, data_version: None }, crate::ffi::specs(models), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(held.clone()), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock)).await.unwrap();
+    let database = bound(Database::open_with_clock(crate::ffi::Config { path }, crate::ffi::specs(models), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(held.clone()), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock)).await.unwrap();
     database.register_operations(operations.to_string()).await.unwrap();
     database.set_online(true).await.unwrap();
     if crate::transport::CredentialSlot::get(&held.inner).unwrap().is_none() { bound(database.session_call("login_link".into(), json!({"account":"A"}).to_string())).await.unwrap(); }

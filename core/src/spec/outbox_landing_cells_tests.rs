@@ -58,7 +58,7 @@ fn out_sending_destroy_not_found_batch() {
     let id = submit_op(&mut twin, op, 30);
     twin.committed(id);
     let request_id = twin.state().ops[&id].request_id;
-    let db = crate::store::Store::open_models(None, vec![crate::schema_fixtures::moments_spec(), crate::schema_fixtures::users_spec()], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let db = crate::store::Store::open_models(None, vec![crate::schema_fixtures::moments_spec(), crate::schema_fixtures::users_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     let job = DecodeJob { op_id: id, model: "Moment".into(), action: "destroy".into(), temp: None, batch: None, body: r#"{"errors":[{"message":"missing","extensions":{"code":"NOT_FOUND"}}]}"#.into() };
     let Decoded::MissingDestroy { stale } = decode_answer(&db, &|_| None, &job) else { panic!("NOT_FOUND destroy must land") };
     twin.post(OutboxInput::MissingDestroy { op_id: id, stale });

@@ -23,7 +23,7 @@ fn operation(seq: i64, row: &str, action: &str, status: OperationStatus) -> Oper
 }
 
 fn queue_work(n: usize, m: usize) -> (usize, usize) {
-    let db = Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let db = Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     {
         let inner = db.lock();
         for index in 0..n {
@@ -64,7 +64,7 @@ fn nested_work(size: usize) -> usize {
     reactions.fields = vec![FieldSpec::scalar("userId", ScalarKind::Id).nullable(), user];
     let records = ModelSpec::new("Record", vec![FieldSpec::scalar("id", ScalarKind::Id), reactions]);
     let users = ModelSpec::new("User", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("name", ScalarKind::Str).nullable()]);
-    let db = Store::open_models(None, vec![records, users], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let db = Store::open_models(None, vec![records, users], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     for index in 0..size {
         crate::store::fixtures::put(&db, "User", json!({"id": format!("u{index}"), "name": "current"}));
         crate::store::fixtures::put(&db, "Record", json!({"id": format!("r{index}"), "reactions": [{"userId": format!("u{index}"), "user": {"name": "old"}}]}));
@@ -86,7 +86,7 @@ fn dlv_nested_refs_work_linear() {
 }
 
 fn edge_work(size: usize) -> usize {
-    let db = Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let db = Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     {
         let inner = db.lock();
         for index in 0..size {
@@ -114,7 +114,7 @@ fn dlv_edges_work_linear() {
 }
 
 fn alias_work(size: usize) -> usize {
-    let db = Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let db = Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     for index in 0..size {
         crate::store::fixtures::put(&db, "moments", json!({"id":format!("r{index}"), "userId":"u1"}));
         db.lock().connection.execute("INSERT INTO row_alias (model, temp, real) VALUES (?1, ?2, ?3)", rusqlite::params!["moments", format!("temp-{index}"), format!("r{index}")]).unwrap();
@@ -138,7 +138,7 @@ fn dlv_evicted_alias_work_linear() {
 }
 
 fn restore_work(size: usize) -> usize {
-    let db = Store::open_models(None, all_specs(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let db = Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     {
         let inner = db.lock();
         for index in 0..size {

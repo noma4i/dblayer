@@ -39,7 +39,7 @@ async fn rig() -> Rig {
     let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
     let server = FakeServer::new(clock.clone());
     let credentials = Arc::new(MemoryCredentials::default());
-    let db = Store::open_models(None, Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, Vec::new(), std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::tests::protocol_tests::config() };
     let client = Client::new(&config, server.clone(), credentials.clone(), db.clone(), clock, Arc::new(MockTransport::new())).unwrap();
     let life = client.start_owners();

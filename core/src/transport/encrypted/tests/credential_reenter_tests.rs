@@ -72,7 +72,7 @@ fn rig(mode: Mode) -> Rig {
     let (entered_to, entered) = channel();
     let (release, release_from) = channel();
     let slot = Arc::new(Slot { memory: MemoryCredentials::default(), client: Mutex::new(Weak::new()), mode, fired: AtomicBool::new(false), sets: AtomicUsize::new(0), entered: Mutex::new(entered_to), release: Mutex::new(release_from) });
-    let db = Store::open_models(None, Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, Vec::new(), std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     let client = Held::new(slot.clone(), db.clone());
     *slot.client.lock().unwrap() = Arc::downgrade(&client);
     Rig { client, slot, db, entered, release }
@@ -131,7 +131,7 @@ fn credential_callback_asking_for_the_credential_is_refused() {
         fn clear(&self) -> Result<(), TransportError> { Ok(()) }
     }
     let slot = Arc::new(Asks(Mutex::new(Weak::new()), Mutex::new(None)));
-    let client = Held::new(slot.clone(), Store::open_models(None, Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap());
+    let client = Held::new(slot.clone(), Store::open_models(None, Vec::new(), std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap());
     *slot.0.lock().unwrap() = Arc::downgrade(&client);
 
     assert_eq!(join_within(load_on_thread(&client)), Err(no_credential()));
@@ -148,7 +148,7 @@ fn sess_prop_credential_in_store() {
         fn clear(&self) -> Result<(), TransportError> { self.clears.fetch_add(1, Ordering::SeqCst); self.memory.clear() }
     }
     let slot = Arc::new(Counting { memory: MemoryCredentials::default(), gets: AtomicUsize::new(0), clears: AtomicUsize::new(0) });
-    let client = Held::new(slot.clone(), Store::open_models(None, Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap());
+    let client = Held::new(slot.clone(), Store::open_models(None, Vec::new(), std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap());
     slot.memory.set("stored-secret").unwrap();
     session_state::start(&client.db.lock().connection, &digest_of("stored-secret")).unwrap();
 

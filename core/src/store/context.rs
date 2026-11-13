@@ -87,7 +87,7 @@ impl Context {
 
 impl Store {
     /// Opens the file (or memory), boots the models, restores the queue and installs the notice of the commits.
-    pub fn open_models(path: Option<&Path>, models: Vec<ModelSpec>, data_version: Option<&str>, clock: Arc<dyn crate::runtime::Clock>) -> Result<Store, CoreError> {
+    pub fn open_models(path: Option<&Path>, models: Vec<ModelSpec>, clock: Arc<dyn crate::runtime::Clock>) -> Result<Store, CoreError> {
         let mut models = models;
         resolve_types(&mut models);
         let faults = validate_models(&models, &reserved_member_names());
@@ -105,7 +105,7 @@ impl Store {
             },
             None => (Store::open_in_memory(clock)?, false),
         };
-        let boot = store.boot(&models, data_version)?;
+        let boot = store.boot(&models)?;
         let changed_models = match &boot.verdict {
             ManifestVerdict::CacheOnly { models } => models.clone(),
             _ => Vec::new(),

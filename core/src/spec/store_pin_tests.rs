@@ -93,7 +93,7 @@ fn store_prop_tombstone_flight() {
     use crate::owners::store::{RowValue, StoreOp};
 
     let clock = Arc::new(crate::runtime::ManualClock::new(Duration::from_secs(1)));
-    let db = Store::open_models(None, crate::store::fixtures::all_specs(), None, clock.clone()).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, crate::store::fixtures::all_specs(), clock.clone()).map(std::sync::Arc::new).unwrap();
     let row = |id: &str| RowValue { row_id: id.into(), values: format!(r#"{{"id":"{id}","text":"value"}}"#) };
     db.write_queue_ops_with_pin(&[StoreOp::Rows { model: "moments".into(), rows: vec![row("m1")] }], None).unwrap();
     let base = u64::try_from(db.revision_seq().unwrap()).unwrap();

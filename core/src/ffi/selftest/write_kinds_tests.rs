@@ -43,7 +43,7 @@ async fn every_write_path_stores_and_refuses_each_field_kind() {
     let order: Vec<String> = fields.iter().chain(ephemeral.iter()).map(|field| field["name"].as_str().unwrap().to_string()).collect();
 
     let directory = tempfile::tempdir().unwrap();
-    let config = Config { path: Some(directory.path().join("kinds.sqlite").to_string_lossy().into()), data_version: None };
+    let config = Config { path: Some(directory.path().join("kinds.sqlite").to_string_lossy().into()) };
     let database = Database::open(config, crate::ffi::specs(spec["models"].to_string()), OpenPorts::default()).await.unwrap();
     let epoch = database.session_epoch();
 

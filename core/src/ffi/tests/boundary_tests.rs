@@ -6,7 +6,7 @@ use crate::value::ScalarKind;
 async fn notes() -> std::sync::Arc<Database> {
     let mut model = ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
     model.storage = Storage::Local;
-    Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap()
+    Database::open(Config { path: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap()
 }
 
 /// boundary_local_result_orders (TRACE-01, P-BND-03): the receipt of a local write shows the row of its own batch.
@@ -33,7 +33,7 @@ async fn boundary_local_result_orders() {
 async fn attach_and_detach_answer_with_their_own_batch() {
     let mut model = ModelSpec::new("Files", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::file("photo").nullable()]);
     model.storage = Storage::Local;
-    let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap();
+    let database = Database::open(Config { path: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap();
     let epoch = database.session_epoch();
     let id = database.create(epoch, "Files".into(), "{}".into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;
     let source = tempfile::NamedTempFile::new().unwrap();

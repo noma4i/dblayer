@@ -25,7 +25,7 @@ pub(in super::super) struct Rig {
 impl Rig {
     pub(in super::super) async fn signed_in() -> Self {
         let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
-        let rig = Self { server: FakeServer::new(clock.clone()), credentials: Arc::new(MemoryCredentials::default()), clock, db: Store::open_models(None, Vec::new(), None, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap(), owned: std::sync::OnceLock::new() };
+        let rig = Self { server: FakeServer::new(clock.clone()), credentials: Arc::new(MemoryCredentials::default()), clock, db: Store::open_models(None, Vec::new(), std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap(), owned: std::sync::OnceLock::new() };
         rig.client().session_call("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
         rig
     }

@@ -8,7 +8,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func net_status_swiftReadersGetTheFirstValueAndEachChange() async throws {
-    try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
+    try await openSignedOffline(config: Config(path: nil), modelsJson: modelsJSON)
     await StatusProbe.shared.set(false)
     let status = StatusProbe.status()
     #expect(status.isOnline == false)
@@ -29,7 +29,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func net_status_swiftAServerAnswerAndARepeatedValueGiveNoFrame() async throws {
-    try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
+    try await openSignedOffline(config: Config(path: nil), modelsJson: modelsJSON)
     await StatusProbe.shared.set(true)
     let status = StatusProbe.status()
     let reader = Cursor(status.changes)
@@ -47,7 +47,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func net_status_swiftALateReaderGetsTheNewestValueFirst() async throws {
-    try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
+    try await openSignedOffline(config: Config(path: nil), modelsJson: modelsJSON)
     await StatusProbe.shared.set(true)
     await StatusProbe.shared.set(false)
     let late = Cursor(StatusProbe.status().changes)
@@ -58,7 +58,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func net_status_swiftCancellingTheTaskEndsOnlyThatReader() async throws {
-    try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
+    try await openSignedOffline(config: Config(path: nil), modelsJson: modelsJSON)
     await StatusProbe.shared.set(false)
     let status = StatusProbe.status()
     let (frames, ready) = AsyncStream<NetworkPath>.makeStream()
@@ -138,7 +138,7 @@ extension BridgeProbeTests {
     let reader = Cursor(status.changes)
     await StatusProbe.shared.set(true)
     #expect(await reader.next("a value with no database")?.online == true)
-    try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
+    try await openSignedOffline(config: Config(path: nil), modelsJson: modelsJSON)
     await DB.closeForCleanup()
     await StatusProbe.shared.set(false)
     #expect(await reader.next("a value after the close")?.online == false)

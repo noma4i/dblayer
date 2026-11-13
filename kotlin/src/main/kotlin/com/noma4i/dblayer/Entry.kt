@@ -69,7 +69,7 @@ object DBlayer {
             UploadNotifications.store(context, uploadNotification)
             val ports = OpenPorts(transport, encrypted, credentials, http, endpoint, OkHttpTransport(headers), dataSync, SystemPreparer(context.applicationContext))
             NetworkStatus(context)
-            val made = opener.open(Config(path, null), modelsJson, OpenOptions(definitions(operations)), ports, SystemObservers(context))
+            val made = opener.open(Config(path), modelsJson, OpenOptions(definitions(operations)), ports, SystemObservers(context))
             made.setRoundJobs(UploadRounds(context.applicationContext, made))
             UploadService.opened(made)
         }
