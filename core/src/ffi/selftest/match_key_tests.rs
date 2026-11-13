@@ -31,12 +31,12 @@ fn server_chat() -> Value { json!({"__typename": "Chat", "id": "c9", "name": "n"
 
 /// The row of the server holds the key.
 fn keyed_in_store(rig: &Rig) -> bool {
-    rig.database.db.read(&["Chat"], |reader| Ok(reader.stored_row("Chat", "c9")?.is_some_and(|row| row.row.get("clientKey") == Some(&json!(KEY))))).unwrap()
+    rig.database.peek_row_now(rig.database.session_epoch(), "Chat".into(), "c9".into()).unwrap().is_some_and(|row| cell(rig, "Chat", &row, "clientKey") == text(KEY))
 }
 
 /// Which of the named rows stand in the store.
 fn stored(rig: &Rig, ids: &[&str]) -> Vec<String> {
-    rig.database.db.read(&["Chat"], |reader| Ok(ids.iter().filter(|id| reader.point("Chat", id).ok().flatten().is_some()).map(|id| id.to_string()).collect::<Vec<_>>())).unwrap()
+    ids.iter().filter(|id| rig.database.peek_row_now(rig.database.session_epoch(), "Chat".into(), id.to_string()).unwrap().is_some_and(|row| row.id == **id)).map(|id| id.to_string()).collect()
 }
 
 /// The ids of the rows of the last frame that carry the key.
