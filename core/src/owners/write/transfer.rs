@@ -777,6 +777,12 @@ impl TransferState {
             RejectReason::Storage(detail) => (false, Some(detail.clone())),
             RejectReason::StaleGeneration { .. } | RejectReason::Invalid(_) => (false, None),
         };
+        #[cfg(test)]
+        if let Some(detail) = &storage {
+            for id in pending.ids.iter().chain(pending.written.keys()) {
+                if let Some(transfer) = self.transfers.get_mut(id) { transfer.last_storage_refusal = Some(detail.clone()); }
+            }
+        }
         if pending.kind == StoreKind::SyncUpload && !matches!(rejected.reason, RejectReason::StaleGeneration { .. }) {
             for id in &pending.ids {
                 if let Some(old) = self.restore_replaced(*id, fx) {
@@ -1091,7 +1097,7 @@ impl StateOwner for Transfers {
 
     #[cfg(test)]
     fn diagnostic(state: &TransferState) -> Option<String> {
-        let transfers: Vec<String> = state.transfers.values().map(|transfer| format!("{}:{:?}:{}:retry={}:in_flight={}:next={:?}:upload_id={}", transfer.transfer_id, transfer.stage, transfer.key, transfer.waiting_retry, transfer.in_flight, transfer.next_step, transfer.upload_id.is_some())).collect();
+        let transfers: Vec<String> = state.transfers.values().map(|transfer| format!("{}:{:?}:{}:retry={}:in_flight={}:next={:?}:upload_id={}:refusals={}:last_refusal={:?}", transfer.transfer_id, transfer.stage, transfer.key, transfer.waiting_retry, transfer.in_flight, transfer.next_step, transfer.upload_id.is_some(), transfer.storage_refusals, transfer.last_storage_refusal)).collect();
         Some(format!("phase={:?}, transfers={transfers:?}, orphans={}, minted_debts={}, owed={}, retrying={}", state.phase, state.orphans.len(), state.minted.len(), state.orphan_owed.len(), state.retrying.len()))
     }
 

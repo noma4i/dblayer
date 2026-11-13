@@ -521,6 +521,8 @@ pub struct Transfer {
     pub attempts: u32,
     /// Storage refusals in a row of the writes of the transfer (P-DATA-102).
     pub storage_refusals: u32,
+    #[cfg(test)]
+    pub(super) last_storage_refusal: Option<String>,
     pub in_flight: bool,
     pub waiting_retry: bool,
     pub next_step: NextStep,

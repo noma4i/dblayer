@@ -77,6 +77,8 @@ impl TransferState {
             attempt_id: 0,
             attempts: 0,
             storage_refusals: 0,
+            #[cfg(test)]
+            last_storage_refusal: None,
             in_flight: false,
             waiting_retry: false,
             next_step: NextStep::Part(1),
