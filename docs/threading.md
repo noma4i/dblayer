@@ -9,7 +9,7 @@ Each piece of mutable state in the core has one owner with one queue. The owner 
 ## What you can rely on
 
 - Record writes use `async` in Swift and `suspend` in Kotlin. Rust runs SQLite writes, argument decoding and result conversion off the caller thread.
-- Database calls prepare their JSON and decode their answers off the caller thread: Kotlin on `Dispatchers.Default`, Swift through `@concurrent`. A projection decodes rows off the main thread and assigns ready values on it. Generated `create`, `update`, `set`, model actions that are not uploads, node reads, edge reads and operation calls follow the same rule. Upload calls keep their own paths.
+- Database calls prepare their JSON and decode their answers off the caller thread: Kotlin on `Dispatchers.Default`, Swift off the actor of the caller. A call runs on the thread of the caller (Kotlin) or on the actor of the caller (Swift) only until the library takes the place of the call in the order of the database; the rest of the work runs off it. A projection decodes rows off the main thread and assigns ready values on it. Generated `create`, `update`, `set`, model actions that are not uploads, node reads, edge reads and operation calls follow the same rule. Upload calls keep their own paths.
 - A stream delivers values from library threads. A Kotlin `Projected` publishes its `StateFlow` from `Dispatchers.Default`, and a Swift `Projected` applies values on the main actor.
 - You can call the library from the main thread: the body of every call runs on library threads. Do not wrap a call in `flowOn` or `withContext`, and do not move it off the main actor in Swift.
 - A delivery touches only the rows it carries. The bindings hold no lock for it.
