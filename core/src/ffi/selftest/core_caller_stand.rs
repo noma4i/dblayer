@@ -85,18 +85,21 @@ impl Collector {
         self.events().into_iter().find_map(|event| match event { Event::Returned(found, how) if found == name => Some(how), _ => None })
     }
 
-    pub(super) fn parked(&self, name: &str) -> bool {
-        let last = self.events().into_iter().rev().find_map(|event| match event {
-            Event::Polling(found) if found == name => Some(false),
-            Event::Parked(found) if found == name => Some(true),
-            Event::Settled(found, _) if found == name => Some(false),
+    pub(super) fn settled(&self, name: &str) -> Option<String> { Self::settled_in(&self.events(), name) }
+
+    /// The state of `name` in one snapshot of the events: the last event of its polls is `Parked`.
+    pub(super) fn parked_in(events: &[Event], name: &str) -> bool {
+        let last = events.iter().rev().find_map(|event| match event {
+            Event::Polling(found) if *found == name => Some(false),
+            Event::Parked(found) if *found == name => Some(true),
+            Event::Settled(found, _) if *found == name => Some(false),
             _ => None,
         });
         last == Some(true)
     }
 
-    pub(super) fn settled(&self, name: &str) -> Option<String> {
-        self.events().into_iter().find_map(|event| match event { Event::Settled(found, outcome) if found == name => Some(outcome), _ => None })
+    pub(super) fn settled_in(events: &[Event], name: &str) -> Option<String> {
+        events.iter().find_map(|event| match event { Event::Settled(found, outcome) if *found == name => Some(outcome.clone()), _ => None })
     }
 
     /// Waits at most 8 s for `ready`. The panic of the wait stays in its task, so the test goes on to name every case that is missing.

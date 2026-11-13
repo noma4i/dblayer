@@ -129,10 +129,22 @@ async fn run() {
     crate::task::spawn_on(executor.handle(), async {}).await.unwrap();
     crate::task::spawn_blocking_on(executor.handle(), None, || ()).await.unwrap();
     let waiting = asynchronous.clone();
-    collector.arrived("every async entry waits after every wake-up while the database and the owner are held", move |found| waiting.iter().all(|name| found.parked(name) || found.settled(name).is_some())).await;
-    for name in &asynchronous {
-        if collector.settled(name).is_some() && !matches!(*name, "register_operations" | "upload_create_batch") { problems.push(format!("{name}: finished while the database and the owner were held")); }
-        else if collector.settled(name).is_none() && !collector.parked(name) { problems.push(format!("{name}: a poll stood while the database and the owner were held")); }
+    let seen_when_ready: Arc<Mutex<Option<Vec<(&'static str, bool, Option<String>)>>>> = Arc::default();
+    let slot = seen_when_ready.clone();
+    collector.arrived("every async entry waits after every wake-up while the database and the owner are held", move |found| {
+        let events = found.events();
+        let seen: Vec<_> = waiting.iter().map(|name| (*name, Collector::parked_in(&events, name), Collector::settled_in(&events, name))).collect();
+        let ready = seen.iter().all(|(_, parked, settled)| *parked || settled.is_some());
+        if ready { *slot.lock().unwrap() = Some(seen); }
+        ready
+    }).await;
+    let verdicts = seen_when_ready.lock().unwrap().take().unwrap_or_else(|| {
+        let events = collector.events();
+        asynchronous.iter().map(|name| (*name, Collector::parked_in(&events, name), Collector::settled_in(&events, name))).collect()
+    });
+    for (name, parked, settled) in verdicts {
+        if settled.is_some() && !matches!(name, "register_operations" | "upload_create_batch") { problems.push(format!("{name}: finished while the database and the owner were held")); }
+        else if settled.is_none() && !parked { problems.push(format!("{name}: a poll stood while the database and the owner were held")); }
     }
 
     hold.release();
