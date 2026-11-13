@@ -165,5 +165,8 @@ pub struct UploadInfo {
     /// The share shown last in hundredths.
     #[serde(default)]
     pub share: u32,
+    /// The share of the batch of the row in hundredths, `None` for a row outside a batch (D-415).
+    #[serde(default)]
+    pub batch_share: Option<u32>,
 }
 

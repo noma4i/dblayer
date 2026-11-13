@@ -87,6 +87,11 @@ pub struct UploadRow {
     pub confirmed_parts: u32,
     /// The share of the file shown last, in hundredths.
     pub progress: u32,
+    /// The size of the copy that weighs the element in its batch (D-415).
+    pub weight: Option<u64>,
+    pub weighed_prepare: bool,
+    /// The share of the batch the row shows, in hundredths.
+    pub batch_progress: u32,
     pub attempts: u32,
     pub completed: bool,
     pub failed: Option<String>,
@@ -208,7 +213,7 @@ pub enum StoreOp {
     RemoveUploadByTransferId { transfer_id: u64 },
     UploadRoundError { key: String, error: Option<String> },
     /// The shown value of a transfer: `status`, `stage` and `wait` of its row in `sync_upload`.
-    UploadShown { key: String, shown: crate::owners::write::transfer::Shown, sent: u32, total: u32, attempts: u32, error: Option<String>, virtual_transfer: Option<(u64, Option<u64>)> },
+    UploadShown { key: String, shown: crate::owners::write::transfer::Shown, batch: u32, sent: u32, total: u32, attempts: u32, error: Option<String>, virtual_transfer: Option<(u64, Option<u64>)> },
     /// The swap of the copy of a transfer is done: `staged` of its row is cleared.
     UploadStaged { key: String },
     /// A multipart upload of a removed transfer: `abort` goes to the server until the server answers.

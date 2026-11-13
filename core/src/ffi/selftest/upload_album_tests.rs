@@ -253,3 +253,31 @@ async fn shifting_a_batch_during_a_held_request_keeps_the_file_owner() {
     assert!(stand.script.purposes("CreateBlob").iter().all(|purpose| *purpose == NetworkPurpose::Transfer));
     database.close_now();
 }
+
+/// D-415: every row of a batch shows the share of the whole batch, the files weighed by the size of their copies: a large failed file and a small file on the server give the weight of the small one, on both rows and after a restart.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_batch_progress_weighs_the_files_by_their_copies() {
+    let stand = Stand::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let database = stand.open(Some(&path), &ALBUM_OPERATIONS).await;
+    let (large, small) = (directory.path().join("0.jpg"), directory.path().join("1.jpg"));
+    std::fs::write(&large, b"bbb").unwrap();
+    std::fs::write(&small, b"a").unwrap();
+    stand.script.data("CreateBlob", REFUSED_BLOB);
+    stand.script.data("CreateBlob", &blob(1));
+    let receipt = upload_batch(&database, items(&[&large, &small], &["key-0", "key-1"], 2)).await;
+    let ids: Vec<String> = receipt.items.iter().map(|item| item.optimistic_value.id.clone()).collect();
+    let upload = |database: &Database, id: &str| database.peek_row_now(database.session_epoch(), "Asset".into(), id.into()).unwrap().and_then(|row| row.uploads.into_iter().next()).map(|entry| entry.upload);
+    let shares = |database: &Database| ids.iter().map(|id| upload(database, id).map(|upload| (upload.progress, upload.batch_progress))).collect::<Vec<_>>();
+    crate::test_wait::settled(&database, "the large file failed and the small file is on the server", || {
+        upload(&database, &ids[0]).is_some_and(|upload| upload.status == crate::ffi::wire::WireUploadStatus::Failed) && upload(&database, &ids[1]).is_some_and(|upload| upload.progress == 1.0)
+    }).await;
+    let weighed = vec![Some((0.0, 0.25)), Some((1.0, 0.25))];
+    assert_eq!(shares(&database), weighed, "{}", state_report(&stand, &database, &[&ids[0], &ids[1]]));
+    database.close_now();
+    let reopened = stand.open(Some(&path), &ALBUM_OPERATIONS).await;
+    crate::test_wait::settled(&reopened, "the reopened base restored the small file on the server", || upload(&reopened, &ids[1]).is_some_and(|upload| upload.progress == 1.0)).await;
+    assert_eq!(shares(&reopened), weighed, "the share of the batch after a restart");
+    reopened.close_now();
+}

@@ -37,5 +37,8 @@ CREATE TABLE IF NOT EXISTS sync_upload (
   blob_created_at INTEGER,
   held INTEGER,
   max_bytes INTEGER,
+  weight INTEGER,
+  weighed_prepare INTEGER NOT NULL DEFAULT 0,
+  batch_progress INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (model, row_id, action)
 ) STRICT, WITHOUT ROWID

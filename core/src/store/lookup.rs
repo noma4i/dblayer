@@ -96,7 +96,7 @@ impl Store {
             match sync.uploads.get_mut(&action.name) {
                 Some(info) => info.processing = processing,
                 None => {
-                    sync.uploads.insert(action.name.clone(), crate::owners::write::upload::UploadInfo { status: crate::owners::write::upload::UploadStatus::Done, stage: crate::owners::write::upload::UploadStage::Mutation, sent_bytes: 0, total_bytes: 0, wait_reason: None, attempts: 0, error: None, local_url: None, processing, copy_file: None, share: 100 });
+                    sync.uploads.insert(action.name.clone(), crate::owners::write::upload::UploadInfo { status: crate::owners::write::upload::UploadStatus::Done, stage: crate::owners::write::upload::UploadStage::Mutation, sent_bytes: 0, total_bytes: 0, wait_reason: None, attempts: 0, error: None, local_url: None, processing, copy_file: None, share: 100, batch_share: None });
                 }
             }
         }

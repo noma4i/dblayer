@@ -58,7 +58,7 @@ pub(super) fn put_upload(connection: &Connection, row: &UploadRow, kind: UploadK
             i64::try_from(row.seq).unwrap_or(i64::MAX), row.source, row.batch.and_then(|group| i64::try_from(group).ok()), row.upload_id, row.completed,
             i64::try_from(row.created_at).unwrap_or(i64::MAX), row.inline, i64::try_from(row.size).unwrap_or(i64::MAX), row.sha256, row.path, row.body,
             on_failure, row.steps_path, row.steps_body, i64::try_from(row.transfer_id).unwrap_or(i64::MAX), i64::try_from(row.cycle_id).unwrap_or(i64::MAX),
-            row.signed_id, row.aborted, row.op_id.and_then(|op| i64::try_from(op).ok()), row.fields, row.attempts, wait_reason, row.staged, row.failed_at.and_then(|at| i64::try_from(at).ok()), row.blob_created_at.and_then(|at| i64::try_from(at).ok()), row.progress, row.held, row.max_bytes.map(|limit| i64::try_from(limit).unwrap_or(i64::MAX))],
+            row.signed_id, row.aborted, row.op_id.and_then(|op| i64::try_from(op).ok()), row.fields, row.attempts, wait_reason, row.staged, row.failed_at.and_then(|at| i64::try_from(at).ok()), row.blob_created_at.and_then(|at| i64::try_from(at).ok()), row.progress, row.held, row.max_bytes.map(|limit| i64::try_from(limit).unwrap_or(i64::MAX)), row.weight.map(|weight| i64::try_from(weight).unwrap_or(i64::MAX)), row.weighed_prepare, row.batch_progress],
     )?;
     if let Some(prepare) = &row.prepare { super::prepare_rows::put_prepare(connection, row.transfer_id, prepare)?; }
     connection.execute(include_str!("sql/upload_ops/put_upload_delete_sync_upload_part.sql"), params![model, id, action])?;
@@ -116,13 +116,13 @@ pub(super) fn apply_upload(connection: &Connection, op: &StoreOp) -> Result<bool
             let [model, id, action] = key_parts(key)?;
             connection.execute(include_str!("sql/upload_ops/upload_round_error.sql"), params![model, id, action, error])?;
         }
-        StoreOp::UploadShown { key, shown, sent, total, attempts, error, .. } => {
+        StoreOp::UploadShown { key, shown, batch, sent, total, attempts, error, .. } => {
             let [model, id, action] = key_parts(key)?;
             let (status, stage, wait) = shown_columns(shown);
             let (error_kind, error_message) = error_columns(error.as_deref());
             let (_, progress) = shown.columns();
             let progress = matches!(shown, crate::owners::write::transfer::Shown::Uploading { .. } | crate::owners::write::transfer::Shown::Preparing { .. } | crate::owners::write::transfer::Shown::Queued { .. }).then_some(progress);
-            connection.execute(include_str!("sql/upload_ops/upload_shown.sql"), params![model, id, action, status, stage, wait, sent, total, attempts, error_kind, error_message, progress])?;
+            connection.execute(include_str!("sql/upload_ops/upload_shown.sql"), params![model, id, action, status, stage, wait, sent, total, attempts, error_kind, error_message, progress, batch])?;
         }
         StoreOp::UploadStaged { key } => {
             let [model, id, action] = key_parts(key)?;

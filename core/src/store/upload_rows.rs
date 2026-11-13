@@ -24,6 +24,9 @@ pub(crate) struct UploadRaw {
     upload_id: Option<String>,
     sent: i64,
     progress: i64,
+    weight: Option<i64>,
+    weighed_prepare: bool,
+    batch_progress: i64,
     attempts: i64,
     completed: bool,
     failed: Option<String>,
@@ -105,6 +108,9 @@ pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result
             progress: row.get(30)?,
             held: row.get::<_, Option<bool>>(31)?.unwrap_or(false),
             max_bytes: row.get::<_, Option<i64>>(32)?.map(|limit| limit as u64),
+            weight: row.get(33)?,
+            weighed_prepare: row.get(34)?,
+            batch_progress: row.get(35)?,
         })
     })?;
     rows.collect()
@@ -125,7 +131,7 @@ impl Store {
         let mutation = NewOp { model: model.into(), row_id: row_id.into(), action: action.into(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: text("mutation_path").unwrap_or_default(), body: text("mutation_body").unwrap_or_default(), effects: IntentEffects::default(), expires_after: None };
         Ok(Some(StoredTransfer {
             transfer_id: id, key: transfer_key(model, row_id, action), seq: number("seq").unwrap_or(id), source, awaiting_source: false,
-            batch: number("batch"), fields: Default::default(), upload_id: text("upload_id"), confirmed_parts: 0, floor: 0, attempts: 0,
+            batch: number("batch"), fields: Default::default(), upload_id: text("upload_id"), confirmed_parts: 0, floor: 0, weight: None, weighed_prepare: false, batch_floor: 0, attempts: 0,
             etags: Vec::new(), completed: false, signed_id: None, failed: None, aborted: false, op_id: number("op_id"), copying: false,
             file_present, created_at: Time(number("created_at").unwrap_or(0)), place: Location::Directory, size: number("size").unwrap_or(0),
             sha256: text("sha256").unwrap_or_default(), cycle_id: number("cycle_id").unwrap_or(1).max(1), has_intent: false, has_operation: false,
@@ -167,6 +173,9 @@ impl Store {
             fields: raw.fields.and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok()).and_then(|value| value.as_object().cloned()).unwrap_or_default(),
             confirmed_parts: unsigned(raw.sent, "sent")?,
             floor: unsigned(raw.progress, "progress")?,
+            weight: raw.weight.map(|weight| unsigned(weight, "weight")).transpose()?,
+            weighed_prepare: raw.weighed_prepare,
+            batch_floor: unsigned(raw.batch_progress, "batch_progress")?,
             attempts: unsigned(raw.attempts, "attempts")?,
             etags: raw.etags,
             completed: raw.completed,

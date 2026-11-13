@@ -85,7 +85,7 @@ fn state_names_round_trip_through_sql() {
 #[test]
 fn inv_upload_14_an_upload_behind_an_open_create_folds_to_waiting_and_stops_waiting_without_it() {
     use crate::owners::write::upload::{UploadInfo, UploadStage, UploadStatus, WaitReason};
-    let queued = || UploadInfo { status: UploadStatus::Queued, stage: UploadStage::Prepare, sent_bytes: 0, total_bytes: 0, wait_reason: None, attempts: 0, error: None, local_url: None, processing: None, copy_file: None, share: 0 };
+    let queued = || UploadInfo { status: UploadStatus::Queued, stage: UploadStage::Prepare, sent_bytes: 0, total_bytes: 0, wait_reason: None, attempts: 0, error: None, local_url: None, processing: None, copy_file: None, share: 0, batch_share: None };
     let folded = |actions: &[&str]| {
         let mut info = SyncInfo { state: SyncState::Pending, actions: actions.iter().map(|action| action.to_string()).collect(), uploads: [("upload".to_string(), queued())].into(), ..SyncInfo::default() };
         info.fold_transfers(&Default::default());

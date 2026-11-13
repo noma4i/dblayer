@@ -63,6 +63,8 @@ data class UploadInfo(
     @SerialName("sent_bytes") val sentBytes: ULong,
     @SerialName("total_bytes") val totalBytes: ULong,
     val progress: Double,
+    /** The share of the batch of the row from 0 to 1: the same as `progress` for a row outside a batch. */
+    @SerialName("batch_progress") val batchProgress: Double,
     @SerialName("wait_reason") val waitReason: String?,
     val attempts: Int,
     val error: OperationFailure?,

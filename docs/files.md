@@ -294,7 +294,7 @@ val records = AccountScope.current().uploadBatch(
 records[1].discard("create_files")
 ```
 
-Each returned record has a temporary id, local file preview, `Sending` state, and independent upload progress.
+Each returned record has a temporary id, local file preview, `Sending` state, and independent upload progress. `batchProgress` of each record of the batch holds the share of the whole batch: the files weigh by the size of their copies, it waits while a copy is not made, never goes down, and is 1 only when the server has every file. A file with `prepare` counts its preparation for half of its weight.
 Use item `variables` for additional input object fields and request `variables` for shared mutation arguments.
 `cancelUpload(action)` removes only the selected transfer and keeps its local record.
 Offline cancellation and restart use the same stored file and multipart state as a single upload.
@@ -358,6 +358,7 @@ The final content mutation does not hold a file permit.
 | `stage`                   | `prepare`, `part`, `mutation`. The step of a request to the network is named by `TransferIdentity` in `Transport.put`                                                                                       |
 | `sentBytes`, `totalBytes` | for multipart the sum over all parts                                                                                                                                                                         |
 | `progress`                | the share of the file from 0 to 1 in steps of 0.01, never lower during a transfer, 1 only when the server has the whole file                                                                                                                           |
+| `batchProgress`           | the share of the batch from 0 to 1 in steps of 0.01, equal to `progress` outside a batch                                                                                                                                                               |
 | `attempts`                | saved attempts for the current unfinished step, preserved across restarts                                                                                                                                    |
 | `error`                   | an `OperationFailure`: `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message`, `extensions`, `responseLimit` and `reason`                                                                                            |
 | `localUrl`                | the file URL of the file the transfer reads now, from the first frame of the row: the file of the caller during the call, then the copy of the library; `nil` without a file. Show the preview from it only                                                                                                                         |

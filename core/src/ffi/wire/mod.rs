@@ -85,6 +85,8 @@ pub struct WireUpload {
     pub total_bytes: u64,
     /// The share of the file 0 to 1 in steps of 0.01 that the status shows: it never goes down.
     pub progress: f64,
+    /// The share of the batch of the row 0 to 1 in steps of 0.01: the same as `progress` for a row outside a batch, it never goes down.
+    pub batch_progress: f64,
     pub wait_reason: Option<String>,
     pub attempts: u32,
     pub error: Option<WireFailure>,
@@ -315,6 +317,7 @@ pub(crate) fn upload(info: &UploadInfo) -> WireUpload {
         sent_bytes: info.sent_bytes,
         total_bytes: info.total_bytes,
         progress: match info.status { UploadStatus::Waiting => 0.0, _ => f64::from(info.share) / 100.0 },
+        batch_progress: match (info.batch_share, info.status) { (Some(share), _) => f64::from(share) / 100.0, (None, UploadStatus::Waiting) => 0.0, (None, _) => f64::from(info.share) / 100.0 },
         wait_reason: info.wait_reason.and_then(|reason| enum_text(&reason)),
         attempts: info.attempts,
         error: info.error.as_ref().map(failure),

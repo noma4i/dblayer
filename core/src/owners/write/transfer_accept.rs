@@ -88,6 +88,10 @@ impl TransferState {
             confirmed_parts: 0,
             inflight: 0,
             floor: 0,
+            weight: None,
+            weighed_prepare: false,
+            share_floor: 0,
+            batch_floor: 0,
             etags: Vec::new(),
             last_part: false,
             aborted: false,
@@ -306,6 +310,10 @@ impl TransferState {
             return;
         }
         let cached = if transfer.prepare.is_some() || transfer.held || transfer.over_limit(size) { CachedBlob::Miss } else { cached };
+        if transfer.weight.is_none() {
+            transfer.weight = Some(size);
+            transfer.weighed_prepare = transfer.prepare.is_some();
+        }
         transfer.size = size;
         transfer.sha256 = sha256;
         transfer.place = Some(place);

@@ -107,6 +107,9 @@ pub struct StoredTransfer {
     pub upload_id: Option<String>,
     pub confirmed_parts: u32,
     pub floor: u32,
+    pub weight: Option<u64>,
+    pub weighed_prepare: bool,
+    pub batch_floor: u32,
     pub attempts: u32,
     pub etags: Vec<Option<String>>,
     pub completed: bool,
@@ -150,6 +153,8 @@ pub enum TransferTick {
     StagedRestore { transfer_id: TransferId },
     /// The write of the shown value the Store refused is due again.
     Shown { transfer_id: TransferId },
+    /// The write of the share of the batch of a row the Store refused is due again.
+    BatchShown { transfer_id: TransferId },
     Expire,
 }
 
@@ -327,6 +332,9 @@ pub enum TransferInput {
 }
 
 /// What `uploads[action]` shows.
+/// The columns of `sync_upload` a shown value of a row writes: status, share of the file, share of its batch (D-415).
+pub type Columns = (u8, u32, u32);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Shown {
     Copying,
@@ -393,6 +401,8 @@ pub enum StoreKind {
     OrphanRemoved,
     /// The shown value of a row: readers get it after `Committed`.
     Shown,
+    /// The share of the batch of a row whose shown value is the same: no reader of the transfer is woken (D-415).
+    BatchShown,
     /// The marker of a temporary copy goes: a refusal of the Store leaves the transfer as it is.
     StagedCleared,
     /// The old row is written back after a failed swap: the temporary file goes and the call is answered after `Committed`.
@@ -536,6 +546,14 @@ pub struct Transfer {
     pub inflight: u64,
     /// The last share shown in hundredths: the shown value never goes below it.
     pub floor: u32,
+    /// The size of the copy of the source when it was first measured: the weight of the member in its batch, `None` before (D-415).
+    pub weight: Option<u64>,
+    /// The source had prepare settings when it was weighed: the step counts for half of the member.
+    pub weighed_prepare: bool,
+    /// The share of the member in its batch in hundredths, never going down.
+    pub share_floor: u32,
+    /// The share of the batch the row of the member shows in hundredths, never going down.
+    pub batch_floor: u32,
     pub etags: Vec<Option<String>>,
     pub last_part: bool,
     pub aborted: bool,
@@ -567,7 +585,7 @@ pub struct Transfer {
     pub cache_stale: bool,
     pub round_error: Option<String>,
     /// The columns of `sync_upload` that the last shown value wrote: `None` while no batch wrote the row.
-    pub stored_shown: Option<(u8, u32)>,
+    pub stored_shown: Option<Columns>,
     /// The value the readers of the transfer got last.
     pub last_shown: Option<Shown>,
     pub removal: Option<Removal>,
@@ -657,7 +675,7 @@ pub(super) struct Pending {
     pub kind: StoreKind,
     pub orphan: Option<(String, Key)>,
     /// The columns each transfer shows once the batch commits.
-    pub written: BTreeMap<TransferId, (u8, u32)>,
+    pub written: BTreeMap<TransferId, Columns>,
 }
 
 #[derive(Debug)]
@@ -819,6 +837,9 @@ pub(super) fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
         upload_id: if kind == StoreKind::Failed && transfer.failure_abort { None } else { transfer.upload_id.clone() },
         confirmed_parts: if kind == StoreKind::Failed && transfer.failure_abort { 0 } else { transfer.confirmed_parts },
         progress: transfer.floor,
+        weight: transfer.weight,
+        weighed_prepare: transfer.weighed_prepare,
+        batch_progress: transfer.batch_floor,
         attempts: transfer.attempts,
         completed: matches!(kind, StoreKind::Completed) || transfer.signed_id.is_some(),
         failed: if kind == StoreKind::Failed { transfer.error.clone().or_else(|| Some("failed".into())) } else { transfer.error.clone().filter(|_| kind != StoreKind::Retrying && supplied.is_none()) },

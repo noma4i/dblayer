@@ -17,7 +17,7 @@ fn write(db: &Store, author: BatchAuthor, ops: Vec<StoreOp>) {
 fn upload(index: u64, confirmed: u32) -> UploadRow {
     UploadRow {
         key: format!("moments:m{index}:upload"), seq: 100 + index, source: Some("/source".into()), parts: 3,
-        batch: None, fields: None, upload_id: Some("upload".into()), confirmed_parts: confirmed, progress: 0, attempts: 0,
+        batch: None, fields: None, upload_id: Some("upload".into()), confirmed_parts: confirmed, progress: 0, weight: None, weighed_prepare: false, batch_progress: 0, attempts: 0,
         completed: false, failed: None, created_at: 1, inline: false,
         size: 9, sha256: "hash".into(), path: "/mutation".into(), body: "{}".into(),
         on_failure: OnFailure::Keep, steps_path: Some("/steps".into()), steps_body: Some("{}".into()),

@@ -144,6 +144,7 @@ fn the_row_carries_its_id_sync_state_and_upload() {
         processing: Some(crate::owners::write::upload::UploadProcessing { progress: Some(0.5) }),
         copy_file: None,
         share: 44,
+        batch_share: None,
     });
     let wire = WireModel::of(&spec()).row(&Arc::new(data));
     assert_eq!(wire.id, "w1");
@@ -168,6 +169,7 @@ fn the_row_carries_its_id_sync_state_and_upload() {
                 sent_bytes: 40,
                 total_bytes: 90,
                 progress: 0.44,
+                batch_progress: 0.44,
                 wait_reason: Some("create_unconfirmed".into()),
                 attempts: 1,
                 error: None,

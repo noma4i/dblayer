@@ -24,7 +24,7 @@ impl TransferState {
             transfer.restore_element = row.restore_element.clone();
             transfer.failed_at = row.failed_at;
             transfer.blob_created_at = row.blob_created_at;
-            transfer.stored_shown = Some((u8::MAX, 0));
+            transfer.stored_shown = Some((u8::MAX, 0, 0));
             transfer.pending_step = row.pending_step.filter(|pending| row.saved_answer.as_ref().is_none_or(|(request_id, _)| request_id != pending));
             if let Some((request_id, answer)) = &row.saved_answer {
                 transfer.seeded = Some((*request_id, crate::owners::session::session_answer(answer.clone()).map(|body| (body, crate::transport::AnswerKind::Answered { sequence: None }))));
@@ -33,6 +33,9 @@ impl TransferState {
             transfer.upload_id = row.upload_id.clone();
             transfer.confirmed_parts = row.confirmed_parts;
             transfer.floor = if row.prepare.is_some() { 0 } else { row.floor };
+            transfer.weight = row.weight;
+            transfer.weighed_prepare = row.weighed_prepare;
+            transfer.batch_floor = row.batch_floor;
             transfer.attempts = row.attempts;
             transfer.etags = row.etags.clone();
             transfer.signed_id = row.signed_id.clone();

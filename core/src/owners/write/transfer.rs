@@ -51,7 +51,7 @@ impl TransferState {
     pub(super) fn shown_op(transfer: &super::transfer_types::Transfer, shown: Shown) -> StoreOp {
         let refused = transfer.round_error.is_some() && matches!(transfer.stage, TransferStage::Ready | TransferStage::Uploading);
         let error = if let (Shown::Failed { error }, false) = (&shown, refused) { Some(error.clone()) } else { None };
-        StoreOp::UploadShown { key: transfer.key.clone(), shown, sent: transfer.confirmed_parts, total: transfer.source.as_ref().map_or(0, |source| source.parts), attempts: transfer.attempts, error, virtual_transfer: transfer.restore_element.as_ref().map(|_| (transfer.transfer_id, transfer.op_id)) }
+        StoreOp::UploadShown { key: transfer.key.clone(), shown, batch: transfer.batch_floor, sent: transfer.confirmed_parts, total: transfer.source.as_ref().map_or(0, |source| source.parts), attempts: transfer.attempts, error, virtual_transfer: transfer.restore_element.as_ref().map(|_| (transfer.transfer_id, transfer.op_id)) }
     }
 
     pub(super) fn show_queued(&mut self, id: TransferId, fx: &mut Fx) {
@@ -59,16 +59,72 @@ impl TransferState {
         self.show(id, Shown::Queued { progress }, fx);
     }
 
-    /// `uploads[action]` and every `Blob` stream of the transfer get `shown`.
+    /// `uploads[action]` and every `Blob` stream of the transfer get `shown`; the rows of its batch get the new share of the batch.
     pub(super) fn show(&mut self, id: TransferId, shown: Shown, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        let key = transfer.key.clone();
         if let Shown::Uploading { progress } = shown { transfer.floor = transfer.floor.max(progress); }
-        let columns = shown.columns();
+        if let Some(share) = Self::member_share(transfer, &shown) { transfer.share_floor = transfer.share_floor.max(share); }
+        let others = self.raise_batch(id);
+        self.show_row(id, shown, fx);
+        for other in others { self.write_batch_share(other, fx); }
+    }
+
+    /// The row of `id` writes the new share of its batch; its shown value is the same, so no reader of the transfer is woken. A row no batch wrote yet takes the share with its first write.
+    pub(super) fn write_batch_share(&mut self, id: TransferId, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get(&id) else { return };
+        let Some(shown) = transfer.last_shown.clone().filter(|shown| Self::unwritten(transfer, shown)) else { return };
+        let columns = Self::columns_of(transfer, &shown);
+        if self.pending.values().any(|pending| matches!(pending.kind, StoreKind::Shown | StoreKind::BatchShown) && pending.written.get(&id) == Some(&columns)) { return; }
+        let op = Self::shown_op(transfer, shown);
+        let batch = self.send_batch(vec![op], fx);
+        self.pending.insert(batch, Pending { ids: Vec::new(), kind: StoreKind::BatchShown, orphan: None, written: BTreeMap::from([(id, columns)]) });
+    }
+
+    /// The share of a member in hundredths for `shown`: half for the prepare step and half for the upload when the source was weighed with settings.
+    fn member_share(transfer: &super::transfer_types::Transfer, shown: &Shown) -> Option<u32> {
+        match (shown, transfer.weighed_prepare, transfer.prepare.is_some()) {
+            (Shown::Preparing { progress }, true, true) => Some(progress / 2),
+            (Shown::Uploading { progress } | Shown::Queued { progress }, true, false) => Some(50 + progress / 2),
+            (Shown::Uploading { progress } | Shown::Queued { progress }, false, _) => Some(*progress),
+            _ => None,
+        }
+    }
+
+    /// D-415: the share of a set of transfers in hundredths, the members weighed by their copies; `None` while a copy is not measured.
+    pub(super) fn share_of(&self, ids: &[TransferId]) -> Option<u32> {
+        let members: Vec<&super::transfer_types::Transfer> = ids.iter().filter_map(|member| self.transfers.get(member)).collect();
+        let weights = members.iter().map(|member| member.weight).collect::<Option<Vec<u64>>>()?;
+        let total: u128 = weights.iter().map(|weight| u128::from(*weight)).sum();
+        if total == 0 { return None; }
+        let weighed: u128 = members.iter().zip(&weights).map(|(member, weight)| u128::from(*weight) * u128::from(member.share_floor)).sum();
+        Some(u32::try_from(weighed / total).unwrap_or(100).min(100))
+    }
+
+    /// The rows of the batch of `id` take a larger share of the batch; the other members whose row shows less are returned.
+    fn raise_batch(&mut self, id: TransferId) -> Vec<TransferId> {
+        let Some(ids) = self.transfers.get(&id).and_then(|transfer| transfer.batch_id).and_then(|group| self.groups.get(&group)).map(|group| group.ids.clone()) else { return Vec::new() };
+        let Some(share) = self.share_of(&ids) else { return Vec::new() };
+        let raised: Vec<TransferId> = ids.iter().filter(|member| self.transfers.get(member).is_some_and(|transfer| transfer.batch_floor < share)).copied().collect();
+        for member in &raised {
+            if let Some(transfer) = self.transfers.get_mut(member) { transfer.batch_floor = share; }
+        }
+        raised.into_iter().filter(|member| *member != id).collect()
+    }
+
+    /// The columns a shown value of the row of `transfer` writes.
+    pub(super) fn columns_of(transfer: &super::transfer_types::Transfer, shown: &Shown) -> Columns {
+        let (status, share) = shown.columns();
+        (status, share, transfer.batch_floor)
+    }
+
+    fn show_row(&mut self, id: TransferId, shown: Shown, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        let key = transfer.key.clone();
+        let columns = Self::columns_of(transfer, &shown);
         transfer.last_shown = Some(shown.clone());
         if Self::unwritten(transfer, &shown) {
             if transfer.restored && shown != Shown::Gone { self.published.entry(key.clone()).or_insert((shown.clone(), transfer.revision)); }
-            let waiting = self.pending.values().any(|pending| pending.kind == StoreKind::Shown && pending.written.get(&id) == Some(&columns));
+            let waiting = self.pending.values().any(|pending| matches!(pending.kind, StoreKind::Shown | StoreKind::BatchShown) && pending.written.get(&id) == Some(&columns));
             let live = matches!(shown, Shown::Preparing { .. }) && transfer.stored_shown.is_some_and(|stored| stored.0 == columns.0);
             let revision = transfer.revision;
             if !waiting {
@@ -84,7 +140,7 @@ impl TransferState {
     }
 
     pub(super) fn unwritten(transfer: &super::transfer_types::Transfer, shown: &Shown) -> bool {
-        *shown != Shown::Gone && transfer.stored_shown.is_some_and(|stored| stored != shown.columns())
+        *shown != Shown::Gone && transfer.stored_shown.is_some_and(|stored| stored != Self::columns_of(transfer, shown))
     }
 
     /// P-XFER-50: a refused write of the shown value goes again after the backoff of its own timer (`Storage`) or at once with the named generations.
@@ -94,10 +150,11 @@ impl TransferState {
             RejectReason::Storage(_) => {
                 let Some(attempt) = self.storage_refused(id) else { return };
                 let timer = self.timer();
-                fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt: attempt.max(1), input: TransferInput::Tick { kind: TransferTick::Shown { transfer_id: id } } });
+                fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt: attempt.max(1), input: TransferInput::Tick { kind: if pending.kind == StoreKind::BatchShown { TransferTick::BatchShown { transfer_id: id } } else { TransferTick::Shown { transfer_id: id } } } });
             }
             RejectReason::StaleGeneration { generations, .. } => {
                 self.generations.extend(generations);
+                if pending.kind == StoreKind::BatchShown { return self.write_batch_share(id, fx); }
                 if let Some(shown) = self.transfers.get(&id).and_then(|transfer| transfer.last_shown.clone()) { self.show(id, shown, fx); }
             }
             RejectReason::Invalid(_) | RejectReason::NoSession | RejectReason::Closed => {}
@@ -112,14 +169,14 @@ impl TransferState {
     }
 
     /// The Store holds `columns` of the row: a later value of the transfer is written, the value of this batch is published when `publish`.
-    fn shown_committed(&mut self, id: TransferId, columns: (u8, u32), (publish, revision): (bool, i64), reconcile: bool, fx: &mut Fx) {
+    fn shown_committed(&mut self, id: TransferId, columns: Columns, (publish, revision): (bool, i64), reconcile: bool, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.stored_shown = Some(columns);
         transfer.revision = transfer.revision.max(revision);
         if !reconcile { return; }
         let key = transfer.key.clone();
         match transfer.last_shown.clone() {
-            Some(shown) if shown != Shown::Gone && shown.columns() != columns => self.show(id, shown, fx),
+            Some(shown) if shown != Shown::Gone && Self::columns_of(transfer, &shown) != columns => self.show(id, shown, fx),
             Some(shown) if publish => self.publish_shown(&key, shown, revision, fx),
             _ => {}
         }
@@ -340,12 +397,12 @@ impl TransferState {
             }))
             .chain(numbers)
             .collect();
-        let columns: BTreeMap<String, (u8, u32)> = ops.iter().filter_map(|op| match op {
-            StoreOp::Upload { row, kind } => Some((row.key.clone(), (kind.shown().columns().0, row.progress))),
-            StoreOp::UploadShown { key, shown, .. } => Some((key.clone(), shown.columns())),
+        let columns: BTreeMap<String, Columns> = ops.iter().filter_map(|op| match op {
+            StoreOp::Upload { row, kind } => Some((row.key.clone(), (kind.shown().columns().0, row.progress, row.batch_progress))),
+            StoreOp::UploadShown { key, shown, batch, .. } => Some((key.clone(), (shown.columns().0, shown.columns().1, *batch))),
             _ => None,
         }).collect();
-        let written: BTreeMap<TransferId, (u8, u32)> = ids.iter().filter_map(|id| self.transfers.get(id).and_then(|transfer| columns.get(&transfer.key)).map(|columns| (*id, *columns))).collect();
+        let written: BTreeMap<TransferId, Columns> = ids.iter().filter_map(|id| self.transfers.get(id).and_then(|transfer| columns.get(&transfer.key)).map(|columns| (*id, *columns))).collect();
         let id = self.next_batch;
         self.next_batch += 1;
         self.pending.insert(id, Pending { ids: ids.to_vec(), kind, orphan: None, written });
@@ -683,7 +740,7 @@ impl TransferState {
             self.shown_committed(*id, *columns, (pending.kind == StoreKind::Shown, revision), !transition, fx);
         }
         if pending.kind == StoreKind::StagedRestored { return self.staged_restored(pending.ids[0], fx); }
-        if matches!(pending.kind, StoreKind::Shown | StoreKind::StagedCleared) { return; }
+        if matches!(pending.kind, StoreKind::Shown | StoreKind::BatchShown | StoreKind::StagedCleared) { return; }
         if pending.kind == StoreKind::Commit { self.commit_committed(now, pending.ids[0], &shown, fx); return self.maybe_drained(fx); }
         if pending.kind == StoreKind::OrphanRemoved {
             if let Some((upload_id, _)) = pending.orphan {
@@ -800,7 +857,7 @@ impl TransferState {
         }
         if pending.kind == StoreKind::StagedCleared { return; }
         if pending.kind == StoreKind::Commit { return self.commit_rejected(pending.ids[0], rejected.reason, fx); }
-        if pending.kind == StoreKind::Shown { return self.shown_rejected(&pending, rejected.reason, fx); }
+        if matches!(pending.kind, StoreKind::Shown | StoreKind::BatchShown) { return self.shown_rejected(&pending, rejected.reason, fx); }
         if pending.kind == StoreKind::StagedRestored { return self.staged_restore_rejected(pending.ids[0], rejected.reason, fx); }
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan) {
             let minted = self.debt_of(&pending).map(|(upload_id, key, _)| (upload_id, key));
@@ -1137,7 +1194,7 @@ impl StateOwner for Transfers {
 
 pub(super) fn upload_kind(kind: StoreKind) -> UploadKind {
     match kind {
-        StoreKind::SyncUpload | StoreKind::Commit | StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan | StoreKind::OrphanRemoved | StoreKind::Removed | StoreKind::BatchIntent | StoreKind::MixedOutcomes | StoreKind::Shown | StoreKind::StagedCleared => UploadKind::SyncUpload,
+        StoreKind::SyncUpload | StoreKind::Commit | StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan | StoreKind::OrphanRemoved | StoreKind::Removed | StoreKind::BatchIntent | StoreKind::MixedOutcomes | StoreKind::Shown | StoreKind::BatchShown | StoreKind::StagedCleared => UploadKind::SyncUpload,
         StoreKind::StagedRestored => UploadKind::Failed,
         StoreKind::ConfirmedParts => UploadKind::ConfirmedParts,
         StoreKind::Completed => UploadKind::Completed,

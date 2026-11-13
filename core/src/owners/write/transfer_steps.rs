@@ -260,6 +260,7 @@ impl TransferState {
             TransferTick::StagedRestore { transfer_id } => { if self.transfers.get(&transfer_id).is_some_and(|transfer| transfer.staged_failed.is_some()) { self.write_restored(transfer_id, fx); } }
             TransferTick::PutTimeout { transfer_id, attempt_id } => self.tick_put_timeout(now, transfer_id, attempt_id, fx),
             TransferTick::Shown { transfer_id } => self.tick_shown(transfer_id, fx),
+            TransferTick::BatchShown { transfer_id } => self.write_batch_share(transfer_id, fx),
         }
     }
 

@@ -14,7 +14,7 @@ fn write(db: &Store, ops: Vec<StoreOp>) {
 
 fn row() -> UploadRow {
     UploadRow {
-        key: KEY.into(), seq: 1, source: Some("/source".into()), parts: 3, batch: None, fields: None, upload_id: None, confirmed_parts: 1, progress: 0, attempts: 2, completed: false, failed: None,
+        key: KEY.into(), seq: 1, source: Some("/source".into()), parts: 3, batch: None, fields: None, upload_id: None, confirmed_parts: 1, progress: 0, weight: None, weighed_prepare: false, batch_progress: 0, attempts: 2, completed: false, failed: None,
         created_at: 1, inline: false, size: 9, sha256: "hash".into(), path: "/mutation".into(), body: "{}".into(), on_failure: OnFailure::Keep, steps_path: None, steps_body: None,
         transfer_id: 2, cycle_id: 1, signed_id: None, aborted: false, staged: false, failed_at: None, blob_created_at: None, held: false, op_id: None, etags: vec![Some("etag".into())], prepare: None, max_bytes: None,
     }
@@ -24,7 +24,7 @@ fn columns(db: &Store) -> (String, String, Option<String>, i64, i64, i64, Option
     db.lock().connection.query_row("SELECT status, stage, wait, sent, total, attempts, error_kind FROM sync_upload WHERE model = 'moments' AND row_id = 'm1' AND action = 'upload'", [], |found| Ok((found.get(0)?, found.get(1)?, found.get(2)?, found.get(3)?, found.get(4)?, found.get(5)?, found.get(6)?))).unwrap()
 }
 
-fn shown(shown: Shown, sent: u32, total: u32, attempts: u32) -> StoreOp { StoreOp::UploadShown { key: KEY.into(), error: if let Shown::Failed { error } = &shown { Some(error.clone()) } else { None }, shown, sent, total, attempts, virtual_transfer: None } }
+fn shown(shown: Shown, sent: u32, total: u32, attempts: u32) -> StoreOp { StoreOp::UploadShown { key: KEY.into(), batch: 0, error: if let Shown::Failed { error } = &shown { Some(error.clone()) } else { None }, shown, sent, total, attempts, virtual_transfer: None } }
 
 #[test]
 fn a_shown_value_writes_the_whole_shown_columns_and_keeps_the_durable_ones() {

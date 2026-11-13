@@ -45,6 +45,8 @@ public struct UploadInfo: Codable, Sendable, Equatable {
   public let sentBytes: UInt64
   public let totalBytes: UInt64
   public let progress: Double
+  /// The share of the batch of the row from 0 to 1: the same as `progress` for a row outside a batch.
+  public let batchProgress: Double
   public let waitReason: String?
   /// Sum of retries for unfinished steps, preserved across restarts.
   public let attempts: Int
@@ -58,6 +60,7 @@ public struct UploadInfo: Codable, Sendable, Equatable {
     case status, stage, attempts, error, processing
     case progress
     case localUrl = "local_url"
+    case batchProgress = "batch_progress"
     case sentBytes = "sent_bytes", totalBytes = "total_bytes", waitReason = "wait_reason"
   }
 }
@@ -100,7 +103,7 @@ extension SyncInfo {
 extension UploadInfo {
   public init(wire: WireUpload) {
     self.init(
-      status: UploadStatus(wire: wire.status), stage: wire.stage, sentBytes: wire.sentBytes, totalBytes: wire.totalBytes, progress: wire.progress,
+      status: UploadStatus(wire: wire.status), stage: wire.stage, sentBytes: wire.sentBytes, totalBytes: wire.totalBytes, progress: wire.progress, batchProgress: wire.batchProgress,
       waitReason: wire.waitReason, attempts: Int(wire.attempts), error: wire.error.map(OperationFailure.init(wire:)),
       localUrl: wire.localUrl, processing: wire.processing.map { UploadProcessing(progress: $0.progress) }
     )
