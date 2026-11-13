@@ -39,6 +39,7 @@ async fn dropping_a_pending_pull_cancels_the_stream() {
     assert!(matches!(crate::test_wait::within(stream.pull_next()).await, Some(ReadValue::Snapshot { .. })));
     let mut pending = Box::pin(stream.pull_next());
     assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pending.as_mut(), cx).is_pending())).await);
+    crate::ffi::owners_drained(&db).await.unwrap();
     drop(pending);
     assert!(matches!(crate::test_wait::within(stream.pull_next()).await, Some(ReadValue::Ended { cause: EndCause::Cancelled })));
     assert!(crate::test_wait::within(stream.pull_next()).await.is_none());

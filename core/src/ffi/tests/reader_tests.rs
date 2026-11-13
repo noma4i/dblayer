@@ -29,6 +29,7 @@ async fn boundary_reader_orders() {
     assert!(matches!(within(stream.pull(first)).await, Some(ReadValue::Snapshot { .. })));
     let mut pending = Box::pin(stream.pull(first));
     assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pending.as_mut(), cx).is_pending())).await, "a release of another reader leaves the stream open");
+    crate::ffi::owners_drained(&db).await.unwrap();
     drop(pending);
     within(db.close_database()).await.unwrap();
 }
@@ -120,6 +121,7 @@ async fn boundary_reader_release_races_pull() {
                 "pending" => {
                     let mut pull = Box::pin(stream.pull(0));
                     assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pull.as_mut(), cx).is_pending())).await, "pull must wait before release");
+                    crate::ffi::owners_drained(&db).await.unwrap();
                     stream.release_reader(0);
                     within(pull).await
                 }

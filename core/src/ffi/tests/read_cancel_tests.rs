@@ -21,6 +21,7 @@ async fn a_cancel_from_another_task_ends_the_pull_that_waits() {
     let mut pending = Box::pin(stream.pull_next());
     assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pending.as_mut(), cx).is_pending())).await);
 
+    crate::ffi::owners_drained(&db).await.unwrap();
     let canceller = tokio::spawn({
         let stream = stream.clone();
         async move { stream.cancel().await }
