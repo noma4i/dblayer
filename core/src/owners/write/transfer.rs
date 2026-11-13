@@ -312,7 +312,6 @@ impl TransferState {
                     }
                     if let Some(op_id) = own {
                         match transfer.removal {
-                            Some(Removal::Confirmed { .. }) if transfer.batch_id.is_some() => ops.push(StoreOp::RemoveIntent { op_id }),
                             Some(Removal::Confirmed { .. }) => {}
                             _ => {
                                 if transfer.has_operation { ops.push(StoreOp::RollBack { op_id }); }

@@ -66,7 +66,7 @@ pub(super) fn rows_referencing(writer: &mut RowWrite<'_>, references: &[(String,
             matches.push((model.clone(), field.clone(), child_id));
         }
     }
-    for (model, ids) in wanted { writer.prefetch(&model, &ids, writer.closing)?; }
+    for (model, ids) in wanted { writer.prefetch(&model, &ids, &writer.closing.clone())?; }
     let mut rows = Vec::new();
     for (model, field, id) in matches {
         if let Some(row) = writer.stored(&model, &id)? { rows.push(ReferencingRow { model, field, row: row.row }); }

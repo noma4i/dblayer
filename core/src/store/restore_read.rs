@@ -29,11 +29,11 @@ fn read_origins(connection: &rusqlite::Connection) -> Result<Origins, super::Sto
         Ok((row.get::<_, i64>(0)?, (row.get::<_, i64>(1), row.get::<_, String>(2))))
     })?.collect::<rusqlite::Result<std::collections::BTreeMap<_, _>>>()?;
     let groups = connection.prepare(include_str!("sql/restore_read/read_origins_groups.sql"))?.query_map([], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, bool>(3)?, row.get::<_, bool>(4)?, row.get::<_, i64>(5), row.get::<_, String>(6)))
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, bool>(3)?, row.get::<_, bool>(4)?, row.get::<_, i64>(5), row.get::<_, String>(6), row.get::<_, Option<i64>>(7)?))
     })?.collect::<rusqlite::Result<Vec<_>>>()?;
     let mut grouped = std::collections::BTreeMap::<i64, Vec<_>>::new();
-    for (seq, position, id, valid_group, belongs, cycle, row_id) in groups {
-        grouped.entry(seq).or_default().push((position, id, valid_group, belongs, cycle.ok(), row_id.ok()));
+    for (seq, position, id, valid_group, belongs, cycle, row_id, member_op) in groups {
+        grouped.entry(seq).or_default().push((position, id, valid_group, belongs, cycle.ok(), row_id.ok(), member_op));
     }
     let mut origins = Origins::default();
     for (seq, kind, transfer, batch) in rows {
@@ -41,7 +41,7 @@ fn read_origins(connection: &rusqlite::Connection) -> Result<Origins, super::Sto
             ("api", None, None) => Some(OpSource::Api),
             ("transfer", Some(id), None) => {
                 let found = singles.get(&seq).and_then(|(cycle, row_id)| Some(TransferMember {
-                    transfer_id: u64::try_from(id).ok()?, cycle_id: u64::try_from(*cycle.as_ref().ok()?).ok()?, row_id: row_id.as_ref().ok()?.clone(),
+                    transfer_id: u64::try_from(id).ok()?, cycle_id: u64::try_from(*cycle.as_ref().ok()?).ok()?, row_id: row_id.as_ref().ok()?.clone(), op_id: None,
                 }));
                 match found {
                     Some(found) => Some(OpSource::Transfer { transfer_id: found.transfer_id, cycle_id: found.cycle_id }),
@@ -50,15 +50,15 @@ fn read_origins(connection: &rusqlite::Connection) -> Result<Origins, super::Sto
             },
             ("transfer_group", None, Some(batch_id)) => {
                 let entries = grouped.remove(&seq).unwrap_or_default();
-                let ordered = entries.iter().enumerate().all(|(index, (position, _, _, _, _, _))| *position == index as i64);
-                let members: Option<Vec<_>> = entries.iter().map(|(_, id, _, _, cycle, row_id)| Some(TransferMember {
-                    transfer_id: u64::try_from(*id).ok()?, cycle_id: u64::try_from((*cycle)?).ok()?, row_id: row_id.clone()?,
+                let ordered = entries.iter().enumerate().all(|(index, (position, _, _, _, _, _, _))| *position == index as i64);
+                let members: Option<Vec<_>> = entries.iter().map(|(_, id, _, _, cycle, row_id, member_op)| Some(TransferMember {
+                    transfer_id: u64::try_from(*id).ok()?, cycle_id: u64::try_from((*cycle)?).ok()?, row_id: row_id.clone()?, op_id: member_op.and_then(|seq| u64::try_from(seq).ok()),
                 })).collect();
                 match (u64::try_from(batch_id), members) {
-                    (Ok(batch_id), Some(members)) if ordered && !members.is_empty() && entries.iter().all(|(_, _, valid, belongs, _, _)| *valid && *belongs) && members.iter().map(|member| member.transfer_id).collect::<std::collections::BTreeSet<_>>().len() == members.len() => Some(OpSource::TransferGroup { batch_id, members }),
+                    (Ok(batch_id), Some(members)) if ordered && !members.is_empty() && entries.iter().all(|(_, _, valid, belongs, _, _, _)| *valid && *belongs) && members.iter().map(|member| member.transfer_id).collect::<std::collections::BTreeSet<_>>().len() == members.len() => Some(OpSource::TransferGroup { batch_id, members }),
                     (group, _) => {
                         if let Ok(group) = group { origins.invalid_groups.insert(group); }
-                        origins.invalid_transfers.extend(entries.into_iter().filter_map(|(_, id, _, _, _, _)| u64::try_from(id).ok()));
+                        origins.invalid_transfers.extend(entries.into_iter().filter_map(|(_, id, _, _, _, _, _)| u64::try_from(id).ok()));
                         None
                     }
                 }

@@ -138,3 +138,34 @@ async fn xfer_prop_pending_terminates() {
         database.close_now();
     }
 }
+
+/// Backlog 225: the values a supplied source gives a row of a batch hold until the batch is answered; each confirmed row shows the server value, whatever the order in which the sources came two at a time.
+#[tokio::test(flavor = "multi_thread")]
+async fn supplied_values_of_a_batch_give_way_to_the_answer() {
+    let stand = Stand::new();
+    let database = stand.open(None, &OPERATIONS).await;
+    let epoch = database.session_epoch();
+    let items = (0..4).map(|index| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":3,"position":{index}}}"#), source: crate::ffi::upload_wire::WireSource::Pending, variables_json: "{}".into() }).collect();
+    let receipt = bound(database.upload_create_batch(epoch, "Asset".into(), items, WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
+    for index in 0..4 { stand.script.data("CreateBlob", &blob(index)); }
+    let answered: Vec<String> = (0..4).map(|index| format!(r#"{{"id":"a{index}","clientKey":"key-{index}","size":7,"position":{index}}}"#)).collect();
+    stand.script.data("CreateAssets", &format!(r#"{{"data":{{"createAssets":{{"assets":[{}]}}}}}}"#, answered.join(",")));
+    let directory = tempfile::tempdir().unwrap();
+    let supply = |index: usize| {
+        let path = directory.path().join(format!("{index}.jpg"));
+        std::fs::write(&path, format!("image-{index}")).unwrap();
+        let source = WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: format!(r#"{{"size":{}}}"#, 40 + index), variables_json: "{}".into(), prepare: None, max_bytes: None };
+        database.supply_source(epoch, "Asset".into(), receipt.items[index].optimistic_value.id.clone(), "create_files".into(), source)
+    };
+    for pair in [[0, 1], [2, 3]] {
+        let (first, second) = tokio::join!(bound(supply(pair[0])), bound(supply(pair[1])));
+        first.unwrap();
+        second.unwrap();
+    }
+    let mut ids = Vec::new();
+    for item in &receipt.items { ids.push(bound(database.confirmed(item.receipt.clone(), false)).await.unwrap().value.map(|row| row.id)); }
+    let sizes: Vec<(Option<String>, Option<serde_json::Value>)> = ids.iter().map(|id| (id.clone(), id.as_ref().and_then(|id| database.db.read(&["Asset"], |reader| reader.point("Asset", id)).unwrap()).and_then(|row| row.get("size").cloned()))).collect();
+    let expected: Vec<(Option<String>, Option<serde_json::Value>)> = (0..4).map(|index| (Some(format!("a{index}")), Some(serde_json::json!(7)))).collect();
+    assert_eq!(sizes, expected, "every confirmed row has the id and the size of the answer");
+    database.close_now();
+}

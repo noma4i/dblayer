@@ -19,10 +19,10 @@ pub(super) fn fault(error: impl std::fmt::Display) -> StoreError { StoreError::C
 
 fn admitted_rows(writer: &mut RowWrite<'_>, model: &str, rows: &[Map<String, Value>], base_revision: i64) -> Result<Vec<Map<String, Value>>, StoreError> {
     let ids: Vec<String> = rows.iter().filter_map(|row| row.get("id").and_then(read_id).map(|id| id.to_string())).collect();
-    writer.prefetch(model, &ids, None)?;
+    writer.prefetch(model, &ids, &[])?;
     let mut accepted = Vec::new();
     for row in rows {
-        if let Some(row) = writer.admit(model, row, RowKind::Server, Admission { base: Some(base_revision), closing: None })? { accepted.push(row); }
+        if let Some(row) = writer.admit(model, row, RowKind::Server, Admission { base: Some(base_revision), closing: &[] })? { accepted.push(row); }
     }
     Ok(accepted)
 }
@@ -32,10 +32,10 @@ fn related_rows(writer: &mut RowWrite<'_>, related: &[(String, Map<String, Value
     for (model, row) in related {
         if let Some(id) = row.get("id").and_then(read_id) { grouped.entry(model).or_default().push(id.to_string()); }
     }
-    for (model, ids) in grouped { writer.prefetch(model, &ids, None)?; }
+    for (model, ids) in grouped { writer.prefetch(model, &ids, &[])?; }
     let mut ops = Vec::new();
     for (model, row) in related {
-        let Some(row) = writer.admit(model, row, RowKind::Server, Admission { base: Some(base_revision), closing: None })? else { continue };
+        let Some(row) = writer.admit(model, row, RowKind::Server, Admission { base: Some(base_revision), closing: &[] })? else { continue };
         let Some(id) = row.get("id").and_then(read_id) else { continue };
         let model = ModelKey::new(model);
         if !planned.contains(&(model.clone(), id.clone())) { ops.push(EntityOp::Upsert { model, id, row }); }

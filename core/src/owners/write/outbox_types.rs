@@ -64,6 +64,8 @@ pub struct TransferMember {
     pub transfer_id: u64,
     pub cycle_id: u64,
     pub row_id: String,
+    /// The operation of the member that holds its optimistic values: the landing of the group ends it in its own batch.
+    pub op_id: Option<u64>,
 }
 
 /// The action of a call: the row it changes and the rule on refusal.

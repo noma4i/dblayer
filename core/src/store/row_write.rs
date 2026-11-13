@@ -25,17 +25,19 @@ pub(super) struct RowWrite<'a> {
     pub revision: i64,
     pub now: i64,
     pub originals: &'a mut BTreeMap<RowRef, Option<Map<String, Value>>>,
-    pub closing: Option<i64>,
+    pub closing: Vec<i64>,
     pub candidates: usize,
     pub current: super::apply::Prefetched,
-    pub feed_fields: BTreeMap<(String, Option<i64>), std::collections::HashMap<String, std::collections::HashSet<String>>>,
+    pub feed_fields: BTreeMap<FieldKey, std::collections::HashMap<String, std::collections::HashSet<String>>>,
     pub feed_tombstones: BTreeMap<String, BTreeMap<String, i64>>,
     pub feed_hidden: Option<super::apply::HiddenRows>,
+    /// The values open operations hold on a row whose temporary id the batch replaced: they lie over the server row of the real id (P-DATA-107, P-DATA-110).
+    pub carried: BTreeMap<(String, String), Map<String, Value>>,
     /// The memory the feed event in its savepoint changed, while the event lands.
     pub event: Option<EventUndo>,
 }
 
-type FieldKey = (String, Option<i64>);
+type FieldKey = (String, Vec<i64>);
 
 /// What one feed event changed in the memory of the writer, given back when the Store refuses the event (P-DATA-99).
 #[derive(Default)]
@@ -90,7 +92,7 @@ impl RowWrite<'_> {
         if let Some(undo) = self.event.as_mut() { undo.tombstones.push((model.to_string(), id.to_string(), before)); }
     }
 
-    pub fn prefetch(&mut self, model: &str, ids: &[String], closing: Option<i64>) -> Result<(), StoreError> {
+    pub fn prefetch(&mut self, model: &str, ids: &[String], closing: &[i64]) -> Result<(), StoreError> {
         let reader = Reader::new(self.connection, self.models);
         let missing: Vec<String> = ids.iter().filter(|id| !self.current.contains_key(&(model.to_string(), (*id).clone()))).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
         if !missing.is_empty() {
@@ -100,14 +102,14 @@ impl RowWrite<'_> {
                 self.current.insert((model.to_string(), id.clone()), rows.remove(&id));
             }
         }
-        let needed: Vec<String> = ids.iter().filter(|id| !self.feed_fields.get(&(model.to_string(), closing)).is_some_and(|fields| fields.contains_key(*id))).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+        let needed: Vec<String> = ids.iter().filter(|id| !self.feed_fields.get(&(model.to_string(), closing.to_vec())).is_some_and(|fields| fields.contains_key(*id))).cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
         if !needed.is_empty() {
             self.feed_tombstones.entry(model.to_string()).or_default();
             let mut fields = unconfirmed_fields(&reader, closing, model, &needed)?;
             let mut tombstones = reader.tombstones(model, &needed)?;
             for id in needed {
-                if let Some(undo) = self.event.as_mut() { undo.field_ids.push(((model.to_string(), closing), id.clone())); }
-                self.feed_fields.entry((model.to_string(), closing)).or_default().insert(id.clone(), fields.remove(&id).unwrap_or_default());
+                if let Some(undo) = self.event.as_mut() { undo.field_ids.push(((model.to_string(), closing.to_vec()), id.clone())); }
+                self.feed_fields.entry((model.to_string(), closing.to_vec())).or_default().insert(id.clone(), fields.remove(&id).unwrap_or_default());
                 if let Some(value) = tombstones.remove(&id) {
                     let before = self.feed_tombstones.entry(model.to_string()).or_default().insert(id.clone(), value);
                     if let Some(undo) = self.event.as_mut() { undo.tombstones.push((model.to_string(), id, before)); }
@@ -142,14 +144,16 @@ impl RowWrite<'_> {
         Ok(result)
     }
 
-    pub fn admit(&mut self, model: &str, patch: &Map<String, Value>, kind: RowKind, admission: Admission) -> Result<Option<Map<String, Value>>, StoreError> {
+    pub fn admit(&mut self, model: &str, patch: &Map<String, Value>, kind: RowKind, admission: Admission<'_>) -> Result<Option<Map<String, Value>>, StoreError> {
         let Some(id) = patch.get("id").and_then(crate::value::read_id) else { return Ok(None) };
         self.prefetch(model, &[id.to_string()], admission.closing)?;
         let mut stored = BTreeMap::new();
         if let Some(row) = self.stored(model, id.as_str())? { stored.insert(id.to_string(), row); }
         let spec = &self.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
         let reader = Reader::new(self.connection, self.models);
-        admitted_with_fields(&reader, kind, admission, model, patch, spec, self.feed_fields.get(&(model.to_string(), admission.closing)), self.feed_tombstones.get(model), Some(&stored))
+        let admitted = admitted_with_fields(&reader, kind, admission, model, patch, spec, self.feed_fields.get(&(model.to_string(), admission.closing.to_vec())), self.feed_tombstones.get(model), Some(&stored))?;
+        let Some(carried) = self.carried.get(&(model.to_string(), id.to_string())) else { return Ok(admitted) };
+        Ok(admitted.map(|mut row| { row.extend(carried.clone()); row }))
     }
 
     pub fn upsert(&mut self, model: &str, row: &RowValue, source: crate::schema::RowSource) -> Result<Option<CommitResult>, StoreError> {
@@ -157,7 +161,8 @@ impl RowWrite<'_> {
         let value: Value = serde_json::from_str(&row.values)?;
         let patch: &Map<String, Value> = value.as_object().ok_or_else(|| StoreError::Constraint("row values must be an object".into()))?;
         let kind = if source == crate::schema::RowSource::Local { RowKind::Local } else { RowKind::Server };
-        let Some(row) = self.admit(model, patch, kind, Admission { base: None, closing: self.closing })? else { return Ok(None) };
+        let closing = self.closing.clone();
+        let Some(row) = self.admit(model, patch, kind, Admission { base: None, closing: &closing })? else { return Ok(None) };
         let mut envelope = BatchPlan::from_source(self.generation, source);
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
         if matches!(source, crate::schema::RowSource::Page | crate::schema::RowSource::NodeReread | crate::schema::RowSource::Event | crate::schema::RowSource::Response) { super::correlate::replace_temp_rows(self, &mut envelope)?; }

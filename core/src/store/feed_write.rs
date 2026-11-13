@@ -41,14 +41,14 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         }
     } else if op == "upsert" {
         let patch = payload.get("row").and_then(Value::as_object).ok_or_else(|| StoreError::Constraint("event has no row".into()))?;
-        let Some(row) = writer.admit(model, patch, RowKind::Server, Admission { base: Some(writer.revision), closing: None })? else { return Ok(None) };
+        let Some(row) = writer.admit(model, patch, RowKind::Server, Admission { base: Some(writer.revision), closing: &[] })? else { return Ok(None) };
         for related in payload.get("related").and_then(Value::as_array).into_iter().flatten() {
             let Some(related_model) = related.get("model").and_then(Value::as_str) else { continue };
             let Some(patch) = related.get("row").and_then(Value::as_object) else { continue };
             if let Some(related_id) = patch.get("id").and_then(read_id) {
                 if reader.tombstone_seq(related_model, related_id.as_str())?.is_some() && writer.stored(related_model, related_id.as_str())?.is_none() { continue; }
             }
-            let Some(row) = writer.admit(related_model, patch, RowKind::Server, Admission { base: Some(writer.revision), closing: None })? else { continue };
+            let Some(row) = writer.admit(related_model, patch, RowKind::Server, Admission { base: Some(writer.revision), closing: &[] })? else { continue };
             if let Some(id) = row.get("id").and_then(read_id) { envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(related_model), id, row }); }
         }
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id: id.clone(), row });
@@ -64,7 +64,7 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         let reader = Reader::new(writer.connection, writer.models);
         let mut ids = BTreeMap::<String, Vec<String>>::new();
         for (model, id) in writer.current.keys() { ids.entry(model.clone()).or_default().push(id.clone()); }
-        let fields = ids.into_iter().map(|(model, ids)| Ok(((model.clone(), None), unconfirmed_fields(&reader, None, &model, &ids)?))).collect::<Result<Vec<_>, StoreError>>()?;
+        let fields = ids.into_iter().map(|(model, ids)| Ok(((model.clone(), Vec::new()), unconfirmed_fields(&reader, &[], &model, &ids)?))).collect::<Result<Vec<_>, StoreError>>()?;
         writer.replace_feed_reads(hidden, fields);
     }
     if op == "delete" { writer.feed_tombstone(model, id.as_str()); }
@@ -85,7 +85,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, events: &[(String, String)], overl
     }
     let mut before = EventRows::new();
     for (model, ids) in wanted {
-        writer.prefetch(&model, &ids, None)?;
+        writer.prefetch(&model, &ids, &[])?;
         for id in ids {
             let key = (model.clone(), id.clone());
             let row = writer.current.get(&key).and_then(|row| row.as_ref());

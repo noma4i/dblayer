@@ -10,17 +10,18 @@ use crate::value::read_id;
 use super::{admit_upsert, Reader, StoreError, UpsertAdmission};
 
 #[derive(Clone, Copy, Default)]
-pub(crate) struct Admission {
+pub(crate) struct Admission<'a> {
     pub base: Option<i64>,
-    pub closing: Option<i64>,
+    /// The operations the batch ends: their values give way to the server row.
+    pub closing: &'a [i64],
 }
 
-pub(crate) fn unconfirmed_fields(reader: &Reader<'_>, closing: Option<i64>, model: &str, ids: &[String]) -> Result<HashMap<String, HashSet<String>>, StoreError> {
+pub(crate) fn unconfirmed_fields(reader: &Reader<'_>, closing: &[i64], model: &str, ids: &[String]) -> Result<HashMap<String, HashSet<String>>, StoreError> {
     if ids.is_empty() { return Ok(HashMap::new()); }
     let sql = format!(include_str!("sql/merge/unconfirmed_fields.sql"), crate::store::operation::OPEN_STATUSES);
     let ids_json = serde_json::to_string(ids)?;
     let sequences = reader.connection().prepare_cached(&sql)?.query_map(params![model, ids_json], |row| row.get::<_, i64>(0))?.collect::<Result<Vec<_>, _>>()?;
-    let sequences: Vec<i64> = sequences.into_iter().filter(|seq| Some(*seq) != closing).collect();
+    let sequences: Vec<i64> = sequences.into_iter().filter(|seq| !closing.contains(seq)).collect();
     if sequences.is_empty() { return Ok(HashMap::new()); }
     let sequence_json = serde_json::to_string(&sequences)?;
     let values = crate::store::nodes::read_trees(reader.connection(), "op_effect_value", &["seq", "position"], "seq IN (SELECT value FROM json_each(?1))", &[rusqlite::types::Value::Text(sequence_json)])?;
@@ -53,7 +54,7 @@ pub(crate) enum RowKind {
     Server,
 }
 
-pub(crate) fn admitted_with_fields(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, spec: &ModelSpec, fields: Option<&HashMap<String, HashSet<String>>>, tombstones: Option<&std::collections::BTreeMap<String, i64>>, stored: Option<&std::collections::BTreeMap<String, super::rows::StoredRow>>) -> Result<Option<Map<String, Value>>, StoreError> {
+pub(crate) fn admitted_with_fields(reader: &Reader<'_>, kind: RowKind, admission: Admission<'_>, model: &str, patch: &Map<String, Value>, spec: &ModelSpec, fields: Option<&HashMap<String, HashSet<String>>>, tombstones: Option<&std::collections::BTreeMap<String, i64>>, stored: Option<&std::collections::BTreeMap<String, super::rows::StoredRow>>) -> Result<Option<Map<String, Value>>, StoreError> {
     let Some(id) = patch.get("id").and_then(read_id) else { return Ok(None) };
     if kind == RowKind::Local {
         return Ok(Some(patch.clone()));
@@ -73,7 +74,7 @@ pub(crate) fn admitted_with_fields(reader: &Reader<'_>, kind: RowKind, admission
     };
     let loaded;
     let fields = match fields { Some(fields) => fields, None => { loaded = unconfirmed_fields(reader, admission.closing, model, &[id.as_str().to_string()])?; &loaded } };
-    for field in fields.get(id.as_str()).into_iter().flatten() {
+    for field in fields.get(id.as_str()).into_iter().flatten().filter(|_| stored.is_some()) {
         match stored.as_ref().and_then(|stored| stored.row.get(field)) {
             Some(value) => row.insert(field.clone(), value.clone()),
             None => row.remove(field),

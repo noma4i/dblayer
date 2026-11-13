@@ -226,7 +226,7 @@ pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, op_id: u64) -> 
     for row in Prior::of(&entry)?.into_iter().flat_map(|prior| prior.rows) {
         if let PriorRow::Edited { model, id, .. } = row { wanted.entry(model).or_default().push(id); }
     }
-    for (model, ids) in wanted { writer.prefetch(&model, &ids, writer.closing)?; }
+    for (model, ids) in wanted { writer.prefetch(&model, &ids, &writer.closing.clone())?; }
     let plan = restore(&reader, &Prior::related_operations(&reader, &entry)?, &entry, writer.revision, &writer.current)?;
     let mut envelope = BatchPlan::new(writer.generation);
     envelope.entity_ops = plan.entity_ops;

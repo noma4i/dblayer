@@ -330,6 +330,22 @@ async fn out_swap_keeps_place() {
     rig.database.close_now();
 }
 
+/// P-DATA-107, P-DATA-110: a row edited while its `create` waits for the answer is confirmed with the real id, the server base and the edit lying over it.
+#[tokio::test(flavor = "multi_thread")]
+async fn out_edit_before_answer_lies_over_the_confirmed_row() {
+    let rig = rig().await;
+    let epoch = rig.database.session_epoch();
+    let hold = rig.world.hold_next("SendMessage");
+    let receipt = send_text(&rig, epoch, "fresh", 3).await;
+    hold.entered().await;
+    let temporary = receipt.optimistic_value.clone().unwrap().id;
+    bound(rig.database.update(epoch, "Message".into(), temporary.clone(), r#"{"text":"edited"}"#.into(), "{}".into())).await.unwrap();
+    hold.release();
+    let confirmed = bound(rig.database.confirmed(receipt, false)).await.unwrap().value.expect("the create is confirmed with the row of the answer");
+    assert_eq!((confirmed.id != temporary, cell(&rig, "Message", &confirmed, "text")), (true, text("edited")));
+    rig.database.close_now();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn out_create_rollback_drops_local() {
     let rig = rig().await;

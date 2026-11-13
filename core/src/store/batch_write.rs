@@ -87,10 +87,10 @@ impl Store {
         transaction.execute_batch(include_str!("sql/batch_write/write_batch_prepared_create_table_batch_file_deletions.sql"))?;
         let base_revision = Reader::new(&transaction, &inner.models).revision_seq()?;
         let revision = base_revision.checked_add(1).ok_or_else(|| StoreError::Constraint("revision overflow".into()))?;
-        let own = batch.ops.iter().find_map(|op| match op { crate::owners::store::StoreOp::RemoveIntent { op_id } => i64::try_from(*op_id).ok(), _ => None }).unwrap_or(-1);
+        let closing: Vec<i64> = batch.ops.iter().filter_map(|op| match op { crate::owners::store::StoreOp::RemoveIntent { op_id } => i64::try_from(*op_id).ok(), _ => None }).collect();
         let mut originals = BTreeMap::new();
         let mut results = Vec::new();
-        let mut writer = RowWrite { connection: &transaction, models: &inner.models, generation: inner.generation, revision, now, originals: &mut originals, closing: (own >= 0).then_some(own), candidates: 0, current: Default::default(), feed_fields: Default::default(), feed_tombstones: Default::default(), feed_hidden: None, event: None };
+        let mut writer = RowWrite { connection: &transaction, models: &inner.models, generation: inner.generation, revision, now, originals: &mut originals, closing: closing.clone(), candidates: 0, current: Default::default(), feed_fields: Default::default(), feed_tombstones: Default::default(), feed_hidden: None, carried: Default::default(), event: None };
         let mut overlay = Vec::new();
         let rows_source = if batch.author == BatchAuthor::Outbox { crate::schema::RowSource::Response } else { crate::schema::RowSource::Page };
         let (observed, refused) = if batch.author == BatchAuthor::Feed {
@@ -134,7 +134,7 @@ impl Store {
             }
             writes_database = true;
             if let crate::owners::store::StoreOp::Swap { model, temp, real } = op {
-                results.push(super::swap::apply(&mut writer, model, temp, real, own)?);
+                results.push(super::swap::apply(&mut writer, model, temp, real, &closing)?);
                 continue;
             }
             if let crate::owners::store::StoreOp::RemoveIntent { op_id } = op {

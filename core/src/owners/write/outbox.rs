@@ -414,6 +414,10 @@ impl OutboxState {
             if let OpSource::TransferGroup { members, .. } = &operation.op.origin { if let [member] = members.as_slice() { ops.push(StoreOp::RemoveUploadByTransferId { transfer_id: member.transfer_id }); } }
         }
         if kind == CommitKind::Land {
+            let leaving = self.member_removals.get(&op_id).filter(|pending| pending.land_after_storage).map(|pending| pending.member.transfer_id);
+            if let OpSource::TransferGroup { members, .. } = &operation.op.origin {
+                ops.extend(members.iter().filter(|member| Some(member.transfer_id) != leaving && !operation.missing.contains(&member.row_id)).filter_map(|member| member.op_id).map(|op_id| StoreOp::RemoveIntent { op_id }));
+            }
             if let Some(pending) = self.member_removals.get(&op_id).filter(|pending| pending.land_after_storage) {
                 ops.push(StoreOp::RemoveUploadByTransferId { transfer_id: pending.member.transfer_id });
                 ops.push(StoreOp::TransferOutcome { transfer_id: pending.member.transfer_id, cycle_id: pending.member.cycle_id, outcome: OutboxOutcome::Discarded });

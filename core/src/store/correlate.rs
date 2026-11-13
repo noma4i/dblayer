@@ -34,7 +34,7 @@ fn correlated_temp(writer: &mut super::row_write::RowWrite<'_>, model: &str, inc
     let spec = &models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
     let entries = candidates(&reader, spec, model, incoming)?;
     let ids: Vec<String> = entries.iter().filter_map(|entry| entry.operation.temp_id.as_ref().map(ToString::to_string)).collect();
-    writer.prefetch(model, &ids, None)?;
+    writer.prefetch(model, &ids, &[])?;
     let mut found = Vec::new();
     for entry in &entries {
         let Some(temp) = entry.operation.temp_id.as_ref() else { continue };
@@ -65,7 +65,7 @@ pub(super) fn replace_temp_rows(writer: &mut super::row_write::RowWrite<'_>, env
         let Some(found) = found.filter(|found| found.temp != id && !replaced.contains(&found.temp)) else { continue };
         let held = writer.stored(model.as_str(), found.temp.as_str())?.map(|stored| stored.row);
         let outbox = crate::store::plan::read_outbox(&Reader::new(writer.connection, writer.models))?;
-        super::swap::plan(writer, envelope, &outbox, super::swap::TempReplacement { model: model.as_str(), temp: &found.temp, real: &id }, found.operation, held)?;
+        super::swap::plan(writer, envelope, &outbox, super::swap::TempReplacement { model: model.as_str(), temp: &found.temp, real: &id }, std::slice::from_ref(&found.operation), held)?;
         replaced.push(found.temp);
     }
     Ok(())

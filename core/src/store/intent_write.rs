@@ -24,7 +24,7 @@ fn effects(reader: &Reader<'_>, writes: &IntentEffects, writer: &mut RowWrite<'_
     for row in &writes.rows { wanted.entry(row.model.clone()).or_default().push(row.row_id.clone()); }
     for row in &writes.tombstones { wanted.entry(row.model.clone()).or_default().push(row.row_id.clone()); }
     for row in &writes.members { wanted.entry(row.model.clone()).or_default().push(row.row_id.clone()); }
-    for (model, ids) in wanted { writer.prefetch(&model, &ids, writer.closing)?; }
+    for (model, ids) in wanted { writer.prefetch(&model, &ids, &writer.closing.clone())?; }
     for EffectRow { model, row_id, values: text } in &writes.rows {
         let fields = values(text)?;
         writer.models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;

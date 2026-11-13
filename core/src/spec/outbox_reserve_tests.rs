@@ -123,7 +123,7 @@ fn out_sending_response_batch_items_batch() {
     use crate::owners::store::RowValue;
     use crate::owners::write::outbox::{OpSource, TransferMember};
     let mut twin = Twin::new();
-    let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into() }, TransferMember { transfer_id: 12, cycle_id: 1, row_id: "b".into() }];
+    let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into(), op_id: None }, TransferMember { transfer_id: 12, cycle_id: 1, row_id: "b".into(), op_id: None }];
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", Policy::Rollback, false) };
     raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     let rows = vec![("Moment".into(), vec![RowValue { row_id: "A".into(), values: "{}".into() }, RowValue { row_id: "B".into(), values: "{}".into() }])];
@@ -140,7 +140,7 @@ fn out_transfer_group_outcomes_commit_with_the_intent() {
     use crate::owners::contract::Committed;
     use crate::owners::write::outbox::{OpSource, TransferMember};
     let mut twin = Twin::new();
-    let members = vec![TransferMember { transfer_id: 11, cycle_id: 2, row_id: "a".into() }, TransferMember { transfer_id: 12, cycle_id: 4, row_id: "b".into() }];
+    let members = vec![TransferMember { transfer_id: 11, cycle_id: 2, row_id: "a".into(), op_id: None }, TransferMember { transfer_id: 12, cycle_id: 4, row_id: "b".into(), op_id: None }];
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", Policy::Rollback, false) };
     raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     let (sends, _) = raw(&mut twin, OutboxInput::Response { op_id: 4, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: vec!["b".into()], errors: None });
@@ -160,7 +160,7 @@ fn out_group_failed_outcome_and_retry_preserves_cycles() {
     use crate::owners::contract::{Committed, Rejected, RejectReason};
     use crate::owners::write::outbox::{OpSource, TransferMember};
     let mut twin = Twin::new();
-    let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into() }, TransferMember { transfer_id: 12, cycle_id: 1, row_id: "b".into() }];
+    let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into(), op_id: None }, TransferMember { transfer_id: 12, cycle_id: 1, row_id: "b".into(), op_id: None }];
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", Policy::Keep, false) };
     raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     let (sends, _) = raw(&mut twin, OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
@@ -187,7 +187,7 @@ fn out_group_rollback_outcome() {
     use crate::owners::contract::Committed;
     use crate::owners::write::outbox::{OpSource, TransferMember};
     let mut twin = Twin::new();
-    let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into() }, TransferMember { transfer_id: 12, cycle_id: 1, row_id: "b".into() }];
+    let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into(), op_id: None }, TransferMember { transfer_id: 12, cycle_id: 1, row_id: "b".into(), op_id: None }];
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", Policy::Rollback, false) };
     raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     let (sends, _) = raw(&mut twin, OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
@@ -203,7 +203,7 @@ fn group_on_rows(twin: &mut Twin, member: &str, policy: Policy) -> OpId {
     use crate::owners::write::outbox::{OpSource, TransferMember};
     let (sends, _) = raw(twin, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Group(9) });
     let op_id = reserved(&sends).first().and_then(|text| crate::spec::support::number_after(text, "Ok(")).expect("the reserved op_id");
-    let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into() }, TransferMember { transfer_id: 12, cycle_id: 1, row_id: member.into() }];
+    let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into(), op_id: None }, TransferMember { transfer_id: 12, cycle_id: 1, row_id: member.into(), op_id: None }];
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", policy, false) };
     twin.post(OutboxInput::SubmitReserved { epoch: EPOCH, op_id, op, created_at: 0 });
     op_id
@@ -422,7 +422,7 @@ fn out_group_answer_waits_membership() {
 fn out_group_outcome_each_member() {
     use crate::owners::write::outbox::{OpSource, TransferMember};
     let group = |twin: &mut Twin, policy: Policy| {
-        let members = vec![TransferMember { transfer_id: 11, cycle_id: 2, row_id: "a".into() }, TransferMember { transfer_id: 12, cycle_id: 4, row_id: "b".into() }];
+        let members = vec![TransferMember { transfer_id: 11, cycle_id: 2, row_id: "a".into(), op_id: None }, TransferMember { transfer_id: 12, cycle_id: 4, row_id: "b".into(), op_id: None }];
         let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", policy, false) };
         twin.post(OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
         assert_eq!(twin.stage(4), Some(St::Sending), "the group is Sending");

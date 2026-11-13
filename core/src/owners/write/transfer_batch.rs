@@ -98,7 +98,7 @@ impl TransferState {
             entry.phase = BatchPhase::Mutating;
             entry.op_row = Some(first.clone());
         }
-        let members = remaining.iter().filter_map(|id| self.transfers.get(id)).map(|transfer| TransferMember { transfer_id: transfer.transfer_id, cycle_id: transfer.cycle_id, row_id: transfer.mutation.row_id.clone() }).collect();
+        let members = remaining.iter().filter_map(|id| self.transfers.get(id)).map(|transfer| TransferMember { transfer_id: transfer.transfer_id, cycle_id: transfer.cycle_id, row_id: transfer.mutation.row_id.clone(), op_id: transfer.op_id }).collect();
         let op = NewOp { model: first.0, row_id: first.1, origin: OpSource::TransferGroup { batch_id: group, members }, body: body.to_string(), ..joint.mutation };
         if let Some(entry) = self.groups.get_mut(&group) { entry.pending_op = Some(op); }
         self.store(remaining, StoreKind::BatchIntent, fx);

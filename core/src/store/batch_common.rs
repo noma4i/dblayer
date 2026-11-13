@@ -11,7 +11,7 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
         StoreOp::Rows { model, rows } | StoreOp::LocalRows { model, rows } => {
             let source = if matches!(op, StoreOp::LocalRows { .. }) { crate::schema::RowSource::Local } else { source };
             let ids: Vec<String> = rows.iter().map(|row| row.row_id.clone()).collect();
-            writer.prefetch(model, &ids, writer.closing)?;
+            writer.prefetch(model, &ids, &writer.closing.clone())?;
             for row in rows {
                 if let Some(result) = writer.upsert(model, row, source)? { results.push(result); }
             }
