@@ -99,7 +99,7 @@ async fn xfer_stage_commit_early() {
         let stand = if case == "preparing" { Stand::new().with_preparer(preparer.clone()) } else { Stand::new() };
         let database = stand.open(None, &OPERATIONS).await;
         answers(&stand);
-        stand.script.data("CompleteMultipart", COMPLETE);
+        let complete = stand.script.hold("CompleteMultipart", COMPLETE);
         stand.script.data("CreateMoment", LANDED);
         let (source, parts) = match case {
             "preparing" => { let path = directory.path().join("clip"); std::fs::write(&path, SOURCE).unwrap(); (path, 1) }
@@ -123,6 +123,7 @@ async fn xfer_stage_commit_early() {
         assert!(upload_of(&database, &staged.row_id).is_some(), "{case}: the row shows its upload");
         run_hold.release();
         put_hold.release();
+        complete.release();
         bound(database.confirmed(committed, false)).await.unwrap();
         let names = stand.script.names();
         assert_eq!(names.iter().filter(|name| *name == "CreateMoment").count(), 1, "{case}: the mutation goes once");

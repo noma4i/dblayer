@@ -114,9 +114,14 @@ pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, te
     let held = writer.stored(model, temp.as_str())?.map(|stored| stored.row);
     let reader = Reader::new(writer.connection, writer.models);
     let mut envelope = BatchPlan::new(writer.generation);
-    if held.is_some() {
+    let buried = held.is_some() && writer.stored(model, real.as_str())?.is_none() && reader.tombstone_seq(model, real.as_str())?.is_some();
+    if buried {
+        envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: temp.clone(), reason: DestroyReason::Server });
+    } else if held.is_some() {
         let outbox = crate::store::plan::read_outbox(&reader)?;
         plan(writer, &mut envelope, &outbox, TempReplacement { model, temp: &temp, real: &real }, closing, held)?;
     }
-    writer.apply(&envelope)
+    let mut result = writer.apply(&envelope)?;
+    if buried { result.server_removed.push(crate::identity::RowRef::new(ModelKey::new(model), real)); }
+    Ok(result)
 }

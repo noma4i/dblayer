@@ -346,6 +346,27 @@ async fn out_edit_before_answer_lies_over_the_confirmed_row() {
     rig.database.close_now();
 }
 
+/// D-426, P-DATA-110: the answer of a create whose real id the server removed before the answer does not bring the row back: the temporary row leaves and the edit queued on it ends.
+#[tokio::test(flavor = "multi_thread")]
+async fn out_confirmed_create_on_a_removed_id_does_not_bring_the_row_back() {
+    let rig = rig().await;
+    let _thread = thread(&rig).await;
+    let epoch = rig.database.session_epoch();
+    let hold = rig.world.hold_next("SendMessage");
+    let receipt = send_text(&rig, epoch, "fresh", 3).await;
+    hold.entered().await;
+    let temporary = receipt.optimistic_value.clone().unwrap().id;
+    let edit = bound(rig.database.update(epoch, "Message".into(), temporary.clone(), r#"{"text":"edited"}"#.into(), "{}".into())).await.unwrap();
+    rig.land_unsettled("Message", json!({"id": "m1", "deleted": true})).await;
+    hold.release();
+    let confirmed = bound(rig.database.confirmed(receipt, false)).await.unwrap().value;
+    let edited = bound(rig.database.confirmed(edit, false)).await;
+    rig.settle().await;
+    let read = |id: String| async { bound(rig.database.read_row(epoch, "Message".into(), id)).await.unwrap().is_some() };
+    assert_eq!((confirmed.map(|row| row.id), matches!(&edited, Err(DbError::Interrupted { detail }) if detail == "Discarded"), read(temporary).await, read("m1".into()).await), (None, true, false, false), "edit: {edited:?}");
+    rig.database.close_now();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn out_create_rollback_drops_local() {
     let rig = rig().await;
