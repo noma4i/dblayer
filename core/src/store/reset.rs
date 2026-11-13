@@ -78,7 +78,6 @@ pub(crate) fn pending_intent(connection: &Connection) -> Result<Option<String>, 
 
 pub(crate) fn clear_intent(connection: &Connection) -> Result<(), StoreError> {
     connection.execute(include_str!("sql/reset/clear_intent_delete_reset_intent.sql"), [])?;
-    connection.execute(include_str!("sql/reset/clear_intent_delete_reset_intent_model.sql"), [])?;
     Ok(())
 }
 

@@ -20,7 +20,7 @@ pub(super) const CACHE_STATEMENTS: [&str; 19] = [
     include_str!("../sql/ddl/reread_owed.sql"),
 ];
 
-pub(super) const CORE_STATEMENTS: [&str; 41] = [
+pub(super) const CORE_STATEMENTS: [&str; 40] = [
     include_str!("../sql/ddl/row_alias.sql"),
     include_str!("../sql/ddl/manifest.sql"),
     include_str!("../sql/ddl/op.sql"),
@@ -53,7 +53,6 @@ pub(super) const CORE_STATEMENTS: [&str; 41] = [
     include_str!("../sql/ddl/quarantine.sql"),
     include_str!("../sql/ddl/quarantine_value.sql"),
     include_str!("../sql/ddl/reset_intent.sql"),
-    include_str!("../sql/ddl/reset_intent_model.sql"),
     include_str!("../sql/ddl/quarantine_reason.sql"),
     include_str!("../sql/ddl/encrypted_session.sql"),
     include_str!("../sql/ddl/encrypted_pending.sql"),

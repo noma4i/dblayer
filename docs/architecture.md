@@ -24,15 +24,15 @@ Each `WireRow` carries the revision of its stored value. The generated model rea
 
 ## Parts of the core
 
-| Part | Responsibility |
-| ---- | -------------- |
-| `identity` | Row ids and list keys |
-| `schema` | Model specification and validation |
-| `owners` | Execution and state for lifecycle, session, network, calls, reads (`owners/read`), writes (`owners/write`: operation status, write plans, uploads), and Store |
-| `store` | SQLite storage: `ddl` tables and indexes, `sql` statement files, `query` compilation, `operation`, `sync_state`, `files`, `nodes`, `session_state`, atomic commits, revisions, tombstones, query windows |
-| `value` | Row values, sync state values (`value/sync.rs`), order keys |
-| `ffi` | Database entry points, platform transport, streams, and value records |
-| `transport` | Network transport, clocks, and retry timing |
+| Part        | Responsibility                                                                                                                                                                                           |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `identity`  | Row ids and list keys                                                                                                                                                                                    |
+| `schema`    | Model specification and validation                                                                                                                                                                       |
+| `owners`    | Execution and state for lifecycle, session, network, calls, reads (`owners/read`), writes (`owners/write`: operation status, write plans, uploads), and Store                                            |
+| `store`     | SQLite storage: `ddl` tables and indexes, `sql` statement files, `query` compilation, `operation`, `sync_state`, `files`, `nodes`, `session_state`, atomic commits, revisions, tombstones, query windows |
+| `value`     | Row values, sync state values (`value/sync.rs`), order keys                                                                                                                                              |
+| `ffi`       | Database entry points, platform transport, streams, and value records                                                                                                                                    |
+| `transport` | Network transport, clocks, and retry timing                                                                                                                                                              |
 
 The schema groups model declarations by responsibility: fields and associations, relations, actions, and validation errors.
 The model specification remains in `schema/mod.rs` and exports these declarations.
@@ -52,27 +52,27 @@ The generator groups declaration parsing and validation by fields, selections, a
 
 SQLite stores model data, window membership, operations, and upload state. The file table can also hold attachment bytes.
 
-| Table | Holds |
-| ----- | ----- |
-| `row_<model>` | One row per record: id, revision, birth revision, one typed column per scalar and enum field, `rev__<field>` revision columns, `<field>__present` flags of typed objects |
-| `row_<model>__<field>` | Items of a list or of an array of typed values, with their position; a recursive array uses one table for every level |
-| `row_<model>__value` | Values without a declared shape (`:json` and `:file`) as rows of a tree: parent, position, key, kind and the number or text |
-| `fts_row_<model>` | Full-text index of the fields selected by `search` |
-| `scope_member`, `tombstone`, `query_window` | List membership and order, deleted rows, page cursors, fetched page count and freshness |
-| `op`, `op_row`, `op_value`, `op_error` | The outbox: status, error kind and message columns, the rows of an operation, its input and prior values, the error extensions |
-| `row_sync`, `sync_row_error`, `sync_action`, `sync_field` | The stored sync state of every unconfirmed record, with its error extensions, actions and dirty fields |
-| `local_pending` | Values written to a local field before its row exists, as a tree of rows |
-| `file` | Small file bytes and file descriptors; larger files live in a directory next to the database |
-| `quarantine`, `quarantine_value` | Payloads the core refused, with the reason |
-| `manifest`, `reset_intent`, `reset_intent_model` | Format and data versions, model fingerprints (hashes) and an unfinished cache reset |
+| Table                                                     | Holds                                                                                                                                                                    |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `row_<model>`                                             | One row per record: id, revision, birth revision, one typed column per scalar and enum field, `rev__<field>` revision columns, `<field>__present` flags of typed objects |
+| `row_<model>__<field>`                                    | Items of a list or of an array of typed values, with their position; a recursive array uses one table for every level                                                    |
+| `row_<model>__value`                                      | Values without a declared shape (`:json` and `:file`) as rows of a tree: parent, position, key, kind and the number or text                                              |
+| `fts_row_<model>`                                         | Full-text index of the fields selected by `search`                                                                                                                       |
+| `scope_member`, `tombstone`, `query_window`               | List membership and order, deleted rows, page cursors, fetched page count and freshness                                                                                  |
+| `op`, `op_row`, `op_value`, `op_error`                    | The outbox: status, error kind and message columns, the rows of an operation, its input and prior values, the error extensions                                           |
+| `row_sync`, `sync_row_error`, `sync_action`, `sync_field` | The stored sync state of every unconfirmed record, with its error extensions, actions and dirty fields                                                                   |
+| `local_pending`                                           | Values written to a local field before its row exists, as a tree of rows                                                                                                 |
+| `file`                                                    | Small file bytes and file descriptors; larger files live in a directory next to the database                                                                             |
+| `quarantine`, `quarantine_value`                          | Payloads the core refused, with the reason                                                                                                                               |
+| `manifest`, `reset_intent`                                | Format version, model fingerprints (hashes) and an unfinished reset                                                                                                      |
 
 ## Repository
 
-| Path | Contents |
-| ---- | -------- |
-| `core/` | Rust core |
-| `gen/` | `.dbl` parser and generator |
-| `fixtures/` | Example models |
-| `swift/`, `kotlin/` | Platform bindings |
-| `scripts/` | Build and check scripts |
-| `docs/` | This documentation |
+| Path                | Contents                    |
+| ------------------- | --------------------------- |
+| `core/`             | Rust core                   |
+| `gen/`              | `.dbl` parser and generator |
+| `fixtures/`         | Example models              |
+| `swift/`, `kotlin/` | Platform bindings           |
+| `scripts/`          | Build and check scripts     |
+| `docs/`             | This documentation          |
