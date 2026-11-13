@@ -38,25 +38,25 @@ public struct Clip: DBModel {
         if let value = widgets { variables_["widgets"] = try JSONValue.encode(value) }
         return variables_
     }
-    @concurrent public static func create(title: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
+    nonisolated(nonsending) public static func create(title: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = title { values_["title"] = try JSONValue.encode(value) }
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(title: String?? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
+    nonisolated(nonsending) public func update(title: String?? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = title { values_["title"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
     }
-    @concurrent public static func createFile(id: String, source: String, widgets: [StickerWidgetInput]? = nil, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
+    nonisolated(nonsending) public static func createFile(id: String, source: String, widgets: [StickerWidgetInput]? = nil, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         var variables_: [String: JSONValue] = [:]
         if let value = widgets { variables_["widgets"] = try JSONValue.encode(value) }
         return try await scope_.upload(Self.self, id: id, action: "create_file", UploadRequest(path: source, variables: variables_))
     }
-    @concurrent public func createFile(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
+    nonisolated(nonsending) public func createFile(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(Self.self, id: id, action: "create_file", request)
     }
-    @concurrent public static func stageCreateFile(source: String, in scope_: AccountScope) async throws -> StagedUpload<Self> {
+    nonisolated(nonsending) public static func stageCreateFile(source: String, in scope_: AccountScope) async throws -> StagedUpload<Self> {
         try await scope_.stage(Self.self, action: "create_file", UploadRequest(path: source))
     }
 }
@@ -104,19 +104,19 @@ public struct Inbox: DBModel {
         let built_ = Query<Self>(relation: "shelf", params: ["list": try JSONValue.encode(list)])
         return built_
     }
-    @concurrent public static func create(title: String, stance: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
+    nonisolated(nonsending) public static func create(title: String, stance: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["title"] = try JSONValue.encode(title)
         if let value = stance { values_["stance"] = try JSONValue.encode(value) }
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(title: String? = nil, stance: String?? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
+    nonisolated(nonsending) public func update(title: String? = nil, stance: String?? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = title { values_["title"] = try JSONValue.encode(value) }
         if let value = stance { values_["stance"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
     }
-    @concurrent public func move(list: ContainerShelfKind, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
+    nonisolated(nonsending) public func move(list: ContainerShelfKind, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         let values_ = try JSONValue.readObject(#"{"stance":{"$map":{"from":"list","map":{"PRIMARY":"main","SECONDARY":"other"}}}}"#)
         return try await self.act("move", values: values_, args: ["list": try JSONValue.encode(list)], in: scope_)
     }
@@ -162,13 +162,13 @@ public struct MediaEntry: DBModel {
         let built_ = Query<Self>(relation: "media", params: ["chatId": try JSONValue.encode(chatId)])
         return built_
     }
-    @concurrent public static func create(text: String? = nil, sequenceNumber: Int, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
+    nonisolated(nonsending) public static func create(text: String? = nil, sequenceNumber: Int, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = text { values_["text"] = try JSONValue.encode(value) }
         values_["sequenceNumber"] = try JSONValue.encode(sequenceNumber)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(text: String?? = nil, sequenceNumber: Int? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
+    nonisolated(nonsending) public func update(text: String?? = nil, sequenceNumber: Int? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = text { values_["text"] = try JSONValue.encode(value) }
         if let value = sequenceNumber { values_["sequenceNumber"] = try JSONValue.encode(value) }
@@ -216,12 +216,12 @@ public struct Roster: DBModel {
         let built_ = Query<Self>(relation: "complete_members", params: ["containerId": try JSONValue.encode(containerId), "order": try JSONValue.encode(order)])
         return built_
     }
-    @concurrent public static func create(title: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
+    nonisolated(nonsending) public static func create(title: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["title"] = try JSONValue.encode(title)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(title: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
+    nonisolated(nonsending) public func update(title: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = title { values_["title"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
@@ -843,47 +843,47 @@ public struct ContainerMediaLoadResult: Codable, Sendable, Equatable {
 }
 
 public enum Operations {
-    @concurrent public static func when(`class`: String, in scope_: AccountScope? = nil) async throws -> WhenResult {
+    nonisolated(nonsending) public static func when(`class`: String, in scope_: AccountScope? = nil) async throws -> WhenResult {
         var variables_: [String: JSONValue] = [:]
         variables_["class"] = try JSONValue.encode(`class`)
         return try await DB.call("KeywordCall", variables: variables_, as: WhenResult.self, in: scope_)
     }
-    @concurrent public static func qrCodeCreate(kind: String, size: Int? = nil, in scope_: AccountScope? = nil) async throws -> QrCodeCreateResult {
+    nonisolated(nonsending) public static func qrCodeCreate(kind: String, size: Int? = nil, in scope_: AccountScope? = nil) async throws -> QrCodeCreateResult {
         var variables_: [String: JSONValue] = [:]
         variables_["kind"] = try JSONValue.encode(kind)
         if let value = size { variables_["size"] = try JSONValue.encode(value) }
         return try await DB.call("QrCodeCreate", variables: ["input": JSONValue.object(variables_)], as: QrCodeCreateResult.self, in: scope_)
     }
-    @concurrent public static func signOut(in scope_: AccountScope? = nil) async throws {
+    nonisolated(nonsending) public static func signOut(in scope_: AccountScope? = nil) async throws {
         let variables_: [String: JSONValue] = [:]
         try await DB.call("SignOut", variables: variables_, in: scope_)
     }
-    @concurrent public static func stickerSend(input: StickerInput, in scope_: AccountScope? = nil) async throws -> StickerSendResult {
+    nonisolated(nonsending) public static func stickerSend(input: StickerInput, in scope_: AccountScope? = nil) async throws -> StickerSendResult {
         var variables_: [String: JSONValue] = [:]
         variables_["input"] = try JSONValue.encode(input)
         return try await DB.call("StickerSend", variables: variables_, as: StickerSendResult.self, in: scope_)
     }
-    @concurrent public static func pricingLoad(in scope_: AccountScope? = nil) async throws -> PricingLoadResult {
+    nonisolated(nonsending) public static func pricingLoad(in scope_: AccountScope? = nil) async throws -> PricingLoadResult {
         let variables_: [String: JSONValue] = [:]
         return try await DB.call("Pricing", variables: variables_, as: PricingLoadResult.self, in: scope_)
     }
-    @concurrent public static func momentCreate(input: MomentInput, in scope_: AccountScope? = nil) async throws -> MomentCreateResult {
+    nonisolated(nonsending) public static func momentCreate(input: MomentInput, in scope_: AccountScope? = nil) async throws -> MomentCreateResult {
         var variables_: [String: JSONValue] = [:]
         variables_["input"] = try JSONValue.encode(input)
         return try await DB.call("MomentCreate", variables: variables_, as: MomentCreateResult.self, in: scope_)
     }
-    @concurrent public static func giphyLoad(type: String, limit: Int? = nil, in scope_: AccountScope? = nil) async throws -> [GiphyLoadResult] {
+    nonisolated(nonsending) public static func giphyLoad(type: String, limit: Int? = nil, in scope_: AccountScope? = nil) async throws -> [GiphyLoadResult] {
         var variables_: [String: JSONValue] = [:]
         variables_["type"] = try JSONValue.encode(type)
         if let value = limit { variables_["limit"] = try JSONValue.encode(value) }
         return try await DB.call("Giphy", variables: variables_, as: [GiphyLoadResult].self, in: scope_)
     }
-    @concurrent public static func widgetsSend(widgets: [StickerWidgetInput]? = nil, in scope_: AccountScope? = nil) async throws -> WidgetsSendResult {
+    nonisolated(nonsending) public static func widgetsSend(widgets: [StickerWidgetInput]? = nil, in scope_: AccountScope? = nil) async throws -> WidgetsSendResult {
         var variables_: [String: JSONValue] = [:]
         if let value = widgets { variables_["widgets"] = try JSONValue.encode(value) }
         return try await DB.call("WidgetsSend", variables: variables_, as: WidgetsSendResult.self, in: scope_)
     }
-    @concurrent public static func containerMediaLoad(containerId: String, upToSequence: Int? = nil, in scope_: AccountScope? = nil) async throws -> ContainerMediaLoadResult {
+    nonisolated(nonsending) public static func containerMediaLoad(containerId: String, upToSequence: Int? = nil, in scope_: AccountScope? = nil) async throws -> ContainerMediaLoadResult {
         var variables_: [String: JSONValue] = [:]
         variables_["containerId"] = try JSONValue.encode(containerId)
         if let value = upToSequence { variables_["upToSequence"] = try JSONValue.encode(value) }

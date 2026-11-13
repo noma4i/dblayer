@@ -34,18 +34,18 @@ data class Ledger(
         val scope = Column<Ledger, String>("scope")
         fun where(condition: Condition) = Query("Ledger", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Ledger", this, ids)
-        suspend fun create(scope: String, account: AccountScope? = null): MutationReceipt<Ledger> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(scope: String, account: AccountScope? = null): MutationReceipt<Ledger> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("scope", jsonValue(scope))
             }
-            MutationReceipt(database_, Ledger, database_.create(epoch_, "Ledger", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Ledger, ordered_.create(epoch_, "Ledger", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(scope: String? = null, account: AccountScope? = null): MutationReceipt<Ledger> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(scope: String? = null, account: AccountScope? = null): MutationReceipt<Ledger> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             scope?.let { this.put("scope", jsonValue(it)) }
         }
-        MutationReceipt(database_, Ledger, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Ledger, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Ledger> = Ledger.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Ledger> = Ledger.destroy(id, account)
@@ -85,18 +85,18 @@ data class LedgerFeed(
             return built_
         }
         suspend fun entriesEdge(scope: String, id: String, account: AccountScope? = null): LedgerFeedEntriesEdge? = LedgerFeed.entries(scope).edgeValues(id, account)?.let { LedgerFeedEntriesEdge(it) }
-        suspend fun create(title: String, account: AccountScope? = null): MutationReceipt<LedgerFeed> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(title: String, account: AccountScope? = null): MutationReceipt<LedgerFeed> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("title", jsonValue(title))
             }
-            MutationReceipt(database_, LedgerFeed, database_.create(epoch_, "LedgerFeed", values_.jsonText(), "{}"))
+            MutationReceipt(database_, LedgerFeed, ordered_.create(epoch_, "LedgerFeed", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(title: String? = null, account: AccountScope? = null): MutationReceipt<LedgerFeed> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(title: String? = null, account: AccountScope? = null): MutationReceipt<LedgerFeed> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             title?.let { this.put("title", jsonValue(it)) }
         }
-        MutationReceipt(database_, LedgerFeed, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, LedgerFeed, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<LedgerFeed> = LedgerFeed.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<LedgerFeed> = LedgerFeed.destroy(id, account)
@@ -140,18 +140,18 @@ data class Shadow(
             return built_
         }
         suspend fun accountEdge(id: String, account: AccountScope? = null): ShadowAccountEdge? = Shadow.account.edgeValues(id, account)?.let { ShadowAccountEdge(it) }
-        suspend fun create(title: String, account: AccountScope? = null): MutationReceipt<Shadow> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(title: String, account: AccountScope? = null): MutationReceipt<Shadow> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("title", jsonValue(title))
             }
-            MutationReceipt(database_, Shadow, database_.create(epoch_, "Shadow", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Shadow, ordered_.create(epoch_, "Shadow", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(title: String? = null, account: AccountScope? = null): MutationReceipt<Shadow> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(title: String? = null, account: AccountScope? = null): MutationReceipt<Shadow> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             title?.let { this.put("title", jsonValue(it)) }
         }
-        MutationReceipt(database_, Shadow, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Shadow, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Shadow> = Shadow.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Shadow> = Shadow.destroy(id, account)
@@ -189,18 +189,18 @@ data class Holder(
             var built_ = Query("Holder", this, relation = "account", params = buildJsonObject {  })
             return built_
         }
-        suspend fun create(label: String? = null, account: AccountScope? = null): MutationReceipt<Holder> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(label: String? = null, account: AccountScope? = null): MutationReceipt<Holder> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 label?.let { this.put("label", jsonValue(it)) }
             }
-            MutationReceipt(database_, Holder, database_.create(epoch_, "Holder", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Holder, ordered_.create(epoch_, "Holder", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(label: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<Holder> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(label: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<Holder> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             this.put("label", label)
         }
-        MutationReceipt(database_, Holder, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Holder, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Holder> = Holder.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Holder> = Holder.destroy(id, account)
@@ -242,20 +242,20 @@ data class Mailbox(
             return built_
         }
         suspend fun entriesEdge(act: String, id: String, account: AccountScope? = null): MailboxEntriesEdge? = Mailbox.entries(act).edgeValues(id, account)?.let { MailboxEntriesEdge(it) }
-        suspend fun create(read: Boolean, put: String? = null, account: AccountScope? = null): MutationReceipt<Mailbox> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(read: Boolean, put: String? = null, account: AccountScope? = null): MutationReceipt<Mailbox> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("read", jsonValue(read))
                 put?.let { this.put("put", jsonValue(it)) }
             }
-            MutationReceipt(database_, Mailbox, database_.create(epoch_, "Mailbox", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Mailbox, ordered_.create(epoch_, "Mailbox", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(read: Boolean? = null, put: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<Mailbox> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(read: Boolean? = null, put: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<Mailbox> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             read?.let { this.put("read", jsonValue(it)) }
             this.put("put", put)
         }
-        MutationReceipt(database_, Mailbox, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Mailbox, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Mailbox> = Mailbox.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Mailbox> = Mailbox.destroy(id, account)
@@ -300,22 +300,22 @@ data class Asset(
             account.upload(this, id, "create_file", UploadRequest(source, variables = buildJsonObject {  }))
         suspend fun stageCreateFile(account: AccountScope, source: String): StagedUpload<Asset> =
             account.stage(Asset, "create_file", UploadRequest(source))
-        suspend fun create(clientKey: String, size: Long, position: Long? = null, account: AccountScope? = null): MutationReceipt<Asset> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(clientKey: String, size: Long, position: Long? = null, account: AccountScope? = null): MutationReceipt<Asset> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("clientKey", jsonValue(clientKey))
                 this.put("size", jsonValue(size))
                 position?.let { this.put("position", jsonValue(it)) }
             }
-            MutationReceipt(database_, Asset, database_.create(epoch_, "Asset", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Asset, ordered_.create(epoch_, "Asset", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(clientKey: String? = null, size: Long? = null, position: Long? = null, account: AccountScope? = null): MutationReceipt<Asset> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(clientKey: String? = null, size: Long? = null, position: Long? = null, account: AccountScope? = null): MutationReceipt<Asset> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             clientKey?.let { this.put("clientKey", jsonValue(it)) }
             size?.let { this.put("size", jsonValue(it)) }
             position?.let { this.put("position", jsonValue(it)) }
         }
-        MutationReceipt(database_, Asset, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Asset, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Asset> = Asset.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Asset> = Asset.destroy(id, account)
@@ -354,18 +354,18 @@ data class Club(
         val name = Column<Club, String>("name")
         fun where(condition: Condition) = Query("Club", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Club", this, ids)
-        suspend fun create(name: String, account: AccountScope? = null): MutationReceipt<Club> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(name: String, account: AccountScope? = null): MutationReceipt<Club> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("name", jsonValue(name))
             }
-            MutationReceipt(database_, Club, database_.create(epoch_, "Club", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Club, ordered_.create(epoch_, "Club", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(name: String? = null, account: AccountScope? = null): MutationReceipt<Club> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(name: String? = null, account: AccountScope? = null): MutationReceipt<Club> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             name?.let { this.put("name", jsonValue(it)) }
         }
-        MutationReceipt(database_, Club, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Club, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Club> = Club.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Club> = Club.destroy(id, account)
@@ -406,18 +406,18 @@ data class Person(
             var built_ = Query("Person", this, relation = "club_members", params = buildJsonObject { this.put("clubId", jsonValue(clubId)); this.put("order", jsonValue(order)) })
             return built_
         }
-        suspend fun create(name: String, account: AccountScope? = null): MutationReceipt<Person> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(name: String, account: AccountScope? = null): MutationReceipt<Person> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("name", jsonValue(name))
             }
-            MutationReceipt(database_, Person, database_.create(epoch_, "Person", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Person, ordered_.create(epoch_, "Person", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(name: String? = null, account: AccountScope? = null): MutationReceipt<Person> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(name: String? = null, account: AccountScope? = null): MutationReceipt<Person> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             name?.let { this.put("name", jsonValue(it)) }
         }
-        MutationReceipt(database_, Person, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Person, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Person> = Person.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Person> = Person.destroy(id, account)
@@ -463,22 +463,22 @@ data class Letter(
             built_ = built_.order(Order("at", SortDirection.ASC))
             return built_
         }
-        suspend fun create(chatId: String, text: String, at: Long, account: AccountScope? = null): MutationReceipt<Letter> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(chatId: String, text: String, at: Long, account: AccountScope? = null): MutationReceipt<Letter> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("chatId", jsonValue(chatId))
                 this.put("text", jsonValue(text))
                 this.put("at", jsonValue(at))
             }
-            MutationReceipt(database_, Letter, database_.create(epoch_, "Letter", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Letter, ordered_.create(epoch_, "Letter", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(chatId: String? = null, text: String? = null, at: Long? = null, account: AccountScope? = null): MutationReceipt<Letter> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(chatId: String? = null, text: String? = null, at: Long? = null, account: AccountScope? = null): MutationReceipt<Letter> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             chatId?.let { this.put("chatId", jsonValue(it)) }
             text?.let { this.put("text", jsonValue(it)) }
             at?.let { this.put("at", jsonValue(it)) }
         }
-        MutationReceipt(database_, Letter, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Letter, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Letter> = Letter.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Letter> = Letter.destroy(id, account)
@@ -550,24 +550,24 @@ data class Container(
             account.upload(this, id, "update_photo", UploadRequest(source, variables = buildJsonObject {  }))
         suspend fun stageUpdatePhoto(account: AccountScope, source: String): StagedUpload<Container> =
             account.stage(Container, "update_photo", UploadRequest(source))
-        suspend fun create(title: String, shareUrl: String? = null, isPublic: Boolean? = null, shelves: List<ContainerShelf>? = null, account: AccountScope? = null): MutationReceipt<Container> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(title: String, shareUrl: String? = null, isPublic: Boolean? = null, shelves: List<ContainerShelf>? = null, account: AccountScope? = null): MutationReceipt<Container> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("title", jsonValue(title))
                 shareUrl?.let { this.put("shareUrl", jsonValue(it)) }
                 isPublic?.let { this.put("isPublic", jsonValue(it)) }
                 shelves?.let { this.put("shelves", jsonValue(it)) }
             }
-            MutationReceipt(database_, Container, database_.create(epoch_, "Container", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Container, ordered_.create(epoch_, "Container", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(title: String? = null, shareUrl: GraphQLNullable<String> = GraphQLNullable.Omitted, isPublic: GraphQLNullable<Boolean> = GraphQLNullable.Omitted, shelves: GraphQLNullable<List<ContainerShelf>> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<Container> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(title: String? = null, shareUrl: GraphQLNullable<String> = GraphQLNullable.Omitted, isPublic: GraphQLNullable<Boolean> = GraphQLNullable.Omitted, shelves: GraphQLNullable<List<ContainerShelf>> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<Container> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             title?.let { this.put("title", jsonValue(it)) }
             this.put("shareUrl", shareUrl)
             this.put("isPublic", isPublic)
             this.put("shelves", shelves)
         }
-        MutationReceipt(database_, Container, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Container, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Container> = Container.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Container> = Container.destroy(id, account)
@@ -619,18 +619,18 @@ data class ContainerHit(
             var built_ = Query("ContainerHit", this, relation = "search", params = buildJsonObject { this.put("text", jsonValue(text)) })
             return built_
         }
-        suspend fun create(containerId: String, account: AccountScope? = null): MutationReceipt<ContainerHit> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(containerId: String, account: AccountScope? = null): MutationReceipt<ContainerHit> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("containerId", jsonValue(containerId))
             }
-            MutationReceipt(database_, ContainerHit, database_.create(epoch_, "ContainerHit", values_.jsonText(), "{}"))
+            MutationReceipt(database_, ContainerHit, ordered_.create(epoch_, "ContainerHit", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(containerId: String? = null, account: AccountScope? = null): MutationReceipt<ContainerHit> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(containerId: String? = null, account: AccountScope? = null): MutationReceipt<ContainerHit> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             containerId?.let { this.put("containerId", jsonValue(it)) }
         }
-        MutationReceipt(database_, ContainerHit, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, ContainerHit, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<ContainerHit> = ContainerHit.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<ContainerHit> = ContainerHit.destroy(id, account)
@@ -677,22 +677,22 @@ data class Document(
             var built_ = Query("Document", this, relation = "bySlug", params = buildJsonObject { this.put("slug", jsonValue(slug)); this.put("source", jsonValue(source)) })
             return built_
         }
-        suspend fun create(slug: String, previewIds: List<String>? = null, cover: DocumentCover? = null, account: AccountScope? = null): MutationReceipt<Document> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(slug: String, previewIds: List<String>? = null, cover: DocumentCover? = null, account: AccountScope? = null): MutationReceipt<Document> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("slug", jsonValue(slug))
                 previewIds?.let { this.put("previewIds", jsonValue(it)) }
                 cover?.let { this.put("cover", jsonValue(it)) }
             }
-            MutationReceipt(database_, Document, database_.create(epoch_, "Document", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Document, ordered_.create(epoch_, "Document", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(slug: String? = null, previewIds: List<String>? = null, cover: GraphQLNullable<DocumentCover> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<Document> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(slug: String? = null, previewIds: List<String>? = null, cover: GraphQLNullable<DocumentCover> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<Document> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             slug?.let { this.put("slug", jsonValue(it)) }
             previewIds?.let { this.put("previewIds", jsonValue(it)) }
             this.put("cover", cover)
         }
-        MutationReceipt(database_, Document, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Document, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Document> = Document.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Document> = Document.destroy(id, account)
@@ -740,22 +740,22 @@ data class Chat(
             var built_ = Query("Chat", this, relation = "list", params = buildJsonObject { this.put("list", jsonValue(list)) })
             return built_
         }
-        suspend fun create(title: String, serverRevision: Long, lists: List<String>, account: AccountScope? = null): MutationReceipt<Chat> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(title: String, serverRevision: Long, lists: List<String>, account: AccountScope? = null): MutationReceipt<Chat> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("title", jsonValue(title))
                 this.put("serverRevision", jsonValue(serverRevision))
                 this.put("lists", jsonValue(lists))
             }
-            MutationReceipt(database_, Chat, database_.create(epoch_, "Chat", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Chat, ordered_.create(epoch_, "Chat", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(title: String? = null, serverRevision: Long? = null, lists: List<String>? = null, account: AccountScope? = null): MutationReceipt<Chat> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(title: String? = null, serverRevision: Long? = null, lists: List<String>? = null, account: AccountScope? = null): MutationReceipt<Chat> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             title?.let { this.put("title", jsonValue(it)) }
             serverRevision?.let { this.put("serverRevision", jsonValue(it)) }
             lists?.let { this.put("lists", jsonValue(it)) }
         }
-        MutationReceipt(database_, Chat, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Chat, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Chat> = Chat.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Chat> = Chat.destroy(id, account)
@@ -793,20 +793,20 @@ data class Message(
         fun where(condition: Condition) = Query("Message", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Message", this, ids)
         suspend fun node(id: String, force: Boolean = false, account: AccountScope? = null): Message? = onAccount(account) { database, epoch -> database.node(epoch, "Message", "node", id, force)?.let { Message.read(it) } }
-        suspend fun create(text: String, chatId: String, account: AccountScope? = null): MutationReceipt<Message> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(text: String, chatId: String, account: AccountScope? = null): MutationReceipt<Message> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("text", jsonValue(text))
                 this.put("chatId", jsonValue(chatId))
             }
-            MutationReceipt(database_, Message, database_.create(epoch_, "Message", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Message, ordered_.create(epoch_, "Message", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(text: String? = null, chatId: String? = null, account: AccountScope? = null): MutationReceipt<Message> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(text: String? = null, chatId: String? = null, account: AccountScope? = null): MutationReceipt<Message> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             text?.let { this.put("text", jsonValue(it)) }
             chatId?.let { this.put("chatId", jsonValue(it)) }
         }
-        MutationReceipt(database_, Message, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Message, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Message> = Message.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Message> = Message.destroy(id, account)
@@ -844,20 +844,20 @@ data class InterfaceRecord(
         fun where(condition: Condition) = Query("InterfaceRecord", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("InterfaceRecord", this, ids)
         suspend fun node(id: String, force: Boolean = false, account: AccountScope? = null): InterfaceRecord? = onAccount(account) { database, epoch -> database.node(epoch, "InterfaceRecord", "node", id, force)?.let { InterfaceRecord.read(it) } }
-        suspend fun create(slug: String, spec: SampleSpec? = null, account: AccountScope? = null): MutationReceipt<InterfaceRecord> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(slug: String, spec: SampleSpec? = null, account: AccountScope? = null): MutationReceipt<InterfaceRecord> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("slug", jsonValue(slug))
                 spec?.let { this.put("spec", jsonValue(it)) }
             }
-            MutationReceipt(database_, InterfaceRecord, database_.create(epoch_, "InterfaceRecord", values_.jsonText(), "{}"))
+            MutationReceipt(database_, InterfaceRecord, ordered_.create(epoch_, "InterfaceRecord", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(slug: String? = null, spec: GraphQLNullable<SampleSpec> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<InterfaceRecord> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(slug: String? = null, spec: GraphQLNullable<SampleSpec> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<InterfaceRecord> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             slug?.let { this.put("slug", jsonValue(it)) }
             this.put("spec", spec)
         }
-        MutationReceipt(database_, InterfaceRecord, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, InterfaceRecord, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<InterfaceRecord> = InterfaceRecord.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<InterfaceRecord> = InterfaceRecord.destroy(id, account)
@@ -902,22 +902,22 @@ data class KeywordRecord(
             built_ = built_.where(Condition.equal("class", jsonValue(`class`)))
             return built_
         }
-        suspend fun create(default: String, `class`: String, value: KeywordValue? = null, account: AccountScope? = null): MutationReceipt<KeywordRecord> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(default: String, `class`: String, value: KeywordValue? = null, account: AccountScope? = null): MutationReceipt<KeywordRecord> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("default", jsonValue(default))
                 this.put("class", jsonValue(`class`))
                 value?.let { this.put("value", jsonValue(it)) }
             }
-            MutationReceipt(database_, KeywordRecord, database_.create(epoch_, "KeywordRecord", values_.jsonText(), "{}"))
+            MutationReceipt(database_, KeywordRecord, ordered_.create(epoch_, "KeywordRecord", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(default: String? = null, `class`: String? = null, value: GraphQLNullable<KeywordValue> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<KeywordRecord> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(default: String? = null, `class`: String? = null, value: GraphQLNullable<KeywordValue> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<KeywordRecord> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             default?.let { this.put("default", jsonValue(it)) }
             `class`?.let { this.put("class", jsonValue(it)) }
             this.put("value", value)
         }
-        MutationReceipt(database_, KeywordRecord, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, KeywordRecord, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<KeywordRecord> = KeywordRecord.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<KeywordRecord> = KeywordRecord.destroy(id, account)
@@ -985,24 +985,24 @@ data class MediaMessage(
             var built_ = Query("MediaMessage", this, relation = "gifts_since", params = buildJsonObject { this.put("chatId", jsonValue(chatId)); this.put("afterSequence", jsonValue(afterSequence)) })
             return built_
         }
-        suspend fun create(chatId: String, kind: MediaMessageKind, mediaKind: MediaKindValue? = null, sequenceNumber: Long? = null, account: AccountScope? = null): MutationReceipt<MediaMessage> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(chatId: String, kind: MediaMessageKind, mediaKind: MediaKindValue? = null, sequenceNumber: Long? = null, account: AccountScope? = null): MutationReceipt<MediaMessage> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("chatId", jsonValue(chatId))
                 this.put("kind", jsonValue(kind))
                 mediaKind?.let { this.put("mediaKind", jsonValue(it)) }
                 sequenceNumber?.let { this.put("sequenceNumber", jsonValue(it)) }
             }
-            MutationReceipt(database_, MediaMessage, database_.create(epoch_, "MediaMessage", values_.jsonText(), "{}"))
+            MutationReceipt(database_, MediaMessage, ordered_.create(epoch_, "MediaMessage", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(chatId: String? = null, kind: MediaMessageKind? = null, mediaKind: GraphQLNullable<MediaKindValue> = GraphQLNullable.Omitted, sequenceNumber: GraphQLNullable<Long> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<MediaMessage> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(chatId: String? = null, kind: MediaMessageKind? = null, mediaKind: GraphQLNullable<MediaKindValue> = GraphQLNullable.Omitted, sequenceNumber: GraphQLNullable<Long> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<MediaMessage> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             chatId?.let { this.put("chatId", jsonValue(it)) }
             kind?.let { this.put("kind", jsonValue(it)) }
             this.put("mediaKind", mediaKind)
             this.put("sequenceNumber", sequenceNumber)
         }
-        MutationReceipt(database_, MediaMessage, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, MediaMessage, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<MediaMessage> = MediaMessage.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<MediaMessage> = MediaMessage.destroy(id, account)
@@ -1080,15 +1080,15 @@ data class Moment(
             account.upload(this, id, "upload_clip", UploadRequest(source, variables = buildJsonObject {  }))
         suspend fun stageUploadClip(account: AccountScope, source: String): StagedUpload<Moment> =
             account.stage(Moment, "upload_clip", UploadRequest(source))
-        suspend fun create(text: String? = null, media: JsonElement? = null, account: AccountScope? = null): MutationReceipt<Moment> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(text: String? = null, media: JsonElement? = null, account: AccountScope? = null): MutationReceipt<Moment> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 text?.let { this.put("text", jsonValue(it)) }
                 media?.let { this.put("media", jsonValue(it)) }
             }
-            MutationReceipt(database_, Moment, database_.create(epoch_, "Moment", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Moment, ordered_.create(epoch_, "Moment", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(uuid: String? = null, userId: GraphQLNullable<String> = GraphQLNullable.Omitted, text: GraphQLNullable<String> = GraphQLNullable.Omitted, likedByMe: Boolean? = null, media: JsonElement? = null, createdAt: String? = null, account: AccountScope? = null): MutationReceipt<Moment> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(uuid: String? = null, userId: GraphQLNullable<String> = GraphQLNullable.Omitted, text: GraphQLNullable<String> = GraphQLNullable.Omitted, likedByMe: Boolean? = null, media: JsonElement? = null, createdAt: String? = null, account: AccountScope? = null): MutationReceipt<Moment> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             uuid?.let { this.put("uuid", jsonValue(it)) }
             this.put("userId", userId)
@@ -1097,7 +1097,7 @@ data class Moment(
             media?.let { this.put("media", jsonValue(it)) }
             createdAt?.let { this.put("createdAt", jsonValue(it)) }
         }
-        MutationReceipt(database_, Moment, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Moment, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Moment> = Moment.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Moment> = Moment.destroy(id, account)
@@ -1163,7 +1163,7 @@ data class NestedSample(
         val replyTo = Column<NestedSample, RecordReplyNode?>("replyTo")
         fun where(condition: Condition) = Query("NestedSample", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("NestedSample", this, ids)
-        suspend fun create(phase: NestedSamplePhase? = null, value: NestedValue? = null, values: List<NestedValue>? = null, tree: NestedTree? = null, replyTo: RecordReplyNode? = null, account: AccountScope? = null): MutationReceipt<NestedSample> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(phase: NestedSamplePhase? = null, value: NestedValue? = null, values: List<NestedValue>? = null, tree: NestedTree? = null, replyTo: RecordReplyNode? = null, account: AccountScope? = null): MutationReceipt<NestedSample> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 phase?.let { this.put("phase", jsonValue(it)) }
                 value?.let { this.put("value", jsonValue(it)) }
@@ -1171,10 +1171,10 @@ data class NestedSample(
                 tree?.let { this.put("tree", jsonValue(it)) }
                 replyTo?.let { this.put("replyTo", jsonValue(it)) }
             }
-            MutationReceipt(database_, NestedSample, database_.create(epoch_, "NestedSample", values_.jsonText(), "{}"))
+            MutationReceipt(database_, NestedSample, ordered_.create(epoch_, "NestedSample", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(phase: GraphQLNullable<NestedSamplePhase> = GraphQLNullable.Omitted, value: GraphQLNullable<NestedValue> = GraphQLNullable.Omitted, values: List<NestedValue>? = null, tree: GraphQLNullable<NestedTree> = GraphQLNullable.Omitted, replyTo: GraphQLNullable<RecordReplyNode> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<NestedSample> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(phase: GraphQLNullable<NestedSamplePhase> = GraphQLNullable.Omitted, value: GraphQLNullable<NestedValue> = GraphQLNullable.Omitted, values: List<NestedValue>? = null, tree: GraphQLNullable<NestedTree> = GraphQLNullable.Omitted, replyTo: GraphQLNullable<RecordReplyNode> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<NestedSample> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             this.put("phase", phase)
             this.put("value", value)
@@ -1182,7 +1182,7 @@ data class NestedSample(
             this.put("tree", tree)
             this.put("replyTo", replyTo)
         }
-        MutationReceipt(database_, NestedSample, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, NestedSample, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<NestedSample> = NestedSample.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<NestedSample> = NestedSample.destroy(id, account)
@@ -1216,18 +1216,18 @@ data class NestedReference(
         val values = Column<NestedReference, List<NestedValue>>("values")
         fun where(condition: Condition) = Query("NestedReference", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("NestedReference", this, ids)
-        suspend fun create(values: List<NestedValue>? = null, account: AccountScope? = null): MutationReceipt<NestedReference> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(values: List<NestedValue>? = null, account: AccountScope? = null): MutationReceipt<NestedReference> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 values?.let { this.put("values", jsonValue(it)) }
             }
-            MutationReceipt(database_, NestedReference, database_.create(epoch_, "NestedReference", values_.jsonText(), "{}"))
+            MutationReceipt(database_, NestedReference, ordered_.create(epoch_, "NestedReference", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(values: List<NestedValue>? = null, account: AccountScope? = null): MutationReceipt<NestedReference> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(values: List<NestedValue>? = null, account: AccountScope? = null): MutationReceipt<NestedReference> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             values?.let { this.put("values", jsonValue(it)) }
         }
-        MutationReceipt(database_, NestedReference, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, NestedReference, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<NestedReference> = NestedReference.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<NestedReference> = NestedReference.destroy(id, account)
@@ -1269,20 +1269,20 @@ data class Notice(
             built_ = built_.order(Order("occurredAt", SortDirection.DESC))
             return built_
         }
-        suspend fun create(body: String, occurredAt: String, account: AccountScope? = null): MutationReceipt<Notice> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(body: String, occurredAt: String, account: AccountScope? = null): MutationReceipt<Notice> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("body", jsonValue(body))
                 this.put("occurredAt", jsonValue(occurredAt))
             }
-            MutationReceipt(database_, Notice, database_.create(epoch_, "Notice", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Notice, ordered_.create(epoch_, "Notice", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(body: String? = null, occurredAt: String? = null, account: AccountScope? = null): MutationReceipt<Notice> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(body: String? = null, occurredAt: String? = null, account: AccountScope? = null): MutationReceipt<Notice> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             body?.let { this.put("body", jsonValue(it)) }
             occurredAt?.let { this.put("occurredAt", jsonValue(it)) }
         }
-        MutationReceipt(database_, Notice, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Notice, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Notice> = Notice.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Notice> = Notice.destroy(id, account)
@@ -1327,22 +1327,22 @@ data class InteractionNotice(
             built_ = built_.order(Order("occurredAt", SortDirection.DESC))
             return built_
         }
-        suspend fun create(recordId: String, actorUserId: String, occurredAt: String, account: AccountScope? = null): MutationReceipt<InteractionNotice> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(recordId: String, actorUserId: String, occurredAt: String, account: AccountScope? = null): MutationReceipt<InteractionNotice> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("recordId", jsonValue(recordId))
                 this.put("actorUserId", jsonValue(actorUserId))
                 this.put("occurredAt", jsonValue(occurredAt))
             }
-            MutationReceipt(database_, InteractionNotice, database_.create(epoch_, "InteractionNotice", values_.jsonText(), "{}"))
+            MutationReceipt(database_, InteractionNotice, ordered_.create(epoch_, "InteractionNotice", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(recordId: String? = null, actorUserId: String? = null, occurredAt: String? = null, account: AccountScope? = null): MutationReceipt<InteractionNotice> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(recordId: String? = null, actorUserId: String? = null, occurredAt: String? = null, account: AccountScope? = null): MutationReceipt<InteractionNotice> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             recordId?.let { this.put("recordId", jsonValue(it)) }
             actorUserId?.let { this.put("actorUserId", jsonValue(it)) }
             occurredAt?.let { this.put("occurredAt", jsonValue(it)) }
         }
-        MutationReceipt(database_, InteractionNotice, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, InteractionNotice, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<InteractionNotice> = InteractionNotice.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<InteractionNotice> = InteractionNotice.destroy(id, account)
@@ -1390,24 +1390,24 @@ data class ChatAction(
             built_ = built_.where(Condition.equal("chatId", jsonValue(chatId)))
             return built_
         }
-        suspend fun create(chatId: String, userId: String, kind: String, active: Boolean, account: AccountScope? = null): MutationReceipt<ChatAction> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(chatId: String, userId: String, kind: String, active: Boolean, account: AccountScope? = null): MutationReceipt<ChatAction> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("chatId", jsonValue(chatId))
                 this.put("userId", jsonValue(userId))
                 this.put("kind", jsonValue(kind))
                 this.put("active", jsonValue(active))
             }
-            MutationReceipt(database_, ChatAction, database_.create(epoch_, "ChatAction", values_.jsonText(), "{}"))
+            MutationReceipt(database_, ChatAction, ordered_.create(epoch_, "ChatAction", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(chatId: String? = null, userId: String? = null, kind: String? = null, active: Boolean? = null, account: AccountScope? = null): MutationReceipt<ChatAction> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(chatId: String? = null, userId: String? = null, kind: String? = null, active: Boolean? = null, account: AccountScope? = null): MutationReceipt<ChatAction> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             chatId?.let { this.put("chatId", jsonValue(it)) }
             userId?.let { this.put("userId", jsonValue(it)) }
             kind?.let { this.put("kind", jsonValue(it)) }
             active?.let { this.put("active", jsonValue(it)) }
         }
-        MutationReceipt(database_, ChatAction, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, ChatAction, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<ChatAction> = ChatAction.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<ChatAction> = ChatAction.destroy(id, account)
@@ -1455,24 +1455,24 @@ data class ChatActivityNotice(
             built_ = built_.order(Order("kind", SortDirection.ASC))
             return built_
         }
-        suspend fun create(chatId: String, userId: String, kind: String, active: Boolean, account: AccountScope? = null): MutationReceipt<ChatActivityNotice> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(chatId: String, userId: String, kind: String, active: Boolean, account: AccountScope? = null): MutationReceipt<ChatActivityNotice> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("chatId", jsonValue(chatId))
                 this.put("userId", jsonValue(userId))
                 this.put("kind", jsonValue(kind))
                 this.put("active", jsonValue(active))
             }
-            MutationReceipt(database_, ChatActivityNotice, database_.create(epoch_, "ChatActivityNotice", values_.jsonText(), "{}"))
+            MutationReceipt(database_, ChatActivityNotice, ordered_.create(epoch_, "ChatActivityNotice", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(chatId: String? = null, userId: String? = null, kind: String? = null, active: Boolean? = null, account: AccountScope? = null): MutationReceipt<ChatActivityNotice> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(chatId: String? = null, userId: String? = null, kind: String? = null, active: Boolean? = null, account: AccountScope? = null): MutationReceipt<ChatActivityNotice> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             chatId?.let { this.put("chatId", jsonValue(it)) }
             userId?.let { this.put("userId", jsonValue(it)) }
             kind?.let { this.put("kind", jsonValue(it)) }
             active?.let { this.put("active", jsonValue(it)) }
         }
-        MutationReceipt(database_, ChatActivityNotice, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, ChatActivityNotice, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<ChatActivityNotice> = ChatActivityNotice.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<ChatActivityNotice> = ChatActivityNotice.destroy(id, account)
@@ -1526,20 +1526,20 @@ data class Presence(
             var built_ = Query("Presence", this, relation = "history", params = buildJsonObject { this.put("presenceId", jsonValue(presenceId)) })
             return built_
         }
-        suspend fun create(userId: String, room: String, account: AccountScope? = null): MutationReceipt<Presence> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(userId: String, room: String, account: AccountScope? = null): MutationReceipt<Presence> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("userId", jsonValue(userId))
                 this.put("room", jsonValue(room))
             }
-            MutationReceipt(database_, Presence, database_.create(epoch_, "Presence", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Presence, ordered_.create(epoch_, "Presence", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(userId: String? = null, room: String? = null, account: AccountScope? = null): MutationReceipt<Presence> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(userId: String? = null, room: String? = null, account: AccountScope? = null): MutationReceipt<Presence> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             userId?.let { this.put("userId", jsonValue(it)) }
             room?.let { this.put("room", jsonValue(it)) }
         }
-        MutationReceipt(database_, Presence, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Presence, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Presence> = Presence.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Presence> = Presence.destroy(id, account)
@@ -1624,7 +1624,7 @@ data class Record(
             var built_ = Query("Record", this, relation = "recent_media", params = buildJsonObject { this.put("containerId", jsonValue(containerId)) })
             return built_
         }
-        suspend fun create(containerId: String, authorId: String? = null, regionId: String? = null, text: String, attachedUserId: String? = null, signedId: String? = null, account: AccountScope? = null): MutationReceipt<Record> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(containerId: String, authorId: String? = null, regionId: String? = null, text: String, attachedUserId: String? = null, signedId: String? = null, account: AccountScope? = null): MutationReceipt<Record> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("containerId", jsonValue(containerId))
                 authorId?.let { this.put("authorId", jsonValue(it)) }
@@ -1635,10 +1635,10 @@ data class Record(
                 attachedUserId?.let { this.put("attachedUserId", jsonValue(it)) }
                 signedId?.let { this.put("signedId", jsonValue(it)) }
             }
-            MutationReceipt(database_, Record, database_.create(epoch_, "Record", values_.jsonText(), args_.jsonText()))
+            MutationReceipt(database_, Record, ordered_.create(epoch_, "Record", values_.jsonText(), args_.jsonText()))
         }
     }
-    suspend fun update(containerId: String? = null, authorId: String? = null, regionId: GraphQLNullable<String> = GraphQLNullable.Omitted, text: String? = null, createdAt: String? = null, sequenceNumber: GraphQLNullable<Long> = GraphQLNullable.Omitted, reactions: List<RecordReactionNode>? = null, attachment: GraphQLNullable<RecordAttachment> = GraphQLNullable.Omitted, media: GraphQLNullable<RecordMedia> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<Record> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(containerId: String? = null, authorId: String? = null, regionId: GraphQLNullable<String> = GraphQLNullable.Omitted, text: String? = null, createdAt: String? = null, sequenceNumber: GraphQLNullable<Long> = GraphQLNullable.Omitted, reactions: List<RecordReactionNode>? = null, attachment: GraphQLNullable<RecordAttachment> = GraphQLNullable.Omitted, media: GraphQLNullable<RecordMedia> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<Record> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             containerId?.let { this.put("containerId", jsonValue(it)) }
             authorId?.let { this.put("authorId", jsonValue(it)) }
@@ -1650,7 +1650,7 @@ data class Record(
             this.put("attachment", attachment)
             this.put("media", media)
         }
-        MutationReceipt(database_, Record, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Record, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Record> = Record.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Record> = Record.destroy(id, account)
@@ -1701,18 +1701,18 @@ data class CurrentUser(
             account.upload(this, "singleton", "update_photo", UploadRequest(source, variables = buildJsonObject { if (keepOld != null) this.put("keepOld", jsonValue(keepOld)); if (skipAssign != null) this.put("skipAssign", jsonValue(skipAssign)) }))
         suspend fun stageUpdatePhoto(account: AccountScope, source: String): StagedUpload<CurrentUser> =
             account.stage(CurrentUser, "update_photo", UploadRequest(source))
-        suspend fun create(name: String, account: AccountScope? = null): MutationReceipt<CurrentUser> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(name: String, account: AccountScope? = null): MutationReceipt<CurrentUser> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("name", jsonValue(name))
             }
-            MutationReceipt(database_, CurrentUser, database_.create(epoch_, "CurrentUser", values_.jsonText(), "{}"))
+            MutationReceipt(database_, CurrentUser, ordered_.create(epoch_, "CurrentUser", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(name: String? = null, account: AccountScope? = null): MutationReceipt<CurrentUser> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(name: String? = null, account: AccountScope? = null): MutationReceipt<CurrentUser> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             name?.let { this.put("name", jsonValue(it)) }
         }
-        MutationReceipt(database_, CurrentUser, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, CurrentUser, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<CurrentUser> = CurrentUser.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<CurrentUser> = CurrentUser.destroy(id, account)
@@ -1770,18 +1770,18 @@ data class CurrentRegion(
             var built_ = Query("CurrentRegion", this, relation = "current", params = buildJsonObject {  })
             return built_
         }
-        suspend fun create(name: String, account: AccountScope? = null): MutationReceipt<CurrentRegion> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(name: String, account: AccountScope? = null): MutationReceipt<CurrentRegion> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("name", jsonValue(name))
             }
-            MutationReceipt(database_, CurrentRegion, database_.create(epoch_, "CurrentRegion", values_.jsonText(), "{}"))
+            MutationReceipt(database_, CurrentRegion, ordered_.create(epoch_, "CurrentRegion", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(name: String? = null, account: AccountScope? = null): MutationReceipt<CurrentRegion> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(name: String? = null, account: AccountScope? = null): MutationReceipt<CurrentRegion> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             name?.let { this.put("name", jsonValue(it)) }
         }
-        MutationReceipt(database_, CurrentRegion, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, CurrentRegion, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<CurrentRegion> = CurrentRegion.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<CurrentRegion> = CurrentRegion.destroy(id, account)
@@ -1833,7 +1833,7 @@ data class ScalarProbe(
         val blob = Column<ScalarProbe, JsonElement?>("blob")
         fun where(condition: Condition) = Query("ScalarProbe", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("ScalarProbe", this, ids)
-        suspend fun create(text: String? = null, count: Long? = null, ratio: Double? = null, flag: Boolean? = null, at: String? = null, blob: JsonElement? = null, account: AccountScope? = null): MutationReceipt<ScalarProbe> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(text: String? = null, count: Long? = null, ratio: Double? = null, flag: Boolean? = null, at: String? = null, blob: JsonElement? = null, account: AccountScope? = null): MutationReceipt<ScalarProbe> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 text?.let { this.put("text", jsonValue(it)) }
                 count?.let { this.put("count", jsonValue(it)) }
@@ -1842,10 +1842,10 @@ data class ScalarProbe(
                 at?.let { this.put("at", jsonValue(it)) }
                 blob?.let { this.put("blob", jsonValue(it)) }
             }
-            MutationReceipt(database_, ScalarProbe, database_.create(epoch_, "ScalarProbe", values_.jsonText(), "{}"))
+            MutationReceipt(database_, ScalarProbe, ordered_.create(epoch_, "ScalarProbe", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(text: GraphQLNullable<String> = GraphQLNullable.Omitted, count: GraphQLNullable<Long> = GraphQLNullable.Omitted, ratio: GraphQLNullable<Double> = GraphQLNullable.Omitted, flag: GraphQLNullable<Boolean> = GraphQLNullable.Omitted, at: GraphQLNullable<String> = GraphQLNullable.Omitted, blob: GraphQLNullable<JsonElement> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<ScalarProbe> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(text: GraphQLNullable<String> = GraphQLNullable.Omitted, count: GraphQLNullable<Long> = GraphQLNullable.Omitted, ratio: GraphQLNullable<Double> = GraphQLNullable.Omitted, flag: GraphQLNullable<Boolean> = GraphQLNullable.Omitted, at: GraphQLNullable<String> = GraphQLNullable.Omitted, blob: GraphQLNullable<JsonElement> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<ScalarProbe> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             this.put("text", text)
             this.put("count", count)
@@ -1854,7 +1854,7 @@ data class ScalarProbe(
             this.put("at", at)
             this.put("blob", blob)
         }
-        MutationReceipt(database_, ScalarProbe, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, ScalarProbe, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<ScalarProbe> = ScalarProbe.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<ScalarProbe> = ScalarProbe.destroy(id, account)
@@ -1898,24 +1898,24 @@ data class CustomScreen(
         fun where(condition: Condition) = Query("CustomScreen", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("CustomScreen", this, ids)
         suspend fun node(id: String, force: Boolean = false, account: AccountScope? = null): CustomScreen? = onAccount(account) { database, epoch -> database.node(epoch, "CustomScreen", "node", id, force)?.let { CustomScreen.read(it) } }
-        suspend fun create(slug: String, version: Long, requires: ScreenRequires, spec: ScreenSpec? = null, account: AccountScope? = null): MutationReceipt<CustomScreen> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(slug: String, version: Long, requires: ScreenRequires, spec: ScreenSpec? = null, account: AccountScope? = null): MutationReceipt<CustomScreen> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("slug", jsonValue(slug))
                 this.put("version", jsonValue(version))
                 this.put("requires", jsonValue(requires))
                 spec?.let { this.put("spec", jsonValue(it)) }
             }
-            MutationReceipt(database_, CustomScreen, database_.create(epoch_, "CustomScreen", values_.jsonText(), "{}"))
+            MutationReceipt(database_, CustomScreen, ordered_.create(epoch_, "CustomScreen", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(slug: String? = null, version: Long? = null, requires: ScreenRequires? = null, spec: GraphQLNullable<ScreenSpec> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<CustomScreen> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(slug: String? = null, version: Long? = null, requires: ScreenRequires? = null, spec: GraphQLNullable<ScreenSpec> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<CustomScreen> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             slug?.let { this.put("slug", jsonValue(it)) }
             version?.let { this.put("version", jsonValue(it)) }
             requires?.let { this.put("requires", jsonValue(it)) }
             this.put("spec", spec)
         }
-        MutationReceipt(database_, CustomScreen, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, CustomScreen, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<CustomScreen> = CustomScreen.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<CustomScreen> = CustomScreen.destroy(id, account)
@@ -1949,18 +1949,18 @@ data class StorageRow(
         val record = Column<StorageRow, String>("record")
         fun where(condition: Condition) = Query("StorageRow", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("StorageRow", this, ids)
-        suspend fun create(record: String, account: AccountScope? = null): MutationReceipt<StorageRow> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(record: String, account: AccountScope? = null): MutationReceipt<StorageRow> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("record", jsonValue(record))
             }
-            MutationReceipt(database_, StorageRow, database_.create(epoch_, "StorageRow", values_.jsonText(), "{}"))
+            MutationReceipt(database_, StorageRow, ordered_.create(epoch_, "StorageRow", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(record: String? = null, account: AccountScope? = null): MutationReceipt<StorageRow> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(record: String? = null, account: AccountScope? = null): MutationReceipt<StorageRow> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             record?.let { this.put("record", jsonValue(it)) }
         }
-        MutationReceipt(database_, StorageRow, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, StorageRow, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<StorageRow> = StorageRow.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<StorageRow> = StorageRow.destroy(id, account)
@@ -1998,18 +1998,18 @@ data class Tail(
             var built_ = Query("Tail", this, relation = "since", params = buildJsonObject { this.put("containerId", jsonValue(containerId)); this.put("afterSequence", jsonValue(afterSequence)); this.put("pinned", jsonValue(pinned)) })
             return built_
         }
-        suspend fun create(text: String, account: AccountScope? = null): MutationReceipt<Tail> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(text: String, account: AccountScope? = null): MutationReceipt<Tail> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("text", jsonValue(text))
             }
-            MutationReceipt(database_, Tail, database_.create(epoch_, "Tail", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Tail, ordered_.create(epoch_, "Tail", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(text: String? = null, account: AccountScope? = null): MutationReceipt<Tail> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(text: String? = null, account: AccountScope? = null): MutationReceipt<Tail> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             text?.let { this.put("text", jsonValue(it)) }
         }
-        MutationReceipt(database_, Tail, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Tail, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Tail> = Tail.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Tail> = Tail.destroy(id, account)
@@ -2049,22 +2049,22 @@ data class UnionSample(
         val props = Column<UnionSample, MomentWidgetItemPropsKind>("props")
         fun where(condition: Condition) = Query("UnionSample", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("UnionSample", this, ids)
-        suspend fun create(label: String? = null, attachment: RecordAttachment? = null, props: MomentWidgetItemProps? = null, account: AccountScope? = null): MutationReceipt<UnionSample> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(label: String? = null, attachment: RecordAttachment? = null, props: MomentWidgetItemProps? = null, account: AccountScope? = null): MutationReceipt<UnionSample> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 label?.let { this.put("label", jsonValue(it)) }
                 attachment?.let { this.put("attachment", jsonValue(it)) }
                 props?.let { this.put("props", jsonValue(it)) }
             }
-            MutationReceipt(database_, UnionSample, database_.create(epoch_, "UnionSample", values_.jsonText(), "{}"))
+            MutationReceipt(database_, UnionSample, ordered_.create(epoch_, "UnionSample", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(label: GraphQLNullable<String> = GraphQLNullable.Omitted, attachment: GraphQLNullable<RecordAttachment> = GraphQLNullable.Omitted, props: GraphQLNullable<MomentWidgetItemProps> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<UnionSample> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(label: GraphQLNullable<String> = GraphQLNullable.Omitted, attachment: GraphQLNullable<RecordAttachment> = GraphQLNullable.Omitted, props: GraphQLNullable<MomentWidgetItemProps> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<UnionSample> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             this.put("label", label)
             this.put("attachment", attachment)
             this.put("props", props)
         }
-        MutationReceipt(database_, UnionSample, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, UnionSample, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<UnionSample> = UnionSample.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<UnionSample> = UnionSample.destroy(id, account)
@@ -2120,20 +2120,20 @@ data class User(
             var built_ = Query("User", this, relation = "complete_members", params = buildJsonObject { this.put("containerId", jsonValue(containerId)) })
             return built_
         }
-        suspend fun create(name: String, birthday: String? = null, account: AccountScope? = null): MutationReceipt<User> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(name: String, birthday: String? = null, account: AccountScope? = null): MutationReceipt<User> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("name", jsonValue(name))
                 birthday?.let { this.put("birthday", jsonValue(it)) }
             }
-            MutationReceipt(database_, User, database_.create(epoch_, "User", values_.jsonText(), "{}"))
+            MutationReceipt(database_, User, ordered_.create(epoch_, "User", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(name: String? = null, birthday: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<User> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(name: String? = null, birthday: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<User> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             name?.let { this.put("name", jsonValue(it)) }
             this.put("birthday", birthday)
         }
-        MutationReceipt(database_, User, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, User, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<User> = User.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<User> = User.destroy(id, account)
@@ -2179,22 +2179,22 @@ data class Vibe(
         val kind = Column<Vibe, VibeKind>("kind")
         fun where(condition: Condition) = Query("Vibe", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Vibe", this, ids)
-        suspend fun create(momentId: String, userId: String, kind: VibeKind, account: AccountScope? = null): MutationReceipt<Vibe> = onAccount(account) { database_, epoch_ ->
+        suspend fun create(momentId: String, userId: String, kind: VibeKind, account: AccountScope? = null): MutationReceipt<Vibe> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("momentId", jsonValue(momentId))
                 this.put("userId", jsonValue(userId))
                 this.put("kind", jsonValue(kind))
             }
-            MutationReceipt(database_, Vibe, database_.create(epoch_, "Vibe", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Vibe, ordered_.create(epoch_, "Vibe", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(momentId: String? = null, userId: String? = null, kind: VibeKind? = null, account: AccountScope? = null): MutationReceipt<Vibe> = onAccount(account) { database_, epoch_ ->
+    suspend fun update(momentId: String? = null, userId: String? = null, kind: VibeKind? = null, account: AccountScope? = null): MutationReceipt<Vibe> = onAccountOf(account) { database_, ordered_, epoch_ ->
         val values_ = buildJsonObject {
             momentId?.let { this.put("momentId", jsonValue(it)) }
             userId?.let { this.put("userId", jsonValue(it)) }
             kind?.let { this.put("kind", jsonValue(it)) }
         }
-        MutationReceipt(database_, Vibe, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Vibe, ordered_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
     suspend fun retry(action: String?, source: UploadSource? = null, account: AccountScope? = null): MutationReceipt<Vibe> = Vibe.retry(id, action, source, account)
     suspend fun destroy(account: AccountScope? = null): MutationReceipt<Vibe> = Vibe.destroy(id, account)
