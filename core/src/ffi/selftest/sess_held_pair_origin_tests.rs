@@ -60,6 +60,7 @@ async fn image_of(origin: Holder, directory: &Path, stand: &Stand, clock: &Arc<T
             presign.dropped().await;
             bound(database.discard(epoch, "Moment".into(), id, Some("upload_clip".into()))).await.unwrap();
             presign.release();
+            crate::ffi::owners_drained(&database).await.unwrap();
             rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
             let owed = directory.join("owed.sqlite");
             copy_image(&live, &owed);
@@ -70,6 +71,7 @@ async fn image_of(origin: Holder, directory: &Path, stand: &Stand, clock: &Arc<T
             abort.entered().await;
             let epoch = reopened.session_epoch();
             bound(reopened.send(plain("Moment", r#"{"text":"B"}"#, epoch))).await.unwrap();
+            crate::ffi::owners_drained(&reopened).await.unwrap();
             rusqlite::Connection::open(&owed).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
             let image = directory.join("image.sqlite");
             copy_image(&owed, &image);
@@ -78,11 +80,13 @@ async fn image_of(origin: Holder, directory: &Path, stand: &Stand, clock: &Arc<T
         }
         Holder::ReleasedPair => {
             for _ in 0..40 { stand.script.enqueue("CreateMoment", Answer::Lost); }
-            stand.script.data("CreateMoment", REFUSED);
+            let released = stand.script.hold("CreateMoment", REFUSED);
             bound(database.send(plain("Moment", r#"{"text":"A"}"#, epoch))).await.unwrap();
             until_failed(&database, clock).await;
+            released.entered().await;
         }
     }
+    crate::ffi::owners_drained(&database).await.unwrap();
     rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
     let image = directory.join("image.sqlite");
     copy_image(&live, &image);
