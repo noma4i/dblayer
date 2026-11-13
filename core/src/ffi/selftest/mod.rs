@@ -60,6 +60,7 @@ mod upload_answer_tests;
 mod upload_refusal_tests;
 mod upload_prepare_tests;
 mod upload_progress_tests;
+mod upload_decisions_tests;
 mod upload_expiry_tests;
 mod upload_init_release_tests;
 mod writes_quiet_tests;
