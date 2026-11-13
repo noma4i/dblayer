@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Rebuild the server cache on the first open: queued operations, session and uploads stay.
+- Run the body of every library call on library threads, never on the caller thread.
+- Order calls by awaiting the previous call: calls started without waiting have no order.
+- Return the network signal of the platform without waiting for the answer.
+
+### Fixed
+
+- Finish an upload that a restart cut during its preparation instead of failing it.
+- Replace a temporary row by its `match_by` key for a server row from any source.
+- Reread a row shown through `ref:` or a relation after a `changed_by` event.
+- Reread the child of a shown parent after its event and recompute the `sets:` field.
+- Reread a row with the `node: :one` scope that `via` names.
+
+### Removed
+
+- Remove `DB.handleBackgroundEvents` and the PUT in a background session on iOS.
+
 ## 6.32.1 - 2026-11-13
 
 ### Changed

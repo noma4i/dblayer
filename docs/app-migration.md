@@ -165,16 +165,6 @@ val removed = staged.discard()
 
 ## 11. After 6.32.0
 
-- `DB.handleBackgroundEvents(identifier:completion:)` stays in the API and always returns `false`: the PUT of a file on iOS runs in the app, in parts. Remove the call from `application(_:handleEventsForBackgroundURLSession:completionHandler:)` if you added it for 6.32.0, and keep the `beginBackgroundTask` around uploads. Android changes nothing. See [upload with the app in the background](files.md#upload-with-the-app-in-the-background).
-
-```swift
-// iOS: remove DB.handleBackgroundEvents, nothing replaces it.
-```
-
-```kotlin
-// Android: no change.
-```
-
 - An event `changed_by ..., via: :node` rereads the row that a list, a counter or a local read shows. Remove a poll, a separate reader of the row and a `via: :observed` that you added only to refresh the tiles of a list.
 
 ```swift
@@ -202,3 +192,27 @@ val receipt = staged.commit(values, variables)
 - The first open after the update rebuilds the cache of the server models because the cache format changed. The app sees the server data load again once. Local models, queued operations, the session and uploads stay. The app changes nothing.
 - A call or a load made before the first network value of the system waits for it instead of failing with `Offline`. A call that waits 30 seconds for that value fails with a network error, not with `Offline`. Remove a retry on `Offline` at start. The app changes nothing else.
 - `discard` and `cancelUpload` of a failed upload that is being replaced no longer throw `InFlight`: remove a repeat after it. The command applies to the upload the key keeps: the new one when the replacement is confirmed, the failed one when it is refused.
+
+## 12. After 6.32.1
+
+- The PUT in a background session on iOS is removed with its entry point of the library. The PUT of a file runs in the app, in parts. Remove the call of the library that you added to `application(_:handleEventsForBackgroundURLSession:completionHandler:)`: the build fails while it stays. Nothing replaces it, and the app adds no `beginBackgroundTask` of its own around uploads. Android changes nothing. See [upload with the app in the background](files.md#upload-with-the-app-in-the-background).
+
+```swift
+// iOS: remove the call of the library in the background session handler, nothing replaces it.
+```
+
+```kotlin
+// Android: no change.
+```
+
+- An event `changed_by ..., via: :node` rereads a row that a read of another model shows through `ref:` or a relation, and the child of a shown parent with a `sets:` field. The parent recomputes the field. A model with several `node: :one` scopes rereads the row with the scope that `via` names. Remove a poll or a reader of the row that you added for it.
+
+```swift
+// no change: the read shows the new value of the row after the event
+```
+
+```kotlin
+// no change: the read shows the new value of the row after the event
+```
+
+- The first open after the update rebuilds the server cache. Queued operations, the session and uploads stay.

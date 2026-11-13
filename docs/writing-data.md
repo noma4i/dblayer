@@ -89,6 +89,20 @@ A parameter goes into the queued change and is never stored in the row, so no re
 
 Every record carries its sync state (`pending`, `sending`, `synced`, `failed`), so you can show that a new moment is still being sent. See [sync state](sync-state.md).
 
+### Order of calls
+
+A call runs its body on library threads. The order of two writes is the order of their calls only when the second call starts after the first returned its receipt. Two calls started without waiting for each other have no order. Await the first call, or send the writes that need an order as one batch call (`uploadBatch`, a list of operations).
+
+```swift
+let first = try await Moment.create(text: "one", media: nil, in: scope)
+let second = try await Moment.create(text: "two", media: nil, in: scope)
+```
+
+```kotlin
+val first = Moment.create(text = "one", media = null, account = scope)
+val second = Moment.create(text = "two", media = null, account = scope)
+```
+
 ## Temporary ids
 
 A created row joins the front of a loaded remote scope in two cases. A scope without parameters takes it when it declares `insert_on: [:create]` (`scope :owned, insert_on: [:create] do ... end`). A scope that lists every row of its parameters takes it too: each parameter binds a value of the row through `where` or `membership`, and constant query variables come with a row rule. A scope with constant variables and no row rule does not take a created row, and an unloaded scope is not created. Other scopes take the row when one of their pages lands, or, for a column filter, when a later write of the row makes it match. A created row has a temporary id until the server answers. When the response arrives, the row's id is replaced in one commit. Readers receive the swap as a `rewrite` edit that carries the `temporary` id, so the row does not disappear and appear again. Rows and queued changes that point at the temporary id through a declared `belongs_to`, `has_many` or `has_one` are rewritten in the same commit, so a child created before its parent is sent carries the real parent id.
@@ -153,7 +167,7 @@ val receipt = Note.create(groupId = group.id, body = "hi", account = scope)
 val noteId = receipt.confirmed().value?.id
 ```
 
-A server row can reach the device before the answer of the mutation that created it (an event of the sent message). Add `match_by "groupId", "userId", "kind", "body"` to the `create` operation, or to a custom operation, to name the attributes that identify one sent record, dotted paths such as `"media.blobId"` read into objects. A new server row replaces the temporary row of a sent, not yet answered create when every named field is non-empty and equal on both. The swap is the same as for the answer: readers get a `rewrite` edit with the `temporary` id, referencing rows and queued changes move to the real id, and the answer that follows finds nothing left to swap. A row that matches no sent record, or more than one, is stored as a new row.
+A server row can reach the device before the answer of the mutation that created it (an event of the sent message). Add `match_by "groupId", "userId", "kind", "body"` to the `create` operation, or to a custom operation, to name the attributes that identify one sent record, dotted paths such as `"media.blobId"` read into objects. A new server row replaces the temporary row of a sent, not yet answered create when every named field is non-empty and equal on both. The row can come from an event, a window page, a `node` read or an answer. The attributes of the key must be in every selection of the model, also in a selection nested in an event of another model: a row without them is stored without a swap. The swap is the same as for the answer: readers get a `rewrite` edit with the `temporary` id, referencing rows and queued changes move to the real id, and the answer that follows finds nothing left to swap. A row that matches no sent record, or more than one, is stored as a new row.
 
 ## Rolling back
 

@@ -81,6 +81,7 @@ val photo = UploadRequest(path, prepare = Prepare.image(edit, quality = 0.8))
 - `maxBytes` is the largest file that may go to the network. It applies to the prepared file, or to the source when it goes as it is. A larger file fails the upload before any request with the reason `too_large`. `maxBytes` of 0 is refused with `Invalid`. A source without `prepare` has no limit: the app checks that file before the call.
 - A failed preparation gives the error kind `prepare_failed`. The `reason` field of the error names the cause: `device_cannot_decode` for a video the device cannot decode, `too_large` for a file above `maxBytes`, `failed` for any other failure. With `onCannotDecode` set to `uploadSource` a video the device cannot decode goes as it is. `retry(action)` prepares the source again.
 - One preparation runs at a time, in the order of the operations. It does not need the network.
+- A restart during the preparation starts the step again from the copy of the source. The files of the earlier attempt never remove the new result, and the upload does not fail for them.
 - `cancelUpload(action)` stops a running preparation and removes its file.
 - An `UploadSource` of a [deferred source](#deferred-source) takes `prepare` too.
 
@@ -195,7 +196,7 @@ The background job keeps the epoch of the accepted upload. A late refusal of the
 
 ### Upload with the app in the background
 
-On iOS a file goes up in the app, in parts, as on Android: a file above the part size goes in several PUTs, an interrupted PUT sends again from the first part the server has not confirmed, and the parts the server has are not sent again. The PUT in a background `URLSession` is off. `DB.handleBackgroundEvents(identifier:completion:)` stays in the API and does nothing: it returns `false` and does not take the completion, so the app keeps the completion of its own sessions. The app adds no call and changes no `beginBackgroundTask` around uploads.
+On iOS a file goes up in the app, in parts, as on Android: a file above the part size goes in several PUTs, an interrupted PUT sends again from the first part the server has not confirmed, and the parts the server has are not sent again. The app adds no call and changes no `beginBackgroundTask` around uploads.
 
 ### Create with an upload
 
