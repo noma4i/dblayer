@@ -263,8 +263,9 @@ struct Gate {
 
 impl Gate {
     fn arm(&self) {
-        if self.state.compare_exchange(IDLE, HELD, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
-            self.router.inflight.add();
+        self.router.inflight.add();
+        if self.state.compare_exchange(IDLE, HELD, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+            self.router.inflight.done(1);
         }
     }
 

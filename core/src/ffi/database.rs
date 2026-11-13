@@ -83,6 +83,8 @@ pub(super) struct Scope { life: Option<Arc<crate::owners::life::Life>>, place: O
 impl Scope {
     /// A call that counts in no barrier and has no place.
     pub(super) fn root() -> Self { Self { life: None, place: None, order: None } }
+    /// A wait of a call of the database: it counts in the barrier of the owners while it can run and takes no place in the order.
+    pub(super) fn counted(life: Arc<crate::owners::life::Life>) -> Self { Self { life: Some(life), place: None, order: None } }
     /// A call that takes its own place in the order of the database at the moment of the call.
     pub(super) fn placed(life: Option<Arc<crate::owners::life::Life>>, order: &Arc<crate::runtime::CallOrder>) -> Self { Self { life, place: Some(order.take()), order: Some(order.clone()) } }
 }
