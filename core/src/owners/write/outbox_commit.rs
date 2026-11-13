@@ -31,6 +31,7 @@ impl OutboxState {
             Batch::Operation { op_id, kind } => {
                 if let Some(operation) = self.ops.get_mut(&op_id) { operation.storage_refusals = 0; }
                 self.operation_committed(now, op_id, kind, (committed.revision, committed.shown), fx);
+                self.drain(now, fx);
             }
         }
     }
@@ -79,7 +80,6 @@ impl OutboxState {
                     self.start_sending(op_id, fx);
                 } else if let Some(operation) = self.ops.get_mut(&op_id) {
                     operation.stage = Stage::Queued;
-                    self.try_start(now, op_id, fx);
                 }
             }
             (CommitKind::Attempt, Stage::PersistingAttempt) => {
@@ -183,7 +183,6 @@ impl OutboxState {
             }
             _ => {}
         }
-        self.drain(now, fx);
     }
 
     /// The `destroy` that cancelled an unsent `create` ends with the rollback of that `create`.
@@ -255,7 +254,10 @@ impl OutboxState {
                     self.maybe_drained(fx);
                 }
             }
-            Batch::Operation { op_id, kind } => self.operation_rejected(now, op_id, kind, rejected.reason, fx),
+            Batch::Operation { op_id, kind } => {
+                self.operation_rejected(now, op_id, kind, rejected.reason, fx);
+                self.drain(now, fx);
+            }
         }
     }
 
@@ -357,6 +359,7 @@ impl OutboxState {
                         Self::reply(fx, reply, OutboxAnswer::Err(Fault::of_reject(reason.clone())));
                     }
                     self.fail_with(op_id, format!("Internal(Invalid): {detail}"), fx);
+                    self.drain(now, fx);
                 }
             },
         }

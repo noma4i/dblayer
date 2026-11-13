@@ -455,6 +455,7 @@ impl OutboxState {
         Self::resolve_operation(&self.aliases, &mut op);
         self.add_operation(op_id, op, Stage::Submitting, created_at);
         self.operation_committed(now, op_id, CommitKind::Intent, (0, Vec::new()), fx);
+        self.drain(now, fx);
     }
 
     pub(super) fn online_changed(&mut self, now: u64, on: bool, fx: &mut Effects<Outbox>) {

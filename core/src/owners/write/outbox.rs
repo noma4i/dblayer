@@ -271,7 +271,16 @@ impl OutboxState {
     /// Session accepts only the `Mutate` of the held pair while it is held: every other operation waits for its owner.
     fn pair_held_by_other(&self, op_id: OpId) -> bool { self.ops.values().any(|other| other.op_id != op_id && other.pending_owned && !matches!(other.stage, Stage::Done | Stage::Failed)) || self.waiting.iter().any(|(waiting, (item, _))| *waiting != op_id && item.pending.is_some()) }
 
-    pub(super) fn goes_out(&self, op_id: OpId) -> bool { self.is_online() && !self.row_busy(op_id) && !self.pair_held_by_other(op_id) && self.slots_taken() < DRAIN_LIMIT }
+    /// An operation with a smaller `seq` still writes its intent (or repeats it after `StaleGeneration`): the order of `Submit` is the order out.
+    fn earlier_submitting(&self, op_id: OpId) -> bool {
+        let Some(sequence) = self.ops.get(&op_id).map(|operation| operation.sequence) else { return false };
+        self.ops.values().any(|other| other.stage == Stage::Submitting && other.sequence < sequence)
+    }
+
+    /// The row, the held pair or an earlier `Submit` keeps the operation back, whatever the slots say.
+    pub(super) fn waits_for_turn(&self, op_id: OpId) -> bool { self.row_busy(op_id) || self.pair_held_by_other(op_id) || self.earlier_submitting(op_id) }
+
+    pub(super) fn goes_out(&self, op_id: OpId) -> bool { self.is_online() && !self.waits_for_turn(op_id) && self.slots_taken() < DRAIN_LIMIT }
 
     pub(super) fn expired(&self, now: u64, op_id: OpId) -> bool {
         let Some(operation) = self.ops.get(&op_id) else { return false };
@@ -591,7 +600,7 @@ impl OutboxState {
             return;
         }
         let ended = self.awaits_ended_create(operation);
-        if !ended && (self.row_busy(op_id) || self.pair_held_by_other(op_id)) {
+        if !ended && self.waits_for_turn(op_id) {
             return;
         }
         if ended || self.expired(now, op_id) {
