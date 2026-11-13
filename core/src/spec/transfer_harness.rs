@@ -709,3 +709,64 @@ pub fn refuses_calls(twin: &mut Twin, key: &str) {
 pub fn storage() -> RejectReason { RejectReason::Storage("disk".into()) }
 
 pub fn refusal() -> String { crate::owners::write::failure::of_graphql("refused".into(), None) }
+
+/// What the executor of the owner has still to do: the delete of a file is a task of its own, the read of the result and the swap of a file happen when they are picked.
+#[derive(Clone, Debug)]
+pub(super) enum Pending {
+    Input(TransferInput),
+    Delete(String),
+    Measure { transfer_id: TransferId, attempt_id: u64 },
+    Promote { transfer_id: TransferId },
+    Written { transfer_id: TransferId, attempt_id: u64 },
+}
+
+/// The prepare files of the transfers (`.prepared`, `.staged`) as the executor keeps them.
+#[derive(Default)]
+pub(super) struct PrepareFiles {
+    files: std::collections::BTreeSet<String>,
+}
+
+impl PrepareFiles {
+    /// The answers and tasks an effect leaves behind.
+    pub fn effect(&mut self, run: &Run, pending: &mut Vec<Pending>) {
+        use crate::owners::write::transfer::{prepared_file_id, staged_file_id};
+        match run {
+            Run::DeleteFile { path } => pending.push(Pending::Delete(path.clone())),
+            Run::Probe { transfer_id, attempt_id, .. } => pending.push(Pending::Input(TransferInput::Probed { transfer_id: *transfer_id, attempt_id: *attempt_id, outcome: crate::ffi::ProbeOutcome::Image { width: 1000, height: 1000, exif_orientation: 1, format: crate::prepare::ImageFormat::Jpeg } })),
+            Run::Prepare { transfer_id, attempt_id, .. } => {
+                self.files.remove(&prepared_file_id(*transfer_id));
+                self.files.remove(&staged_file_id(*transfer_id));
+                pending.push(Pending::Written { transfer_id: *transfer_id, attempt_id: *attempt_id });
+            }
+            Run::Measure { transfer_id, attempt_id } => pending.push(Pending::Measure { transfer_id: *transfer_id, attempt_id: *attempt_id }),
+            Run::PromoteStaged { transfer_id } => pending.push(Pending::Promote { transfer_id: *transfer_id }),
+            Run::Step { transfer_id, attempt_id, part, .. } => pending.push(Pending::Input(TransferInput::StepOk { transfer_id: *transfer_id, attempt_id: *attempt_id, part: *part, upload_id: None, etag: part.map(|part| format!("e{part}")) })),
+            Run::Complete { transfer_id, attempt_id, .. } => pending.push(Pending::Input(TransferInput::Completed { transfer_id: *transfer_id, attempt_id: *attempt_id, signed_id: Some("signed".into()) })),
+            _ => {}
+        }
+    }
+
+    /// The pick of a pending task: the input it gives back, if any.
+    pub fn deliver(&mut self, pending: Pending) -> Option<TransferInput> {
+        use crate::owners::write::transfer::{prepared_file_id, staged_file_id, CachedBlob};
+        match pending {
+            Pending::Input(input) => Some(input),
+            Pending::Delete(path) => { self.files.remove(&path); None }
+            Pending::Written { transfer_id, attempt_id } => {
+                self.files.insert(prepared_file_id(transfer_id));
+                Some(TransferInput::Prepared { transfer_id, attempt_id, outcome: crate::ffi::PrepareOutcome::Done { name: None, mime: None } })
+            }
+            Pending::Measure { transfer_id, attempt_id } => {
+                if self.files.remove(&prepared_file_id(transfer_id)) {
+                    self.files.insert(staged_file_id(transfer_id));
+                    Some(TransferInput::CopyDone { transfer_id, attempt_id, size: 10, sha256: "p".into(), place: Location::Directory, cached: CachedBlob::Miss })
+                } else {
+                    Some(TransferInput::CopyFailed { transfer_id, attempt_id, error: "the prepared file is gone".into() })
+                }
+            }
+            Pending::Promote { transfer_id } => {
+                if self.files.remove(&staged_file_id(transfer_id)) { Some(TransferInput::StagedPromoted { transfer_id }) } else { Some(TransferInput::StagedPromoteFailed { transfer_id, detail: "the staged file is gone".into() }) }
+            }
+        }
+    }
+}
