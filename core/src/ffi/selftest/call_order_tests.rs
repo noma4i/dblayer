@@ -140,7 +140,7 @@ fn bridge_prop_calls_enter_in_the_order_they_started() {
             rig.database.close_now();
         });
     })).collect();
-    for seed in seeds { seed.join().unwrap(); }
+    for seed in seeds { crate::test_wait::join_within(seed); }
 }
 
 /// Requirement P-BR-10: a place that never reaches an owner does not hold the next one.

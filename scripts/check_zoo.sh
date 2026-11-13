@@ -787,6 +787,19 @@ for number, line in enumerate(manifest.read_text().splitlines()[2:] if manifest.
     if cells[3].rsplit(".", 1)[-1].rsplit("::", 1)[-1] not in declared[cells[2]]:
         findings.append(f"Z58 a row of the sequence manifest names a test that the {cells[2]} lane declares: {manifest.relative_to(root)}:{number} {cells[3]}")
 
+ordered_entries = r"(create|update|act|destroy|setLocal|setEphemeral|attachFile|detach|retry|discard|node|nodes|refresh|loadMore|send|upload|stage|commitStaged|uploadCreateBatch|supplySource|failSource|cancelUpload|call|sessionCall|interruptedSessionAnswer|sessionReset)"
+for path in sorted(tracked_rglob(root / "swift" / "Sources" / "DBlayer", "*.swift")):
+    lines = path.read_text().splitlines()
+    for number, line in enumerate(lines, 1):
+        if re.search(rf"\bdatabase\.{ordered_entries}\(", line) and not any("ordered(" in near for near in lines[max(0, number - 7):number]):
+            findings.append(f"Z61 a wrapper function that reaches an owner takes the place of the call first: the entry runs inside DB.ordered, which takes the place on the actor of the caller (bridge.md P-BR-10): {path.relative_to(root)}:{number}")
+for path in sorted(tracked_rglob(root / "kotlin" / "src" / "main", "*.kt")):
+    lines = path.read_text().splitlines()
+    for number, line in enumerate(lines, 1):
+        near = " ".join(lines[max(0, number - 3):number])
+        if re.search(rf"\bdatabase\.{ordered_entries}\(", line) and "offCaller {" in near and "offCallerInOrder" not in near:
+            findings.append(f"Z61 a wrapper function that reaches an owner takes the place of the call before offCaller: use offCallerInOrder or onAccount (bridge.md P-BR-10): {path.relative_to(root)}:{number}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     print("Each finding is a second mechanism or a second meaning of one word. Find the cause and remove the duplicate: keep the owner, delete the copy. A rename or an allowlist line that only makes the check pass is refused at review.")

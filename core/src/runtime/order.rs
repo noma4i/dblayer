@@ -4,7 +4,7 @@ use std::task::{Context, Poll, Waker};
 
 /// The order in which the calls of one database started: a place is taken in O(1) on the thread of the caller and passes when its call reaches an owner or ends.
 #[derive(Default)]
-pub struct Order {
+pub struct CallOrder {
     state: std::sync::Mutex<Places>,
 }
 
@@ -16,7 +16,7 @@ struct Places {
 }
 
 pub struct Place {
-    order: Arc<Order>,
+    order: Arc<CallOrder>,
     number: u64,
 }
 
@@ -24,7 +24,7 @@ thread_local! { static ENTERING: std::cell::RefCell<Option<Arc<Place>>> = const 
 
 fn held(state: &std::sync::Mutex<Places>) -> std::sync::MutexGuard<'_, Places> { state.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
 
-impl Order {
+impl CallOrder {
     pub fn take(self: &Arc<Self>) -> Arc<Place> {
         let mut places = held(&self.state);
         places.next += 1;
