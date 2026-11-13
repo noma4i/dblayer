@@ -16,8 +16,8 @@ An object of the old account does not live on in the new one.
 
 ```swift
 let scope = try DB.account()
-let user = Projected<CurrentUser>(scope.singleton(CurrentUser.self))
-let thread = Projected<Message>(scope.stream(Message.thread(containerId: id)))
+let user = Projected<CurrentUser>(try scope.singleton(CurrentUser.self))
+let thread = Projected<Message>(try scope.stream(Message.thread(containerId: id)))
 ```
 
 ```kotlin

@@ -85,7 +85,10 @@ val capped = UploadRequest(path, maxBytes = 5_000_000uL)
 ```
 
 - `Prepare.video(limits, mirror, onCannotDecode)`: without `limits` the library uses its default limits. A video above the limits, or with `mirror`, is encoded again. A video inside the limits that carries private metadata of the source is written again without it and without a new encode. Any other video goes as it is. With `limits.recodeAboveBytes` set, a video not larger than it is not encoded again by the limits (`mirror` still encodes it).
+- `SystemPreparer` is the `Preparer` that Swift uses by default: it prepares and probes sources with the codecs of the system.
 - `Prepare.image(edit, quality, format)`: the image is always written again, upright and without the metadata of the source. `format` is JPEG or PNG.
+- `VideoLimits` has `maxLongSide`, `corridors`, `minFrameRate`, `maxFrameRate`, `sourceBitrateCapPercent`, `audioBitrate`, `audioChannels`, `audioSampleRate` and `recodeAboveBytes`. Each corridor is a `BitrateStep` with `fromLongSide`, `minBps` and `maxBps`: the step with the largest `fromLongSide` not above the target long side sets the bitrate range. The default limits are a long side of 1920, corridors from 0 (500000 to 900000 bps), 720 (700000 to 1200000), 960 (900000 to 1500000), 1280 (1200000 to 2000000) and 1920 (2000000 to 3500000), frame rates from 30 to 60, a source bitrate cap of 95 percent, audio of 128000 bps, 2 channels and 44100 Hz, and no `recodeAboveBytes`. A `maxLongSide` below 2, no corridor, a corridor with `minBps` above `maxBps`, or frame rates that do not satisfy 0 < min <= max are refused with `Invalid`.
+- `CropFractions` has `x`, `y`, `width` and `height` as fractions of the upright image, and `PhotoEdit.crop` takes it.
 - `maxBytes` stands on `UploadRequest`, `UploadItem` and `UploadSource`, not on `Prepare`. It is the largest file that may go to the network: the prepared file, or the source when it goes as it is. A larger file ends the upload as `failed` with the kind `too_large` and no transfer request leaves the device. `retry(action)` gives the same outcome. `maxBytes` of 0 is refused with `Invalid`. A request without `maxBytes` has no limit.
 - A failed preparation gives the error kind `prepare_failed`. The `reason` field of the error names the cause: `device_cannot_decode` for a video the device cannot decode, `failed` for any other failure. With `onCannotDecode` set to `uploadSource` a video the device cannot decode goes as it is. `retry(action)` prepares the source again.
 - One preparation runs at a time, in the order of the operations. It does not need the network.
@@ -210,7 +213,7 @@ On iOS a file goes up in the app, in parts, as on Android: a file above the part
 
 A record that does not exist yet can be created together with its upload. The record appears at once with a temporary id and its `uploads[action]` state. No create operation is queued: after the file is stored, the content mutation creates the record on the server and its id replaces the temporary one. A failed upload leaves the record failed, `retry(action)` sends again and `discard(action)` removes it.
 
-Declare a named operation for each content mutation, with `upload MutationName` and its record `root`. Uploads use the same response normalization as other actions. Create and update uploads can have different nested roots on the same model.
+Declare a named operation for each content mutation, with `upload: true` and its record `root`. Uploads use the same response normalization as other actions. Create and update uploads can have different nested roots on the same model.
 
 ```swift
 let request = UploadRequest(path: url.path, variables: ["text": .string("hello")])
@@ -413,7 +416,7 @@ val removed = staged.discard()
 - `stage` takes the same `UploadRequest` as `upload`: a file, `name`, `mime`, `prepare` and `maxBytes`. A request with no file is refused with `Invalid`. `staged.id` is the id of the row that `commit` creates, `staged.action` the declared action. The typed call of a generated model is `Model.stage<Action>(source:, in:)`.
 - Start `stage` when the user picks the file. The library copies, prepares and sends the parts at once and holds the last step. No row exists and no final mutation leaves the device.
 - `scope.uploadStatus(staged)` streams the status before `commit`. A transfer that sent all parts shows `uploading` with the share 0.99. After `commit` the same stream and `uploads[action]` of the row go on.
-- `commit(values, variables)` creates the row with `values`, sends the final mutation with `variables` and returns the `MutationReceipt` of `send`. The typed variables helpers of the model build `variables`. A second `commit` of the same `staged` throws `Invalid`. A `commit` before the end of the transfer lets the transfer go on. A `commit` of a failed transfer shows the row with the error, and `retry` and `discard` work as for any row.
+- `commit(values, variables)` creates the row with `values`, sends the final mutation with `variables` and returns the `MutationReceipt` of `send`. The typed variables builders of the model build `variables`. A second `commit` of the same `staged` throws `Invalid`. A `commit` before the end of the transfer lets the transfer go on. A `commit` of a failed transfer shows the row with the error, and `retry` and `discard` work as for any row.
 - `discard()` stops the transfer, removes its files and aborts the multipart upload of the server. It returns the value of the core, `true` when it removed the transfer.
 - The app that closes before `commit` ends the transfer: the next open removes it with its files. The library keeps no staged upload for the next run, so the app starts `stage` again.
 
@@ -445,4 +448,4 @@ val sent = CurrentUser.updatePhoto(scope, source = path, createInitialMoment = t
 val confirmed = sent.confirmed()
 ```
 
-The generated upload helpers and the `stage` helpers take `prepare` and `maxBytes` like `UploadRequest`.
+The generated upload functions and the `stage` functions take `prepare` and `maxBytes` like `UploadRequest`.

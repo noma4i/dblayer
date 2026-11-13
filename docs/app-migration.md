@@ -37,7 +37,7 @@ Every read is a stream of an `AccountScope` shown through `Projected`. See [live
 ## 5. Writes
 
 - `Model.create(..., in: scope)` (`account = scope` in Kotlin) returns a receipt with the optimistic value, the revision and `confirmed()`. Every write waits in the queue while the network is away, so the app handles no offline error of a write. See [writing data](writing-data.md#writing-without-a-network).
-- `OperationFailure` takes `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message`, `extensions` and `responseLimit`, in this order.
+- `OperationFailure` takes `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message`, `extensions`, `responseLimit` and `reason`, in this order.
 - `FileInfo.size` is `UInt64` in Swift and `ULong` in Kotlin.
 - `RetryProgress` is read by pull: `RetryProgress.changes` in Swift and `RetryProgress.flow` in Kotlin. See [server sync](server-sync.md#retries).
 - `upload` on a row that does not exist is accepted, and the answer of the final mutation writes the row. See [files](files.md#upload-to-a-row-that-does-not-exist).
@@ -116,7 +116,7 @@ val receipt = staged.commit(buildJsonObject { put("text", "hello") })
 val removed = staged.discard()
 ```
 
-- `registerOperations`, and an `open` that passes a read or a mutation, fail with `Invalid` when the definitions leave out an operation the library sends by itself. The error names every missing operation. Pass the generated `GraphQLOperations.all`. See [server sync](server-sync.md#connecting).
+- An `open` that passes a read or a mutation fails with `Invalid` when the definitions leave out an operation the library sends by itself. The error names every missing operation. Pass the generated `GraphQLOperations.all`. See [server sync](server-sync.md#connecting).
 - The parents of a changed row are touched once per batch, the queue order of restored operations is kept, and a failed operation with a lost answer stops no other write. The app changes nothing for these fixes.
 
 ## 9. After 6.31.0
@@ -198,7 +198,7 @@ val receipt = staged.commit(values, variables)
 - The PUT in a background session on iOS is removed with its entry point of the library. The PUT of a file runs in the app, in parts. Remove the call of the library that you added to `application(_:handleEventsForBackgroundURLSession:completionHandler:)`: the build fails while it stays. Nothing replaces it, and the app adds no `beginBackgroundTask` of its own around uploads. Android changes nothing. See [upload with the app in the background](files.md#upload-with-the-app-in-the-background).
 
 ```swift
-// iOS: remove the call of the library in the background session handler, nothing replaces it.
+// iOS: remove the call of the library in the background session callback, nothing replaces it.
 ```
 
 ```kotlin

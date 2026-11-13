@@ -44,7 +44,9 @@ let message = try await Message.create(text: "hello", in: scope).optimisticValue
 
 ```kotlin
 val message = Message.create(text = "hello", account = scope).optimisticValue
-``` Attributes the server owns (ids, counters, dates) are left out of the call and the local row gets a zero value for each until the answer arrives: `""`, `0`, `false`, `[]`, `{}`, the first value of an enum, and the current time for a date.
+```
+
+Attributes the server owns (ids, counters, dates) are left out of the call and the local row gets a zero value for each until the answer arrives: `""`, `0`, `false`, `[]`, `{}`, the first value of an enum, and the current time for a date.
 
 ## Values the row does not store
 

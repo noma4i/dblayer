@@ -10,7 +10,7 @@ One owner in the core serves each stream: the query, the count, the row by id, t
 | --- | --- |
 | `scope.stream(query)` | The rows of a query: a snapshot, then deltas. |
 | `scope.count(query)` | The number of rows of a query. |
-| `scope.entity(Model, id, fetch)` | One row by id. `fetch` tells when the library loads it from the server. |
+| `scope.entity(Model, id, fetch)` | One row by id. `fetch` tells when the library loads it from the server: `never` (default) loads nothing, `ifMissing` loads when the row is not stored, `stale` loads when the stored row is stale, `force` loads at every open. |
 | `scope.singleton(Model)` | The one row of a model that has a single record. |
 | `scope.events(Model)` | The events of a model after the stream opened. Past events are not repeated. |
 | `scope.changes()` | One item per commit of the database that changed rows, with the `(model, id)` pairs. It reads no rows and opens no query. |
@@ -50,7 +50,7 @@ A delta carries the steps from the rows the reader holds to the rows of its revi
 A projection applies the steps in order and decides nothing: the core fixed the order.
 A row that cannot be decoded asks the core for one new snapshot with `resync()`.
 
-`Projected.edits` holds the edits of the last delivery. Apply them to a list you keep. A snapshot carries its own edits: the first one inserts every row, a snapshot after `resync()` removes, inserts, moves and rewrites only the rows that differ. A failure of a stream arrives as its last value `ended` with a cause (`Internal` for a delivery that could not be read); reading a stream never throws.
+`Projected.edits` holds the edits of the last delivery. Apply them to a list you keep. A snapshot carries its own edits: the first one inserts every row, a snapshot after `resync()` removes, inserts, moves and rewrites only the rows that differ. A failure of a stream arrives as its last value `ended` with a cause (`Internal` for a delivery that could not be read); reading a stream never throws. `Projected.isEnded` in Swift is true once the stream has ended, and a Kotlin projection holds the cause in `ended`.
 A `rewrite` that the server confirmed carries the `temporary` id the row had when the screen first showed it. A screen keeps the identity of the row with it.
 
 ## Reading before the first delivery
@@ -123,7 +123,8 @@ Moment.ids(listOf("a", "b"))        // the rows with these ids
 The builders only fill a typed record that the core compiles to SQL. A relation is optional in it: a load, refresh or load more of a query without a relation fails with `Invalid`.
 The count of a relation is a query: `scope.count(...)`. There are no counter caches.
 A query is plain data (`model`, `where`, `order`, `limit`, `offset`). The core compiles it to SQL. Every scalar and enum field compares as its own SQLite column, and an index makes the comparison fast.
-A row with a null field matches `!(field == value)`.
+A row with a null field matches `!(field == value)`. `Condition.notEqual(field, value)` is the condition behind `!=` (`neq` in Kotlin).
+`asc` and `desc` use the null order of SQLite. `ascNullsLast` sorts ascending with null values last, and `descNullsFirst` sorts descending with null values first. `idsQuery` is the Kotlin function behind `Model.ids`.
 
 ## Related rows
 

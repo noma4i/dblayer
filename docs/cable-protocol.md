@@ -41,9 +41,9 @@ Every open creates one `PlatformSocket` object that the core holds. The core sen
 | Call | What the core expects |
 | ---- | --------------------- |
 | `appHeaders()` | The headers of the app. The core reads them again for every request and cable, merges them with its own headers and the `User-Agent`, and passes the result in `HttpRequest.headers` |
-| `send(request)` | One HTTP exchange of `HttpRequest` (`url`, `method`, `headers`, `body`, `connectMs`, `requestMs`, `purpose`). Set the headers as given. Return `RawOutcome.response(status, etag, body)` for any HTTP answer, or `RawOutcome.failed(RawFailure)` when no answer came. Do not follow redirects, retry or classify |
+| `send(request)` | One HTTP exchange of `HttpRequest` (`author`, `requestId`, `attempt`, `url`, `method`, `headers`, `body`, `connectMs`, `requestMs`, `purpose`, `responseLimit`). `responseLimit` is the most bytes of the answer to read: count while reading and fail with `RawFailure` domain `DBlayer.ResponseLimit` and code 1 at the next byte. Set the headers as given. Return `RawOutcome.response(status, etag, body)` for any HTTP answer, or `RawOutcome.failed(RawFailure)` when no answer came. Do not follow redirects, retry or classify |
 | `openCable(url, headers, connectMs, events)` | Open the text socket at `url` with `headers` as given, report to `events` and return `CableOutcome.open(connection)` after the handshake, or `CableOutcome.failed(failure, handshakeStatus)`. When the core cancels the call, cancel the socket and end the call |
-| `put(target, file, identity, progress)` | `target` is `PutTarget(url, headers, connectMs, requestMs)`. Send the `length` bytes of the file from `offset` with PUT, set the headers as given and return `RawOutcome.response` with the status and the `ETag`. Call `progress.sent(bytes)` while it sends. The core cancels the call when it gives up (Swift task cancellation, Kotlin coroutine cancellation): end the HTTP request then, there is no flag to poll. `requestMs` is the idle bound of the upload, a file has no total bound |
+| `put(target, file, identity, progress)` | `target` is `PutTarget(url, headers, connectMs, requestMs, responseLimit)`. Send the `length` bytes of the file from `offset` with PUT, set the headers as given and return `RawOutcome.response` with the status and the `ETag`. Call `progress.sent(bytes)` while it sends. The core cancels the call when it gives up (Swift task cancellation, Kotlin coroutine cancellation): end the HTTP request then, there is no flag to poll. `requestMs` is the idle bound of the upload, a file has no total bound |
 
 The GraphQL address of a database without an encrypted session is `endpoint` of the open call. The core validates the addresses it builds before it hands them to a transport.
 
@@ -51,10 +51,11 @@ The GraphQL address of a database without an encrypted session is `endpoint` of 
 
 | `domain` and `code` | Class |
 | ------------------- | ----- |
-| `NSURLErrorDomain` -999, `Swift.CancellationError`, `java.util.concurrent.CancellationException`, `kotlinx.coroutines.JobCancellationException`, `java.io.IOException` with the text `Canceled` | The call was cancelled |
+| `NSURLErrorDomain` -999, `Swift.CancellationError`, `java.util.concurrent.CancellationException`, `kotlinx.coroutines.JobCancellationException`, `kotlinx.coroutines.TimeoutCancellationException`, `java.io.IOException` with the text `Canceled` | The call was cancelled |
 | `NSURLErrorDomain` -1200 to -1206, `javax.net.ssl.SSLHandshakeException`, `javax.net.ssl.SSLPeerUnverifiedException` | The server certificate is not trusted |
 | `NSURLErrorDomain` -1003, -1004, -1006, -1009, -1018, -1020, `java.net.UnknownHostException`, `java.net.ConnectException`, `java.net.NoRouteToHostException` | The host is unreachable or the device is offline |
 | `NSURLErrorDomain` -1001, `java.net.SocketTimeoutException`, `java.io.InterruptedIOException` | A timeout of the call expired |
+| `DBlayer.ResponseLimit` code 1 | The answer passed `responseLimit`: a read fails with `ResponseTooLarge`, a mutation is interrupted |
 | anything else, `url` | Any other failure of the connection |
 
 The core sets the timeouts and the platform applies them. On Apple platforms the applied bound is the idle timeout of the request (`URLRequest.timeoutInterval = requestMs`): there is no connect bound and no total bound. Kotlin applies all four: connect, read, write and call.
@@ -77,7 +78,7 @@ DBlayer.open(context, encrypted = encrypted, credentials = credentials, modelsJs
 
 ## Cable closes
 
-`DB.cableCloses()` in Swift and `DBlayer.cableCloses()` in Kotlin give a stream of `CableCloseItem`: `ready` when the stream starts, `close` with the `position` and the `CableClose` event (connection id, code, reason, failure, initiator and `intended`), `lost` with the `first` and `last` positions of closes that are gone, and `ended` with an `EndCause` when the stream ends by itself.
+`DB.cableCloses()` in Swift and `DBlayer.cableCloses()` in Kotlin give a stream of `CableCloseItem` (`CableCloseStream` in Swift): `ready` when the stream starts, `close` with the `position` and the `CableClose` event (connection id, code, reason, failure, initiator and `intended`), `lost` with the `first` and `last` positions of closes that are gone, and `ended` with an `EndCause` when the stream ends by itself.
 
 ```swift
 for await item in try DB.cableCloses() {

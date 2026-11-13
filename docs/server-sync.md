@@ -26,7 +26,7 @@ try await DB.open(endpoint: endpoint, headers: { ["Authorization": "Bearer \(ses
 DBlayer.open(context, endpoint = endpoint, headers = { mapOf("Authorization" to "Bearer ${session.token}") }, modelsJson = modelsJson, operations = GraphQLOperations.all, uploadNotification = notification)
 ```
 
-`registerOperations` and an `open` that passes at least one operation besides the upload steps fail with `Invalid` when the set leaves out an operation the library sends by itself: the subscription of the change feed, each `listens` and `updates` subscription, and the read of each relation a `changed_by` event starts. The error names every missing operation in alphabetical order, and no definition of that call is accepted. An `open` without operations or with the upload steps only passes, and the app registers the rest later. The generated `GraphQLOperations.all` holds them all.
+An `open` that passes at least one operation besides the upload steps fails with `Invalid` when the set leaves out an operation the library sends by itself: the subscription of the change feed, each `listens` and `updates` subscription, and the read of each relation a `changed_by` event starts. The error names every missing operation in alphabetical order, and no definition of that call is accepted. An `open` without operations or with the upload steps only passes, and the app registers the rest later. The generated `GraphQLOperations.all` holds them all.
 
 ```swift
 // Invalid: the operations the library sends by itself are not registered: Changes, UserNode
@@ -123,7 +123,7 @@ DBlayer.open(
     path = path,
     uploadNotification = notification,
 )
-DBlayer.sessionCall("otp", PhoneBody("+61400000000"))
+DBlayer.sessionCall<PhoneBody, JsonElement>("otp", PhoneBody("+61400000000"))
 val answer: SignedIn = DBlayer.sessionCall("confirm", CodeBody("123456"))
 ```
 
@@ -134,6 +134,8 @@ For `class: .sessionless`, the request contains exactly `audience`, `kid`, `meth
 It omits `credential` and `sequence`, stores no pending request, and does not acquire the mutation lock.
 A failed send is repeated by the library with the session retry policy, up to 40 sends and without a time limit, then the error returns to the caller.
 Bootstrap keeps its separate envelope and shares only the JWE encryption primitive.
+
+Only `logout` is a name the library reserves. The other names in the table, `otp`, `support`, `confirm` and `social`, are examples: the app sets its own names in `EncryptedConfig.endpoints.sessionOperations`.
 
 | Operation | Body                                                                                                                                   | Answer                                                                |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
@@ -153,6 +155,7 @@ Bootstrap keeps its separate envelope and shares only the JWE encryption primiti
 | `replayedRequest`                                                                            | a read arrived twice. The core already repeated it once with a new request id     | kept                                      |
 | `serverKeyMismatch`                                                                          | the session key differs from the pinned key                                       | kept                                      |
 | `stateLost`                                                                                  | a stored credential has no matching sequence state, final without automatic retry | kept, recovery belongs to the application |
+| `noCredential`                                                                               | the call needs a session and the database has none                                | kept                                      |
 | `other`                                                                                      | any other `error` value, the text is in `detail`                                  | kept                                      |
 
 ### Ending a session
@@ -260,7 +263,7 @@ try {
 } catch (error: DbException.Session) {
     if (error.code == SessionCode.UNAUTHENTICATED) {
         DBlayer.sessionReset()
-        DBlayer.sessionCall("social", signIn)
+        DBlayer.sessionCall<SignInBody, JsonElement>("social", signIn)
     }
 }
 ```

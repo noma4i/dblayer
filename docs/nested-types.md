@@ -59,9 +59,11 @@ let items = sample.payload?.objectValue["items"]
 val items = sample.payload?.jsonObject?.get("items")
 ```
 
+In Swift a `JSONValue` also reads a scalar with `intValue`, `doubleValue`, `boolValue` and `stringValue`. Each returns `nil` when the value has another type.
+
 ## Reuse and recursion
 
-`type: NamedType` names a generated value type. Define it once and reuse it across fields, lists and models. File order does not matter. Pass the declaring files and the referencing files together to the generator.
+A named type in the second argument of `attribute` names a generated value type. Define it once and reuse it across fields, lists and models. File order does not matter. Pass the declaring files and the referencing files together to the generator.
 
 Recursive values can use arrays:
 
@@ -142,14 +144,14 @@ val rewards = Note.where(Note.attachment eq NoteAttachmentKind.Reward)
 | Rule | Behavior |
 | ---- | -------- |
 | Case names | the variant type name without the words that every variant starts or ends with: `RewardAttachment` becomes `reward`, `MomentEmojiProps` becomes `emoji`. `on Type, case: :name` sets it |
-| Reuse | `type: NoteAttachment` without a block names a union declared anywhere in the same generator invocation. A variant type can belong to several unions |
+| Reuse | `attribute :attachment, NoteAttachment` without a block names a union declared anywhere in the same generator invocation. A variant type can belong to several unions |
 | `null` | a nullable union field is `nil` / `null` when the server sends no value. An absent value is not an unknown variant |
 | Unknown variant | a `__typename` that no `on` block names becomes `.unknown(typename:)` / `Unknown`. It keeps only the type name: its fields are not stored and are not written back |
 | Partial selections | an operation may select some fields of a variant. Declare the others with `null: true` or `optional: true` |
 | Answers | an answer replaces the whole value, like any nested value. A new variant clears the columns of the old one |
 | Merge | `merge: :present` keeps the stored value when the server sends null, and `local: true` keeps the field app-owned. Key-by-key merge is not available for a union |
 | Queries | `Note.attachment` compares the variant kind: `==`, `in`, `isNull`, ordering. Variant fields are not queryable |
-| Lists | `type: [Name]` with `on` blocks holds a list of variants, see [interfaces and lists](#interfaces-and-lists-of-unions) |
+| Lists | `attribute :field, [Name]` with `on` blocks holds a list of variants, see [interfaces and lists](#interfaces-and-lists-of-unions) |
 | Schema | with `--schema`, every `on` type must be a member of the GraphQL union and every member needs an `on` block. An operation document that selects the field must select `__typename` and may name only declared variants in `... on` |
 
 A union is stored in the columns of its row: one text column holds the `__typename`, and each variant has its own columns, prefixed with the field and variant names. Only the active variant has values. A SQLite table has at most 2000 columns, so the generator rejects a model whose union widens a table past that limit: `table row_Note would have 2405 columns, above the SQLite limit of 2000`.
@@ -235,8 +237,8 @@ In `fixtures/screen.dbl`, 14 common fields plus 1 `:json` props attribute and 4 
 Adding catalogue types or props keeps that width constant.
 Props, visibility, action lists and state values use `:json, parse: :json`, so the application receives decoded JSON values.
 Applications interpret props and conditions after core parses their JSON text.
-The state entry table has 4 storage columns, 1 path and 1 JSON value, totaling 6 columns instead of 9.
-Action lists and conditions no longer declare separate variant tables or generated types.
+The state entry table has 4 storage columns, 1 path and 1 JSON value, totaling 6 columns.
+Action lists and conditions declare no separate variant tables or generated types.
 
 The groups below define a fixed-shape catalogue example, with 20 base entries in group 0 and 20 component groups.
 The example has 306 listed components, including 102 composable components.
@@ -269,5 +271,5 @@ Only composable rows declare V/S/L widths, the other rows have no typed properti
 | Including group 0 | 326 | 122 | 164 | 108 | 11 | 928 |
 
 The typed element table totals 4 + 1 + 13 shared + 928 variant columns + 11 list presence columns = 957.
-Both declarations fit today, a synthetic threefold expansion reaches 2835 columns and must fail.
+Both declarations stay below the limit of 2000 columns. A threefold expansion of the typed declaration reaches 2835 columns, and the generator rejects it.
 Raw props also preserve fields of unknown element types, while an unknown union variant preserves only its discriminator.

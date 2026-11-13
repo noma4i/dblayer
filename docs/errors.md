@@ -37,7 +37,7 @@ A call that fails in order reports the first failing check. For `upload` the ord
 | A call (`create`, `load`, `read`, `sessionCall`) | It throws the error. |
 | A receipt `confirmed()` | The value, or `Rejected`, or the error of the end cause. |
 | A receipt `confirmed()` | the value, `Rejected` with an `OperationFailure` and `kept`, or the error of the end (`NoSession`, `Closed`). See [writing data](writing-data.md#what-the-server-answered). |
-| `sync.error` and `uploads[action].error` | An `OperationFailure`: `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message`, `extensions` and `responseLimit`, in this order. |
+| `sync.error` and `uploads[action].error` | An `OperationFailure`: `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message`, `extensions`, `responseLimit` and `reason`, in this order. |
 | A stream | It never throws. The state carries the last load `error`. The last value is `ended` with a cause: `SessionEnded`, `Closed`, `Cancelled`, `Invalid`, `Storage` or `Internal`. |
 | A transfer or an operations stream | The last item is `ended` with the cause. |
 | `RetryProgress` | It reports waiting retries as `RetrySnapshot` values and no error. |

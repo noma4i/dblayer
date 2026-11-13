@@ -80,7 +80,7 @@ Use them for an "unsent" banner, a retry-all button or a badge with the number o
 
 ## The queue of operations
 
-`operations()` streams every write that has not ended, oldest first: the whole list when you open it and again after each change, then one `ended` item with the cause of the core (`OperationQueueItem.Ended` in Kotlin). A write enters the list before its receipt returns and leaves it when the server confirmed it or it rolled back.
+`operations()` (an `OperationQueueStream` in Swift) streams every write that has not ended, oldest first: the whole list when you open it and again after each change, then one `ended` item with the cause of the core (`OperationQueueItem.Ended` in Kotlin). A write enters the list before its receipt returns and leaves it when the server confirmed it or it rolled back.
 
 Each item of the list is an `OperationInfo`:
 

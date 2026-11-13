@@ -29,9 +29,9 @@ Every public name of the Swift package and the Kotlin module, with the section t
 | `DB.account()` / `AccountScope.current()`, `AccountScope`                                                | [account scope](value-bridge.md#account-scope)                                                                                       |
 | `AccountScope.stream`, `count`, `entity`, `events`, `changes`, `uploadStatus`, `operations`, `singleton` (Swift only) | [streams](live-data.md#streams)                                                                                                      |
 | `ValueStream`, `ReadValue`, `EndCause`, `ReadClaim`                                                      | [values](value-bridge.md#values), [errors](errors.md#where-an-error-arrives), [claiming a reader](value-bridge.md#claiming-a-reader) |
-| `DB.cableCloses` / `DBlayer.cableCloses`, `CableCloseItem`, `CableClose`                                 | [cable closes](cable-protocol.md#cable-closes)                                                                                       |
-| `ListDelivery`, `ListProjection`, `Projected`, `ListEdit`                                                | [what a delta contains](live-data.md#what-a-delta-contains), [reading a projection](value-bridge.md#reading-a-projection-on-screen)  |
-| `ProjectedCount`, `CountProjection` (Kotlin only)                                                                      | [streams](live-data.md#streams)                                                                                                      |
+| `DB.cableCloses` / `DBlayer.cableCloses`, `CableCloseItem`, `CableCloseStream` (Swift), `CableClose`                              | [cable closes](cable-protocol.md#cable-closes)                                                                                       |
+| `ListDelivery`, `ListProjection`, `Projected`, `Projected.isEnded` (Swift), `ListEdit`                                                | [what a delta contains](live-data.md#what-a-delta-contains), [reading a projection](value-bridge.md#reading-a-projection-on-screen)  |
+| `ProjectedCount`, `CountProjection` (`CountProjection` is Kotlin only)                                                                      | [streams](live-data.md#streams)                                                                                                      |
 | `ReadState`, `ReadPhase`                                                                                 | [state of a stream](live-data.md#state-of-a-stream)                                                                                  |
 | `ReadFetch`                                                                                              | [streams](live-data.md#streams)                                                                                                      |
 | `ModelEvent`, `ModelEventItem`, `EventStream` (Swift), `ValueStream.events` (Kotlin)                                                            | [model events](live-data.md#model-events)                                                                                            |
@@ -44,7 +44,7 @@ Every public name of the Swift package and the Kotlin module, with the section t
 
 | Swift / Kotlin                                                                         | Section                                                                             |
 | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `Query`, `Condition`, `Column`, `Order`, `Association`, `Model.ids`                    | [queries](live-data.md#queries), [text search](live-data.md#text-search)            |
+| `Query`, `Condition`, `Condition.notEqual`, `Column`, `Column.ascNullsLast`, `Column.descNullsFirst`, `Order`, `Association`, `Model.ids`, `idsQuery` (Kotlin)                  | [queries](live-data.md#queries), [text search](live-data.md#text-search)            |
 | `cachedRow`, `read`, `readRow`                                                         | [reading before the first delivery](live-data.md#reading-before-the-first-delivery) |
 | `load`, `beginLoad`, `LoadRequest`, `refresh`, `loadMore`, `loadAll`, `LoadMoreResult` | [remote relations are live too](live-data.md#remote-relations-are-live-too)         |
 | `edgeValues`, generated `<name>Edge`                                                   | [edge values](models.md#edge-values)                                                |
@@ -61,7 +61,7 @@ Every public name of the Swift package and the Kotlin module, with the section t
 | `set` (ephemeral values), `setLocal` (local fields)                                 | [ephemeral fields](models.md#ephemeral-fields), [local fields](models.md#local-fields)                                         |
 | `MutationReceipt`, `ItemReceipt`, `OperationReceipt`, `Confirmed`, `Confirmed.value`, `Confirmed.answerJson`                 | [what the server answered](writing-data.md#what-the-server-answered)                                                           |
 | `confirmed(discardOnFailure:)` (Swift), `confirmed(discardOnFailure)` (Kotlin)      | [what the server answered](writing-data.md#what-the-server-answered)                                                           |
-| `retry`, `discard`, `OperationInfo`, `OperationQueueItem`, `OperationQueueStatus`   | [the queue of operations](sync-state.md#the-queue-of-operations)                                                               |
+| `retry`, `discard`, `OperationInfo`, `OperationQueueItem`, `OperationQueueStream` (Swift), `OperationQueueStatus`   | [the queue of operations](sync-state.md#the-queue-of-operations)                                                               |
 | `OperationInfo.upload`, `OperationInfo.uploadInfo`                                  | [the queue of operations](sync-state.md#the-queue-of-operations)                                                               |
 
 ## Files and uploads
@@ -73,7 +73,7 @@ Every public name of the Swift package and the Kotlin module, with the section t
 | `Model.<action>(id:, source:, ...variables, in:)` (Swift), `Model.<action>(account, id, source, ...variables)` (Kotlin), without `id` for a singleton model| [upload to a row that does not exist](files.md#upload-to-a-row-that-does-not-exist)                                                      |
 | `AccountScope.upload(_:id:action:_:)` (Swift), `AccountScope.upload(decoder, id, action, request)` (Kotlin)             | [upload to a row that does not exist](files.md#upload-to-a-row-that-does-not-exist)                                                      |
 | `UploadRequest.pending`, `UploadSource`, `supplySource`, `failSource`                                                   | [deferred source](files.md#deferred-source)                                                                                              |
-| `Prepare`, `VideoLimits`, `PhotoEdit`, `PixelSize`, `CropFractions`, `ImageFormat`, `CannotDecode` | [source preparation](files.md#source-preparation) |
+| `Prepare`, `VideoLimits`, `BitrateStep`, `PhotoEdit`, `PixelSize`, `CropFractions`, `ImageFormat`, `CannotDecode`, `SystemPreparer` (Swift) | [source preparation](files.md#source-preparation) |
 | `UploadInfo`, `UploadStatus`, `UploadProcessing`                                                                        | [state](files.md#state)                                                                                                                  |
 | `multipart`, `roots` for `initiate`, `presign`, `complete`                                                             | [uploads of a record](files.md#uploads-of-a-record)                                                                                       |
 | `TransferProgress`, `TransferItem`, `UploadStatusStream` (Swift), `AccountScope.uploadStatus` as a `ValueStream` (Kotlin)                                                                | [rules](files.md#rules-1)                                                                                                                |
@@ -85,7 +85,7 @@ Every public name of the Swift package and the Kotlin module, with the section t
 | Swift / Kotlin                                   | Section                                                                                           |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
 | `CellReader`, `Cell`                             | [cell types](value-bridge.md#cell-types)                                                          |
-| `JSONValue` (Swift), `dbJson` (Kotlin)           | [JSON text in `:json` attributes](nested-types.md#json-text-in-json-attributes)                   |
+| `JSONValue` with `intValue`, `doubleValue`, `boolValue`, `stringValue` (Swift), `dbJson` (Kotlin)         | [JSON text in `:json` attributes](nested-types.md#json-text-in-json-attributes)                   |
 | `RawEnum`, `UnionSerializer` (Kotlin), `UnionTypenameKey` (Swift) | [enums](models.md#enums), [unions](nested-types.md#unions)                                        |
 | `GraphqlExtensions`, `SessionCode`               | [errors](errors.md#where-an-error-arrives), [encrypted session](server-sync.md#encrypted-session) |
 

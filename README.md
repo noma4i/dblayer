@@ -171,7 +171,7 @@ DBlayer.open(
   credentials = AppCredentials(context), modelsJson = modelsJSON, path = path,
   uploadNotification = UploadNotification("Uploading", "Your files are on their way", R.drawable.ic_upload),
 )
-DBlayer.sessionCall("otp", PhoneBody("+61400000000"))
+DBlayer.sessionCall<PhoneBody, JsonElement>("otp", PhoneBody("+61400000000"))
 ```
 
 Await `DB.open` in Swift or call suspend `DBlayer.open` from a Kotlin coroutine.
@@ -198,11 +198,11 @@ See [docs/live-data.md](docs/live-data.md) for UIKit, view models, single record
 
 ## Build and test
 
-Requirements: Xcode, Android SDK with NDK, Homebrew `rustup` with the iOS and Android targets, `cargo-ndk`, JDK 17 and Gradle 9.
+Requirements: Xcode, Android SDK with NDK, Homebrew `rustup` with the iOS and Android targets, JDK 17 and Gradle 9.
 
 ```sh
 export PATH=/opt/homebrew/opt/rustup/bin:$PATH
-bash scripts/check_dblayer.sh      # cheap checks, then the Rust, Swift, Kotlin and Android lanes one after another (--fast: touched directories only)
+bash scripts/check_dblayer.sh      # cheap checks, then the Rust, Swift, Kotlin and Android lanes at the same time (--fast: touched directories only)
 cargo test                         # Rust core and generator only
 ```
 
