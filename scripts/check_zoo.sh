@@ -423,7 +423,9 @@ for path in generated_tool:
         if suppressed and f"z29:{path.relative_to(root)}:{suppressed.group(1)}" not in allowed:
             findings.append(f"Z29 a lint is fixed at its cause, not suppressed (gen): {path.relative_to(root)}:{number}: {suppressed.group(0)}")
 
-wait_inputs = {("ffi/network_status.rs", "next"), ("ffi/encrypted.rs", "next"), ("ffi/loading.rs", "result")}
+wait_inputs = {("ffi/network_status.rs", "next"), ("ffi/encrypted.rs", "next")}
+if "on_core(" not in (source / "ffi" / "reading.rs").read_text():
+    findings.append("Z60 Reader::next waits through on_core: core/src/ffi/reading.rs")
 for path in files:
     relative = str(path.relative_to(source))
     if not relative.startswith("ffi/") or relative.startswith(("ffi/selftest/", "ffi/tests/")) or "/tests/" in relative or relative.endswith("_tests.rs"):
@@ -451,9 +453,8 @@ for path in files:
             body = text[start:index]
             place = f"{path.relative_to(root)}:{text.count(chr(10), 0, offset) + 1}: {entry.group(1)}"
             if (relative, entry.group(1)) in wait_inputs:
-                reads = [word for word in ("on_core(", ".db.", "read_in_epoch", "offload(", "blocking(", "blocking_unit(", "spawn") if word in body]
-                if reads:
-                    findings.append(f"Z60 an async input that only waits for a published value (bridge.md D-409) reads no base and calls no bridge: {place}: {', '.join(reads)}")
+                if "self.0.next(" not in body:
+                    findings.append(f"Z60 an async input that only waits for a published value (bridge.md D-409, P-BR-15) waits through Reader::next, which waits on the core runtime: {place}")
             elif "on_core(" not in body:
                 findings.append(f"Z60 an async exported input runs its body through the bridge function on_core, or is named in wait_inputs: {place}")
         offset += len(line)
