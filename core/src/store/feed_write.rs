@@ -9,11 +9,11 @@ use crate::value::read_id;
 use super::merge::{unconfirmed_fields, Admission, RowKind};
 use super::row_write::RowWrite;
 use super::{Reader, StoreError};
+use super::window_write::fault;
 
 type EventRows = BTreeMap<(String, String), Option<Map<String, Value>>>;
 pub(super) type OverlayWrites = Vec<(String, String, Map<String, Value>)>;
 
-fn fault(error: impl std::fmt::Display) -> StoreError { StoreError::Constraint(error.to_string()) }
 
 fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mut OverlayWrites) -> Result<Option<CommitResult>, StoreError> {
     let op = payload.get("op").and_then(Value::as_str).ok_or_else(|| StoreError::Constraint("event has no operation".into()))?;

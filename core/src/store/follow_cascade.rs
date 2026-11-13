@@ -9,8 +9,8 @@ use crate::store::query::{compile_keys, fetch_keys, Query, Where};
 use crate::schema::Dependent;
 
 use super::{ModelInfo, Reader, StoreError};
+use super::window_write::fault;
 
-fn fault(error: impl std::fmt::Display) -> StoreError { StoreError::Constraint(error.to_string()) }
 
 pub(super) fn descendants(models: &BTreeMap<String, ModelInfo>, reader: &Reader<'_>, parent: &RowRef, seen: &mut HashSet<RowRef>, result: &mut Vec<RowRef>) -> Result<(), StoreError> {
     let spec = &models.get(parent.model.as_str()).ok_or_else(|| StoreError::UnknownModel(parent.model.to_string()))?.spec;

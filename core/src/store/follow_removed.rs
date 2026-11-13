@@ -8,8 +8,8 @@ use crate::identity::{ModelKey, RowId};
 use crate::store::query::{compile_keys, fetch_keys, Query, Where};
 
 use super::{ModelInfo, StoreError};
+use super::window_write::fault;
 
-fn fault(error: impl std::fmt::Display) -> StoreError { StoreError::Constraint(error.to_string()) }
 
 /// A row that lands removes the rows of the models that name its model in `removed_by` and match it, in the same batch.
 pub(super) fn follow_removed_by(connection: &Connection, models: &BTreeMap<String, ModelInfo>, envelope: &mut BatchPlan) -> Result<(), StoreError> {

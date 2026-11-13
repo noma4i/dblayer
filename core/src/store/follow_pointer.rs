@@ -9,10 +9,10 @@ use crate::schema::{AssociationKind, AssociationSpec, ModelSpec};
 use crate::value::{read_id, same_fields};
 
 use super::{ModelInfo, Reader, StoreError};
+use super::window_write::fault;
 
 type Row = Map<String, Value>;
 
-fn fault(error: impl std::fmt::Display) -> StoreError { StoreError::Constraint(error.to_string()) }
 
 fn setting(spec: &ModelSpec) -> impl Iterator<Item = &AssociationSpec> {
     spec.associations.iter().filter(|association| association.kind == AssociationKind::BelongsTo && !association.sets.is_empty())
