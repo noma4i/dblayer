@@ -57,6 +57,7 @@ struct Jobs(std::sync::Mutex<Vec<(u64, u64)>>);
 impl crate::ffi::RoundJobsSink for Jobs {
     fn schedule_job(&self, job: crate::ffi::RoundJob) { self.0.lock().unwrap().push((job.request_id, job.epoch)); }
     fn end_job(&self, _: u32) {}
+    fn round_progress(&self, _: u32, _: f64) {}
 }
 
 /// P-XFER-05, xfer_round_needed_new_epoch: a round that runs while the session ends asks for the job of the next epoch only when the platform ends the running one.

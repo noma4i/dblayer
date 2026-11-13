@@ -105,6 +105,7 @@ class UploadWorkTest {
             database.setRoundJobs(object : RoundJobsSink {
                 override fun scheduleJob(job: RoundJob) {}
                 override fun endJob(roundId: UInt) { ended.add(roundId); TestPulse.pulse() }
+                override fun roundProgress(roundId: UInt, fraction: Double) {}
             })
             val controller = Robolectric.buildService(UploadService::class.java).create()
             controller.withIntent(android.content.Intent(context, UploadService::class.java).putExtra("request", 1L).putExtra("round", 1L).putExtra("epoch", 1L)).startCommand(0, 1)
@@ -136,6 +137,13 @@ class UploadWorkTest {
             UploadNetwork.ended(8u)
             closeForCleanup()
         }
+    }
+
+    @Test
+    fun theProgressOfTheRoundIsTheProgressOfTheNotificationOfTheJob() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        UploadNotifications.store(context, notification)
+        assertEquals(40, UploadNotifications.build(context, 0.4).extras.getInt(android.app.Notification.EXTRA_PROGRESS))
     }
 
     private suspend fun refused(block: suspend () -> RawOutcome) {

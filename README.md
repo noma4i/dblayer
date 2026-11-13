@@ -34,7 +34,6 @@ iOS 17, macOS 14, or Android 13 (API 33) or newer.
 - **Versioned cached rows.** Each row sent to Swift or Kotlin includes its stored revision, so readers can reject older values.
 - **Immediate cached entities.** The first reader gets a row already in memory without waiting for a subscription delivery or reading disk. Native callbacks never keep entity sources alive. Deliveries from a replaced database cannot overwrite current entities.
 
-
 ## Documentation
 
 - [Getting started](docs/getting-started.md)
@@ -155,11 +154,10 @@ val config = DBlayer.serverConfig(context, encrypted, AppPlatform.ANDROID, appVe
 if (config.updateRequired) showUpdate(config.storeUrl)
 ```
 
-
 ```swift
 try await DB.open(
   encrypted: EncryptedConfig(origin: "https://api.example.com", serverKey: serverKey, pin: serverPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel),
-  credentials: AppCredentials(), modelsJSON: modelsJSON, path: path
+  credentials: AppCredentials(), modelsJSON: modelsJSON, path: path, uploadTaskTitle: "Uploading"
 )
 try await DB.sessionCall("otp", body: PhoneBody(phone: "+61400000000"))
 ```
@@ -186,15 +184,15 @@ See [docs/live-data.md](docs/live-data.md) for UIKit, view models, single record
 
 ## Repository layout
 
-| Path | Contents |
-| ---- | -------- |
-| `core/` | The Rust core: storage, writes, queries, sync, files |
-| `gen/` | `dblayer-gen`: `.dbl` parser and code generator |
-| `fixtures/` | Example models used by tests |
-| `swift/` | Swift package with the bindings |
-| `kotlin/` | Android library module with the bindings |
-| `docs/` | Developer documentation |
-| `scripts/` | Build and check scripts |
+| Path        | Contents                                             |
+| ----------- | ---------------------------------------------------- |
+| `core/`     | The Rust core: storage, writes, queries, sync, files |
+| `gen/`      | `dblayer-gen`: `.dbl` parser and code generator      |
+| `fixtures/` | Example models used by tests                         |
+| `swift/`    | Swift package with the bindings                      |
+| `kotlin/`   | Android library module with the bindings             |
+| `docs/`     | Developer documentation                              |
+| `scripts/`  | Build and check scripts                              |
 
 ## Build and test
 

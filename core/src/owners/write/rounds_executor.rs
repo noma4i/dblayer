@@ -11,6 +11,7 @@ use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
 pub trait RoundJobs: Send + Sync + 'static {
     fn schedule_job(&self, request_id: RequestId, epoch: Epoch);
     fn end_job(&self, round_id: RoundId);
+    fn progress(&self, round_id: RoundId, fraction: u32);
 }
 
 pub(crate) struct RoundsExecutor {
@@ -27,6 +28,7 @@ impl EffectRunner<Rounds> for RoundsExecutor {
         match effect {
             RoundsEffect::ScheduleJob { request_id, epoch } => self.jobs.schedule_job(request_id, epoch),
             RoundsEffect::EndJob { round_id } => self.jobs.end_job(round_id),
+            RoundsEffect::Progress { round_id, fraction } => self.jobs.progress(round_id, fraction),
             RoundsEffect::Drained(drained) => (self.drained)(drained),
         }
     }

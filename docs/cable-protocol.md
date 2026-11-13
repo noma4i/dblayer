@@ -2,12 +2,12 @@
 
 `transport::CableLink` implements the cryptographic exchange for `EncryptedConfig.endpoints.cable`. It has no socket, timer, database or credential storage access.
 
-| Call | Result |
-| --- | --- |
-| `CableLink::open(config, challenge, credential)` | Connection state and RSA-OAEP/A256GCM hello |
-| `seal(body)` | Client frame with the next sequence number |
-| `receive(token)` | Authenticated server message with validated fields |
-| `close()` | Erases both directional keys and refuses further frames |
+| Call                                             | Result                                                  |
+| ------------------------------------------------ | ------------------------------------------------------- |
+| `CableLink::open(config, challenge, credential)` | Connection state and RSA-OAEP/A256GCM hello             |
+| `seal(body)`                                     | Client frame with the next sequence number              |
+| `receive(token)`                                 | Authenticated server message with validated fields      |
+| `close()`                                        | Erases both directional keys and refuses further frames |
 
 Use the HTTP `EncryptedConfig` for cable. The bundled SPKI must match its SHA-256 pin, and the challenge must name that same pin.
 The hello binds the audience, path, challenge, credential, client X25519 public key and random response key.
@@ -38,25 +38,25 @@ Every open creates one `PlatformSocket` object that the core holds. The core sen
 
 `DB.open` and `DBlayer.open` take any `Transport` in `transport`. The interface has four calls:
 
-| Call | What the core expects |
-| ---- | --------------------- |
-| `appHeaders()` | The headers of the app. The core reads them again for every request and cable, merges them with its own headers and the `User-Agent`, and passes the result in `HttpRequest.headers` |
-| `send(request)` | One HTTP exchange of `HttpRequest` (`author`, `requestId`, `attempt`, `url`, `method`, `headers`, `body`, `connectMs`, `requestMs`, `purpose`, `responseLimit`). `responseLimit` is the most bytes of the answer to read: count while reading and fail with `RawFailure` domain `DBlayer.ResponseLimit` and code 1 at the next byte. Set the headers as given. Return `RawOutcome.response(status, etag, body)` for any HTTP answer, or `RawOutcome.failed(RawFailure)` when no answer came. Do not follow redirects, retry or classify |
-| `openCable(url, headers, connectMs, events)` | Open the text socket at `url` with `headers` as given, report to `events` and return `CableOutcome.open(connection)` after the handshake, or `CableOutcome.failed(failure, handshakeStatus)`. When the core cancels the call, cancel the socket and end the call |
-| `put(target, file, identity, progress)` | `target` is `PutTarget(url, headers, connectMs, requestMs, responseLimit)`. Send the `length` bytes of the file from `offset` with PUT, set the headers as given and return `RawOutcome.response` with the status and the `ETag`. Call `progress.sent(bytes)` while it sends. The core cancels the call when it gives up (Swift task cancellation, Kotlin coroutine cancellation): end the HTTP request then, there is no flag to poll. `requestMs` is the idle bound of the upload, a file has no total bound |
+| Call                                         | What the core expects                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `appHeaders()`                               | The headers of the app. The core reads them again for every request and cable, merges them with its own headers and the `User-Agent`, and passes the result in `HttpRequest.headers`                                                                                                                                                                                                                                                                                                                                                    |
+| `send(request)`                              | One HTTP exchange of `HttpRequest` (`author`, `requestId`, `attempt`, `url`, `method`, `headers`, `body`, `connectMs`, `requestMs`, `purpose`, `responseLimit`). `responseLimit` is the most bytes of the answer to read: count while reading and fail with `RawFailure` domain `DBlayer.ResponseLimit` and code 1 at the next byte. Set the headers as given. Return `RawOutcome.response(status, etag, body)` for any HTTP answer, or `RawOutcome.failed(RawFailure)` when no answer came. Do not follow redirects, retry or classify |
+| `openCable(url, headers, connectMs, events)` | Open the text socket at `url` with `headers` as given, report to `events` and return `CableOutcome.open(connection)` after the handshake, or `CableOutcome.failed(failure, handshakeStatus)`. When the core cancels the call, cancel the socket and end the call                                                                                                                                                                                                                                                                        |
+| `put(target, file, identity, progress)`      | `target` is `PutTarget(url, headers, connectMs, requestMs, responseLimit)`. Send the `length` bytes of the file from `offset` with PUT, set the headers as given and return `RawOutcome.response` with the status and the `ETag`. Call `progress.sent(bytes)` while it sends. The core cancels the call when it gives up (Swift task cancellation, Kotlin coroutine cancellation): end the HTTP request then, there is no flag to poll. `requestMs` is the idle bound of the upload, a file has no total bound                          |
 
 The GraphQL address of a database without an encrypted session is `endpoint` of the open call. The core validates the addresses it builds before it hands them to a transport.
 
 `RawFailure` has the raw facts of the failure: `domain` (the `NSError` domain, or the class name of the exception), an optional `code` and the `message`. The core derives the class from a table of known domains, codes and exception classes. An error the table does not know is a failed connection.
 
-| `domain` and `code` | Class |
-| ------------------- | ----- |
-| `NSURLErrorDomain` -999, `Swift.CancellationError`, `java.util.concurrent.CancellationException`, `kotlinx.coroutines.JobCancellationException`, `kotlinx.coroutines.TimeoutCancellationException`, `java.io.IOException` with the text `Canceled` | The call was cancelled |
-| `NSURLErrorDomain` -1200 to -1206, `javax.net.ssl.SSLHandshakeException`, `javax.net.ssl.SSLPeerUnverifiedException` | The server certificate is not trusted |
-| `NSURLErrorDomain` -1003, -1004, -1006, -1009, -1018, -1020, `java.net.UnknownHostException`, `java.net.ConnectException`, `java.net.NoRouteToHostException` | The host is unreachable or the device is offline |
-| `NSURLErrorDomain` -1001, `java.net.SocketTimeoutException`, `java.io.InterruptedIOException` | A timeout of the call expired |
-| `DBlayer.ResponseLimit` code 1 | The answer passed `responseLimit`: a read fails with `ResponseTooLarge`, a mutation is interrupted |
-| anything else, `url` | Any other failure of the connection |
+| `domain` and `code`                                                                                                                                                                                                                                | Class                                                                                              |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `NSURLErrorDomain` -999, `Swift.CancellationError`, `java.util.concurrent.CancellationException`, `kotlinx.coroutines.JobCancellationException`, `kotlinx.coroutines.TimeoutCancellationException`, `java.io.IOException` with the text `Canceled` | The call was cancelled                                                                             |
+| `NSURLErrorDomain` -1200 to -1206, `javax.net.ssl.SSLHandshakeException`, `javax.net.ssl.SSLPeerUnverifiedException`                                                                                                                               | The server certificate is not trusted                                                              |
+| `NSURLErrorDomain` -1003, -1004, -1006, -1009, -1018, -1020, `java.net.UnknownHostException`, `java.net.ConnectException`, `java.net.NoRouteToHostException`                                                                                       | The host is unreachable or the device is offline                                                   |
+| `NSURLErrorDomain` -1001, `java.net.SocketTimeoutException`, `java.io.InterruptedIOException`                                                                                                                                                      | A timeout of the call expired                                                                      |
+| `DBlayer.ResponseLimit` code 1                                                                                                                                                                                                                     | The answer passed `responseLimit`: a read fails with `ResponseTooLarge`, a mutation is interrupted |
+| anything else, `url`                                                                                                                                                                                                                               | Any other failure of the connection                                                                |
 
 The core sets the timeouts and the platform applies them. On Apple platforms the applied bound is the idle timeout of the request (`URLRequest.timeoutInterval = requestMs`): there is no connect bound and no total bound. Kotlin applies all four: connect, read, write and call.
 
@@ -69,7 +69,7 @@ The core sets the timeouts and the platform applies them. On Apple platforms the
 A transport that does not open a cable socket returns `CableOutcome.failed`, like `MockTransport`.
 
 ```swift
-try await DB.open(encrypted: encrypted, credentials: credentials, modelsJSON: modelsJSON)
+try await DB.open(encrypted: encrypted, credentials: credentials, modelsJSON: modelsJSON, uploadTaskTitle: "Uploading")
 ```
 
 ```kotlin
@@ -113,13 +113,13 @@ Cancel sends `unsubscribe` for the chosen id only. The last cancel closes the so
 Copied server enumerations can reject authenticated refusals and cause repeated connections instead of stopping the affected subscription.
 The client validates code shapes without copying the server's vocabulary.
 
-| Field | Validation and meaning |
-| --- | --- |
-| `error.code` | 1-64 ASCII uppercase letters, digits or underscores. Preserve the string in the GraphQL failure |
-| `error.retryable` | Boolean. This flag alone decides whether the refused subscription retries |
-| `closing.reason` | The same string shape as `error.code`. Unknown reasons remain valid |
-| `closing.code` | Integer from 1000 through 4999. Unknown codes remain valid |
-| `t` and field names | Closed message grammar. Unknown message types and fields remain invalid |
+| Field               | Validation and meaning                                                                          |
+| ------------------- | ----------------------------------------------------------------------------------------------- |
+| `error.code`        | 1-64 ASCII uppercase letters, digits or underscores. Preserve the string in the GraphQL failure |
+| `error.retryable`   | Boolean. This flag alone decides whether the refused subscription retries                       |
+| `closing.reason`    | The same string shape as `error.code`. Unknown reasons remain valid                             |
+| `closing.code`      | Integer from 1000 through 4999. Unknown codes remain valid                                      |
+| `t` and field names | Closed message grammar. Unknown message types and fields remain invalid                         |
 
 An `error` for a subscription contains its `id`, `code` and `retryable`, without a message or reason field.
 With `retryable=false`, the models of that subscription leave the live set. Their `scope.events(Model)` streams end with `ended(invalid)`. Windows of those models get no error and keep their normal freshness rules. The subscription opens again only when a new reader asks for live data. The foreground event and the return of the network do not restart it.
@@ -133,12 +133,12 @@ The documented session-ending close values below keep their meaning. Other valid
 A connection that drops after it delivered data reconnects at once. A connection that drops again before any new data waits for the reconnect backoff.
 The code-shape check is shared by error codes and closing reasons, so new server vocabulary needs no client enumeration update.
 
-| Subscription | Handling |
-| --- | --- |
-| `recordEvents` | Declared response paths select the reread or local removal from `changed_by` |
-| `bulletinAdded` | The event creates a row of the memory model Notice without an HTTP read |
+| Subscription     | Handling                                                                                        |
+| ---------------- | ----------------------------------------------------------------------------------------------- |
+| `recordEvents`   | Declared response paths select the reread or local removal from `changed_by`                    |
+| `bulletinAdded`  | The event creates a row of the memory model Notice without an HTTP read                         |
 | `presenceSignal` | `apply` copies declared fields when `matches` accepts the event, `reset_after` resets the value |
-| `recordSignal` | The event creates a row of the memory model InteractionNotice without an HTTP read |
+| `recordSignal`   | The event creates a row of the memory model InteractionNotice without an HTTP read              |
 
 After an event is applied, the core publishes a model event with the rows before and after. `via: :observed` rereads each observed read of the model once.
 `recordEvents` does not replace row fields. A matching `removes_on` kind removes the cached row without HTTP or a mutation.
@@ -168,11 +168,11 @@ Going offline drops a pending retry delay. Coming back online reopens at once wh
 The last cancellation, offline transition or transport drop interrupts a pending socket open or handshake receive.
 The platform observer reports the connection state to the core, which passes it to the transport.
 
-| Close | Result |
-| --- | --- |
-| HTTP 401 or 403 during open, a session error during open | Reopen with backoff, like a dropped connection |
-| 4401, 4403, ACCOUNT_LOCKED or LOGGED_OUT | Reopen with backoff, like a dropped connection |
-| 1003, 1006, 4400, 4408, 4409, 4429, 4430, 4500, 4503 | Reopen with backoff. A close before the first server frame after ready keeps growing the delay |
+| Close                                                    | Result                                                                                         |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| HTTP 401 or 403 during open, a session error during open | Reopen with backoff, like a dropped connection                                                 |
+| 4401, 4403, ACCOUNT_LOCKED or LOGGED_OUT                 | Reopen with backoff, like a dropped connection                                                 |
+| 1003, 1006, 4400, 4408, 4409, 4429, 4430, 4500, 4503     | Reopen with backoff. A close before the first server frame after ready keeps growing the delay |
 
 No close deletes the credential and no close ends the session. Cable receives only the function that reads the credential.
 A subscription failure never reaches the `error` of a list or entity stream: windows keep their own load state. User-initiated configuration requests and queries remain available.

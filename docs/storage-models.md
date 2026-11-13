@@ -39,7 +39,7 @@ edited.destroy()
 A database with only local models needs no server. Open it without a transport. Online tracking and `retry` then do nothing, and calls that need the server fail with `DbError.Invalid`.
 
 ```swift
-try await DB.open(transport: nil, modelsJSON: modelsJSON, path: path)
+try await DB.open(transport: nil, modelsJSON: modelsJSON, path: path, uploadTaskTitle: "Uploading")
 ```
 
 ```kotlin

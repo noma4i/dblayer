@@ -714,6 +714,9 @@ pub struct TransferState {
     /// `upload_id` -> key of the removed transfers whose `abort` the server has not answered.
     pub(super) orphans: BTreeMap<String, Key>,
     pub(super) orphan_flight: BTreeSet<String>,
+    /// The transfers `Rounds` holds the round for, and the last share of them sent to `Rounds`.
+    pub(super) round_active: BTreeSet<TransferId>,
+    pub(super) round_sent: Option<u32>,
     /// `upload_id` -> the write the Store refused.
     pub(super) minted: BTreeMap<String, MintedDebt>,
     /// The orphans whose `Online(true)` or `RestoreReady` came while their abort was in flight.
@@ -771,6 +774,8 @@ impl TransferState {
             complete: false,
             orphans: BTreeMap::new(),
             orphan_flight: BTreeSet::new(),
+            round_active: BTreeSet::new(),
+            round_sent: None,
             minted: BTreeMap::new(),
             orphan_owed: BTreeSet::new(),
             retrying: BTreeMap::new(),

@@ -851,7 +851,7 @@ end
 Missing entry fields and undeclared areas are rejected.
 
 ```swift
-try await DB.open(endpoint: endpoint, modelsJSON: modelsJSON, operations: [RecordEvents.self])
+try await DB.open(endpoint: endpoint, modelsJSON: modelsJSON, operations: [RecordEvents.self], uploadTaskTitle: "Uploading")
 ```
 
 ```kotlin

@@ -269,6 +269,7 @@ fn every_round_job_carries_a_round_id_no_other_job_of_the_process_has() {
     impl RoundJobsSink for Asked {
         fn schedule_job(&self, job: RoundJob) { self.0.lock().unwrap().push(job); }
         fn end_job(&self, _round_id: u32) {}
+        fn round_progress(&self, _round_id: u32, _fraction: f64) {}
     }
     let asked = Arc::new(Asked(Default::default()));
     let slot = RoundJobsSlot::default();

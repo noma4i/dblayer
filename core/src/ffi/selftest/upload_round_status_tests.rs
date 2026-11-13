@@ -15,6 +15,7 @@ struct Jobs {
 impl RoundJobsSink for Jobs {
     fn schedule_job(&self, job: crate::ffi::RoundJob) { self.asked.lock().unwrap().push((job.request_id, job.epoch)); self.rounds.lock().unwrap().push(job.round_id); }
     fn end_job(&self, round_id: u32) { self.ended.lock().unwrap().push(round_id); }
+    fn round_progress(&self, _round_id: u32, _fraction: f64) {}
 }
 
 fn refusal(rows: &crate::ffi::tape::Rows) -> Option<String> {

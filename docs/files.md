@@ -18,12 +18,12 @@ val uri  = user.url(User.avatar)         // java.net.URI of a local file for a p
 user.detach(User.avatar)
 ```
 
-| Call     | Result                                                                   |
-| -------- | ------------------------------------------------------------------------ |
+| Call     | Result                                                                     |
+| -------- | -------------------------------------------------------------------------- |
 | `attach` | copies the local file and replaces the previous one for that row and field |
-| `file`   | `FileInfo`: id, name, mime type, size, sha256                            |
-| `url`    | a local file `URL` (Swift) or `java.net.URI` (Kotlin), created on demand |
-| `detach` | removes the file                                                         |
+| `file`   | `FileInfo`: id, name, mime type, size, sha256                              |
+| `url`    | a local file `URL` (Swift) or `java.net.URI` (Kotlin), created on demand   |
+| `detach` | removes the file                                                           |
 
 The library copies the source file in pieces of 1 MiB. It holds at most one piece of a large file in memory. A source that cannot be read fails with `Storage`. You do not decide where bytes live. Small files are kept inside the database, large ones next to it, and the library may move them. The API has no paths to storage and no size thresholds.
 
@@ -161,7 +161,7 @@ A project with an `upload: true` operation declares the block exactly once. A se
 
 ```swift
 try await DB.open(endpoint: endpoint, modelsJSON: models,
-  operations: [MomentCreateFile.self, CreateBlob.self, InitMultipart.self, PresignParts.self, CompleteMultipart.self, AbortMultipart.self])
+  operations: [MomentCreateFile.self, CreateBlob.self, InitMultipart.self, PresignParts.self, CompleteMultipart.self, AbortMultipart.self], uploadTaskTitle: "Uploading")
 let request = UploadRequest(path: url.path, variables: ["text": .string("hello")])
 try await DB.account().upload(moment, action: "upload_clip", request)
 moment.uploads["upload_clip"]?.status       // .uploading
@@ -198,7 +198,7 @@ On iOS the PUT of a file runs in the app, see [upload with the app in the backgr
 
 On Android the app gives the text and the small icon of the notification to `DBlayer.open` as `uploadNotification = UploadNotification(title, text, icon)`.
 
-API 34 and later run one user-initiated job with a network requirement. Below API 34 the library runs a sticky `dataSync` foreground task that starts its notification before `open` finishes: `open` fails with `Config` when the manifest of the app lacks `android.permission.FOREGROUND_SERVICE_DATA_SYNC`. The library does not use WorkManager. A job or foreground task never repeats a transfer: retries follow the upload `Backoff` of the core. When the system refuses the start, the reason appears in the `error` (kind `refused`) of the accepted upload until the next job is asked, and nothing else changes. Upload requests (the file `PUT`, the steps and the content mutation) use the network of the job, all other requests use the default route. A restart or a force stop continues at the next `open`.
+API 34 and later run one user-initiated job with a network requirement. Below API 34 the library runs a sticky `dataSync` foreground task that starts its notification before `open` finishes: `open` fails with `Config` when the manifest of the app lacks `android.permission.FOREGROUND_SERVICE_DATA_SYNC`. The library does not use WorkManager. A job or foreground task never repeats a transfer: retries follow the upload `Backoff` of the core. When the system refuses the start, the reason appears in the `error` (kind `refused`) of the accepted upload until the next job is asked, and nothing else changes. The notification of the job shows the share of the running uploads as its progress. Upload requests (the file `PUT`, the steps and the content mutation) use the network of the job, all other requests use the default route. A restart or a force stop continues at the next `open`.
 
 The multipart abort uses the transfer network too. A custom `Transport.put` receives a `TransferIdentity` with the operation, the item and the step. The identity of an item stays the same when the batch changes. The item key is an opaque value, not a file name.
 The background job keeps the epoch of the accepted upload. A late refusal of the system applies only to that epoch.
@@ -208,6 +208,8 @@ The background job keeps the epoch of the accepted upload. A late refusal of the
 ### Upload with the app in the background
 
 On iOS a file goes up in the app, in parts, as on Android: a file above the part size goes in several PUTs, an interrupted PUT sends again from the first part the server has not confirmed, and the parts the server has are not sent again. The app adds no call and changes no `beginBackgroundTask` around uploads.
+
+With the app in the background the library keeps the process alive with a system task. On iOS 26 and later it is a continued processing task: add `<bundle id>.dblayer.uploads` (or a wildcard that covers it) to `BGTaskSchedulerPermittedIdentifiers` in `Info.plist`, and pass the title of the system progress bar as `uploadTaskTitle` to `DB.open`. A missing identifier refuses the round: the reason shows in the `error` (kind `refused`) of the accepted upload. The bar shows the share of the running uploads and has a cancel button: cancel ends the task, the transfer goes on while the process lives and continues from the first unconfirmed part at the next start. On iOS 18 to 25 the library holds the process for the time the system gives after the app is minimised. A swipe in the app switcher, a kill or a power off stops the process: the transfer continues at the next `open`.
 
 ### Create with an upload
 
@@ -339,13 +341,13 @@ Absent headers are valid. Malformed header JSON or non-string header names and v
 
 The file is read in ranges: a single upload in one range up to the 10 MiB threshold, a multipart upload in parts of 5 MiB. The checksum is base64 MD5, the MIME type comes from the file extension unless you pass one.
 
-| Setting                            | Default                                                                                   |
-| ---------------------------------- | ----------------------------------------------------------------------------------------- |
-| multipart threshold                | 10 MiB                                                                                    |
-| part size                          | 5 MiB                                                                                     |
-| files at a time                    | 1, the others wait as `queued`                                                            |
-| retry backoff                      | [Upload retry policy](server-sync.md#retries), with a saved budget for each step and part |
-| PUT timeout                        | 120 s                                                                                     |
+| Setting             | Default                                                                                   |
+| ------------------- | ----------------------------------------------------------------------------------------- |
+| multipart threshold | 10 MiB                                                                                    |
+| part size           | 5 MiB                                                                                     |
+| files at a time     | 1, the others wait as `queued`                                                            |
+| retry backoff       | [Upload retry policy](server-sync.md#retries), with a saved budget for each step and part |
+| PUT timeout         | 120 s                                                                                     |
 
 The file limit counts transfers across operations and their items. The limit is 1 and has no setting.
 The final content mutation does not hold a file permit.
@@ -354,18 +356,18 @@ The final content mutation does not hold a file permit.
 
 `record.uploads` is empty when nothing is running, otherwise it holds one entry per declared upload action. It changes through the same live reads as `record.sync`, so observers get a new row for every state or progress change.
 
-| Field                     | Meaning                                                                                                                                                                                                      |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `status`                  | `waiting`, `preparing`, `queued`, `uploading`, `sending`, `done`, `failed`                                                                                                                    |
+| Field                     | Meaning                                                                                                                                                                                                                                                                      |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status`                  | `waiting`, `preparing`, `queued`, `uploading`, `sending`, `done`, `failed`                                                                                                                                                                                                   |
 | `waitReason`              | why a `waiting` upload does not run yet: `create_unconfirmed` (the record is still local, its `create` has no answer) or `source_pending` (the upload was created without a file and waits for it). A step that waits for the network or for power saving to end is `queued` |
-| `stage`                   | `prepare`, `part`, `mutation`. The step of a request to the network is named by `TransferIdentity` in `Transport.put`                                                                                       |
-| `sentBytes`, `totalBytes` | for multipart the sum over all parts                                                                                                                                                                         |
-| `progress`                | the share of the file from 0 to 1 in steps of 0.01, never lower during a transfer, 1 only when the server has the whole file                                                                                                                           |
-| `batchProgress`           | the share of the batch from 0 to 1 in steps of 0.01, equal to `progress` outside a batch                                                                                                                                                               |
-| `attempts`                | saved attempts for the current unfinished step, preserved across restarts                                                                                                                                    |
-| `error`                   | an `OperationFailure`: `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message`, `extensions`, `responseLimit` and `reason`                                                                                            |
-| `localUrl`                | the file URL of the file the transfer reads now, from the first frame of the row: the file of the caller during the call, then the copy of the library; `nil` without a file. Show the preview from it only                                                                                                                         |
-| `processing`              | `processing.progress`: the progress the server reports while it works on the file after the transfer, `nil` before                                                                                           |
+| `stage`                   | `prepare`, `part`, `mutation`. The step of a request to the network is named by `TransferIdentity` in `Transport.put`                                                                                                                                                        |
+| `sentBytes`, `totalBytes` | for multipart the sum over all parts                                                                                                                                                                                                                                         |
+| `progress`                | the share of the file from 0 to 1 in steps of 0.01, never lower during a transfer, 1 only when the server has the whole file                                                                                                                                                 |
+| `batchProgress`           | the share of the batch from 0 to 1 in steps of 0.01, equal to `progress` outside a batch                                                                                                                                                                                     |
+| `attempts`                | saved attempts for the current unfinished step, preserved across restarts                                                                                                                                                                                                    |
+| `error`                   | an `OperationFailure`: `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message`, `extensions`, `responseLimit` and `reason`                                                                                                                                           |
+| `localUrl`                | the file URL of the file the transfer reads now, from the first frame of the row: the file of the caller during the call, then the copy of the library; `nil` without a file. Show the preview from it only                                                                  |
+| `processing`              | `processing.progress`: the progress the server reports while it works on the file after the transfer, `nil` before                                                                                                                                                           |
 
 An upload of a local record starts as `waiting` with `totalBytes` set from the file size and `sentBytes` and `progress` at zero. When the `create` is confirmed the real id replaces the local id in the upload variables and the status moves on through `preparing` or `queued` to `uploading`, `sending` and the end. If the `create` is refused the upload is discarded with the record. Every change of status, stage, bytes or reason reaches observers as a new row.
 

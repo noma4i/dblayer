@@ -40,6 +40,7 @@ impl RoundRefusal {
 pub trait RoundJobsSink: Send + Sync {
     fn schedule_job(&self, job: RoundJob);
     fn end_job(&self, round_id: u32);
+    fn round_progress(&self, round_id: u32, fraction: f64);
 }
 
 /// The sink the platform sets after `open`: a job asked for before it is set is not scheduled, the round asks again at the next need.
@@ -62,6 +63,13 @@ impl RoundJobs for RoundJobsSlot {
         if let Some(sink) = self.0.get() {
             crate::lock::assert_no_library_lock("RoundJobsSink::end_job");
             sink.end_job(round_id);
+        }
+    }
+
+    fn progress(&self, round_id: RoundId, fraction: u32) {
+        if let Some(sink) = self.0.get() {
+            crate::lock::assert_no_library_lock("RoundJobsSink::round_progress");
+            sink.round_progress(round_id, f64::from(fraction) / 100.0);
         }
     }
 }

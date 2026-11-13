@@ -15,6 +15,8 @@ use crate::owners::contract::RequestId;
 pub enum RoundsInput {
     Needed { epoch: Epoch, ids: Vec<TransferId> },
     Idle { epoch: Epoch, transfer_id: TransferId },
+    /// The share of the set of transfers of the epoch in hundredths, from Transfer.
+    Progress { epoch: Epoch, fraction: u32 },
     Foreground,
     /// The platform gave the sink of the jobs (`set_round_jobs`).
     JobsSinkSet,
@@ -30,6 +32,7 @@ pub enum RoundsInput {
 pub enum RoundsEffect {
     ScheduleJob { request_id: RequestId, epoch: Epoch },
     EndJob { round_id: RoundId },
+    Progress { round_id: RoundId, fraction: u32 },
     Drained(Drained),
 }
 
@@ -159,6 +162,12 @@ impl RoundsState {
         }
     }
 
+    fn progress(&self, epoch: Epoch, fraction: u32, fx: &mut Fx) {
+        if let Round::Running { round_id, epoch: running, ended: false, .. } = self.round {
+            if running == epoch { fx.push(Effect::Run(RoundsEffect::Progress { round_id, fraction })); }
+        }
+    }
+
     fn refused(&mut self, request_id: RequestId, epoch: Epoch, reason: String, fx: &mut Fx) {
         if let Round::Requested { epoch: asked, request_id: current } = self.round {
             if current == request_id && asked == epoch {
@@ -221,6 +230,7 @@ impl StateOwner for Rounds {
         match input {
             RoundsInput::Needed { epoch, ids } => state.needed(epoch, ids, &mut fx),
             RoundsInput::Idle { epoch, transfer_id } => state.idle(epoch, transfer_id, &mut fx),
+            RoundsInput::Progress { epoch, fraction } => state.progress(epoch, fraction, &mut fx),
             RoundsInput::Foreground => state.foreground(&mut fx),
             RoundsInput::JobsSinkSet => state.sink_set(&mut fx),
             RoundsInput::RoundStarted { request_id, round_id, epoch } => state.started(request_id, round_id, epoch, &mut fx),

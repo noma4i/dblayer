@@ -67,6 +67,7 @@ impl TransferState {
         let others = self.raise_batch(id);
         self.show_row(id, shown, fx);
         for other in others { self.write_batch_share(other, fx); }
+        self.round_progress(fx);
     }
 
     /// The row of `id` writes the new share of its batch; its shown value is the same, so no reader of the transfer is woken. A row no batch wrote yet takes the share with its first write.
@@ -493,16 +494,30 @@ impl TransferState {
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
 
-    pub(super) fn rounds_needed(&self, ids: Vec<TransferId>, fx: &mut Fx) {
+    pub(super) fn rounds_needed(&mut self, ids: Vec<TransferId>, fx: &mut Fx) {
         if let (Some(rounds), false) = (self.peers.rounds, ids.is_empty()) {
+            self.round_active.extend(ids.iter().copied());
             fx.push(Effect::Send(Outbound::new(rounds, RoundsInput::Needed { epoch: self.epoch, ids })));
+            self.round_progress(fx);
         }
     }
 
-    pub(super) fn rounds_idle(&self, id: TransferId, fx: &mut Fx) {
+    pub(super) fn rounds_idle(&mut self, id: TransferId, fx: &mut Fx) {
         if let Some(rounds) = self.peers.rounds {
             fx.push(Effect::Send(Outbound::new(rounds, RoundsInput::Idle { epoch: self.epoch, transfer_id: id })));
+            self.round_active.remove(&id);
+            if self.round_active.is_empty() { self.round_sent = None; } else { self.round_progress(fx); }
         }
+    }
+
+    /// D-415: the share of the set `Rounds` holds the round for goes to `Rounds` when it grows.
+    pub(super) fn round_progress(&mut self, fx: &mut Fx) {
+        let Some(rounds) = self.peers.rounds else { return };
+        let ids: Vec<TransferId> = self.round_active.iter().copied().collect();
+        let Some(share) = self.share_of(&ids) else { return };
+        if self.round_sent.is_some_and(|sent| sent >= share) { return; }
+        self.round_sent = Some(share);
+        fx.push(Effect::Send(Outbound::new(rounds, RoundsInput::Progress { epoch: self.epoch, fraction: share })));
     }
 
     pub(super) fn receipt(&self, id: TransferId) -> Receipt { Receipt { epoch: self.epoch, op_id: id, cycle_id: self.transfers.get(&id).map_or(0, |transfer| transfer.cycle_id), revision: self.transfers.get(&id).map_or(0, |transfer| transfer.revision), optimistic: self.transfers.get(&id).and_then(|transfer| transfer.optimistic.clone()) } }

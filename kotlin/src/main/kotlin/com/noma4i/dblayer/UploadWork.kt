@@ -40,11 +40,13 @@ internal object UploadNotifications {
         return UploadNotification(title, text, file.getInt("icon", 0))
     }
 
-    fun build(context: Context): Notification {
+    fun build(context: Context, fraction: Double? = null): Notification {
         val shown = stored(context)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.createNotificationChannel(NotificationChannel(CHANNEL, shown.title, NotificationManager.IMPORTANCE_LOW))
-        return Notification.Builder(context, CHANNEL).setContentTitle(shown.title).setContentText(shown.text).setSmallIcon(shown.smallIcon).setOngoing(true).build()
+        val builder = Notification.Builder(context, CHANNEL).setContentTitle(shown.title).setContentText(shown.text).setSmallIcon(shown.smallIcon).setOngoing(true)
+        if (fraction != null) builder.setProgress(100, (fraction * 100).toInt(), false)
+        return builder.build()
     }
 }
 
@@ -89,6 +91,14 @@ internal class UploadRounds(private val context: Context, private val database: 
         if (scheduler.getPendingJob(UploadJobService.JOB_ID)?.extras?.let(::roundJobOf)?.roundId == roundId) scheduler.cancel(UploadJobService.JOB_ID)
         UploadService.stop(roundId)
     }
+
+    override fun roundProgress(roundId: UInt, fraction: Double) {
+        val notification = UploadNotifications.build(context, fraction)
+        when (uploadMode(Build.VERSION.SDK_INT)) {
+            UploadMode.UserInitiatedJob -> UploadJobService.progress(roundId, notification)
+            UploadMode.ForegroundService -> (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(UploadNotifications.ID, notification)
+        }
+    }
 }
 
 private const val REQUEST = "request"
@@ -118,6 +128,7 @@ internal object UploadNetwork {
 @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
 internal class UploadJobService : JobService() {
     override fun onStartJob(params: JobParameters): Boolean {
+        running.set(this to params)
         setNotification(params, UploadNotifications.ID, UploadNotifications.build(this), JOB_END_NOTIFICATION_POLICY_REMOVE)
         val database = DBlayer.openedDatabase()
         if (database == null) { jobFinished(params, false); return false }
@@ -133,6 +144,7 @@ internal class UploadJobService : JobService() {
 
     override fun onStopJob(params: JobParameters): Boolean {
         val job = roundJobOf(params.extras)
+        running.compareAndSet(running.get()?.takeIf { it.second === params }, null)
         UploadNetwork.ended(job.roundId)
         DBlayer.openedDatabase()?.roundEnded(job.roundId, job.epoch)
         return false
@@ -140,6 +152,13 @@ internal class UploadJobService : JobService() {
 
     companion object {
         const val JOB_ID = 0x0DB1
+
+        private val running = java.util.concurrent.atomic.AtomicReference<Pair<UploadJobService, JobParameters>?>(null)
+
+        fun progress(roundId: UInt, notification: Notification) {
+            val (service, params) = running.get()?.takeIf { roundJobOf(it.second.extras).roundId == roundId } ?: return
+            service.setNotification(params, UploadNotifications.ID, notification, JOB_END_NOTIFICATION_POLICY_REMOVE)
+        }
 
         fun schedule(context: Context, job: RoundJob): Refusal? {
             val scheduler = context.getSystemService(JobScheduler::class.java)

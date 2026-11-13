@@ -414,3 +414,19 @@ fn xfer_round_resume_old_epoch() {
         assert_eq!((runs.len(), sends.len(), state.round), (0, 0, round), "{round:?}: a round of an old epoch is not resumed");
     }
 }
+
+#[test]
+fn xfer_round_progress_reaches_the_running_job() {
+    let mut state = state(1);
+    let request_id = requested(&mut state, 1, &[10]);
+    let (runs, _) = step(&mut state, RoundsInput::Progress { epoch: 1, fraction: 10 });
+    assert!(runs.is_empty(), "a requested round has no job to show progress");
+    step(&mut state, RoundsInput::RoundStarted { request_id, round_id: 5, epoch: 1 });
+    let (runs, _) = step(&mut state, RoundsInput::Progress { epoch: 1, fraction: 40 });
+    assert_eq!(runs, vec![RoundsEffect::Progress { round_id: 5, fraction: 40 }]);
+    let (runs, _) = step(&mut state, RoundsInput::Progress { epoch: 2, fraction: 90 });
+    assert!(runs.is_empty(), "the share of another epoch is not the share of the job");
+    step(&mut state, RoundsInput::Idle { epoch: 1, transfer_id: 10 });
+    let (runs, _) = step(&mut state, RoundsInput::Progress { epoch: 1, fraction: 100 });
+    assert!(runs.is_empty(), "an ended job gets nothing");
+}

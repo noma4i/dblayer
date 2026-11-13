@@ -34,7 +34,7 @@ struct OpenHeadersTests {
     let origin = try await server.start()
     let token = Token()
     let encrypted = EncryptedConfig(origin: origin.absoluteString, serverKey: SealedServer.serverKey, pin: SealedServer.pin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["login_link": EncryptedSessionOperation(path: "/api/auth/login_link", class: .authenticated)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel")
-    try await DB.open(headers: { ["X-Token": token.value] }, encrypted: encrypted, credentials: HeaderCredential(), modelsJSON: emptySpecs)
+    try await DB.open(headers: { ["X-Token": token.value] }, encrypted: encrypted, credentials: HeaderCredential(), modelsJSON: emptySpecs, uploadTaskTitle: "Uploading")
 
     try await DB.database.setOnline(online: true)
     await expectDbError("Http") { try await DB.sessionCall("login_link", body: HeaderLogin(account: "A")) }

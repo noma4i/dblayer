@@ -88,10 +88,13 @@ public enum DB {
     return try await fetchServerConfig(encrypted: encrypted, platform: platform, version: version, build: build, http: http ?? UrlSessionTransport(), retries: retries, observers: nil)
   }
 
-  public static func open(endpoint: URL? = nil, headers: @escaping @Sendable () -> [String: String] = { [:] }, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], http: EncryptedHttp? = nil) async throws {
+  public static func open(endpoint: URL? = nil, headers: @escaping @Sendable () -> [String: String] = { [:] }, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], http: EncryptedHttp? = nil, uploadTaskTitle: String) async throws {
     _ = NetworkStatus()
     let ports = OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: endpoint?.absoluteString, executor: UrlSessionTransport(headers: headers), dataSyncDeclared: nil, preparer: SystemPreparer())
-    _ = try await opener.open(config: Config(path: path), modelsJson: modelsJSON, options: OpenOptions(operations: definitions(operations)), ports: ports, observers: SystemObservers())
+    let made = try await opener.open(config: Config(path: path), modelsJson: modelsJSON, options: OpenOptions(operations: definitions(operations)), ports: ports, observers: SystemObservers())
+    #if os(iOS)
+    made.setRoundJobs(sink: UploadRounds(database: made, scheduler: SystemRoundScheduler(title: uploadTaskTitle)))
+    #endif
   }
 
   private static func definitions(_ operations: [any GraphQLOperation.Type]) -> [OperationDefinition] {

@@ -19,7 +19,7 @@ The library opens files and recreates incompatible caches on its worker pool.
 Open the database once at app start and use that instance everywhere. A second call to `open` while the database is open fails with `database is already open; open it once at app start`, whatever its parameters. An opening error permits retry. `close` ends the database, meant for tests and the end of the process, and the next `open` opens it again.
 
 ```swift
-try await DB.open(endpoint: endpoint, headers: { ["Authorization": "Bearer \(session.token)"] }, modelsJSON: modelsJSON, operations: GraphQLOperations.all)
+try await DB.open(endpoint: endpoint, headers: { ["Authorization": "Bearer \(session.token)"] }, modelsJSON: modelsJSON, operations: GraphQLOperations.all, uploadTaskTitle: "Uploading")
 ```
 
 ```kotlin
@@ -30,7 +30,7 @@ An `open` that passes at least one operation besides the upload steps fails with
 
 ```swift
 // Invalid: the operations the library sends by itself are not registered: Changes, UserNode
-try await DB.open(endpoint: endpoint, modelsJSON: modelsJSON, operations: [Greeting.self])
+try await DB.open(endpoint: endpoint, modelsJSON: modelsJSON, operations: [Greeting.self], uploadTaskTitle: "Uploading")
 ```
 
 ```kotlin
@@ -107,7 +107,7 @@ try await DB.open(
   encrypted: EncryptedConfig(origin: origin.absoluteString, serverKey: bundledServerKey, pin: bundledServerPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel),
   credentials: AppCredentials(),
   modelsJSON: modelsJSON,
-  path: path
+  path: path, uploadTaskTitle: "Uploading"
 )
 try await DB.sessionCall("otp", body: PhoneBody(phone: "+61400000000"))
 let answer = try await DB.sessionCall("confirm", body: CodeBody(code: "123456"), as: SignedIn.self)
@@ -446,7 +446,7 @@ Origin rule: `https://host[:port]` is accepted for any host. `http://host[:port]
 The core takes the transport and the encrypted HTTP from the executor of the platform, `UrlSessionTransport` or `OkHttpTransport`, on the same origin, including the WebSocket at `encrypted.endpoints.cable`. A database with neither `endpoint` nor `encrypted` is local and has no transport. The optional `transport` and `http` parameters replace the executor in tests.
 
 ```swift
-try await DB.open(encrypted: EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel), credentials: AppCredentials(), modelsJSON: modelsJSON)
+try await DB.open(encrypted: EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel), credentials: AppCredentials(), modelsJSON: modelsJSON, uploadTaskTitle: "Uploading")
 ```
 
 ```kotlin
@@ -456,7 +456,7 @@ DBlayer.open(context, encrypted = EncryptedConfig(origin, bundledServerKey, bund
 Tests can pass their own transport and HTTP replies. A test that opens cable must also implement the 4 WebSocket calls.
 
 ```swift
-try await DB.open(encrypted: encrypted, credentials: credentials, transport: testTransport, modelsJSON: modelsJSON, http: testHttp)
+try await DB.open(encrypted: encrypted, credentials: credentials, transport: testTransport, modelsJSON: modelsJSON, http: testHttp, uploadTaskTitle: "Uploading")
 ```
 
 ```kotlin
@@ -943,7 +943,7 @@ let encrypted = EncryptedConfig(
   cablePurpose: cablePurpose, cableChannel: cableChannel
 )
 let config = try await DB.serverConfig(encrypted: encrypted, platform: .ios, version: appVersion)
-try await DB.open(encrypted: encrypted, credentials: credentials, modelsJSON: modelsJSON)
+try await DB.open(encrypted: encrypted, credentials: credentials, modelsJSON: modelsJSON, uploadTaskTitle: "Uploading")
 ```
 
 ```kotlin

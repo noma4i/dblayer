@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- Continue iOS uploads in the background with a system task, set by uploadTaskTitle in DB.open.
+- Show the share of the running uploads as the progress of the background job.
+
 ### Changed
 
 - Close the server cable while the app is in the background.
