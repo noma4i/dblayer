@@ -177,6 +177,7 @@ pub(super) fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadV
 /// An open stream. Dropping the last handle releases it in the core.
 #[derive(uniffi::Object)]
 pub struct ReadStream {
+    me: Weak<ReadStream>,
     database: Weak<Database>,
     stream: u64,
     ended: std::sync::Mutex<Option<EndCause>>,
@@ -245,62 +246,62 @@ impl ReadStream {
     }
 
     /// The next value of the stream, `None` once the stream ended and its last value was taken. A failure of the stream arrives as its last value `Ended`.
-    pub async fn pull(&self, reader: u64) -> Option<ReadValue> {
-        if self.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).released.contains(&reader) { return Some(ReadValue::Ended { cause: EndCause::Closed }); }
-        let Some(life) = self.life() else { return self.finished(EndCause::Closed) };
-        let waiter = life.pull(self.stream, reader);
-        let mut waiting = PullWait { life, stream: self.stream, outcome: waiter.id(), armed: true };
+    pub async fn pull(&self, reader: u64) -> Option<ReadValue> { let Some(this_stream) = self.me.upgrade() else { return self.finished(EndCause::Closed) }; super::database::on_core(self.life(), async move {
+        if this_stream.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).released.contains(&reader) { return Some(ReadValue::Ended { cause: EndCause::Closed }); }
+        let Some(life) = this_stream.life() else { return this_stream.finished(EndCause::Closed) };
+        let waiter = life.pull(this_stream.stream, reader);
+        let mut waiting = PullWait { life, stream: this_stream.stream, outcome: waiter.id(), armed: true };
         let answer = waiter.wait().await;
         waiting.armed = false;
-        if self.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).released.contains(&reader) { return Some(ReadValue::Ended { cause: EndCause::Closed }); }
+        if this_stream.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).released.contains(&reader) { return Some(ReadValue::Ended { cause: EndCause::Closed }); }
         match answer {
             Outcome::Value(PullAnswer::Value(value)) => {
                 let mut value = *value;
                 if let Value::Ended(cause) = &mut value {
-                    let mut ended = self.ended.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let mut ended = this_stream.ended.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                     *cause = ended.get_or_insert_with(|| cause.clone()).clone();
                 }
-                match read_value(value, self.wire.as_deref()) {
+                match read_value(value, this_stream.wire.as_deref()) {
                     Ok(value) => Some(value),
-                    Err(error) => self.finished(EndCause::Internal { detail: error.to_string() }),
+                    Err(error) => this_stream.finished(EndCause::Internal { detail: error.to_string() }),
                 }
             }
-            Outcome::Value(PullAnswer::Done) | Outcome::Closing => self.finished(EndCause::Closed),
-            Outcome::EpochEnded(_) => self.finished(EndCause::SessionEnded),
-            Outcome::Internal => self.finished(EndCause::Internal { detail: "the answer of the owner was lost".into() }),
-            Outcome::Value(PullAnswer::Interrupted) => self.finished(EndCause::Cancelled),
+            Outcome::Value(PullAnswer::Done) | Outcome::Closing => this_stream.finished(EndCause::Closed),
+            Outcome::EpochEnded(_) => this_stream.finished(EndCause::SessionEnded),
+            Outcome::Internal => this_stream.finished(EndCause::Internal { detail: "the answer of the owner was lost".into() }),
+            Outcome::Value(PullAnswer::Interrupted) => this_stream.finished(EndCause::Cancelled),
         }
-    }
+    }).await.unwrap_or_else(|error| self.finished(EndCause::Internal { detail: error.to_string() })) }
 
     /// Loads the first page of the relation of this stream again. `Invalid` when the stream reads no relation, `NoSession` when its session ended.
-    pub async fn refresh(&self) -> Result<(), DbError> {
-        let database = self.database.upgrade().ok_or_else(super::command::closed)?;
-        database.account_call(self.epoch)?;
-        let load = self.relation()?;
-        database.refresh(self.epoch, load.model.clone(), Some(load.relation.clone()), load.params_json.clone()).await
-    }
+    pub async fn refresh(&self) -> Result<(), DbError> { let this_stream = self.me.upgrade().ok_or_else(super::command::closed)?; super::database::on_core(self.life(), async move {
+        let database = this_stream.database.upgrade().ok_or_else(super::command::closed)?;
+        database.account_call(this_stream.epoch)?;
+        let load = this_stream.relation()?;
+        database.refresh(this_stream.epoch, load.model.clone(), Some(load.relation.clone()), load.params_json.clone()).await
+    }).await? }
 
     /// Loads the next page of the relation of this stream.
-    pub async fn load_more(&self) -> Result<LoadMoreResult, DbError> {
-        let database = self.database.upgrade().ok_or_else(super::command::closed)?;
-        database.account_call(self.epoch)?;
-        let load = self.relation()?;
-        database.load_more(self.epoch, load.model.clone(), Some(load.relation.clone()), load.params_json.clone()).await
-    }
+    pub async fn load_more(&self) -> Result<LoadMoreResult, DbError> { let this_stream = self.me.upgrade().ok_or_else(super::command::closed)?; super::database::on_core(self.life(), async move {
+        let database = this_stream.database.upgrade().ok_or_else(super::command::closed)?;
+        database.account_call(this_stream.epoch)?;
+        let load = this_stream.relation()?;
+        database.load_more(this_stream.epoch, load.model.clone(), Some(load.relation.clone()), load.params_json.clone()).await
+    }).await? }
 
     /// Takes the stream for one reader and returns its number or the reason the claim ended.
-    pub async fn claim_reader(&self) -> ReadClaim {
+    pub async fn claim_reader(&self) -> ReadClaim { let Some(this_stream) = self.me.upgrade() else { return ReadClaim::Ended { cause: EndCause::Closed } }; super::database::on_core(self.life(), async move {
         {
-            let readers = self.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let readers = this_stream.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(reader) = readers.claimed.filter(|id| readers.released.contains(id)) { return ReadClaim::Claimed { reader }; }
         }
-        let Some(life) = self.life() else { return ReadClaim::Ended { cause: EndCause::Closed } };
+        let Some(life) = this_stream.life() else { return ReadClaim::Ended { cause: EndCause::Closed } };
         let reader = crate::runtime::next_id(crate::runtime::IdSpace::Reader);
-        if life.claim_reader(self.stream, reader).await {
-            self.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).claimed = Some(reader);
+        if life.claim_reader(this_stream.stream, reader).await {
+            this_stream.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner).claimed = Some(reader);
             ReadClaim::Claimed { reader }
         } else if life.is_shut() { ReadClaim::Ended { cause: EndCause::Closed } } else { ReadClaim::Ended { cause: EndCause::Invalid { detail: "the stream has a reader".into() } } }
-    }
+    }).await.unwrap_or_else(|error| ReadClaim::Ended { cause: EndCause::Internal { detail: error.to_string() } }) }
 
     /// The reader left the stream: its interest ends while the handle lives. Another reader's number changes nothing.
     pub fn release_reader(&self, reader: u64) {
@@ -309,14 +310,14 @@ impl ReadStream {
     }
 
     /// Returns when no value of this stream is delivered any more.
-    pub async fn cancel(&self) {
+    pub async fn cancel(&self) { let Some(this_stream) = self.me.upgrade() else { return }; super::database::on_core(self.life(), async move {
         {
-            let readers = self.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let readers = this_stream.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if readers.claimed.is_some_and(|id| readers.released.contains(&id)) { return; }
         }
-        if let Some(life) = self.life() { let _ = life.cancel_stream(self.stream).wait().await; }
-        self.ended.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert(EndCause::Cancelled);
-    }
+        if let Some(life) = this_stream.life() { let _ = life.cancel_stream(this_stream.stream).wait().await; }
+        this_stream.ended.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert(EndCause::Cancelled);
+    }).await.ok().unwrap_or_default() }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
@@ -346,7 +347,7 @@ impl Database {
     /// The view of a request: what the owner reads, and the window it watches.
     fn view_of(&self, request: &ReadRequest) -> Result<View, DbError> {
         match request {
-            ReadRequest::List { .. } | ReadRequest::Count { .. } | ReadRequest::Entity { .. } => self.row_view(request).map(|(view, _)| view),
+            ReadRequest::List { .. } | ReadRequest::Count { .. } | ReadRequest::Entity { .. } => self.row_view(request, false).map(|(view, _)| view),
             ReadRequest::Events { model } => {
                 self.db.spec(model)?;
                 Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone(), node: None, wants: Vec::new(), deferred_rows: Vec::new(), query: None })
@@ -361,18 +362,18 @@ impl Database {
     fn deferred_of(&self, request: &ReadRequest, waiting: Vec<(String, String)>) -> Option<crate::owners::read::deliveries::Deferred> {
         if waiting.is_empty() { return None; }
         let (me, request) = (self.me.clone(), request.clone());
-        Some(crate::owners::read::deliveries::Deferred { temps: waiting, rebind: crate::owners::read::deliveries::Rebind::new(move || me.upgrade()?.row_view(&request).ok().filter(|(_, waiting)| waiting.is_empty()).map(|(view, _)| view)) })
+        Some(crate::owners::read::deliveries::Deferred { temps: waiting, rebind: crate::owners::read::deliveries::Rebind::new(move || me.upgrade()?.row_view(&request, true).ok().filter(|(_, waiting)| waiting.is_empty()).map(|(view, _)| view)) })
     }
 
     /// The view of a read of rows and the temporary ids of its request that have no server id yet. Every id passes `resolve` first: a request with such an id opens no window and sends no request, the stream reads the local rows and opens its window when a swap gives the server ids (`Deferred`).
-    pub(super) fn row_view(&self, request: &ReadRequest) -> Result<(View, Vec<(String, String)>), DbError> {
+    pub(super) fn row_view(&self, request: &ReadRequest, read: bool) -> Result<(View, Vec<(String, String)>), DbError> {
         match request {
             ReadRequest::List { query: asked } | ReadRequest::Count { query: asked } => {
                 let mut asked = asked.clone();
                 let mut waiting = Vec::new();
                 if asked.relation.is_some() && asked.params_json.contains(crate::identity::TEMP_ID_PREFIX) {
                     let mut params: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&asked.params_json).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-                    waiting = super::loading::resolve_params(&self.db, &asked.model, &mut params)?;
+                    waiting = super::loading::resolve_params(&self.db, &asked.model, &mut params, read)?;
                     asked.params_json = serde_json::Value::Object(params).to_string();
                 }
                 let (query, remote) = self.parsed_query(&asked)?;
@@ -398,7 +399,7 @@ impl Database {
                     return Err(DbError::Invalid { detail: format!("{model} declares no node read to fetch from") });
                 }
                 let row = crate::identity::RowId::new(id).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-                let row = self.db.resolve(model, &row)?;
+                let row = if read { self.db.resolve(model, &row)? } else { row };
                 let id = row.as_str();
                 let waits = row.is_temp() && fetch != Fetch::Never;
                 let follows = fetch == Fetch::Never && !row.is_temp() && !spec.is_local() && node.is_some();
@@ -412,7 +413,7 @@ impl Database {
                     Some(relation) if remote => crate::owners::read::scoped_channels(spec, &relation.name, &params).into(),
                     _ => Default::default(),
                 };
-                Ok((View { kind: Kind::Entity { fetch }, model: model.clone(), tables: read_tables(&self.db, model), local: spec.is_local(), remote, live: remote && spec.is_live(), scoped, reload: false, window, subject: id.to_string(), node: node_relation(spec), wants: self.db.dependency_models(model), deferred_rows: Vec::new(), query: None }, if waits { vec![(model.clone(), id.to_string())] } else { Vec::new() }))
+                Ok((View { kind: Kind::Entity { fetch }, model: model.clone(), tables: read_tables(&self.db, model), local: spec.is_local(), remote, live: remote && spec.is_live(), scoped, reload: false, window, subject: id.to_string(), node: node_relation(spec), wants: self.db.dependency_models(model), deferred_rows: Vec::new(), query: None }, if waits || (!read && row.is_temp()) { vec![(model.clone(), id.to_string())] } else { Vec::new() }))
             }
             _ => Err(DbError::Internal { detail: "a stream of this kind reads no rows".into() }),
         }
@@ -461,7 +462,7 @@ impl Database {
     pub fn subscribe_values(&self, epoch: u64, request: ReadRequest) -> Arc<ReadStream> {
         let stream = self.life.next_stream_id();
         let (view, valid, deferred) = match match &request {
-            ReadRequest::List { .. } | ReadRequest::Count { .. } | ReadRequest::Entity { .. } => self.row_view(&request).map(|(view, waiting)| (view, self.deferred_of(&request, waiting))),
+            ReadRequest::List { .. } | ReadRequest::Count { .. } | ReadRequest::Entity { .. } => self.row_view(&request, false).map(|(view, waiting)| (view, self.deferred_of(&request, waiting))),
             _ => self.view_of(&request).map(|view| (view, None)),
         } {
             Ok((view, deferred)) => (view, true, deferred),
@@ -477,7 +478,7 @@ impl Database {
             (ReadRequest::List { query } | ReadRequest::Count { query }, true) => query.relation.as_ref().map(|relation| RelationLoad { model: query.model.clone(), relation: relation.clone(), params_json: query.params_json.clone() }),
             _ => None,
         };
-        Arc::new(ReadStream { database: self.me.clone(), stream, ended: std::sync::Mutex::new(None), readers: std::sync::Mutex::new(ReadReaders::default()), wire, epoch, load })
+        Arc::new_cyclic(|me| ReadStream { me: me.clone(), database: self.me.clone(), stream, ended: std::sync::Mutex::new(None), readers: std::sync::Mutex::new(ReadReaders::default()), wire, epoch, load })
     }
 }
 

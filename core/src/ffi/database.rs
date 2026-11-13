@@ -78,18 +78,51 @@ pub(super) async fn on_executor<T: Send + 'static, E: Into<DbError> + Send + 'st
     crate::task::spawn_on(executor()?.handle(), work).await.map_err(joined)?.map_err(Into::into)
 }
 
-pub(super) async fn cancellable<T: Send + 'static>(work: impl std::future::Future<Output = T> + Send + 'static) -> Result<T, DbError> {
-    struct Cancel(tokio::task::AbortHandle);
-    impl Drop for Cancel { fn drop(&mut self) { crate::lock::effect(|| self.0.abort()); } }
-    let task = crate::task::spawn_on(executor()?.handle(), work);
-    let _cancel = Cancel(task.abort_handle());
-    task.await.map_err(joined)
+#[cfg(test)]
+thread_local! { pub(super) static CALLER: std::cell::Cell<Option<std::thread::ThreadId>> = const { std::cell::Cell::new(None) }; }
+
+pub(super) async fn on_core<T: Send + 'static>(life: Option<Arc<crate::owners::life::Life>>, work: impl std::future::Future<Output = T> + Send + 'static) -> Result<T, DbError> {
+    #[derive(Default)]
+    struct Start { started: std::sync::atomic::AtomicBool, cancelled: std::sync::atomic::AtomicBool }
+    struct Cancel(tokio::task::AbortHandle, Arc<Start>);
+    impl Drop for Cancel {
+        fn drop(&mut self) {
+            self.1.cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+            if self.1.started.load(std::sync::atomic::Ordering::SeqCst) { crate::lock::effect(|| self.0.abort()); }
+        }
+    }
+    #[cfg(test)]
+    let caller = std::thread::current().id();
+    let start = Arc::new(Start::default());
+    let launch = life.map(|life| life.launch());
+    let seen = start.clone();
+    let (answer, answered) = tokio::sync::oneshot::channel();
+    let task = crate::task::spawn_on(executor()?.handle(), crate::runtime::counted(launch, async move {
+        let mut work = Box::pin(work);
+        seen.started.store(true, std::sync::atomic::Ordering::SeqCst);
+        let mut first = true;
+        let output = std::future::poll_fn(|cx| {
+            #[cfg(test)]
+            CALLER.set(Some(caller));
+            let polled = std::future::Future::poll(work.as_mut(), cx);
+            #[cfg(test)]
+            CALLER.set(None);
+            let stop = std::mem::take(&mut first) && polled.is_pending() && seen.cancelled.load(std::sync::atomic::Ordering::SeqCst);
+            if stop { std::task::Poll::Ready(None) } else { polled.map(Some) }
+        }).await;
+        drop(crate::lock::effect(|| answer.send(output)));
+    }));
+    let _cancel = Cancel(task.abort_handle(), start);
+    match answered.await {
+        Ok(output) => output.ok_or_else(|| DbError::Interrupted { detail: "the call was dropped".into() }),
+        Err(_) => Err(task.await.err().map_or_else(|| DbError::Interrupted { detail: "the call ended without an answer".into() }, joined)),
+    }
 }
 
 pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
     #[cfg(test)]
     let work = {
-        let caller = std::thread::current().id();
+        let caller = CALLER.get().unwrap_or_else(|| std::thread::current().id());
         move || {
             super::tests::offload_tests::note_blocking_thread(caller);
             work()
@@ -113,7 +146,10 @@ impl TestClock {
     pub fn new(start_millis: u64) -> Arc<Self> { Arc::new(Self { clock: Arc::new(ManualClock::new(Duration::from_millis(start_millis))) }) }
     pub fn advance(&self, millis: u64) { self.clock.advance(Duration::from_millis(millis)) }
     pub fn armed(&self) -> u64 { self.clock.armed_total() }
-    pub async fn await_armed(&self, after: u64) { self.clock.wait_armed(after).await }
+    pub async fn await_armed(&self, after: u64) {
+        let clock = self.clock.clone();
+        drop(on_core(None, async move { clock.wait_armed(after).await }).await);
+    }
 }
 
 impl TestClock {
@@ -271,25 +307,25 @@ pub(super) fn id(value: &str) -> Result<RowId, DbError> {
 
 #[uniffi::export]
 impl Database {
-    pub fn peek_row(&self, epoch: u64, model: String, row_id: String) -> Result<Option<WireRow>, DbError> {
-        self.admit_now(epoch)?;
-        let wire = self.wire(&model)?;
-        let row_id = self.db.resolve(&model, &id(&row_id)?)?;
-        let found = self.db.peek_row(&model, &row_id).map(|row| wire.row(&row));
-        self.admit_now(epoch)?;
+    pub async fn peek_row(&self, epoch: u64, model: String, row_id: String) -> Result<Option<WireRow>, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.admit_now(epoch)?;
+        this_db.wire(&model)?;
+        let row_id = id(&row_id)?;
+        let found = this_db.read_in_epoch(epoch, "peek row", move |this| this.read_wire_row(&model, &row_id)).await?;
+        this_db.admit_now(epoch)?;
         Ok(found)
-    }
-    pub async fn edge_values(&self, epoch: u64, model: String, relation: Option<String>, params_json: String, row_ids: Vec<String>) -> Result<Vec<EdgeRow>, DbError> {
-        self.account_call(epoch)?;
+    }).await? }
+    pub async fn edge_values(&self, epoch: u64, model: String, relation: Option<String>, params_json: String, row_ids: Vec<String>) -> Result<Vec<EdgeRow>, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.account_call(epoch)?;
         let relation = super::loading::relation_named(&model, relation)?;
-        self.read_in_epoch(epoch, "edge values", move |database| {
+        this_db.read_in_epoch(epoch, "edge values", move |database| {
             let params = parse_json(&params_json)?;
             Ok(database.db.edge_values(&model, &relation, &params, &row_ids)?.into_iter().map(|(id, values)| EdgeRow {
                 id,
                 values: values.iter().map(|(key, value)| super::wire::CellEntry { key: key.clone(), value: super::wire::free_cell(value) }).collect(),
             }).collect())
         }).await
-    }
+    }).await? }
     pub fn open_report(&self) -> Result<OpenReport, DbError> {
         self.not_closed()?;
         Ok(self.db.open_report().clone())
@@ -299,21 +335,21 @@ impl Database {
         self.not_closed()?;
         Ok(account_epoch.unwrap_or_else(|| self.life.published().epoch))
     }
-    pub async fn subscription_census(&self) -> Result<SubscriptionCensus, DbError> {
-        self.not_closed()?;
-        let (observed, subscriptions, retained, refused_events) = self.life.subscription_census().await.ok_or_else(foreign_reply)?;
-        self.not_closed()?;
+    pub async fn subscription_census(&self) -> Result<SubscriptionCensus, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.not_closed()?;
+        let (observed, subscriptions, retained, refused_events) = this_db.life.subscription_census().await.ok_or_else(foreign_reply)?;
+        this_db.not_closed()?;
         Ok(SubscriptionCensus { observed_queries: observed as u64, subscriptions: subscriptions as u64, retained_observers: retained as u64, refused_events })
-    }
-    pub async fn file(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<super::wire::WireFile>, DbError> {
-        let row_id = self.file_row(epoch, &model, &row_id, &field, false).await?;
-        self.read_in_epoch(epoch, "file", move |database| Ok(database.db.file(&model, &row_id, &field)?.map(Into::into))).await
-    }
-    pub async fn url(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
-        let row_id = self.file_row(epoch, &model, &row_id, &field, false).await?;
-        self.read_in_epoch(epoch, "file url", move |database| Ok(database.db.url(&model, &row_id, &field)?.map(|path| path.to_string_lossy().into_owned()))).await
-    }
-    pub async fn register_operations(&self, defs_json: String) -> Result<(), DbError> { self.declare(defs_json, true).await }
+    }).await? }
+    pub async fn file(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<super::wire::WireFile>, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        let row_id = this_db.file_row(epoch, &model, &row_id, &field, false).await?;
+        this_db.read_in_epoch(epoch, "file", move |database| Ok(database.db.file(&model, &row_id, &field)?.map(Into::into))).await
+    }).await? }
+    pub async fn url(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        let row_id = this_db.file_row(epoch, &model, &row_id, &field, false).await?;
+        this_db.read_in_epoch(epoch, "file url", move |database| Ok(database.db.url(&model, &row_id, &field)?.map(|path| path.to_string_lossy().into_owned()))).await
+    }).await? }
+    pub async fn register_operations(&self, defs_json: String) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move { this_db.declare(defs_json, true).await }).await? }
 
     /// The declaration of `open`: the operations the library sends by itself are checked only when the set holds an operation that is not an upload step, the app declares the rest later.
     pub(super) async fn declare(&self, defs_json: String, explicit: bool) -> Result<(), DbError> {
@@ -358,44 +394,50 @@ impl Database {
         }
         uploads.check(|name| self.reads.get(name).is_some()).map_err(|detail| DbError::Invalid { detail })
     }
-    pub async fn call(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> {
-        self.account_call(epoch)?;
-        let Some(returns) = self.returns.get(&operation).cloned() else {
+    pub async fn call(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.account_call(epoch)?;
+        let Some(returns) = this_db.returns.get(&operation).cloned() else {
             return Err(DbError::Invalid { detail: format!("operation {operation} is not declared in the specs") });
         };
-        let root = self.run(epoch, operation, variables_json).await?;
-        self.offload(move || crate::value::call_result::normalize(&root, &returns).map_err(|detail| DbError::Invalid { detail })).await
-    }
-    pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<super::upload_wire::WireUploadSource>) -> Result<WireOperationReceipt, DbError> {
-        let (row_id, transfer) = self.operation_target(epoch, &model, &row_id, action.as_deref(), source.is_some()).await?;
+        let root = this_db.run(epoch, operation, variables_json).await?;
+        this_db.offload(move || crate::value::call_result::normalize(&root, &returns).map_err(|detail| DbError::Invalid { detail })).await
+    }).await? }
+    pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<super::upload_wire::WireUploadSource>) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        let (row_id, transfer) = this_db.operation_target(epoch, &model, &row_id, action.as_deref(), source.is_some()).await?;
         if source.is_some() || transfer {
             let Some(action) = action else { return Err(DbError::Invalid { detail: "a new source names the action of its upload".into() }) };
-            return self.retry_transfer(epoch, model, row_id, action, source).await;
+            return this_db.retry_transfer(epoch, model, row_id, action, source).await;
         }
-        match self.retry_operation(epoch, model.clone(), row_id.clone(), action).await? {
+        match this_db.retry_operation(epoch, model.clone(), row_id.clone(), action).await? {
             super::write::Retried::Receipt(receipt) => Ok(*receipt),
-            super::write::Retried::Transfer(selected) => self.retry_transfer(epoch, model, row_id, selected, None).await,
+            super::write::Retried::Transfer(selected) => this_db.retry_transfer(epoch, model, row_id, selected, None).await,
         }
-    }
-    pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.apply_online(online) }
+    }).await? }
+    pub async fn set_online(&self, online: bool) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.not_closed()?;
+        match this_db.await_life(this_db.life.set_online(online, super::network_status::next_stamp())).await? {
+            LifeReply::Online { closed: false } => Ok(()),
+            _ => Err(super::command::closed()),
+        }
+    }).await? }
 
     pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { self.not_closed()?; Ok(OnlineSink::of_life(&self.life)) }
     /// Closes the database: every lease ends, every holder closes, every database thread lets go of the file, then the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
-    pub async fn close_database(&self) -> Result<(), DbError> {
-        let waiter = self.life.close();
-        let _closing = crate::runtime::hold_until_woken(self.life.launch());
-        let answered = on_executor(crate::runtime::counted(Some(self.life.launch()), async move { Ok::<_, DbError>(waiter.wait().await) })).await;
+    pub async fn close_database(&self) -> Result<(), DbError> { let this_db = self.clone(); on_core(Some(self.life.clone()), async move {
+        let waiter = this_db.life.close();
+        let _closing = crate::runtime::hold_until_woken(this_db.life.launch());
+        let answered = on_executor(crate::runtime::counted(Some(this_db.life.launch()), async move { Ok::<_, DbError>(waiter.wait().await) })).await;
         crate::runtime::release_holds();
         let answered = answered.and_then(|outcome| match outcome {
             crate::runtime::Outcome::Value(_) | crate::runtime::Outcome::Closing => Ok(()),
             crate::runtime::Outcome::Internal | crate::runtime::Outcome::EpochEnded(_) => Err(DbError::Internal { detail: "the answer of the close was lost".into() }),
         });
-        let (life, _closing) = (self.life.clone(), crate::runtime::hold_until_woken(self.life.launch()));
+        let (life, _closing) = (this_db.life.clone(), crate::runtime::hold_until_woken(this_db.life.launch()));
         let ended = blocking(move || { life.shutdown(); Ok(()) }).await;
         crate::runtime::release_holds();
-        if let Some(lease) = self.lease.get() { lease.release(); }
+        if let Some(lease) = this_db.lease.get() { lease.release(); }
         answered.and(ended)
-    }
+    }).await? }
 }
 
 impl Database {
@@ -482,4 +524,17 @@ fn upload_steps_of(models: &[ModelSpec]) -> Result<Option<UploadOperations>, DbE
         }
     }
     Ok(found.cloned())
+}
+
+impl Database {
+    fn read_wire_row(&self, model: &str, row_id: &crate::identity::RowId) -> Result<Option<WireRow>, DbError> {
+        let wire = self.wire(model)?;
+        let row_id = self.db.resolve(model, row_id)?;
+        Ok(self.db.peek_row(model, &row_id).map(|row| wire.row(&row)))
+    }
+}
+
+#[cfg(test)]
+impl Database {
+    pub(crate) fn peek_row_now(&self, _epoch: u64, model: String, row_id: String) -> Result<Option<WireRow>, DbError> { self.read_wire_row(&model, &id(&row_id)?) }
 }

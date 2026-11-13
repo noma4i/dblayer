@@ -88,13 +88,13 @@ impl Database {
 #[uniffi::export]
 impl Database {
     /// Writes the row locally in the epoch of the caller and queues it for the server. The SQL commit is refused when the epoch moved or the database closed before it.
-    pub async fn send(&self, request: CommandRequest) -> Result<WireOperationReceipt, DbError> {
-        self.account_call(request.epoch)?;
-        self.admit_command(&request)?;
-        self.mutation_needs_transport(&request.model, request.upload.as_ref().map_or("create", |upload| upload.action.as_str()))?;
+    pub async fn send(&self, request: CommandRequest) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.account_call(request.epoch)?;
+        this_db.admit_command(&request)?;
+        this_db.mutation_needs_transport(&request.model, request.upload.as_ref().map_or("create", |upload| upload.action.as_str()))?;
         if request.upload.is_none() {
-            return self.create_row(request.epoch, request.model, request.values_json, request.args_json).await;
+            return this_db.create_row(request.epoch, request.model, request.values_json, request.args_json).await;
         }
-        self.send_upload(request).await
-    }
+        this_db.send_upload(request).await
+    }).await? }
 }

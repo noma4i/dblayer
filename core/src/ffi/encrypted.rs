@@ -2,7 +2,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 use crate::transport::{self as core, EncryptedConfig, EncryptedTransport, Exchange, ServerConfig, SessionCode};
-use super::database::{blocking, cancellable, parse_json, Database, Encrypted, Wiring};
+use super::database::{blocking, parse_json, Database, Encrypted, Wiring};
 use crate::owners::life::LifeReply;
 use super::transport::{transport_error, ForeignTransport};
 use super::{DbError, Transport};
@@ -103,35 +103,35 @@ impl RetrySubscription {
 impl Database {
     pub fn retry_progress(&self) -> Arc<RetryProgress> { RetryProgress::new() }
 
-    pub async fn session_call(&self, operation: String, body_json: String) -> Result<String, DbError> {
-        self.not_closed()?;
-        let body_json = self.offload(move || { parse_json::<Value>(&body_json)?; Ok(body_json) }).await?;
-        match self.await_life(self.life.session_call(operation, body_json)).await? {
+    pub async fn session_call(&self, operation: String, body_json: String) -> Result<String, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.not_closed()?;
+        let body_json = this_db.offload(move || { parse_json::<Value>(&body_json)?; Ok(body_json) }).await?;
+        match this_db.await_life(this_db.life.session_call(operation, body_json)).await? {
             LifeReply::Session(Ok(body)) => Ok(body),
             LifeReply::Session(Err(error)) => Err(session_failure(error)),
             _ => Err(super::database::foreign_reply()),
         }
-    }
+    }).await? }
 
-    pub async fn interrupted_session_answer(&self) -> Result<Option<String>, DbError> {
-        match self.await_life(self.life.interrupted_session_answer()).await? {
+    pub async fn interrupted_session_answer(&self) -> Result<Option<String>, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        match this_db.await_life(this_db.life.interrupted_session_answer()).await? {
             LifeReply::SessionResume(Ok(Some(body))) => Ok(Some(body)),
             LifeReply::SessionResume(Ok(None)) => Ok(None),
             LifeReply::SessionResume(Err(error)) => Err(session_failure(error)),
             _ => Err(super::database::foreign_reply()),
         }
-    }
+    }).await? }
 
     /// Ends the session: the old work ends, the credential and the data of the account go. Returns after the clearing. The same call ends a plain or local database too.
-    pub async fn session_reset(&self) -> Result<(), DbError> {
-        match self.await_life(self.life.session_reset()).await? {
+    pub async fn session_reset(&self) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        match this_db.await_life(this_db.life.session_reset()).await? {
             LifeReply::Life(Ok(())) => Ok(()),
             LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Storage)) => Err(DbError::Storage { detail: "the account could not be cleared".into() }),
             LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Closed)) => Err(super::command::closed()),
             LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Runtime)) => Err(DbError::Runtime { detail: "the owners failed".into() }),
             _ => Err(super::cause_error(&super::EndCause::SessionEnded)),
         }
-    }
+    }).await? }
 }
 
 pub(crate) fn session_failure(error: crate::owners::session::SessionError) -> DbError {
@@ -167,7 +167,7 @@ pub(crate) fn session_failure(error: crate::owners::session::SessionError) -> Db
 /// The server config before the database exists: `observers` report the network state to the fetch and stop when it ends.
 #[uniffi::export]
 pub async fn fetch_server_config(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retries: Option<Arc<RetryProgress>>, observers: Option<Arc<dyn super::PlatformObserver>>) -> Result<ServerConfig, DbError> {
-    fetch_observed(encrypted, platform, version, build, FetchPorts { http, retries, observers }, Arc::new(crate::runtime::SystemClock)).await
+    super::database::on_core(None, fetch_observed(encrypted, platform, version, build, FetchPorts { http, retries, observers }, Arc::new(crate::runtime::SystemClock))).await?
 }
 
 #[derive(uniffi::Record)]
@@ -179,7 +179,7 @@ pub struct FetchPorts {
 
 #[uniffi::export]
 pub async fn fetch_server_config_with_clock(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, ports: FetchPorts, clock: Arc<super::TestClock>) -> Result<ServerConfig, DbError> {
-    fetch_observed(encrypted, platform, version, build, ports, clock.manual()).await
+    super::database::on_core(None, fetch_observed(encrypted, platform, version, build, ports, clock.manual())).await?
 }
 
 async fn fetch_observed(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, ports: FetchPorts, clock: Arc<dyn crate::runtime::Clock>) -> Result<ServerConfig, DbError> {
@@ -201,7 +201,7 @@ async fn fetch_observed(encrypted: EncryptedConfig, platform: core::AppPlatform,
 pub(super) struct Waits { pub connectivity: Arc<core::Connectivity>, pub clock: Arc<dyn crate::runtime::Clock> }
 
 pub(super) async fn fetch_server_config_with(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retries: Option<Arc<RetryProgress>>, waits: Waits) -> Result<ServerConfig, DbError> {
-    cancellable(async move {
+    super::database::on_core(None, async move {
         let progress = retries.map(|retries| retries.inner.clone()).unwrap_or_else(|| core::retry::retry_progress().clone());
         core::encrypted::bootstrap::fetch(&encrypted, &core::encrypted::bootstrap::AppRelease { platform, version: &version, build: build.as_deref() }, Arc::new(ForeignHttp { port: http, origin: encrypted.origin.clone() }), &*waits.clock, &progress, &waits.connectivity).await.map_err(DbError::from)
     }).await?

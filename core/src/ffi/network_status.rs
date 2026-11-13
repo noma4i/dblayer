@@ -59,7 +59,10 @@ impl NetworkStatus {
     pub fn new(observer: Arc<dyn PlatformObserver>) -> Arc<Self> {
         static STARTED: std::sync::OnceLock<Arc<dyn PlatformObserver>> = std::sync::OnceLock::new();
         STARTED.get_or_init(|| {
-            crate::lock::effect(|| observer.start(OnlineSink::of_status()));
+            if let Ok(executor) = super::database::executor() {
+                let started = observer.clone();
+                crate::task::spawn_on(executor.handle(), async move { crate::lock::effect(|| started.start(OnlineSink::of_status())); });
+            }
             observer
         });
         Arc::new(Self)

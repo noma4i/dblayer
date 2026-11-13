@@ -47,11 +47,13 @@ impl LoadRequest {
     /// Waits for the end of the load. A request cancelled before its end fails with `Interrupted`.
     pub async fn result(&self) -> Result<(), DbError> {
         let mut outcome = self.outcome.clone();
-        let seen = match outcome.wait_for(Option::is_some).await {
-            Ok(seen) => seen.clone(),
-            Err(_) => return Err(DbError::Internal { detail: "the load ended without an outcome".into() }),
-        };
-        seen.unwrap_or_else(|| Err(load_cancelled()))
+        super::database::on_core(None, async move {
+            let seen = match outcome.wait_for(Option::is_some).await {
+                Ok(seen) => seen.clone(),
+                Err(_) => return Err(DbError::Internal { detail: "the load ended without an outcome".into() }),
+            };
+            seen.unwrap_or_else(|| Err(load_cancelled()))
+        }).await?
     }
 
     /// Gives up this caller's interest. The request goes on while another caller waits for it.
@@ -114,7 +116,7 @@ impl Drop for LeaveLoad {
 }
 
 /// Swaps the temporary ids among the params for server ids with `resolve(model of the param, id)`, the model is the target of the `BelongsTo` or `References` association of the model whose foreign key the param names. Returns the temporary ids that have no server id yet. A temporary id that no association names, or one inside an array or object, is `Invalid`: no request carries it.
-pub(super) fn resolve_params(db: &crate::store::Store, model: &str, params: &mut Map<String, Value>) -> Result<Vec<(String, String)>, DbError> {
+pub(super) fn resolve_params(db: &crate::store::Store, model: &str, params: &mut Map<String, Value>, read: bool) -> Result<Vec<(String, String)>, DbError> {
     let spec = db.spec(model)?;
     let mut waiting = Vec::new();
     for (name, value) in params.iter_mut() {
@@ -124,7 +126,7 @@ pub(super) fn resolve_params(db: &crate::store::Store, model: &str, params: &mut
         let target = value.is_string().then(|| spec.associations.iter().find(|association| matches!(association.kind, AssociationKind::BelongsTo | AssociationKind::References) && association.foreign_key == *name).map(|association| association.target.as_str())).flatten();
         let (Some(temp), Some(target)) = (value.as_str(), target) else { return Err(DbError::Invalid { detail: format!("the param {name} of {model} holds a temporary id") }) };
         let temp = RowId::new(temp).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-        let real = db.resolve(target, &temp)?;
+        let real = if read { db.resolve(target, &temp)? } else { temp.clone() };
         if real.is_temp() { waiting.push((target.to_string(), temp.as_str().to_string())); } else { *value = Value::String(real.as_str().to_string()); }
     }
     Ok(waiting)
@@ -144,12 +146,12 @@ impl Database {
         self.begin(LoadArgs { epoch, model, relation, params_json, goal: Goal::First, force: false })
     }
 
-    pub async fn refresh(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<(), DbError> {
-        self.account_call(epoch)?;
+    pub async fn refresh(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.account_call(epoch)?;
         let relation = relation_named(&model, relation)?;
-        let Some(call) = self.start_load(epoch, &model, &relation, &params_json, (Goal::First, true), Some("refresh")).await? else { return Ok(()) };
-        self.finish_load(call).await.map(drop)
-    }
+        let Some(call) = this_db.start_load(epoch, &model, &relation, &params_json, (Goal::First, true), Some("refresh")).await? else { return Ok(()) };
+        this_db.finish_load(call).await.map(drop)
+    }).await? }
 
     /// Starts reading every page of the relation and returns this caller's request at once. Cancelling it stops the pages that no other caller waits for.
     pub fn begin_load_all(&self, epoch: u64, model: String, relation: Option<String>, params_json: String, force: bool) -> Result<Arc<LoadRequest>, DbError> {
@@ -158,47 +160,47 @@ impl Database {
         self.begin(LoadArgs { epoch, model, relation, params_json, goal: Goal::All, force })
     }
 
-    pub async fn load_more(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<LoadMoreResult, DbError> {
-        self.account_call(epoch)?;
+    pub async fn load_more(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<LoadMoreResult, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.account_call(epoch)?;
         let relation = relation_named(&model, relation)?;
-        let Some(call) = self.start_load(epoch, &model, &relation, &params_json, (Goal::Next, false), Some("load more")).await? else { return Ok(LoadMoreResult::NoMore) };
-        self.finish_load(call).await
-    }
+        let Some(call) = this_db.start_load(epoch, &model, &relation, &params_json, (Goal::Next, false), Some("load more")).await? else { return Ok(LoadMoreResult::NoMore) };
+        this_db.finish_load(call).await
+    }).await? }
 
-    pub async fn node(&self, epoch: u64, model: String, relation: String, row_id: String, force: bool) -> Result<Option<WireRow>, DbError> {
-        self.account_call(epoch)?;
-        self.node_relation(&model, &relation, NodeRead::One)?;
+    pub async fn node(&self, epoch: u64, model: String, relation: String, row_id: String, force: bool) -> Result<Option<WireRow>, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.account_call(epoch)?;
+        this_db.node_relation(&model, &relation, NodeRead::One)?;
         let id = RowId::new(&row_id).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-        let id = self.resolved(epoch, &model, id).await?;
-        let wire = self.wire(&model)?.clone();
+        let id = this_db.resolved(epoch, &model, id).await?;
+        let wire = this_db.wire(&model)?.clone();
         if id.is_temp() {
-            let row = self.read_in_epoch(epoch, "node", move |database| Ok(database.db.find(&model, &id)?)).await?;
+            let row = this_db.read_in_epoch(epoch, "node", move |database| Ok(database.db.find(&model, &id)?)).await?;
             return Ok(row.map(|row| wire.row(&row)));
         }
         let params = Map::from_iter([(NODE_PARAM.to_string(), json!(id.as_str()))]);
-        let Some(call) = self.start_load(epoch, &model, &relation, &Value::Object(params.clone()).to_string(), (Goal::First, force), force.then_some("node")).await? else { return Ok(None) };
-        self.finish_load(call).await?;
-        let row = self.read_in_epoch(epoch, "node", move |database| Ok(if database.db.window_member(&model, &relation, &params, id.as_str())? { database.db.find(&model, &id)? } else { None })).await?;
+        let Some(call) = this_db.start_load(epoch, &model, &relation, &Value::Object(params.clone()).to_string(), (Goal::First, force), force.then_some("node")).await? else { return Ok(None) };
+        this_db.finish_load(call).await?;
+        let row = this_db.read_in_epoch(epoch, "node", move |database| Ok(if database.db.window_member(&model, &relation, &params, id.as_str())? { database.db.find(&model, &id)? } else { None })).await?;
         Ok(row.map(|row| wire.row(&row)))
-    }
+    }).await? }
 
     /// The rows of the ids that the answer of the server returned, in the order of the call.
-    pub async fn nodes(&self, epoch: u64, model: String, relation: String, row_ids: Vec<String>) -> Result<Vec<WireRow>, DbError> {
-        self.admit_now(epoch)?;
-        self.node_relation(&model, &relation, NodeRead::Many)?;
+    pub async fn nodes(&self, epoch: u64, model: String, relation: String, row_ids: Vec<String>) -> Result<Vec<WireRow>, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.admit_now(epoch)?;
+        this_db.node_relation(&model, &relation, NodeRead::Many)?;
         let asked = row_ids.iter().map(|id| RowId::new(id).map_err(|error| DbError::Invalid { detail: error.to_string() })).collect::<Result<Vec<_>, _>>()?;
         let mut ids = Vec::with_capacity(asked.len());
         for id in asked {
-            let id = self.resolved(epoch, &model, id).await?;
+            let id = this_db.resolved(epoch, &model, id).await?;
             if !id.is_temp() { ids.push(id); }
         }
         if ids.is_empty() { return Ok(Vec::new()); }
-        let wire = self.wire(&model)?.clone();
+        let wire = this_db.wire(&model)?.clone();
         let key = WindowKey::nodes(&model, &ids.iter().map(RowId::as_str).collect::<Vec<_>>());
         let name = key.name.clone();
-        let call = self.start_window(epoch, self.reserve_load(epoch), key, (Goal::First, true), None)?;
-        self.finish_load(call).await?;
-        let rows = self.read_in_epoch(epoch, "nodes", move |database| {
+        let call = this_db.start_window(epoch, this_db.reserve_load(epoch), key, (Goal::First, true), None)?;
+        this_db.finish_load(call).await?;
+        let rows = this_db.read_in_epoch(epoch, "nodes", move |database| {
             let mut rows = Vec::with_capacity(ids.len());
             for id in database.db.nodes_answered(&model, &name, &ids)? {
                 rows.extend(database.db.find(&model, &id)?);
@@ -206,7 +208,7 @@ impl Database {
             Ok(rows)
         }).await?;
         Ok(rows.iter().map(|row| wire.row(row)).collect())
-    }
+    }).await? }
 }
 
 impl Database {
@@ -272,7 +274,7 @@ impl Database {
         let (db, found, name, text) = (self.db.clone(), model.to_string(), relation.to_string(), params_json.to_string());
         let prepared = super::database::blocking(move || {
             let mut params: Map<String, Value> = serde_json::from_str(&text)?;
-            if !resolve_params(&db, &found, &mut params)?.is_empty() { return Ok(None); }
+            if !resolve_params(&db, &found, &mut params, true)?.is_empty() { return Ok(None); }
             let params = db.spec(&found)?.selection_values(&name, &params).map_err(crate::store::CoreError::from)?;
             db.check_window(&found, &name, &params)?;
             Ok(Some(params))
@@ -288,7 +290,7 @@ impl Database {
         if published.epoch != epoch { return Err(super::cause_error(&super::EndCause::SessionEnded)); }
         if published.identity.is_none() { return Err(DbError::NoSession { detail: "the database has no session in this epoch".into() }); }
         let (id, waiter) = (slot.id, slot.waiter.take().ok_or_else(super::database::foreign_reply)?);
-        self.life.load(epoch, id, key.clone(), (goal, force), self.db.revision_seq()?, no_wait);
+        self.life.load(epoch, id, key.clone(), (goal, force), crate::blocking::blocking_unit(|| self.db.revision_seq())?, no_wait);
         Ok(LoadCall { waiter, leave: LeaveLoad { life: self.life.clone(), key, id, settled: false } })
     }
 

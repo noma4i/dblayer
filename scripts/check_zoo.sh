@@ -418,6 +418,41 @@ for path in generated_tool:
         if suppressed and f"z29:{path.relative_to(root)}:{suppressed.group(1)}" not in allowed:
             findings.append(f"Z29 a lint is fixed at its cause, not suppressed (gen): {path.relative_to(root)}:{number}: {suppressed.group(0)}")
 
+wait_inputs = {("ffi/network_status.rs", "next"), ("ffi/encrypted.rs", "next")}
+for path in files:
+    relative = str(path.relative_to(source))
+    if not relative.startswith("ffi/") or relative.startswith(("ffi/selftest/", "ffi/tests/")) or "/tests/" in relative or relative.endswith("_tests.rs"):
+        continue
+    text = contents[path]
+    exported = False
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        if line.startswith("#[uniffi::export"):
+            exported = True
+        elif line.startswith("}"):
+            exported = False
+        entry = re.match(r"\s*pub async fn (\w+)", line)
+        if exported and entry:
+            depth, index, seen = 0, text.index("{", offset), False
+            start = index
+            while index < len(text):
+                if text[index] == "{":
+                    depth += 1
+                elif text[index] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                index += 1
+            body = text[start:index]
+            place = f"{path.relative_to(root)}:{text.count(chr(10), 0, offset) + 1}: {entry.group(1)}"
+            if (relative, entry.group(1)) in wait_inputs:
+                reads = [word for word in ("on_core(", ".db.", "read_in_epoch", "offload(", "blocking(", "blocking_unit(", "spawn") if word in body]
+                if reads:
+                    findings.append(f"Z60 an async input that only waits for a published value (bridge.md D-409) reads no base and calls no bridge: {place}: {', '.join(reads)}")
+            elif "on_core(" not in body:
+                findings.append(f"Z60 an async exported input runs its body through the bridge function on_core, or is named in wait_inputs: {place}")
+        offset += len(line)
+
 dead_names = re.compile(r'"((?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:rs|kt|swift))"')
 rule_text = (root / "scripts" / "check_zoo.sh").read_text() if (root / "scripts" / "check_zoo.sh").exists() else ""
 everything = [str(path.relative_to(source)) for path in source.rglob("*.rs")]

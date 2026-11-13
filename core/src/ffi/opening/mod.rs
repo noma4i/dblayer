@@ -78,6 +78,7 @@ impl OpenPorts {
 
 #[derive(uniffi::Object)]
 pub struct OpenDatabase {
+    me: std::sync::Weak<OpenDatabase>,
     slot: Arc<OpenSlot>,
     held: std::sync::Mutex<Option<Arc<Database>>>,
 }
@@ -85,30 +86,30 @@ pub struct OpenDatabase {
 #[uniffi::export]
 impl OpenDatabase {
     #[uniffi::constructor]
-    pub fn new() -> Arc<Self> { Arc::new(Self { slot: OpenSlot::new(), held: std::sync::Mutex::new(None) }) }
+    pub fn new() -> Arc<Self> { Arc::new_cyclic(|me| Self { me: me.clone(), slot: OpenSlot::new(), held: std::sync::Mutex::new(None) }) }
 
-    pub async fn open(&self, config: Config, models_json: String, options: OpenOptions, ports: OpenPorts, observers: Option<Arc<dyn PlatformObserver>>) -> Result<Arc<Database>, DbError> {
+    pub async fn open(&self, config: Config, models_json: String, options: OpenOptions, ports: OpenPorts, observers: Option<Arc<dyn PlatformObserver>>) -> Result<Arc<Database>, DbError> { let this_open = self.me.upgrade().ok_or_else(super::command::closed)?; super::database::on_core(None, async move {
         ports.check_data_sync()?;
         let ports = ports.resolved();
-        let lease = self.slot.acquire()?;
+        let lease = this_open.slot.acquire()?;
         let remote = ports.transport.is_some();
         let database = Database::open(config, models_json, ports).await?;
-        self.keep(Self::start(database, lease, remote, options, observers, true).await?)
-    }
+        this_open.keep(Self::start(database, lease, remote, options, observers, true).await?)
+    }).await? }
 
     /// The database this opener opened last, closed or not: a call on a closed database gets its `Closed` error. `NotOpen` before the first open.
     pub fn opened(&self) -> Result<Arc<Database>, DbError> {
         crate::lock::lock(&self.held).clone().ok_or_else(|| DbError::NotOpen { detail: "database is not open; call DBlayer.open once at app start".into() })
     }
 
-    pub async fn open_with_clock(&self, config: Config, models_json: String, ports: OpenPorts, clock: Arc<TestClock>, options: OpenOptions, observers: Option<Arc<dyn PlatformObserver>>) -> Result<Arc<Database>, DbError> {
+    pub async fn open_with_clock(&self, config: Config, models_json: String, ports: OpenPorts, clock: Arc<TestClock>, options: OpenOptions, observers: Option<Arc<dyn PlatformObserver>>) -> Result<Arc<Database>, DbError> { let this_open = self.me.upgrade().ok_or_else(super::command::closed)?; super::database::on_core(None, async move {
         ports.check_data_sync()?;
         let ports = ports.resolved();
-        let lease = self.slot.acquire()?;
+        let lease = this_open.slot.acquire()?;
         let remote = ports.transport.is_some();
         let database = Database::open_with_clock(config, models_json, ports, clock).await?;
-        self.keep(Self::start(database, lease, remote, options, observers, false).await?)
-    }
+        this_open.keep(Self::start(database, lease, remote, options, observers, false).await?)
+    }).await? }
 }
 
 impl OpenDatabase {

@@ -38,22 +38,6 @@ impl ByteProgress {
     pub fn is_cancelled(&self) -> bool { self.cancel.is_cancelled() }
 }
 
-struct Unpark(std::thread::Thread);
-
-impl std::task::Wake for Unpark {
-    fn wake(self: Arc<Self>) { self.0.unpark(); }
-}
-
-fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
-    let mut future = std::pin::pin!(future);
-    let waker = std::task::Waker::from(Arc::new(Unpark(std::thread::current())));
-    let mut context = std::task::Context::from_waker(&waker);
-    loop {
-        if let std::task::Poll::Ready(value) = future.as_mut().poll(&mut context) { return value; }
-        std::thread::park();
-    }
-}
-
 enum SignalTarget {
     Life(std::sync::Weak<crate::owners::life::Life>),
     Connectivity(Arc<core::Connectivity>),
@@ -97,21 +81,11 @@ impl OnlineSink {
 
     pub(crate) fn of_connectivity(connectivity: Arc<core::Connectivity>) -> Arc<Self> { Arc::new(Self { target: SignalTarget::Connectivity(connectivity), registrations: Arc::default() }) }
 
-    /// Waits for the outcome of the owner: the answer of `Network`, `Closed` once the database ended.
-    pub(crate) fn apply_online(&self, online: bool) -> Result<(), DbError> {
+    pub(crate) fn apply_online(&self, online: bool) {
         match &self.target {
-            SignalTarget::Status => {
-                self.apply_path(super::network_status::path_of_online(online));
-                Ok(())
-            }
-            SignalTarget::Connectivity(connectivity) => {
-                connectivity.change(online, super::network_status::next_stamp());
-                Ok(())
-            }
-            SignalTarget::Life(_) => {
-                let Some(life) = self.life() else { return Err(super::command::closed()) };
-                deliver_life(&life, online, super::network_status::next_stamp())
-            }
+            SignalTarget::Status => self.apply_path(super::network_status::path_of_online(online)),
+            SignalTarget::Connectivity(connectivity) => connectivity.change(online, super::network_status::next_stamp()),
+            SignalTarget::Life(_) => { if let Some(life) = self.life() { post_life(&life, online, super::network_status::next_stamp()); } }
         }
     }
 
@@ -132,14 +106,14 @@ impl OnlineSink {
 
 #[uniffi::export]
 impl OnlineSink {
-    /// Returns once the owners heard the change.
-    pub fn set_online(&self, online: bool) { let _ = self.apply_online(online); }
+    /// Sends the change to the owners and returns.
+    pub fn set_online(&self, online: bool) { self.apply_online(online); }
 
     /// The status input of the process: the default network of the phone, its online flag feeds the owners as `set_online` does.
     pub fn set_path(&self, path: super::NetworkPath) {
         match &self.target {
             SignalTarget::Status => self.apply_path(path),
-            SignalTarget::Connectivity(_) | SignalTarget::Life(_) => { let _ = self.apply_online(path.online); }
+            SignalTarget::Connectivity(_) | SignalTarget::Life(_) => self.apply_online(path.online),
         }
     }
 
@@ -182,7 +156,7 @@ pub(crate) fn follow_life(life: &Arc<crate::owners::life::Life>) {
     all.push(Follower::Life(Arc::downgrade(life)));
     drop(all);
     let processed = *super::network_status::network_value().borrow();
-    if let Some(path) = processed.path { let _ = deliver_life(life, path.online, processed.stamp); }
+    if let Some(path) = processed.path { post_life(life, path.online, processed.stamp); }
 }
 
 pub(crate) fn follow_connectivity(connectivity: &Arc<crate::transport::Connectivity>) {
@@ -205,21 +179,13 @@ pub(crate) fn feed_followers(online: bool, stamp: u64) {
     };
     for follower in live {
         match follower {
-            Follower::Life(life) => { if let Some(life) = life.upgrade() { let _ = deliver_life(&life, online, stamp); } }
+            Follower::Life(life) => { if let Some(life) = life.upgrade() { post_life(&life, online, stamp); } }
             Follower::Connectivity(connectivity) => { if let Some(connectivity) = connectivity.upgrade() { connectivity.change(online, stamp); } }
         }
     }
 }
 
-pub(super) fn deliver_life(life: &Arc<crate::owners::life::Life>, online: bool, stamp: u64) -> Result<(), DbError> {
-    let waiter = life.set_online(online, stamp);
-    match crate::blocking::blocking_unit(|| block_on(waiter.wait())) {
-        crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Online { closed: false }) => Ok(()),
-        crate::runtime::Outcome::Value(_) | crate::runtime::Outcome::Closing => Err(super::command::closed()),
-        crate::runtime::Outcome::EpochEnded(cause) => Err(super::cause_error(&super::EndCause::of(cause))),
-        crate::runtime::Outcome::Internal => Err(DbError::Internal { detail: "the answer of the owner was lost".into() }),
-    }
-}
+pub(super) fn post_life(life: &Arc<crate::owners::life::Life>, online: bool, stamp: u64) { drop(life.set_online(online, stamp)); }
 
 /// The OS observers of the platform: the core starts them after `open` and stops them in `Closing`, and `close` returns after `stop`.
 #[uniffi::export(with_foreign)]

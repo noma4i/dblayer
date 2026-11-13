@@ -118,7 +118,7 @@ impl Database {
 
     #[cfg(test)]
     pub(super) fn optimistic(&self, model: &str, row: &crate::identity::RowId) -> Result<Option<super::wire::WireRow>, DbError> {
-        self.db.find(model, row)?.map(|found| self.wire(model).map(|wire| wire.row(&found))).transpose()
+        crate::blocking::blocking_unit(|| self.db.find(model, row))?.map(|found| self.wire(model).map(|wire| wire.row(&found))).transpose()
     }
 
     pub(super) fn wire_of_row(&self, model: &str, row: &crate::store::Row) -> Result<super::wire::WireRow, DbError> { self.wire(model).map(|wire| wire.row(row)) }
@@ -149,7 +149,7 @@ impl Database {
             return Ok(receipt_of(epoch, model, None, revision, value, None, self.life.clone()));
         }
         let destroyed = action == "destroy";
-        let call = self.db.mutation_call(&model, action, &planned, &uuid::Uuid::new_v4().to_string())?;
+        let call = crate::blocking::blocking_unit(|| self.db.mutation_call(&model, action, &planned, &uuid::Uuid::new_v4().to_string()))?;
         let Some(call) = call else {
             let mut effects = planned.effects;
             if !destroyed { effects.shown = Some((model.clone(), shown.to_string())); }
@@ -178,92 +178,92 @@ impl Database {
 
 #[uniffi::export]
 impl Database {
-    pub async fn create(&self, epoch: u64, model: String, values_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
-        self.create_row(epoch, model, values_json, args_json).await
-    }
+    pub async fn create(&self, epoch: u64, model: String, values_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.create_row(epoch, model, values_json, args_json).await
+    }).await? }
 
-    pub async fn update(&self, epoch: u64, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
-        self.account_call(epoch)?;
-        self.mutation_needs_transport(&model, "update")?;
-        let (db, name) = (self.db.clone(), model.clone());
-        let (patch, args) = self.offload(move || {
+    pub async fn update(&self, epoch: u64, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.account_call(epoch)?;
+        this_db.mutation_needs_transport(&model, "update")?;
+        let (db, name) = (this_db.db.clone(), model.clone());
+        let (patch, args) = this_db.offload(move || {
             let patch: serde_json::Map<String, Value> = parse_json(&patch_json)?;
             let args = parse_json(&args_json)?;
             db.validate_update(&name, &patch)?;
             Ok((patch, args))
         }).await?;
-        let row = self.resolved(epoch, &model, id(&row_id)?).await?;
-        let (db, name) = (self.db.clone(), model.clone());
-        let planned = self.offload(move || Ok(db.plan_update(&name, &row, patch, args)?)).await?;
-        self.write_planned(epoch, "update", planned).await
-    }
+        let row = this_db.resolved(epoch, &model, id(&row_id)?).await?;
+        let (db, name) = (this_db.db.clone(), model.clone());
+        let planned = this_db.offload(move || Ok(db.plan_update(&name, &row, patch, args)?)).await?;
+        this_db.write_planned(epoch, "update", planned).await
+    }).await? }
 
-    pub async fn act(&self, epoch: u64, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
-        self.account_call(epoch)?;
-        if !self.db.spec(&model)?.actions.iter().any(|declared| declared.name == action) { return Err(DbError::Invalid { detail: format!("{model} declares no action {action}") }); }
-        self.mutation_needs_transport(&model, &action)?;
-        let (db, name) = (self.db.clone(), model.clone());
-        let (patch, args) = self.offload(move || {
+    pub async fn act(&self, epoch: u64, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.account_call(epoch)?;
+        if !this_db.db.spec(&model)?.actions.iter().any(|declared| declared.name == action) { return Err(DbError::Invalid { detail: format!("{model} declares no action {action}") }); }
+        this_db.mutation_needs_transport(&model, &action)?;
+        let (db, name) = (this_db.db.clone(), model.clone());
+        let (patch, args) = this_db.offload(move || {
             let patch: serde_json::Map<String, Value> = parse_json(&patch_json)?;
             let args = parse_json(&args_json)?;
             db.validate_act(&name, patch.clone(), &args)?;
             Ok((patch, args))
         }).await?;
-        let row = self.resolved(epoch, &model, id(&row_id)?).await?;
-        let (db, name, verb) = (self.db.clone(), model.clone(), action.clone());
-        let planned = self.offload(move || Ok(db.plan_act(&name, &verb, &row, patch, args)?)).await?;
-        self.write_planned(epoch, &action, planned).await
-    }
+        let row = this_db.resolved(epoch, &model, id(&row_id)?).await?;
+        let (db, name, verb) = (this_db.db.clone(), model.clone(), action.clone());
+        let planned = this_db.offload(move || Ok(db.plan_act(&name, &verb, &row, patch, args)?)).await?;
+        this_db.write_planned(epoch, &action, planned).await
+    }).await? }
 
-    pub async fn destroy(&self, epoch: u64, model: String, row_id: String) -> Result<WireOperationReceipt, DbError> {
-        self.account_call(epoch)?;
-        self.mutation_needs_transport(&model, "destroy")?;
-        let row = self.resolved(epoch, &model, id(&row_id)?).await?;
-        let (db, name) = (self.db.clone(), model.clone());
-        let planned = self.offload(move || Ok(db.plan_destroy(&name, &row)?)).await?;
-        self.write_planned(epoch, "destroy", planned).await
-    }
+    pub async fn destroy(&self, epoch: u64, model: String, row_id: String) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.account_call(epoch)?;
+        this_db.mutation_needs_transport(&model, "destroy")?;
+        let row = this_db.resolved(epoch, &model, id(&row_id)?).await?;
+        let (db, name) = (this_db.db.clone(), model.clone());
+        let planned = this_db.offload(move || Ok(db.plan_destroy(&name, &row)?)).await?;
+        this_db.write_planned(epoch, "destroy", planned).await
+    }).await? }
 
-    pub async fn set_local(&self, epoch: u64, model: String, row_id: String, path: String, value_json: String) -> Result<(), DbError> {
-        self.account_call(epoch)?;
-        let (db, name, field) = (self.db.clone(), model.clone(), path.clone());
-        let value = self.offload(move || {
+    pub async fn set_local(&self, epoch: u64, model: String, row_id: String, path: String, value_json: String) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.account_call(epoch)?;
+        let (db, name, field) = (this_db.db.clone(), model.clone(), path.clone());
+        let value = this_db.offload(move || {
             let value = parse_json::<Value>(&value_json)?;
             db.local_value(&name, &field, value.clone())?;
             Ok(value)
         }).await?;
-        let row = self.resolved(epoch, &model, id(&row_id)?).await?;
-        let (db, name, field) = (self.db.clone(), model.clone(), path.clone());
-        let plan = self.offload(move || Ok(db.plan_set_local(&name, &row, &field, value)?)).await?;
+        let row = this_db.resolved(epoch, &model, id(&row_id)?).await?;
+        let (db, name, field) = (this_db.db.clone(), model.clone(), path.clone());
+        let plan = this_db.offload(move || Ok(db.plan_set_local(&name, &row, &field, value)?)).await?;
         let (kind, row, values) = match plan {
             crate::store::LocalPlan::Unchanged => return Ok(()),
             crate::store::LocalPlan::Row { row_id, values } => (LocalWriteKind::SetLocal, row_id, Value::Object(values).to_string()),
             crate::store::LocalPlan::Pending { row_id, path, value } => (LocalWriteKind::SetLocalPending, row_id, serde_json::json!({ "path": path, "value": value }).to_string()),
         };
-        let waiter = self.life.local_write(epoch, model, kind, row.to_string(), values);
-        self.outbox_answer(epoch, waiter, "set local").await.map(drop)
-    }
+        let waiter = this_db.life.local_write(epoch, model, kind, row.to_string(), values);
+        this_db.outbox_answer(epoch, waiter, "set local").await.map(drop)
+    }).await? }
 
-    pub async fn set_ephemeral(&self, epoch: u64, model: String, row_id: String, values_json: String) -> Result<(), DbError> {
-        self.account_call(epoch)?;
-        let (db, name, text) = (self.db.clone(), model.clone(), values_json.clone());
-        self.offload(move || Ok(db.plan_set_ephemeral(&name, &parse_json(&text)?)?)).await?;
-        let row = self.resolved(epoch, &model, id(&row_id)?).await?;
-        let waiter = self.life.local_write(epoch, model, LocalWriteKind::SetEphemeral { expire_after: None }, row.to_string(), values_json);
-        self.outbox_answer(epoch, waiter, "set ephemeral").await.map(drop)
-    }
+    pub async fn set_ephemeral(&self, epoch: u64, model: String, row_id: String, values_json: String) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.account_call(epoch)?;
+        let (db, name, text) = (this_db.db.clone(), model.clone(), values_json.clone());
+        this_db.offload(move || Ok(db.plan_set_ephemeral(&name, &parse_json(&text)?)?)).await?;
+        let row = this_db.resolved(epoch, &model, id(&row_id)?).await?;
+        let waiter = this_db.life.local_write(epoch, model, LocalWriteKind::SetEphemeral { expire_after: None }, row.to_string(), values_json);
+        this_db.outbox_answer(epoch, waiter, "set ephemeral").await.map(drop)
+    }).await? }
 
     /// Attaches the local file at `source_path`: the library copies it in pieces and the row shows the copy.
-    pub async fn attach_file(&self, epoch: u64, model: String, row_id: String, field: String, source_path: String, name: String, mime: String) -> Result<super::wire::WireFile, DbError> {
-        self.account_call(epoch)?;
+    pub async fn attach_file(&self, epoch: u64, model: String, row_id: String, field: String, source_path: String, name: String, mime: String) -> Result<super::wire::WireFile, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.account_call(epoch)?;
         let source_path = local_source(&source_path)?;
-        let row = self.file_row(epoch, &model, &row_id, &field, true).await?;
-        let files = self.db.files().clone();
+        let row = this_db.file_row(epoch, &model, &row_id, &field, true).await?;
+        let files = this_db.db.files().clone();
         let copied = files.clone();
-        let copy = self.offload(move || crate::store::files::copy_attachment(&copied, &source_path).map_err(|error| DbError::Storage { detail: format!("the source file could not be copied: {error}") })).await?;
+        let copy = this_db.offload(move || crate::store::files::copy_attachment(&copied, &source_path).map_err(|error| DbError::Storage { detail: format!("the source file could not be copied: {error}") })).await?;
         let id = copy.id.clone();
-        let waiter = self.life.local_write(epoch, model, LocalWriteKind::AttachCopy { copy, name, mime }, row.to_string(), field.clone());
-        let answer = self.outbox_answer(epoch, waiter, "attach").await;
+        let waiter = this_db.life.local_write(epoch, model, LocalWriteKind::AttachCopy { copy, name, mime }, row.to_string(), field.clone());
+        let answer = this_db.outbox_answer(epoch, waiter, "attach").await;
         let attached = match &answer {
             Ok(OutboxAnswer::Written { shown: Some(shown), .. }) => shown.get(&field).and_then(crate::store::files::FileDescriptor::from_value),
             _ => None,
@@ -274,32 +274,32 @@ impl Database {
             Err(error) => Err(error),
             Ok(_) => Err(DbError::Internal { detail: "the attached file is not on the row".into() }),
         }
-    }
+    }).await? }
 
-    pub async fn detach(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<bool, DbError> {
-        let row = self.file_row(epoch, &model, &row_id, &field, true).await?;
-        let waiter = self.life.local_write(epoch, model, LocalWriteKind::Detach, row.to_string(), field);
-        let OutboxAnswer::Written { files_removed, .. } = self.outbox_answer(epoch, waiter, "detach").await? else { return Err(super::database::foreign_reply()) };
+    pub async fn detach(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<bool, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        let row = this_db.file_row(epoch, &model, &row_id, &field, true).await?;
+        let waiter = this_db.life.local_write(epoch, model, LocalWriteKind::Detach, row.to_string(), field);
+        let OutboxAnswer::Written { files_removed, .. } = this_db.outbox_answer(epoch, waiter, "detach").await? else { return Err(super::database::foreign_reply()) };
         Ok(files_removed > 0)
-    }
+    }).await? }
 
     /// The one outcome of a receipt (D-286): the value `Confirmed{value, answer_json}`, a refusal is `Rejected{failure, kept}` (`kept` = the failed intent stays for `retry` or `discard`), the end of the wait is the error of `cause_error`.
-    pub async fn confirmed(&self, receipt: WireOperationReceipt, discard_on_failure: bool) -> Result<WireConfirmed, DbError> {
-        self.settle(receipt, discard_on_failure).await
-    }
+    pub async fn confirmed(&self, receipt: WireOperationReceipt, discard_on_failure: bool) -> Result<WireConfirmed, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.settle(receipt, discard_on_failure).await
+    }).await? }
 
-    pub async fn discard(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<(), DbError> {
-        let (row_id, transfer) = self.operation_target(epoch, &model, &row_id, action.as_deref(), false).await?;
+    pub async fn discard(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        let (row_id, transfer) = this_db.operation_target(epoch, &model, &row_id, action.as_deref(), false).await?;
         if let Some(declared) = action.as_deref().filter(|_| transfer) {
-            return self.discard_transfer(epoch, &model, &row_id, declared).await;
+            return this_db.discard_transfer(epoch, &model, &row_id, declared).await;
         }
-        let waiter = self.life.discard_operation(epoch, (model.clone(), row_id.clone()), action);
-        match self.in_epoch(epoch, "discard", self.await_life(waiter)).await? {
+        let waiter = this_db.life.discard_operation(epoch, (model.clone(), row_id.clone()), action);
+        match this_db.in_epoch(epoch, "discard", this_db.await_life(waiter)).await? {
             LifeReply::Transfer(TransferAnswer::Err(fault)) | LifeReply::Outbox(OutboxAnswer::Err(fault)) => Err(refused(fault, "discard")),
             LifeReply::Outbox(_) | LifeReply::Transfer(_) => Ok(()),
             _ => Err(super::database::foreign_reply()),
         }
-    }
+    }).await? }
 }
 
 /// The local path of a source: an absolute path or a `file://` address. Another scheme and a relative path are `Invalid`.
@@ -398,5 +398,5 @@ pub(super) enum Retried {
 }
 
 pub(super) fn row_present(database: &Database, model: &str, row: &crate::identity::RowId) -> Result<(), DbError> {
-    database.db.find(model, row)?.map(drop).ok_or_else(|| DbError::NotFound { detail: format!("row {row} of {model} does not exist") })
+    crate::blocking::blocking_unit(|| database.db.find(model, row))?.map(drop).ok_or_else(|| DbError::NotFound { detail: format!("row {row} of {model} does not exist") })
 }

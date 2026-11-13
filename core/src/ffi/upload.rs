@@ -52,7 +52,7 @@ impl Database {
     /// The size of the file and the number of its steps: a single step for a small file, parts for a large one.
     fn source_of(&self, path: &str, held: bool) -> Result<(Source, bool), DbError> {
         #[cfg(test)] self.db.files().record_source_read();
-        let total = std::fs::metadata(path).map_err(|error| invalid(format!("the source file is unreadable: {error}")))?.len();
+        let total = crate::blocking::blocking_unit(|| std::fs::metadata(path)).map_err(|error| invalid(format!("the source file is unreadable: {error}")))?.len();
         if total == 0 { return Err(invalid(crate::store::files::EMPTY_SOURCE)); }
         let sizing = self.upload_operations()?.sizing(&self.upload_config);
         if held && !sizing.multipart_declared { return Err(invalid("a staged upload needs the multipart steps")); }
@@ -83,7 +83,7 @@ impl Database {
         let name = source.name.unwrap_or_else(|| std::path::Path::new(&source.path).file_name().map_or_else(|| source.path.clone(), |name| name.to_string_lossy().into_owned()));
         let spec = self.db.spec(model)?;
         let declaration = spec.upload_action(action).ok_or_else(|| invalid("upload action is not declared"))?;
-        let current = self.db.read(&[model], |reader| reader.point(model, row.as_str()))?;
+        let current = crate::blocking::blocking_unit(|| self.db.read(&[model], |reader| reader.point(model, row.as_str())))?;
         let correlation = declaration.correlate.first().and_then(|field| current.as_ref().and_then(|row| row.get(field)).and_then(Value::as_str)).map_or_else(|| row.to_string(), str::to_string);
         let steps = StepsBody { multipart, mime: source.mime.unwrap_or_else(|| mime_of(&name).to_string()), name, signed_variable: "signedId".into(), item: correlation }.steps();
         let wrap = match &declaration.batch {
@@ -191,33 +191,33 @@ impl Database {
 
 #[uniffi::export]
 impl Database {
-    pub async fn supply_source(&self, epoch: u64, model: String, row_id: String, action: String, source: WireUploadSource) -> Result<(), DbError> {
-        let (row, _) = self.operation_target(epoch, &model, &row_id, Some(&action), true).await?;
+    pub async fn supply_source(&self, epoch: u64, model: String, row_id: String, action: String, source: WireUploadSource) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        let (row, _) = this_db.operation_target(epoch, &model, &row_id, Some(&action), true).await?;
         let row = id(&row)?;
-        let database = self.me.upgrade().ok_or_else(super::command::closed)?;
+        let database = this_db.me.upgrade().ok_or_else(super::command::closed)?;
         let (name, verb, target) = (model.clone(), action.clone(), row.clone());
-        let source = self.offload(move || database.supplied_source(&name, &target, &verb, source)).await?;
-        match self.transfer_answer(epoch, self.life.supply_source(epoch, key_of(&model, row.as_str(), &action), source), "supply source").await? {
+        let source = this_db.offload(move || database.supplied_source(&name, &target, &verb, source)).await?;
+        match this_db.transfer_answer(epoch, this_db.life.supply_source(epoch, key_of(&model, row.as_str(), &action), source), "supply source").await? {
             TransferAnswer::Ok => Ok(()),
             _ => Err(super::database::foreign_reply()),
         }
-    }
+    }).await? }
 
-    pub async fn fail_source(&self, epoch: u64, model: String, row_id: String, action: String, message: String) -> Result<(), DbError> {
-        let (row, _) = self.operation_target(epoch, &model, &row_id, Some(&action), true).await?;
-        match self.transfer_answer(epoch, self.life.fail_source(epoch, key_of(&model, row.as_str(), &action), message), "fail source").await? {
+    pub async fn fail_source(&self, epoch: u64, model: String, row_id: String, action: String, message: String) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        let (row, _) = this_db.operation_target(epoch, &model, &row_id, Some(&action), true).await?;
+        match this_db.transfer_answer(epoch, this_db.life.fail_source(epoch, key_of(&model, row.as_str(), &action), message), "fail source").await? {
             TransferAnswer::Ok => Ok(()),
             _ => Err(super::database::foreign_reply()),
         }
-    }
+    }).await? }
 
-    pub async fn upload(&self, epoch: u64, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<WireOperationReceipt, DbError> {
-        self.account_call(epoch)?;
-        let file = self.offload(move || request.into_file()).await?;
-        let single = self.single_of(&model, &action, &file, false)?;
-        let row = self.resolved(epoch, &model, id(&row_id)?).await?;
-        let (db, name, verb, target, args) = (self.db.clone(), model.clone(), action.clone(), row.clone(), file.variables.clone());
-        let effects = self.offload(move || {
+    pub async fn upload(&self, epoch: u64, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.account_call(epoch)?;
+        let file = this_db.offload(move || request.into_file()).await?;
+        let single = this_db.single_of(&model, &action, &file, false)?;
+        let row = this_db.resolved(epoch, &model, id(&row_id)?).await?;
+        let (db, name, verb, target, args) = (this_db.db.clone(), model.clone(), action.clone(), row.clone(), file.variables.clone());
+        let effects = this_db.offload(move || {
             db.validate_act(&name, Map::new(), &args)?;
             match db.plan_act(&name, &verb, &target, Map::new(), args) {
                 Ok(planned) => Ok(planned.effects),
@@ -225,31 +225,31 @@ impl Database {
                 Err(error) => Err(error.into()),
             }
         }).await?;
-        let item = self.single_upload((&model, row.as_str(), &action), single, &file, effects)?;
-        let waiter = self.life.accept_upload(epoch, item);
-        let TransferAnswer::Receipt(held) = self.transfer_answer(epoch, waiter, "upload").await? else { return Err(DbError::Internal { detail: "the owner answered an upload with no receipt".into() }) };
-        let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&model, shown)).transpose()?;
-        Ok(self.transfer_receipt(epoch, model, held, value))
-    }
+        let item = this_db.single_upload((&model, row.as_str(), &action), single, &file, effects)?;
+        let waiter = this_db.life.accept_upload(epoch, item);
+        let TransferAnswer::Receipt(held) = this_db.transfer_answer(epoch, waiter, "upload").await? else { return Err(DbError::Internal { detail: "the owner answered an upload with no receipt".into() }) };
+        let value = held.optimistic.as_ref().map(|shown| this_db.wire_of_row(&model, shown)).transpose()?;
+        Ok(this_db.transfer_receipt(epoch, model, held, value))
+    }).await? }
 
     /// The file goes up before its row exists: `commit_staged` sends the final mutation (D-372).
-    pub async fn stage(&self, epoch: u64, model: String, action: String, request: WireUploadRequest) -> Result<WireStagedUpload, DbError> {
-        self.account_call(epoch)?;
-        let file = self.offload(move || request.into_file()).await?;
-        let single = self.single_of(&model, &action, &file, true)?;
+    pub async fn stage(&self, epoch: u64, model: String, action: String, request: WireUploadRequest) -> Result<WireStagedUpload, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.account_call(epoch)?;
+        let file = this_db.offload(move || request.into_file()).await?;
+        let single = this_db.single_of(&model, &action, &file, true)?;
         if single.source.is_none() { return Err(invalid("a staged upload needs a file")); }
         let row = crate::identity::RowId::generate_temp(None);
-        let mut item = self.single_upload((&model, row.as_str(), &action), single, &file, IntentEffects::default())?;
+        let mut item = this_db.single_upload((&model, row.as_str(), &action), single, &file, IntentEffects::default())?;
         item.held = true;
-        let waiter = self.life.accept_upload(epoch, item);
-        let TransferAnswer::Receipt(held) = self.transfer_answer(epoch, waiter, "stage").await? else { return Err(DbError::Internal { detail: "the owner answered a stage with no receipt".into() }) };
-        Ok(WireStagedUpload { row_id: row.to_string(), receipt: self.transfer_receipt(epoch, model, held, None) })
-    }
+        let waiter = this_db.life.accept_upload(epoch, item);
+        let TransferAnswer::Receipt(held) = this_db.transfer_answer(epoch, waiter, "stage").await? else { return Err(DbError::Internal { detail: "the owner answered a stage with no receipt".into() }) };
+        Ok(WireStagedUpload { row_id: row.to_string(), receipt: this_db.transfer_receipt(epoch, model, held, None) })
+    }).await? }
 
-    pub async fn commit_staged(&self, epoch: u64, model: String, row_id: String, action: String, values_json: String, variables_json: String) -> Result<WireOperationReceipt, DbError> {
-        self.account_call(epoch)?;
-        let (db, name, row) = (self.db.clone(), model.clone(), row_id.clone());
-        let (planned, variables) = self.offload(move || {
+    pub async fn commit_staged(&self, epoch: u64, model: String, row_id: String, action: String, values_json: String, variables_json: String) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.account_call(epoch)?;
+        let (db, name, row) = (this_db.db.clone(), model.clone(), row_id.clone());
+        let (planned, variables) = this_db.offload(move || {
             let mut values = super::upload_wire::object(&values_json)?;
             values.insert("id".into(), Value::String(row));
             let variables = super::upload_wire::object(&variables_json)?;
@@ -259,19 +259,19 @@ impl Database {
                 Err(error) => Err(error.into()),
             }
         }).await?;
-        let wrap = self.db.spec(&model)?.upload_action(&action).ok_or_else(|| invalid("upload action is not declared"))?.wrap.clone();
+        let wrap = this_db.db.spec(&model)?.upload_action(&action).ok_or_else(|| invalid("upload action is not declared"))?.wrap.clone();
         let refused = planned.is_none();
-        let waiter = self.life.commit_upload(epoch, key_of(&model, &row_id, &action), CommitRequest { effects: planned.unwrap_or_default(), variables, wrap, refused });
-        let TransferAnswer::Receipt(held) = self.transfer_answer(epoch, waiter, "commit").await? else { return Err(DbError::Internal { detail: "the owner answered a commit with no receipt".into() }) };
-        let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&model, shown)).transpose()?;
-        Ok(self.transfer_receipt(epoch, model, held, value))
-    }
+        let waiter = this_db.life.commit_upload(epoch, key_of(&model, &row_id, &action), CommitRequest { effects: planned.unwrap_or_default(), variables, wrap, refused });
+        let TransferAnswer::Receipt(held) = this_db.transfer_answer(epoch, waiter, "commit").await? else { return Err(DbError::Internal { detail: "the owner answered a commit with no receipt".into() }) };
+        let value = held.optimistic.as_ref().map(|shown| this_db.wire_of_row(&model, shown)).transpose()?;
+        Ok(this_db.transfer_receipt(epoch, model, held, value))
+    }).await? }
 
-    pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<WireBatchReceipt, DbError> {
-        self.account_call(epoch)?;
-        let (items, request) = self.offload(move || Ok((items.into_iter().map(WireUploadItem::into_item).collect::<Result<Vec<_>, _>>()?, request.into_input()?))).await?;
-        self.upload_operations()?;
-        let spec = self.db.spec(&model)?;
+    pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<WireBatchReceipt, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        this_db.account_call(epoch)?;
+        let (items, request) = this_db.offload(move || Ok((items.into_iter().map(WireUploadItem::into_item).collect::<Result<Vec<_>, _>>()?, request.into_input()?))).await?;
+        this_db.upload_operations()?;
+        let spec = this_db.db.spec(&model)?;
         let action = spec.actions.iter().find(|declared| declared.name == request.operation).ok_or_else(|| invalid("unknown upload operation"))?;
         let batch = action.batch.as_ref().ok_or_else(|| invalid("operation has no upload batch declaration"))?;
         if !batch_size_admitted((batch.min, batch.max), items.len()) { return Err(invalid(format!("upload batch requires {}..{} items", batch.min, batch.max))); }
@@ -281,34 +281,34 @@ impl Database {
             let key = item.values.get(&field).and_then(Value::as_str).filter(|key| !key.trim().is_empty()).ok_or_else(|| invalid("upload correlation key is empty"))?;
             if !keys.insert(key.to_string()) { return Err(invalid("upload correlation keys must be unique")); }
         }
-        let (db, name) = (self.db.clone(), model.clone());
-        let created = self.offload(move || items.into_iter().map(|item| Ok((db.plan_create(&name, item.values.clone(), Map::new())?, item))).collect::<Result<Vec<_>, DbError>>()).await?;
+        let (db, name) = (this_db.db.clone(), model.clone());
+        let created = this_db.offload(move || items.into_iter().map(|item| Ok((db.plan_create(&name, item.values.clone(), Map::new())?, item))).collect::<Result<Vec<_>, DbError>>()).await?;
         let planned = created.into_iter().map(|(planned, item)| {
-            let built = self.batch_upload(&model, &request.operation, &planned, &item, &request)?;
+            let built = this_db.batch_upload(&model, &request.operation, &planned, &item, &request)?;
             Ok((item, planned, built))
         }).collect::<Result<Vec<_>, DbError>>()?;
         let built: Vec<BatchItem> = planned.iter().map(|(_, _, built)| built.clone()).collect();
-        let joint = self.joint_of(&model, &request)?;
-        let waiter = self.life.accept_upload_batch(epoch, built, joint);
-        let TransferAnswer::Receipts(held) = self.transfer_answer(epoch, waiter, "upload batch").await? else { return Err(DbError::Internal { detail: "the owner answered a batch with no receipts".into() }) };
+        let joint = this_db.joint_of(&model, &request)?;
+        let waiter = this_db.life.accept_upload_batch(epoch, built, joint);
+        let TransferAnswer::Receipts(held) = this_db.transfer_answer(epoch, waiter, "upload batch").await? else { return Err(DbError::Internal { detail: "the owner answered a batch with no receipts".into() }) };
         let mut items = Vec::new();
         for ((item, planned, _), held) in planned.into_iter().zip(held) {
             let key = item.values.get(&field).and_then(Value::as_str).unwrap_or_default().to_string();
-            let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&model, shown)).transpose()?.ok_or_else(|| DbError::Internal { detail: format!("the accepted row {} of {model} is not shown", planned.row_id) })?;
-            items.push(WireItemReceipt { item: ItemId { value: key }, optimistic_value: value.clone(), receipt: self.transfer_receipt(epoch, model.clone(), held, Some(value)) });
+            let value = held.optimistic.as_ref().map(|shown| this_db.wire_of_row(&model, shown)).transpose()?.ok_or_else(|| DbError::Internal { detail: format!("the accepted row {} of {model} is not shown", planned.row_id) })?;
+            items.push(WireItemReceipt { item: ItemId { value: key }, optimistic_value: value.clone(), receipt: this_db.transfer_receipt(epoch, model.clone(), held, Some(value)) });
         }
         Ok(WireBatchReceipt { epoch, items })
-    }
+    }).await? }
 
-    pub async fn cancel_upload(&self, epoch: u64, model: String, row_id: String, action: String) -> Result<bool, DbError> {
-        let (row, _) = self.operation_target(epoch, &model, &row_id, Some(&action), true).await?;
-        if self.uploads.is_none() { return Err(DbError::NotFound { detail: "cancel upload: there is no such operation".into() }); }
-        let waiter = self.life.cancel_upload(epoch, key_of(&model, &row, &action));
-        match self.transfer_answer(epoch, waiter, "cancel upload").await? {
+    pub async fn cancel_upload(&self, epoch: u64, model: String, row_id: String, action: String) -> Result<bool, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+        let (row, _) = this_db.operation_target(epoch, &model, &row_id, Some(&action), true).await?;
+        if this_db.uploads.is_none() { return Err(DbError::NotFound { detail: "cancel upload: there is no such operation".into() }); }
+        let waiter = this_db.life.cancel_upload(epoch, key_of(&model, &row, &action));
+        match this_db.transfer_answer(epoch, waiter, "cancel upload").await? {
             TransferAnswer::Cancelled(cancelled) => Ok(cancelled),
             _ => Err(DbError::Internal { detail: "the owner answered a cancel with no result".into() }),
         }
-    }
+    }).await? }
 }
 
 impl Database {
