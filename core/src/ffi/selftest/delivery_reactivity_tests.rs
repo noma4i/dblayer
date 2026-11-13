@@ -501,6 +501,36 @@ async fn data_insert_on_node_reread() {
     bound(database.close_database()).await.unwrap();
 }
 
+/// data_insert_on_node_reread_of_a_row_in_debt (D-397): the first reader of the `node` window of a row in debt lands the row as a node reread, so the row joins the window with `insert_on: [:node]`.
+#[tokio::test(flavor = "multi_thread")]
+async fn data_insert_on_node_reread_of_a_row_in_debt() {
+    let world = World::new("server", "A", true);
+    let changes = vec![json!({"area":"CHAT","relation":"node"})];
+    let (database, transport) = feed_database_joining(world.clone(), None, None, false, changes, (true, false)).await;
+    let chat = |id: &str| json!({"data":{"node":{"__typename":"Chat","id":id,"title":"t","revision":1,"lists":["PRIMARY"]}}});
+    let list = Arc::new(crate::ffi::tape::Rows::default());
+    let window = database.watch_query(r#"{"model":"Chat","relation":"list","params":{"list":"PRIMARY"}}"#, list.clone());
+    world.answer_with("ChatList", json!({"data":{"chats":[]}}));
+    bound(window.wait_for_initial_load()).await.unwrap();
+    bound(transport.opened.notified()).await;
+    let token = transport.token.lock().unwrap().clone().unwrap();
+    let node = |id: &str| json!({"model":"Chat","relation":"node","params":{crate::schema::NODE_PARAM: id}}).to_string();
+    world.answer_with("ChatNode", chat("c1"));
+    let first = Arc::new(crate::ffi::tape::Rows::default());
+    let reader = database.watch_query(&node("c1"), first.clone());
+    crate::test_wait::settled(&database, "the node is read", || first.len() == 1).await;
+    assert_eq!(list.len(), 0, "a node read by the caller puts no row into the window");
+    reader.cancel();
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"CHAT","action":"UPDATED","recordId":"c1"}]}}})));
+    crate::test_wait::settled(&database, "the event is done", || true).await;
+    assert_eq!(list.len(), 0, "nobody reads the row, so nothing lands");
+    world.answer_with("ChatNode", chat("c1"));
+    let second = Arc::new(crate::ffi::tape::Rows::default());
+    let _again = database.watch_query(&node("c1"), second.clone());
+    crate::test_wait::settled(&database, "the row in debt is read by the first reader", || list.len() == 1).await;
+    bound(database.close_database()).await.unwrap();
+}
+
 const SHOWN_LIST: &str = r#"{"model":"Chat","relation":"list","params":{"list":"PRIMARY"}}"#;
 const OTHER_LIST: &str = r#"{"model":"Chat","relation":"list","params":{"list":"OTHER"}}"#;
 
