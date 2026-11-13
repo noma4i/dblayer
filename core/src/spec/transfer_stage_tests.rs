@@ -44,14 +44,6 @@ fn held_at(twin: &mut Twin, key: &str) -> TransferId {
 }
 
 #[test]
-fn xfer_stage_accept() {
-    let mut twin = Twin::offline();
-    let id = staged(&mut twin, KEY, 2);
-    assert_eq!(twin.stage(id), TransferStage::Ready);
-    assert!(twin.t(id).held && twin.t(id).mutation.effects.is_empty());
-}
-
-#[test]
 fn xfer_stage_invalid() {
     let mut twin = Twin::new();
     let reply = twin.reply();

@@ -154,6 +154,7 @@ async fn xfer_prepare_runs_then_uploads() {
     assert_eq!(*stand.puts.bodies.lock().unwrap(), vec![PREPARED.to_vec()], "the body of the PUT is the prepared file");
     assert_eq!(stand.script.count("CreateMoment"), 1);
     crate::test_wait::settled(&database, "no copy and no result stay", || files_left(&path) == 0).await;
+    assert_eq!(preparer.kinds(), vec![crate::ffi::PrepareKind::Image], "the probe gets the kind the settings ask for");
     assert_eq!(preparer.runs().len(), 1);
     database.close_now();
 
@@ -310,6 +311,7 @@ async fn xfer_prepare_strips_private_metadata_without_reencode() {
     stand.script.data("CreateMoment", LANDED);
     let receipt = bound(database.send(send(database.session_epoch(), &source, video(|_| {})))).await.unwrap();
     bound(database.confirmed(receipt, false)).await.unwrap();
+    assert_eq!(preparer.kinds(), vec![crate::ffi::PrepareKind::Video], "the probe gets the kind the settings ask for");
     let jobs = preparer.jobs();
     assert_eq!(jobs.len(), 1, "the private key forces a write");
     match &jobs[0].plan {
@@ -480,24 +482,6 @@ async fn xfer_prepare_too_large() {
             assert_eq!(*stand.puts.bodies.lock().unwrap(), vec![PREPARED.to_vec()], "{what}");
             assert_eq!(stand.script.count("CreateMoment"), 1, "{what}");
         }
-        database.close_now();
-    }
-}
-
-/// D-368: the probe of the platform gets the kind the settings ask for.
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_prepare_probe_gets_the_kind_of_the_settings() {
-    for (probe, prepare, kind) in [(probed_image(), shrink(), crate::ffi::PrepareKind::Image), (video_probe(&[], false), video(|_| {}), crate::ffi::PrepareKind::Video)] {
-        let directory = tempfile::tempdir().unwrap();
-        let source = source_file(directory.path(), "clip", SOURCE);
-        let preparer = ScriptedPreparer::new(probe, PREPARED, &[]);
-        let stand = Stand::new().with_preparer(preparer.clone());
-        let database = stand.open(Some(&directory.path().join("db.sqlite")), &[CREATE_MOMENT]).await;
-        stand.script.data("CreateBlob", BLOB);
-        stand.script.data("CreateMoment", LANDED);
-        let receipt = bound(database.send(send(database.session_epoch(), &source, prepare))).await.unwrap();
-        bound(database.confirmed(receipt, false)).await.unwrap();
-        assert_eq!(preparer.kinds(), vec![kind]);
         database.close_now();
     }
 }

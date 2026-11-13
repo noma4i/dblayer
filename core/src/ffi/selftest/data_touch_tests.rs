@@ -64,23 +64,24 @@ async fn chain(with_message: bool, derived: bool) -> Chain {
 #[derive(Clone, Copy, Debug)]
 enum Path { Create, EventChange, EventSameValues, EventDelete, OperationValue, Page, EventWithDerivedParent }
 
-/// P-DATA-115: the parent gets 1 new value per batch of a child change, whatever the path of the change; a write of equal child values gives it none.
+/// P-DATA-115: the parent gets 1 new value per batch of a child change, whatever the path of the change, and so does each ancestor above it; a write of equal child values gives none.
 #[tokio::test(flavor = "multi_thread")]
 async fn data_touch_once_any_path() {
-    // path, whether the message m1 exists first, new values of the chat stream (a create is 2 batches: the optimistic row and the answer; the derived parent is written by the batch of its child)
+    // path, whether the message m1 exists first, new values of the chat stream (a create is 2 batches: the optimistic row and the answer; the derived parent is written by the batch of its child), new values of the group above the chat where the path gives one value per batch
     let cases = [
-        (Path::Create, false, 2),
-        (Path::EventChange, true, 1),
-        (Path::EventSameValues, true, 0),
-        (Path::EventDelete, true, 1),
-        (Path::OperationValue, true, 2),
-        (Path::Page, false, 1),
-        (Path::EventWithDerivedParent, false, 1),
+        (Path::Create, false, 2, None),
+        (Path::EventChange, true, 1, Some(1)),
+        (Path::EventSameValues, true, 0, Some(0)),
+        (Path::EventDelete, true, 1, None),
+        (Path::OperationValue, true, 2, None),
+        (Path::Page, false, 1, Some(1)),
+        (Path::EventWithDerivedParent, false, 1, None),
     ];
-    for (path, existing, expected) in cases {
-        let Chain { rig, chat, .. } = chain(existing, matches!(path, Path::EventWithDerivedParent)).await;
+    for (path, existing, expected, above) in cases {
+        let Chain { rig, chat, group } = chain(existing, matches!(path, Path::EventWithDerivedParent)).await;
         let epoch = rig.database.session_epoch();
         let before = values(&chat);
+        let group_before = values(&group);
         match path {
             Path::Create => {
                 let hold = rig.world.hold_next("SendMessage");
@@ -113,31 +114,7 @@ async fn data_touch_once_any_path() {
         }
         rig.settle().await;
         assert_eq!(values(&chat) - before, expected, "{path:?}: new values of the parent stream");
+        if let Some(above) = above { assert_eq!(values(&group) - group_before, above, "{path:?}: new values of the stream above the parent"); }
         rig.database.close_now();
     }
-}
-
-/// P-DATA-115: a touch goes up the chain, the chat and then the group each get 1 new value per batch, also for a page of several children, and a write of equal values gives none.
-#[tokio::test(flavor = "multi_thread")]
-async fn data_touch_chain_reaches_every_ancestor_once() {
-    let Chain { rig, chat, group } = chain(true, false).await;
-    let seen = || (values(&chat), values(&group));
-
-    let before = seen();
-    rig.land("Message", json!({"id": "m1", "chatId": "c1", "text": "changed", "at": 1})).await;
-    assert_eq!(seen(), (before.0 + 1, before.1 + 1), "an event of the child reaches the chat and the group once");
-
-    let before = seen();
-    rig.land("Message", json!({"id": "m1", "chatId": "c1", "text": "changed", "at": 1})).await;
-    assert_eq!(seen(), before, "equal values touch no ancestor");
-
-    for (id, at) in [("p1", 2), ("p2", 3), ("p3", 4)] { rig.world.seed_message("A", id, id, at); }
-    let before = seen();
-    let list = Arc::new(Rows::default());
-    let stream = rig.database.watch_query(THREAD, list.clone());
-    bound(stream.wait_for_initial_load()).await.unwrap();
-    settled(&rig, "the page shows its children", || list.len() == 3).await;
-    rig.settle().await;
-    assert_eq!(seen(), (before.0 + 1, before.1 + 1), "a page of 3 new children reaches the chat and the group once");
-    rig.database.close_now();
 }

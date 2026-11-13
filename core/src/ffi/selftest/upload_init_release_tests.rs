@@ -30,35 +30,26 @@ fn aborted_once(stand: &Stand) {
     assert!(stand.script.variables("AbortMultipart")[0].to_string().contains("upload"), "{:?}", stand.script.variables("AbortMultipart"));
 }
 
-/// xfer_released_init_answer_owes_abort (D-388): a discard while `Init` is in flight, the answer comes after the removal.
+/// xfer_released_init_answer_owes_abort (D-388): a discard or a cancel while `Init` is in flight, the answer comes after the removal.
 /// Observable: the calls to the server, the debts in the base. Catches: a multipart that stays on the server until its timeout.
 #[tokio::test(flavor = "multi_thread")]
-async fn xfer_init_answer_after_discard_aborts_the_multipart() {
-    let stand = Stand::new();
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("db.sqlite");
-    let (database, held, id) = init_held(&stand, &path, directory.path()).await;
-    bound(database.discard(database.session_epoch(), "Moment".into(), id, Some("upload_clip".into()))).await.unwrap();
-    held.release();
-    settled(&database, "the abort went", || stand.script.count("AbortMultipart") == 1).await;
-    aborted_once(&stand);
-    assert_eq!((stand.script.count("PresignParts"), owed(&path)), (0, 0));
-    database.close_now();
-}
-
-/// A cancel of the upload while `Init` is in flight removes the transfer like a discard: the multipart of the late answer is aborted.
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_init_answer_after_cancel_aborts_the_multipart() {
-    let stand = Stand::new();
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("db.sqlite");
-    let (database, held, id) = init_held(&stand, &path, directory.path()).await;
-    bound(database.cancel_upload(database.session_epoch(), "Moment".into(), id, "upload_clip".into())).await.unwrap();
-    held.release();
-    settled(&database, "the abort went", || stand.script.count("AbortMultipart") == 1).await;
-    aborted_once(&stand);
-    assert_eq!(owed(&path), 0);
-    database.close_now();
+async fn xfer_init_answer_after_removal_aborts_the_multipart() {
+    for cancel in [false, true] {
+        let stand = Stand::new();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("db.sqlite");
+        let (database, held, id) = init_held(&stand, &path, directory.path()).await;
+        if cancel {
+            bound(database.cancel_upload(database.session_epoch(), "Moment".into(), id, "upload_clip".into())).await.unwrap();
+        } else {
+            bound(database.discard(database.session_epoch(), "Moment".into(), id, Some("upload_clip".into()))).await.unwrap();
+        }
+        held.release();
+        settled(&database, "the abort went", || stand.script.count("AbortMultipart") == 1).await;
+        aborted_once(&stand);
+        assert_eq!((stand.script.count("PresignParts"), owed(&path)), (0, 0), "cancel {cancel}");
+        database.close_now();
+    }
 }
 
 /// The process ends after the discard, before the answer of `Init`: the next opening sends the saved pair, the answer is the debt, the abort goes once, and a further opening sends nothing.

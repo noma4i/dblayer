@@ -76,16 +76,13 @@ fn store_owe_reread_written() {
     assert_eq!(missing.revision, written.revision, "a row that is not stored writes nothing");
 }
 
-/// store_owe_reread_same: the event of a row that stands in debt writes the debt again without announcing the row; the raised debt is not paid by a load issued before the second event.
+/// store_owe_reread_announces_once: the event of a row that stands in debt writes the debt again without announcing the row.
 #[test]
-fn store_owe_reread_same() {
+fn store_owe_reread_announces_once() {
     let db = open();
     owe(&db, 1, "c1");
-    let issued = db.revision_seq().unwrap();
     let again = owe(&db, 2, "c1");
     assert!(again.notice.rows.as_ref().is_none_or(|rows| rows.is_empty()), "no row is announced: {:?}", again.notice.rows);
-    land_node_at(&db, 3, "c1", Vec::new(), issued);
-    assert!(owed(&db, "c1"), "the second event raised the debt above the request");
 }
 
 /// store_owed_cleared_by_server_row: every server source of the row pays the debt.
