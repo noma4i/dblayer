@@ -14,6 +14,7 @@ pub(super) struct FeedTransport {
     pub(super) cable: crate::transport::encrypted::cable::tests::peer_tests::CablePeer,
     pub(super) token: Arc<Mutex<Option<String>>>,
     pub(super) opened: Arc<tokio::sync::Notify>,
+    pub(super) clock: Arc<crate::ffi::TestClock>,
 }
 
 #[async_trait::async_trait]
@@ -73,7 +74,10 @@ pub(super) async fn feed_database_at(path: Option<String>, held: Arc<crate::ffi:
     let mut remote = crate::schema_fixtures::remote("ChatList", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes");
     remote.variables.insert("list".into(), VariableSource::Param { name: "list".into() });
     list.remote = Some(remote);
-    chat.relations.extend([node, list]);
+    let mut pinned = list.clone();
+    pinned.name = "pinned".into();
+    pinned.keep_on_gap = true;
+    chat.relations.extend([node, list, pinned]);
     chat.changes = changes.into_iter().map(|read| serde_json::from_value(read).unwrap()).collect();
     if let Some(listen) = listen { chat.listens.push(serde_json::from_value(listen).unwrap()); }
     chat.change_feed = Some(crate::schema::ChangeFeed { subscription: "RecordEvents".into(), root: "recordEvents.entries".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
@@ -100,8 +104,9 @@ pub(super) async fn feed_database_over(path: Option<String>, held: Arc<crate::ff
     let cable = crate::transport::encrypted::cable::tests::peer_tests::CablePeer::observed(encrypted.clone(), move |event| {
         if let crate::transport::encrypted::cable::tests::peer_tests::PeerEvent::Subscribed(subscribed) = event { *observed.0.lock().unwrap() = Some(subscribed); observed.1.notify_one(); }
     });
-    let transport = Arc::new(FeedTransport { cable, token, opened });
-    let database = bound(Database::open_with_clock(crate::ffi::Config { path, data_version: None }, crate::ffi::specs(models), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(held.clone()), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
+    let clock = crate::ffi::TestClock::new(1_000_000);
+    let transport = Arc::new(FeedTransport { cable, token, opened, clock: clock.clone() });
+    let database = bound(Database::open_with_clock(crate::ffi::Config { path, data_version: None }, crate::ffi::specs(models), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(held.clone()), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock)).await.unwrap();
     database.register_operations(operations.to_string()).await.unwrap();
     database.set_online(true).await.unwrap();
     if crate::transport::CredentialSlot::get(&held.inner).unwrap().is_none() { bound(database.session_call("login_link".into(), json!({"account":"A"}).to_string())).await.unwrap(); }

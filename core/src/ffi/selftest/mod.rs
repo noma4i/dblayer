@@ -91,6 +91,7 @@ mod open_headers_tests;
 mod channel_census_tests;
 mod write_cells_tests;
 mod call_order_tests;
+mod keep_on_gap_tests;
 mod scope_channel_tests;
 mod typing_channel_tests;
 
