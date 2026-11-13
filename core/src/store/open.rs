@@ -31,16 +31,20 @@ pub struct DroppedRow {
 
 pub(super) struct Recreated {
     pub dropped: Vec<DroppedRow>,
+    /// The kept tables set aside for `carry_back`.
+    pub aside: Vec<String>,
 }
 
-pub(super) fn recreate(connection: &Connection) -> Result<Recreated, StoreError> {
+/// `kept` = the tables of the `storage: local` models with their old fingerprint: they wait aside until `carry_back` after the model tables exist.
+pub(super) fn recreate(connection: &Connection, kept: &[String]) -> Result<Recreated, StoreError> {
     let tables: Vec<String> = connection
         .prepare(include_str!("sql/open/recreate_select_sqlite_master.sql"))?
         .query_map([], |row| row.get(0))?
         .collect::<Result<_, _>>()?;
     let carried: Vec<&str> = CARRIED_TABLES.iter().copied().filter(|table| tables.iter().any(|found| found == table)).collect();
     let manifest = carried_manifest(connection, &tables)?;
-    for table in &carried {
+    let aside: Vec<String> = kept.iter().filter(|table| tables.contains(table)).cloned().collect();
+    for table in carried.iter().copied().chain(aside.iter().map(String::as_str)) {
         connection.execute_batch(&format!(include_str!("sql/open/recreate_create_table.sql"), sql_ident(&carry_name(table)), sql_ident(table), filter = ""))?;
     }
     for table in &tables {
@@ -58,13 +62,27 @@ pub(super) fn recreate(connection: &Connection) -> Result<Recreated, StoreError>
     if carried.contains(&"op_value") {
         connection.execute_batch(include_str!("sql/open/recreate_delete_op_value.sql"))?;
     }
-    for row in &dropped {
-        connection.execute(
-            include_str!("sql/open/recreate_insert_restore_failed.sql"),
-            rusqlite::params![row.table, row.key, row.reason, row.columns],
-        )?;
+    keep_refused(connection, &dropped)?;
+    Ok(Recreated { dropped, aside })
+}
+
+/// The rows a layout change could not carry keep their values in `restore_failed` (D-32).
+fn keep_refused(connection: &Connection, dropped: &[DroppedRow]) -> Result<(), StoreError> {
+    for row in dropped {
+        connection.execute(include_str!("sql/open/recreate_insert_restore_failed.sql"), rusqlite::params![row.table, row.key, row.reason, row.columns])?;
     }
-    Ok(Recreated { dropped })
+    Ok(())
+}
+
+/// Moves the tables `recreate` kept aside into the model tables of the new layout, by the same plan as the carried tables.
+pub(super) fn carry_back(connection: &Connection, aside: &[String]) -> Result<Vec<DroppedRow>, StoreError> {
+    let mut dropped = Vec::new();
+    for table in aside {
+        dropped.extend(carry_rows(connection, table)?);
+        connection.execute_batch(&format!(include_str!("sql/open/recreate_drop_table_2.sql"), sql_ident(&carry_name(table))))?;
+    }
+    keep_refused(connection, &dropped)?;
+    Ok(dropped)
 }
 
 fn carried_manifest(connection: &Connection, tables: &[String]) -> Result<Vec<(String, String)>, StoreError> {

@@ -197,28 +197,33 @@ pub(crate) fn stash_local_values(connection: &Connection, models: &BTreeMap<Stri
                 stash.push(PendingValue { model: model.clone(), row_id: row_id.clone(), path: path.clone(), value });
             }
         }
-        let paths = local_paths(info);
-        if paths.is_empty() || !tables.contains(&info.table) {
-            continue;
-        }
-        if changed.contains(model) {
-            stash_surviving_columns(connection, info, model, &paths, &mut stash)?;
-            continue;
-        }
-        let ids: Vec<String> = connection.prepare(&format!(include_str!("sql/reset/stash_local_values.sql"), info.table))?.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
-        for (id, stored) in fetch_stored(connection, info, &ids, false)? {
-            for path in &paths {
-                let found = match path.split_once('.') {
-                    None => stored.row.get(path),
-                    Some((name, key)) => stored.row.get(name).and_then(|object| object.get(key)),
-                };
-                if let Some(value) = found.filter(|value| !value.is_null()) {
-                    stash.push(PendingValue { model: model.clone(), row_id: id.clone(), path: path.clone(), value: value.clone() });
-                }
+        stash_row_locals(connection, (model, info), &tables, changed.contains(model), &mut stash)?;
+    }
+    Ok(stash)
+}
+
+/// The `local: true` values in the stored rows of a server model; `surviving` reads a table of an unknown layout by its matching columns only.
+pub(crate) fn stash_row_locals(connection: &Connection, (model, info): (&str, &ModelInfo), tables: &[String], surviving: bool, stash: &mut Vec<PendingValue>) -> Result<(), StoreError> {
+    let paths = local_paths(info);
+    if info.spec.is_local() || paths.is_empty() || !tables.contains(&info.table) {
+        return Ok(());
+    }
+    if surviving {
+        return stash_surviving_columns(connection, info, model, &paths, stash);
+    }
+    let ids: Vec<String> = connection.prepare(&format!(include_str!("sql/reset/stash_local_values.sql"), info.table))?.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
+    for (id, stored) in fetch_stored(connection, info, &ids, false)? {
+        for path in &paths {
+            let found = match path.split_once('.') {
+                None => stored.row.get(path),
+                Some((name, key)) => stored.row.get(name).and_then(|object| object.get(key)),
+            };
+            if let Some(value) = found.filter(|value| !value.is_null()) {
+                stash.push(PendingValue { model: model.to_string(), row_id: id.clone(), path: path.clone(), value: value.clone() });
             }
         }
     }
-    Ok(stash)
+    Ok(())
 }
 
 fn stash_surviving_columns(connection: &Connection, info: &ModelInfo, model: &str, paths: &[String], stash: &mut Vec<PendingValue>) -> Result<(), StoreError> {

@@ -39,15 +39,31 @@ impl Store {
         if let Some(reason) = crate::store::ddl::recreate_reason(&inner.connection)? {
             let fingerprints = current_fingerprints(&inner)?;
             let transaction = inner.connection.unchecked_transaction()?;
-            let recreated_layout = super::open::recreate(&transaction)?;
-            dropped = recreated_layout.dropped;
+            let saved_prints = rusqlite::OptionalExtension::optional(transaction.query_row(include_str!("sql/open/table_exists.sql"), ["manifest"], |row| row.get::<_, i64>(0)))?.is_some();
+            let mut changed = Vec::new();
+            for (model, print) in &fingerprints {
+                let saved = if saved_prints { crate::store::ddl::manifest_read(&transaction, &fingerprint_key(model))? } else { None };
+                if saved.as_deref() != Some(print.as_str()) { changed.push(model.clone()); }
+            }
+            let tables = super::reset::row_tables(&transaction)?;
+            let mut stash = Vec::new();
+            for (model, info) in inner.models.iter().filter(|(_, info)| !info.spec.is_memory()) { super::reset::stash_row_locals(&transaction, (model, info), &tables, changed.contains(model), &mut stash)?; }
+            let kept: Vec<String> = inner.models.iter().filter(|(model, info)| info.spec.is_local() && !changed.contains(model)).flat_map(|(_, info)| tables.iter().filter(|name| **name == info.table || name.starts_with(&format!("{}__", info.table))).cloned().collect::<Vec<_>>()).collect();
+            let super::open::Recreated { dropped: carried, aside } = super::open::recreate(&transaction, &kept)?;
+            dropped = carried;
             for statement in models_statements(models) { transaction.execute_batch(&statement)?; }
+            dropped.extend(super::open::carry_back(&transaction, &aside)?);
+            for (model, info) in inner.models.iter().filter(|(model, info)| info.spec.is_local() && !changed.contains(model) && !info.search.is_empty()) {
+                let ids: Vec<String> = transaction.prepare(&format!(include_str!("sql/reset/stash_local_values.sql"), info.table))?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
+                for (id, stored) in super::rows::Reader::new(&transaction, &inner.models).stored_rows(model, &ids)? { super::search::reindex(&transaction, info, &id, &stored.row)?; }
+            }
+            restore_local_values(&transaction, &stash)?;
             crate::store::plan::op_effect::rebuild_open_effects(&transaction, &inner.models)?;
             manifest_stamp(&transaction, data_version, &fingerprints)?;
             transaction.commit()?;
             recreated = Some(reason);
             rebuilt = true;
-            migrated_reset = Some(models.iter().filter(|spec| !spec.is_memory()).map(|spec| spec.key.as_str().to_string()).collect());
+            migrated_reset = Some(models.iter().filter(|spec| !spec.is_memory() && (!spec.is_local() || changed.iter().any(|model| model == spec.key.as_str()))).map(|spec| spec.key.as_str().to_string()).collect());
         } else {
             crate::store::ddl::migrate_core(&inner.connection)?;
         }

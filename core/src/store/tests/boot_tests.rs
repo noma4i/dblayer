@@ -522,3 +522,29 @@ fn a_format_change_carries_queued_operations_transfers_and_the_session_and_drops
     }
     assert_eq!(count(&store, "SELECT COUNT(*) FROM restore_failed"), 0);
 }
+
+/// D-429, the Boot row of a format mismatch in `store.md`: the rows of a `storage: local` model with its old fingerprint and the `local: true` values of a server row stay after a format change; the server row itself is cache and goes.
+#[test]
+fn a_format_change_keeps_the_data_of_the_app() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    let mut notes = ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
+    notes.storage = crate::schema::Storage::Local;
+    let mut messages = messages_spec();
+    messages.fields.push(FieldSpec { merge: Some(crate::schema::MergeRule::Local), ..FieldSpec::scalar("draft", ScalarKind::Str).optional() });
+    let models = vec![notes, messages];
+    let open = || Store::open_models(Some(&path), models.clone(), None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    {
+        let store = open();
+        let batch = |ops| crate::owners::store::StoreBatch { author: crate::owners::contract::BatchAuthor::LocalWrites, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops };
+        store.write_batch(&batch(vec![crate::owners::store::StoreOp::Rows { model: "messages".into(), rows: vec![crate::owners::store::RowValue { row_id: "m1".into(), values: json!({"id": "m1", "chatId": "c1", "body": "server"}).to_string() }] }]), store.files(), None).unwrap();
+        store.write_batch(&batch(vec![crate::owners::store::StoreOp::LocalRows { model: "notes".into(), rows: vec![crate::owners::store::RowValue { row_id: "n1".into(), values: json!({"id": "n1", "text": "keep"}).to_string() }] }]), store.files(), None).unwrap();
+        store.write_batch(&batch(vec![crate::owners::store::StoreOp::LocalFields { model: "messages".into(), row_id: "m1".into(), values: json!({"draft": "mine"}).to_string() }]), store.files(), None).unwrap();
+        exec(&store, "UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
+    }
+    let store = open();
+    assert_eq!((store.open_report().recreated, store.open_report().reset_models.clone()), (Some(crate::store::ddl::RecreateReason::CoreFormat), vec!["messages".to_string()]), "the kept local model is not reported reset");
+    let (notes, messages) = (crate::store::ddl::table_name("notes"), crate::store::ddl::table_name("messages"));
+    let kept = (count(&store, &format!("SELECT COUNT(*) FROM {notes} WHERE id = 'n1' AND text = 'keep'")), count(&store, "SELECT COUNT(*) FROM local_pending WHERE model = 'messages' AND row_id = 'm1' AND path = 'draft'"), count(&store, &format!("SELECT COUNT(*) FROM {messages}")));
+    assert_eq!(kept, (1, 1, 0), "the local row and the local value stay, the server row goes");
+}
