@@ -367,6 +367,7 @@ pub struct QueuedOperation {
     /// The error of each cycle that ended with `Failed` (the outcome of a receipt is immutable).
     pub failed_errors: BTreeMap<u64, String>,
     pub retry_uploads: Vec<crate::owners::store::UploadRow>,
+    /// The reason of the terminal refusal: only the outcome `Rejected` of the rollback batch carries it.
     pub reject_error: Option<String>,
     /// The `create` of the row of this operation ended without a real id: its `Rejected` tells Transfer so (D-325).
     pub row_never_created: bool,
