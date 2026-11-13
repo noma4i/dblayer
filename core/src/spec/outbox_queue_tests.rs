@@ -132,7 +132,7 @@ fn trace(seed: u64, rows: usize) -> Vec<OpId> {
         order.extend(sent);
         let state = twin.state();
         assert!(state.slots_taken() <= DRAIN_LIMIT, "seed {seed}: {} slots", state.slots_taken());
-        let startable = state.online && state.slots_taken() < DRAIN_LIMIT && state.ops.values().any(|queued| queued.stage == Stage::Queued && !state.ops.values().any(|other| other.op_id < queued.op_id && other.op.row_id == queued.op.row_id && other.stage != Stage::Done));
+        let startable = state.online == Some(true) && state.slots_taken() < DRAIN_LIMIT && state.ops.values().any(|queued| queued.stage == Stage::Queued && !state.ops.values().any(|other| other.op_id < queued.op_id && other.op.row_id == queued.op.row_id && other.stage != Stage::Done));
         assert!(!startable, "seed {seed}: a free slot and a queued operation on a free row");
     }
     order
@@ -187,4 +187,17 @@ fn out_expiry_clock_at_select() {
     assert_eq!((sends(&early), kinds(&early).contains(&o_rollback())), (1, false), "the slot-freed selection at a now below the deadline sends the operation");
     let late = after_tick(11_000);
     assert_eq!((sends(&late), kinds(&late).contains(&o_rollback())), (0, true), "the selection at a later now expires it, the earlier Tick did not");
+}
+
+#[test]
+fn out_waits_for_the_first_online_value() {
+    let mut twin = Twin::unannounced();
+    twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())], complete: false });
+    twin.post(OutboxInput::Restored { ops: Vec::new(), pending_lost: false });
+    twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
+    let id = twin.submit("r", Policy::Rollback, false);
+    let committed = twin.committed(id);
+    assert_eq!((sends(&committed), twin.pauses.len()), (0, 0), "no value yet: nothing goes out and no retry is scheduled: {committed:?}");
+    let online = twin.post(OutboxInput::Online(Online(true)));
+    assert_eq!(sent_ids(&online), vec![id], "{online:?}");
 }

@@ -192,7 +192,7 @@ impl OutboxState {
             OutboxInput::ReservedFloor { op_id } => self.next_op = self.next_op.max(op_id + 1),
             held @ (OutboxInput::ReserveOp { .. } | OutboxInput::ReserveReplacement { .. } | OutboxInput::FinishReplacement { .. } | OutboxInput::SubmitReserved { .. } | OutboxInput::RowRemoved { .. }) => self.held.push(held),
             held @ (OutboxInput::Retry { .. } | OutboxInput::RetryTransfer { .. } | OutboxInput::Discard { .. } | OutboxInput::DiscardTransfer { .. } | OutboxInput::Outcome { .. }) => self.held.push(held),
-            OutboxInput::Online(Online(on)) => self.online = on,
+            OutboxInput::Online(Online(on)) => self.online = Some(on),
             OutboxInput::EpochStarted(started) => {
                 self.base_generation = started.generation;
                 fx.push(Effect::Run(OutboxEffect::Started { epoch: started.epoch }));

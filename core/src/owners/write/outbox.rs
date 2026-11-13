@@ -49,7 +49,7 @@ pub(super) struct MemberRemoval {
 pub struct OutboxState {
     pub(super) peers: OutboxPeers,
     pub epoch: Epoch,
-    pub online: bool,
+    pub online: Option<bool>,
     /// The clock in milliseconds as the last `Tick` or `Submit` told it.
     pub generation: BTreeMap<String, u64>,
     /// The generation of the models without an entry in `generation`.
@@ -101,15 +101,18 @@ impl OutboxState {
     pub fn local_writes(epoch: Epoch, store: Address<StoreWriter>) -> Self {
         let mut state = Self::new(epoch, OutboxPeers { store, session: None, transfer: None });
         state.author = BatchAuthor::LocalWrites;
+        state.online = Some(true);
         state.phase = Phase::Ready;
         state
     }
+
+    pub(super) fn is_online(&self) -> bool { self.online == Some(true) }
 
     pub fn new(epoch: Epoch, peers: OutboxPeers) -> Self {
         Self {
             peers,
             epoch,
-            online: true,
+            online: None,
             generation: BTreeMap::new(),
             base_generation: 0,
             ops: BTreeMap::new(),
@@ -266,7 +269,7 @@ impl OutboxState {
     /// Session accepts only the `Mutate` of the held pair while it is held: every other operation waits for its owner.
     fn pair_held_by_other(&self, op_id: OpId) -> bool { self.ops.values().any(|other| other.op_id != op_id && other.pending_owned && !matches!(other.stage, Stage::Done | Stage::Failed)) || self.waiting.iter().any(|(waiting, (item, _))| *waiting != op_id && item.pending.is_some()) }
 
-    pub(super) fn goes_out(&self, op_id: OpId) -> bool { self.online && !self.row_busy(op_id) && !self.pair_held_by_other(op_id) && self.slots_taken() < DRAIN_LIMIT }
+    pub(super) fn goes_out(&self, op_id: OpId) -> bool { self.is_online() && !self.row_busy(op_id) && !self.pair_held_by_other(op_id) && self.slots_taken() < DRAIN_LIMIT }
 
     pub(super) fn expired(&self, now: u64, op_id: OpId) -> bool {
         let Some(operation) = self.ops.get(&op_id) else { return false };
@@ -275,7 +278,7 @@ impl OutboxState {
 
     /// The Queued operations in `seq` order: each one goes out while a slot is free or ends `Rejected{Expired}`.
     pub(super) fn drain(&mut self, now: u64, fx: &mut Effects<Outbox>) {
-        if !self.online {
+        if !self.is_online() {
             return;
         }
         let queued: Vec<OpId> = self.ops.values().filter(|operation| operation.stage == Stage::Queued && !self.removed.contains(&operation.op_id)).map(|operation| operation.op_id).collect();
@@ -582,7 +585,7 @@ impl OutboxState {
     /// A Queued operation on a free row ends `Rejected{Expired}` when its time is over, else goes to the network while a slot is free: the first `Mutate` of the cycle at once, a repeat after its attempt is written, the 41st attempt never.
     pub(super) fn try_start(&mut self, now: u64, op_id: OpId, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get(&op_id) else { return };
-        if operation.stage != Stage::Queued || !self.online {
+        if operation.stage != Stage::Queued || !self.is_online() {
             return;
         }
         let ended = self.awaits_ended_create(operation);
@@ -907,7 +910,7 @@ impl StateOwner for Outbox {
     #[cfg(test)]
     fn diagnostic(state: &Self::State) -> Option<String> {
         let ops = state.ops.iter().map(|(id, op)| format!("{id}:{:?}:retry={}", op.stage, op.waiting_retry)).collect::<Vec<_>>();
-        Some(format!("phase={:?}, online={}, ops={ops:?}, batches={:?}, quiet_waiters={:?}", state.phase, state.online, state.batches.keys().collect::<Vec<_>>(), state.quiet_waiters))
+        Some(format!("phase={:?}, online={:?}, ops={ops:?}, batches={:?}, quiet_waiters={:?}", state.phase, state.online, state.batches.keys().collect::<Vec<_>>(), state.quiet_waiters))
     }
 
     fn step(state: &mut OutboxState, input: OutboxInput, now: crate::runtime::Time) -> Effects<Self> {

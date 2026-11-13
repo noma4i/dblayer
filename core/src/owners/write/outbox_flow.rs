@@ -75,7 +75,7 @@ impl OutboxState {
         let attempts = self.ops[&op_id].attempts;
         if attempts >= ATTEMPT_LIMIT {
             self.fail_exhausted(op_id, fx);
-        } else if self.online {
+        } else if self.is_online() {
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.waiting_retry = true;
             }
@@ -98,10 +98,10 @@ impl OutboxState {
             return;
         }
         match self.stage_of(op_id) {
-            Some(Stage::Sending) if self.online && self.slots_taken() - usize::from(!self.ops[&op_id].waiting_retry) >= DRAIN_LIMIT => {
+            Some(Stage::Sending) if self.is_online() && self.slots_taken() - usize::from(!self.ops[&op_id].waiting_retry) >= DRAIN_LIMIT => {
                 self.requeue(op_id, fx);
             }
-            Some(Stage::Sending) if self.online => {
+            Some(Stage::Sending) if self.is_online() => {
                 if self.ops[&op_id].attempts < ATTEMPT_LIMIT {
                     self.begin_attempt(op_id, fx);
                 } else {
@@ -458,7 +458,7 @@ impl OutboxState {
     }
 
     pub(super) fn online_changed(&mut self, now: u64, on: bool, fx: &mut Effects<Outbox>) {
-        self.online = on;
+        self.online = Some(on);
         if !on {
             let waiting: Vec<OpId> = self.ops.values().filter(|operation| operation.stage == Stage::Sending && operation.waiting_retry).map(|operation| operation.op_id).collect();
             for op_id in waiting {
@@ -544,7 +544,7 @@ impl OutboxState {
     fn is_quiet(&self) -> bool {
         self.writes_active() == 0 && self.ops.values().all(|operation| match operation.stage {
             Stage::Submitting | Stage::PersistingAttempt | Stage::Landing | Stage::RollingBack(_) | Stage::MarkingFailed | Stage::MarkingRetry => false,
-            Stage::Sending => operation.waiting_retry || !self.online,
+            Stage::Sending => operation.waiting_retry || !self.is_online(),
             Stage::WaitingDeclaration | Stage::Queued | Stage::Failed | Stage::Done => true,
         })
     }

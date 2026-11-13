@@ -230,8 +230,13 @@ pub(super) struct Twin {
 }
 
 impl Twin {
-    /// The owner in the phase `Restoring`: nothing restored yet.
     pub(super) fn bare() -> Self {
+        let mut twin = Self::unannounced();
+        twin.post(OutboxInput::Online(Online(true)));
+        twin
+    }
+
+    pub(super) fn unannounced() -> Self {
         let (mut det, log, _) = world(7);
         det.start_epoch(EPOCH);
         det.run_until_quiet(10_000).expect("the owner is quiet");

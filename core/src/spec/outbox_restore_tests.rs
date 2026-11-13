@@ -90,7 +90,7 @@ fn out_restoring_holds_calls() {
 fn out_restoring_online() {
     let mut twin = Twin::bare();
     assert!(twin.post(OutboxInput::Online(Online(false))).is_empty());
-    assert!(!twin.state().online);
+    assert_eq!(twin.state().online, Some(false));
 }
 
 #[test]

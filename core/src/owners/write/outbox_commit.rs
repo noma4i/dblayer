@@ -87,7 +87,7 @@ impl OutboxState {
                     operation.attempts += 1;
                     operation.attempt_unsent = true;
                 }
-                if self.online && !self.row_busy(op_id) {
+                if self.is_online() && !self.row_busy(op_id) {
                     self.start_sending(op_id, fx);
                 } else {
                     self.requeue(op_id, fx);
