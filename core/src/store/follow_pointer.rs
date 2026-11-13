@@ -38,19 +38,14 @@ pub(crate) fn parents_of(spec: &ModelSpec, row: &Row, parents: &mut BTreeSet<Row
 }
 
 /// The parent models whose stored pointer named the destroyed child: its confirmed delete turns their windows stale (P-DATA-122).
-pub(crate) fn named_parents(reader: &Reader<'_>, spec: &ModelSpec, before: &Row) -> Result<Vec<String>, StoreError> {
+pub(crate) fn named_parents(reader: &Reader<'_>, info: &ModelInfo, id: &str, before: &Row) -> Result<Vec<String>, StoreError> {
+    let spec = &info.spec;
     let mut named = Vec::new();
     for association in setting(spec) {
         let Some(parent) = before.get(&association.foreign_key).and_then(read_id) else { continue };
-        let Some(pointer) = association.pointer_field() else { continue };
-        let Some(stored) = reader.point(association.target.as_str(), parent.as_str())? else { continue };
-        let was_named = match stored.get(pointer).and_then(read_id) {
-            None => true,
-            Some(id) => match reader.point(spec.key.as_str(), id.as_str())? {
-                Some(current) => association.newest([before, &current]).is_some_and(|newest| std::ptr::eq(newest, before)),
-                None => true,
-            },
-        };
+        if association.pointer_field().is_none() { continue }
+        if reader.point(association.target.as_str(), parent.as_str())?.is_none() { continue }
+        let was_named = first_ranked(reader, &info.table, association, &parent, false, Some((id, before)))?.is_none_or(|winner| winner.as_str() == id);
         if was_named { named.push(association.target.to_string()); }
     }
     Ok(named)
@@ -83,7 +78,7 @@ fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, pa
                     }
                 }
                 let mut newest = |permanent: bool| -> Result<Option<Row>, StoreError> {
-                    let Some(id) = first_ranked(reader, &child.table, association, &parent.id, permanent)? else { return Ok(None) };
+                    let Some(id) = first_ranked(reader, &child.table, association, &parent.id, permanent, None)? else { return Ok(None) };
                     read += 1;
                     reader.point(child.spec.key.as_str(), id.as_str())
                 };
@@ -104,11 +99,25 @@ fn derived_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, pa
     Ok((derived, read, stale))
 }
 
-fn first_ranked(reader: &Reader<'_>, table: &str, association: &AssociationSpec, parent_id: &RowId, permanent: bool) -> Result<Option<RowId>, StoreError> {
+fn first_ranked(reader: &Reader<'_>, table: &str, association: &AssociationSpec, parent_id: &RowId, permanent: bool, destroyed: Option<(&str, &Row)>) -> Result<Option<RowId>, StoreError> {
     let order = crate::store::ddl::newer_order(association).into_iter().map(|(term, descending)| if descending { format!("{term} DESC") } else { term }).collect::<Vec<_>>().join(", ");
     let foreign_key = crate::store::ddl::sql_ident(&crate::store::ddl::column_name(&association.foreign_key));
     let only = if permanent { format!(" AND {}", crate::identity::permanent_row_flag(&crate::store::ddl::sql_ident("id"))) } else { String::new() };
-    let mut statement = reader.connection().prepare_cached(&format!("SELECT id FROM {table} WHERE {foreign_key} = ?1{only} ORDER BY {order} LIMIT 1"))?;
-    let id: Option<String> = statement.query_row([parent_id.as_str()], |row| row.get(0)).optional()?;
+    let mut bound: Vec<rusqlite::types::Value> = vec![parent_id.as_str().to_string().into()];
+    let sql = match destroyed {
+        None => format!("SELECT id FROM {table} WHERE {foreign_key} = ?1{only} ORDER BY {order} LIMIT 1"),
+        Some((id, row)) => {
+            let columns: Vec<String> = association.newer.iter().map(|field| crate::store::ddl::sql_ident(&crate::store::ddl::column_name(field))).collect();
+            bound.push(id.to_string().into());
+            for field in &association.newer {
+                bound.push(crate::store::query::binding(field, row.get(field).unwrap_or(&Value::Null)).map_err(|error| StoreError::Constraint(error.to_string()))?);
+            }
+            let slots: String = (0..columns.len()).map(|index| format!(", ?{}", index + 3)).collect();
+            let names: String = columns.iter().map(|name| format!(", {name}")).collect();
+            format!("SELECT id FROM (SELECT id{names} FROM {table} WHERE {foreign_key} = ?1{only} UNION ALL SELECT ?2{slots}) ORDER BY {order} LIMIT 1")
+        }
+    };
+    let mut statement = reader.connection().prepare_cached(&sql)?;
+    let id: Option<String> = statement.query_row(rusqlite::params_from_iter(bound), |row| row.get(0)).optional()?;
     id.map(|id| RowId::new(&id).map_err(fault)).transpose()
 }

@@ -106,10 +106,10 @@ pub(super) fn apply_transitions(
 fn destroyed_parents(connection: &Connection, models: &BTreeMap<String, ModelInfo>, seq: i64, parents: &mut BTreeSet<RowRef>, result: &mut CommitResult) -> Result<(), StoreError> {
     let Some(prior) = crate::store::plan::op_effect::read_prior(connection, seq)? else { return Ok(()) };
     for row in crate::store::plan::Prior::decode(prior)?.rows {
-        if let crate::store::plan::PriorRow::Destroyed { model, before, .. } = row {
+        if let crate::store::plan::PriorRow::Destroyed { model, id, before, .. } = row {
             if let Some(info) = models.get(&model) {
                 crate::store::follow_pointer::parents_of(&info.spec, &before, parents)?;
-                result.stale.extend(crate::store::follow_pointer::named_parents(&Reader::new(connection, models), &info.spec, &before)?);
+                result.stale.extend(crate::store::follow_pointer::named_parents(&Reader::new(connection, models), info, &id, &before)?);
             }
         }
     }

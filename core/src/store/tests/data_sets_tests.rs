@@ -294,3 +294,33 @@ pub(super) fn local_parent(db: &Arc<Store>, path: &str, values: Value) {
         other => panic!("no path {other}"),
     }
 }
+
+/// P-DATA-57, P-DATA-59 (d), D-400: the child that was the newest is the first of the one SQL order of the children, with a NULL in `newer:` and with a temporary id too.
+#[test]
+fn data_sets_destroy_marks_the_parent_stale_only_for_the_sql_winner() {
+    let nulls: Vec<(&str, i64, Option<i64>)> = vec![("m1", 2, Some(1)), ("m2", 2, Some(1)), ("m3", 5, None), ("m4", 5, Some(0))];
+    let cases: [(&str, &[(&str, i64, Option<i64>)], &str, bool, &str); 5] = [
+        ("the winner with NULLs", &nulls, "m2", true, "m1"),
+        ("a child with the newer time and no number", &nulls, "m3", false, "m2"),
+        ("a child with the lower number", &nulls, "m4", false, "m2"),
+        ("a confirmed child with the larger id behind a temporary one", &[("zz", 5, None), ("temp-1", 5, None)], "zz", false, "temp-1"),
+        ("the temporary winner", &[("zz", 5, None), ("temp-1", 5, None)], "temp-1", true, "zz"),
+    ];
+    for (name, children, destroyed, stale, winner_after) in cases {
+        for order in permutations(&(0..children.len()).collect::<Vec<_>>()) {
+            let db = open();
+            for index in &order {
+                let (id, at, seq) = children[*index];
+                if id.starts_with("temp-") {
+                    write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::LocalRows { model: "messages".into(), rows: vec![message(id, at)] }]);
+                } else {
+                    land_children(&db, vec![child(id, "c1", at, seq)]);
+                }
+            }
+            intent_hiding(&db, 1, "messages", destroyed);
+            let written = write_as(&db, 2, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RemoveIntent { op_id: 1 }]);
+            assert_eq!(!written.stale_parents.is_empty(), stale, "{name}, landed as {order:?}: the windows of the parent are stale only when the destroyed child was the newest");
+            assert_eq!(sets(&db).id.as_deref(), Some(winner_after), "{name}, landed as {order:?}: the newest child after the destroy");
+        }
+    }
+}

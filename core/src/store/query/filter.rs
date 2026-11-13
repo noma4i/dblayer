@@ -219,7 +219,7 @@ pub(super) fn column_sql(model: &ModelSpec, field: &str) -> Result<String, Query
     }
 }
 
-pub(super) fn binding(field: &str, value: &Value) -> Result<SqlValue, QueryError> {
+pub(crate) fn binding(field: &str, value: &Value) -> Result<SqlValue, QueryError> {
     match value {
         Value::Null => Ok(SqlValue::Null),
         Value::Bool(flag) => Ok(SqlValue::Integer(i64::from(*flag))),
