@@ -2,7 +2,6 @@ use super::photo::{photo_turn, PhotoTurn};
 
 const MAX_PIXELS: u32 = 16_384;
 
-/// A width and a height in pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
 pub struct PixelSize {
     pub width: u32,
@@ -16,7 +15,6 @@ fn decode_cost(width: u32, height: u32) -> Option<u64> {
     Some(u64::from(width) * u64::from(height) * 4)
 }
 
-/// A rectangle in fractions 0.0 to 1.0 of the upright photo.
 #[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
 pub struct CropFractions {
     pub x: f64,
@@ -25,11 +23,6 @@ pub struct CropFractions {
     pub height: f64,
 }
 
-/// What the app asks of a photo besides making it upright.
-/// `max_size` fits the result into a rectangle and keeps the proportions, it enlarges a smaller result only when `enlarge` is set.
-/// `output_size` gives the exact size and wins over `max_size`.
-/// `rotation_degrees` turns the upright photo clockwise by a multiple of 90 before `crop`.
-/// `crop` is taken from the turned photo before `mirror`, `mirror` flips the cropped result horizontally.
 #[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
 pub struct PhotoEdit {
     pub max_size: Option<PixelSize>,
@@ -48,12 +41,6 @@ pub struct PixelRect {
     pub height: u32,
 }
 
-/// The whole plan of a photo: turn it upright and by `rotation_degrees` in one `turn`, take `crop` of the turned pixels, scale to `output`, flip when `mirror`.
-/// `needs_draw` is true when the crop, the mirror or the output size ask for a last draw after the photo is upright.
-/// The photo is decoded smaller than its file when the crop is larger than the output: `sample` is the power of two for a platform that samples (Android `inSampleSize`),
-/// `decode` is the size that sample gives (the file orientation, rounded up), `thumbnail_side` is the exact long side for a platform that scales while it decodes (iOS `kCGImageSourceThumbnailMaxPixelSize`).
-/// Both keep every side of the crop at or above the output. `cost` is the memory asked of the Ledger: the decoded raster `decode` (twice when the photo is turned)
-/// and the output raster when a last draw is needed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
 pub struct PhotoPlan {
     pub turn: PhotoTurn,
@@ -68,8 +55,6 @@ pub struct PhotoPlan {
     pub cost: u64,
 }
 
-/// The one plan of a photo edit, in the order turn, crop, mirror, fit. No plan for a photo without size or above the pixel limit,
-/// a rotation that is not a multiple of 90, a crop that is not a number or holds no pixel, a size of zero or an output above the pixel limit.
 pub fn photo_plan(width: u32, height: u32, exif_orientation: u32, edit: PhotoEdit) -> Option<PhotoPlan> {
     decode_cost(width, height)?;
     if !edit.rotation_degrees.is_multiple_of(90) {
@@ -104,7 +89,6 @@ pub fn photo_plan(width: u32, height: u32, exif_orientation: u32, edit: PhotoEdi
     Some(PhotoPlan { turn, upright: PixelSize { width: upright_width, height: upright_height }, crop, mirror: edit.mirror, output, needs_draw, sample, decode, thumbnail_side, cost })
 }
 
-/// The largest power of two that keeps the crop at or above the output on both sides, and the long side of the photo that does the same exactly. A crop at or below the output keeps the file size.
 fn sampling(width: u32, height: u32, crop: PixelRect, output: PixelSize) -> (u32, u32) {
     let mut sample = 1;
     while crop.width / (sample * 2) >= output.width && crop.height / (sample * 2) >= output.height {
@@ -120,7 +104,6 @@ fn sampling(width: u32, height: u32, crop: PixelRect, output: PixelSize) -> (u32
     (sample, side as u32)
 }
 
-/// The turn that makes the photo upright and then turns it clockwise by `degrees`. A mirrored photo turns the other way round before the mirror.
 fn turned_by(turn: PhotoTurn, degrees: u32) -> PhotoTurn {
     let extra = degrees % 360;
     let added = if turn.flip_horizontal { (360 - extra) % 360 } else { extra };

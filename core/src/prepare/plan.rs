@@ -1,6 +1,5 @@
 use crate::ffi::DbError;
 
-/// The bitrate band for target videos whose long side is at least `from_long_side`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
 pub struct BitrateStep {
     pub from_long_side: u32,
@@ -8,7 +7,6 @@ pub struct BitrateStep {
     pub max_bps: u32,
 }
 
-/// What a video may be before it is sent. The caller owns these tables, `default_video_limits` holds the defaults.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct VideoLimits {
     pub max_long_side: u32,
@@ -21,7 +19,6 @@ pub struct VideoLimits {
     pub audio_sample_rate: u32,
 }
 
-/// What the platform read from the source file. `rotation_degrees` is the turn the file asks for, `frame_rate` is 0 when unknown.
 #[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
 pub struct VideoSource {
     pub width: u32,
@@ -32,7 +29,6 @@ pub struct VideoSource {
     pub mp4_h264_aac: bool,
 }
 
-/// The upright result the platform encodes. `rotation_degrees` (0, 90, 180, 270) is the turn to apply to the source frames.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
 pub struct VideoPlan {
     pub reencode: bool,
@@ -63,7 +59,6 @@ pub fn default_video_limits() -> VideoLimits {
     }
 }
 
-/// The one rule that turns a source video and the app tables into what the encoder does: upright even sides, the long side cut to the table without upscale, a bitrate inside the corridor, a frame rate inside the limits, and whether the file needs encoding at all.
 pub fn plan_video(source: VideoSource, limits: VideoLimits) -> Result<VideoPlan, DbError> {
     check(&limits)?;
     if source.width == 0 || source.height == 0 {
