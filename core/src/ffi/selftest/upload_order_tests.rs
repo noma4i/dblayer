@@ -39,7 +39,7 @@ async fn an_orphan_abort_goes_out_once(order: OpenOrder) {
     std::fs::File::create(&source).unwrap().set_len(11 * MEBIBYTE).unwrap();
     let operations = [CREATE_MOMENT];
     let database = stand.open(Some(&path), &operations).await;
-    stand.script.data("InitMultipart", r#"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#);
+    stand.script.data("InitMultipart", r#"{"data":{"initMultipart":{"multipartUpload":{"key":"key","uploadId":"upload"}}}}"#);
     let presign = stand.script.hold("PresignParts", r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}}"#);
     let epoch = database.session_epoch();
     let sent = bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &source, epoch))).await.unwrap();

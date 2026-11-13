@@ -5,7 +5,7 @@ use super::upload_stand::{Answer, ScriptedPreparer, Stand, CREATE_MOMENT};
 use crate::ffi::wire::WireUploadStatus;
 use crate::owners::write::upload::MEBIBYTE;
 
-const INIT: &str = r#"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#;
+const INIT: &str = r#"{"data":{"initMultipart":{"multipartUpload":{"key":"key","uploadId":"upload"}}}}"#;
 const ABORTED: &str = r#"{"data":{"abortMultipart":{"ok":true}}}"#;
 
 /// Requirement (D-372, D-388, D-417): every end of a transfer removes its prepared file and the copy of the library, and the discard of a multipart upload aborts it. Input: a source with prepare settings whose result goes as a multipart upload, a refusal after the multipart was created, `discard`. Observable: the abort calls of the server double, the files of the base, the queue stream. Catches: a prepare file left behind, a multipart left open.

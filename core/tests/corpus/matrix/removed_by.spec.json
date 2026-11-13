@@ -12,10 +12,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "kind": "id",
-            "type": "scalar"
-          },
+          "kind": { "kind": "id", "type": "scalar" },
           "merge": null,
           "name": "id",
           "nullable": false,
@@ -27,10 +24,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "kind": "str",
-            "type": "scalar"
-          },
+          "kind": { "kind": "str", "type": "scalar" },
           "merge": null,
           "name": "title",
           "nullable": false,
@@ -55,10 +49,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "kind": "id",
-            "type": "scalar"
-          },
+          "kind": { "kind": "id", "type": "scalar" },
           "merge": null,
           "name": "id",
           "nullable": false,
@@ -70,10 +61,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "kind": "id",
-            "type": "scalar"
-          },
+          "kind": { "kind": "id", "type": "scalar" },
           "merge": null,
           "name": "noteId",
           "nullable": false,
@@ -84,14 +72,7 @@
       "key": "NoteMark",
       "listens": [],
       "relations": [],
-      "removed_by": [
-        {
-          "matches": {
-            "noteId": "id"
-          },
-          "model": "Note"
-        }
-      ],
+      "removed_by": [{ "matches": { "noteId": "id" }, "model": "Note" }],
       "storage": "local"
     }
   ],

@@ -1,1 +1,811 @@
-[{"key":"Asset","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"clientKey","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"size","kind":{"type":"scalar","kind":"int"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"position","kind":{"type":"scalar","kind":"int"},"nullable":false,"optional":false,"default":0,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}],"associations":[],"relations":[],"indexes":[],"actions":[{"client_mutation_id":false,"name":"create_file","root_shape":"upsert","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"members":[],"mutation":"CreateAsset","upload":true,"variables":{"assetId":"id"},"optimistic":{},"refetch":[],"args":{},"local":[],"correlate":["clientKey"],"ignore_response":false,"wrap":null,"root":"createAsset.asset","lands":[]},{"batch":{"min":2,"max":10,"items":"items","single":"create_file","input":{"clientKey":"clientKey"},"renumber":{"position":"position","size":"size","position_from":0}},"client_mutation_id":false,"name":"create_files","root_shape":"upsert","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"members":[],"mutation":"CreateAssets","upload":true,"variables":{"assetId":"id"},"optimistic":{},"refetch":[],"args":{},"local":[],"correlate":["clientKey"],"ignore_response":false,"wrap":null,"root":"createAssets.assets","lands":[]}],"ephemeral":[],"storage":"disk","expire_after":null,"listens":[],"upload_steps":{"create_blob":{"name":"CreateBlob","root_path":"blobCreate"},"multipart":{"initiate":{"name":"InitMultipart"},"presign":{"name":"PresignParts"},"complete":{"name":"CompleteMultipart"},"abort":{"name":"AbortMultipart"}}}},{"key":"Moment","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"uuid","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"userId","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"text","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null,"searchable":true},{"name":"likedByMe","kind":{"type":"scalar","kind":"bool"},"nullable":false,"optional":false,"default":false,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"media","kind":{"type":"raw"},"nullable":false,"optional":false,"default":{},"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"tone","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":true,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":{"type":"local"}},{"name":"createdAt","kind":{"type":"scalar","kind":"date"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null}],"associations":[{"name":"author","kind":"belongs_to","target":"User","foreign_key":"userId","dependent":null,"touches_parent":true,"sets":{},"newer":[],"from":null},{"name":"vibes","kind":"has_many","target":"Vibe","foreign_key":"momentId","dependent":"destroy","touches_parent":false,"sets":{},"newer":[],"from":null}],"relations":[{"name":"transcode_status","by_columns":[],"text_params":["nodeId"],"remote":{"operation":"MomentTranscodeStatus","shape":{"type":"single"},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":false,"page_size":null,"variables":{"momentId":{"from":"param","name":"nodeId"}},"root":null},"is_global":false,"sort":"server_order","joins_events":false,"joins_created":false,"node":"one"},{"name":"recent","by_columns":[],"text_params":[],"remote":null,"is_global":true,"sort":{"fields":[{"column":"createdAt","direction":"desc"}]},"joins_events":false,"joins_created":false},{"name":"by_user","by_columns":["userId"],"text_params":[],"remote":null,"is_global":false,"sort":{"fields":[{"column":"createdAt","direction":"desc"}]},"joins_events":false,"joins_created":false},{"name":"feed","updates":[{"subscription":"MomentEvents","deleted_by":"destroyed","set":{},"removes":false,"debounce":null,"root":null,"apply":{"effect":"upsert","matches":{}}}],"by_columns":[],"text_params":[],"remote":{"operation":"MomentsFeed","shape":{"type":"connection","direction":"forward","coverage":"page","max_pages":null,"cursor":null},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":true,"page_size":20,"variables":{},"root":null},"is_global":true,"sort":"server_order","joins_events":false,"joins_created":false,"edge_fields":[{"name":"impressionUuid","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"impressionScore","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"vibe_feed","by_columns":[],"text_params":["vibeId"],"remote":{"operation":"MomentsFeed","shape":{"type":"connection","direction":"forward","coverage":"page","max_pages":null,"cursor":null},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":true,"page_size":20,"variables":{},"root":null},"is_global":false,"sort":"server_order","joins_events":false,"joins_created":false,"edge_fields":[{"name":"impressionUuid","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"score","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":"impressionScore","app_type":null,"merge":null},{"name":"rank","kind":{"type":"enum","values":["top","normal"]},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"FeedRank","merge":null}]}],"indexes":[["uuid"],["userId","createdAt"]],"actions":[{"client_mutation_id":false,"name":"create","root_shape":"upsert","on_failure":"rollback","has_optimistic":true,"has_temp_row_retention":true,"has_cascade_dependents":false,"members":[],"mutation":"CreateMoment","upload":false,"variables":{"media":"media","text":"text"},"optimistic":{},"refetch":[],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":null,"lands":[]},{"client_mutation_id":false,"name":"update","root_shape":"upsert","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"members":[],"mutation":"UpdateMoment","upload":false,"variables":{},"optimistic":{},"refetch":[],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":null,"lands":[]},{"client_mutation_id":false,"name":"upload_clip","root_shape":"upsert","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"members":[],"mutation":"CreateMoment","upload":true,"variables":{"momentId":"id"},"optimistic":{},"refetch":[],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":"createMoment","lands":[],"returns":{"name":"returns","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null,"fields":[{"name":"successMessage","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}},{"client_mutation_id":false,"name":"destroy","root_shape":"destroy","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"members":[],"mutation":"DeleteMoment","upload":false,"variables":{},"optimistic":{},"refetch":[],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":null,"lands":[]},{"client_mutation_id":false,"name":"like","root_shape":"upsert","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"members":[],"mutation":"LikeMoment","upload":false,"variables":{"momentId":"id"},"optimistic":{"likedByMe":true},"refetch":["feed"],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":null,"lands":[]},{"client_mutation_id":false,"name":"share","root_shape":"upsert","on_failure":"rollback","has_optimistic":false,"has_temp_row_retention":false,"has_cascade_dependents":false,"members":[],"mutation":"ShareMoment","upload":false,"variables":{"momentId":"id"},"optimistic":{},"refetch":[],"args":{},"local":[],"correlate":[],"ignore_response":false,"wrap":null,"root":"shareMoment.moment","lands":[],"returns":{"name":"returns","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null,"fields":[{"name":"copies","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"successMessage","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}}],"ephemeral":[],"storage":"disk","expire_after":null,"listens":[],"upload_steps":{"create_blob":{"name":"CreateBlob","root_path":"blobCreate"},"multipart":{"initiate":{"name":"InitMultipart"},"presign":{"name":"PresignParts"},"complete":{"name":"CompleteMultipart"},"abort":{"name":"AbortMultipart"}}}},{"key":"User","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"name","kind":{"type":"scalar","kind":"str"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"avatar","kind":{"type":"file"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"birthday","kind":{"type":"scalar","kind":"date"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}],"associations":[],"relations":[{"name":"profile","updates":[{"subscription":"UserTyping","deleted_by":null,"set":{"typing":true},"removes":false,"debounce":null,"root":null,"apply":{"effect":"upsert","matches":{}}}],"by_columns":[],"text_params":[],"remote":{"operation":"UserProfile","shape":{"type":"single"},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":false,"page_size":null,"variables":{},"root":null},"is_global":true,"sort":"server_order","joins_events":false,"joins_created":false},{"name":"container_members","by_columns":[],"text_params":["containerId"],"remote":{"operation":"ContainerMembers","shape":{"type":"connection","direction":"forward","coverage":"page","max_pages":null,"cursor":null},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":true,"page_size":30,"variables":{},"root":"node.members","total_from":"node.membersCount"},"is_global":false,"sort":"server_order","joins_events":false,"joins_created":false},{"name":"complete_members","by_columns":[],"text_params":["containerId"],"remote":{"operation":"ContainerMembers","shape":{"type":"connection","direction":"forward","coverage":"page","max_pages":null,"cursor":null},"stale_time":"5.minutes","empty_stale_time":null,"selects_page_info":true,"page_size":100,"variables":{},"root":"node.members","total_from":"node.membersCount"},"is_global":false,"sort":"server_order","joins_events":false,"joins_created":false,"members_complete":true}],"indexes":[],"actions":[],"ephemeral":[{"name":"typing","kind":{"type":"scalar","kind":"bool"},"nullable":false,"optional":false,"default":false,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null,"reset_after":"5.seconds"},{"name":"mood","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null,"reset_after":null}],"storage":"disk","expire_after":null,"listens":[]},{"key":"Vibe","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"momentId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":true,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"userId","kind":{"type":"scalar","kind":"id"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"kind","kind":{"type":"enum","values":["like","love","laugh"]},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"VibeKind","merge":null}],"associations":[],"relations":[],"indexes":[["userId"]],"actions":[],"ephemeral":[],"storage":"disk","expire_after":null,"listens":[]}]
+[
+  {
+    "actions": [
+      {
+        "args": {},
+        "client_mutation_id": false,
+        "correlate": ["clientKey"],
+        "has_cascade_dependents": false,
+        "has_optimistic": false,
+        "has_temp_row_retention": false,
+        "ignore_response": false,
+        "lands": [],
+        "local": [],
+        "members": [],
+        "mutation": "CreateAsset",
+        "name": "create_file",
+        "on_failure": "rollback",
+        "optimistic": {},
+        "refetch": [],
+        "root": "createAsset.asset",
+        "root_shape": "upsert",
+        "upload": true,
+        "variables": { "assetId": "id" },
+        "wrap": null
+      },
+      {
+        "args": {},
+        "batch": {
+          "input": { "clientKey": "clientKey" },
+          "items": "items",
+          "max": 10,
+          "min": 2,
+          "renumber": { "position": "position", "position_from": 0, "size": "size" },
+          "single": "create_file"
+        },
+        "client_mutation_id": false,
+        "correlate": ["clientKey"],
+        "has_cascade_dependents": false,
+        "has_optimistic": false,
+        "has_temp_row_retention": false,
+        "ignore_response": false,
+        "lands": [],
+        "local": [],
+        "members": [],
+        "mutation": "CreateAssets",
+        "name": "create_files",
+        "on_failure": "rollback",
+        "optimistic": {},
+        "refetch": [],
+        "root": "createAssets.assets",
+        "root_shape": "upsert",
+        "upload": true,
+        "variables": { "assetId": "id" },
+        "wrap": null
+      }
+    ],
+    "associations": [],
+    "ephemeral": [],
+    "expire_after": null,
+    "fields": [
+      {
+        "app_type": null,
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "kind": "id", "type": "scalar" },
+        "merge": null,
+        "name": "id",
+        "nullable": false,
+        "optional": false
+      },
+      {
+        "app_type": null,
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "kind": "str", "type": "scalar" },
+        "merge": null,
+        "name": "clientKey",
+        "nullable": false,
+        "optional": false
+      },
+      {
+        "app_type": null,
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "kind": "int", "type": "scalar" },
+        "merge": null,
+        "name": "size",
+        "nullable": false,
+        "optional": false
+      },
+      {
+        "app_type": null,
+        "default": 0,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "kind": "int", "type": "scalar" },
+        "merge": null,
+        "name": "position",
+        "nullable": false,
+        "optional": false
+      }
+    ],
+    "indexes": [],
+    "key": "Asset",
+    "listens": [],
+    "relations": [],
+    "storage": "disk",
+    "upload_steps": {
+      "create_blob": { "name": "CreateBlob", "root_path": "blobCreate" },
+      "multipart": {
+        "abort": { "name": "AbortMultipart" },
+        "complete": { "name": "CompleteMultipart" },
+        "initiate": { "name": "InitMultipart", "root_path": "initMultipart.multipartUpload" },
+        "presign": { "name": "PresignParts" }
+      }
+    }
+  },
+  {
+    "actions": [
+      {
+        "args": {},
+        "client_mutation_id": false,
+        "correlate": [],
+        "has_cascade_dependents": false,
+        "has_optimistic": true,
+        "has_temp_row_retention": true,
+        "ignore_response": false,
+        "lands": [],
+        "local": [],
+        "members": [],
+        "mutation": "CreateMoment",
+        "name": "create",
+        "on_failure": "rollback",
+        "optimistic": {},
+        "refetch": [],
+        "root": null,
+        "root_shape": "upsert",
+        "upload": false,
+        "variables": { "media": "media", "text": "text" },
+        "wrap": null
+      },
+      {
+        "args": {},
+        "client_mutation_id": false,
+        "correlate": [],
+        "has_cascade_dependents": false,
+        "has_optimistic": false,
+        "has_temp_row_retention": false,
+        "ignore_response": false,
+        "lands": [],
+        "local": [],
+        "members": [],
+        "mutation": "UpdateMoment",
+        "name": "update",
+        "on_failure": "rollback",
+        "optimistic": {},
+        "refetch": [],
+        "root": null,
+        "root_shape": "upsert",
+        "upload": false,
+        "variables": {},
+        "wrap": null
+      },
+      {
+        "args": {},
+        "client_mutation_id": false,
+        "correlate": [],
+        "has_cascade_dependents": false,
+        "has_optimistic": false,
+        "has_temp_row_retention": false,
+        "ignore_response": false,
+        "lands": [],
+        "local": [],
+        "members": [],
+        "mutation": "CreateMoment",
+        "name": "upload_clip",
+        "on_failure": "rollback",
+        "optimistic": {},
+        "refetch": [],
+        "returns": {
+          "app_type": "MomentUploadClipResult",
+          "default": null,
+          "fields": [
+            {
+              "app_type": null,
+              "default": null,
+              "from": null,
+              "id_from_parent": null,
+              "indexed": false,
+              "kind": { "kind": "str", "type": "scalar" },
+              "merge": null,
+              "name": "successMessage",
+              "nullable": true,
+              "optional": false
+            }
+          ],
+          "from": null,
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": { "type": "object" },
+          "merge": null,
+          "name": "upload_clip",
+          "nullable": false,
+          "optional": false
+        },
+        "root": "createMoment",
+        "root_shape": "upsert",
+        "upload": true,
+        "variables": { "momentId": "id" },
+        "wrap": null
+      },
+      {
+        "args": {},
+        "client_mutation_id": false,
+        "correlate": [],
+        "has_cascade_dependents": false,
+        "has_optimistic": false,
+        "has_temp_row_retention": false,
+        "ignore_response": false,
+        "lands": [],
+        "local": [],
+        "members": [],
+        "mutation": "DeleteMoment",
+        "name": "destroy",
+        "on_failure": "rollback",
+        "optimistic": {},
+        "refetch": [],
+        "root": null,
+        "root_shape": "destroy",
+        "upload": false,
+        "variables": {},
+        "wrap": null
+      },
+      {
+        "args": {},
+        "client_mutation_id": false,
+        "correlate": [],
+        "has_cascade_dependents": false,
+        "has_optimistic": false,
+        "has_temp_row_retention": false,
+        "ignore_response": false,
+        "lands": [],
+        "local": [],
+        "members": [],
+        "mutation": "LikeMoment",
+        "name": "like",
+        "on_failure": "rollback",
+        "optimistic": { "likedByMe": true },
+        "refetch": ["feed"],
+        "root": null,
+        "root_shape": "upsert",
+        "upload": false,
+        "variables": { "momentId": "id" },
+        "wrap": null
+      },
+      {
+        "args": {},
+        "client_mutation_id": false,
+        "correlate": [],
+        "has_cascade_dependents": false,
+        "has_optimistic": false,
+        "has_temp_row_retention": false,
+        "ignore_response": false,
+        "lands": [],
+        "local": [],
+        "members": [],
+        "mutation": "ShareMoment",
+        "name": "share",
+        "on_failure": "rollback",
+        "optimistic": {},
+        "refetch": [],
+        "returns": {
+          "app_type": "MomentShareResult",
+          "default": null,
+          "fields": [
+            {
+              "app_type": null,
+              "default": null,
+              "from": null,
+              "id_from_parent": null,
+              "indexed": false,
+              "kind": { "kind": "str", "type": "scalar" },
+              "merge": null,
+              "name": "successMessage",
+              "nullable": true,
+              "optional": false
+            },
+            {
+              "app_type": null,
+              "default": null,
+              "from": null,
+              "id_from_parent": null,
+              "indexed": false,
+              "kind": { "kind": "int", "type": "scalar" },
+              "merge": null,
+              "name": "copies",
+              "nullable": true,
+              "optional": false
+            }
+          ],
+          "from": null,
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": { "type": "object" },
+          "merge": null,
+          "name": "share",
+          "nullable": false,
+          "optional": false
+        },
+        "root": "shareMoment.moment",
+        "root_shape": "upsert",
+        "upload": false,
+        "variables": { "momentId": "id" },
+        "wrap": null
+      }
+    ],
+    "associations": [
+      { "dependent": null, "foreign_key": "userId", "from": null, "kind": "belongs_to", "name": "author", "newer": [], "sets": {}, "target": "User", "touches_parent": true },
+      { "dependent": "destroy", "foreign_key": "momentId", "from": null, "kind": "has_many", "name": "vibes", "newer": [], "sets": {}, "target": "Vibe", "touches_parent": false }
+    ],
+    "ephemeral": [],
+    "expire_after": null,
+    "fields": [
+      {
+        "app_type": null,
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "kind": "id", "type": "scalar" },
+        "merge": null,
+        "name": "id",
+        "nullable": false,
+        "optional": false
+      },
+      {
+        "app_type": null,
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "kind": "str", "type": "scalar" },
+        "merge": null,
+        "name": "uuid",
+        "nullable": false,
+        "optional": false
+      },
+      {
+        "app_type": null,
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": true,
+        "kind": { "kind": "id", "type": "scalar" },
+        "merge": null,
+        "name": "userId",
+        "nullable": true,
+        "optional": false
+      },
+      {
+        "app_type": null,
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "kind": "str", "type": "scalar" },
+        "merge": null,
+        "name": "text",
+        "nullable": true,
+        "optional": false,
+        "searchable": true
+      },
+      {
+        "app_type": null,
+        "default": false,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "kind": "bool", "type": "scalar" },
+        "merge": null,
+        "name": "likedByMe",
+        "nullable": false,
+        "optional": false
+      },
+      {
+        "app_type": null,
+        "default": {},
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "type": "raw" },
+        "merge": null,
+        "name": "media",
+        "nullable": false,
+        "optional": false
+      },
+      {
+        "app_type": null,
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "kind": "str", "type": "scalar" },
+        "merge": { "type": "local" },
+        "name": "tone",
+        "nullable": false,
+        "optional": true
+      },
+      {
+        "app_type": null,
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": true,
+        "kind": { "kind": "date", "type": "scalar" },
+        "merge": null,
+        "name": "createdAt",
+        "nullable": false,
+        "optional": false
+      }
+    ],
+    "indexes": [["uuid"], ["userId", "createdAt"]],
+    "key": "Moment",
+    "listens": [],
+    "relations": [
+      {
+        "by_columns": [],
+        "is_global": false,
+        "joins_created": false,
+        "joins_events": false,
+        "name": "transcode_status",
+        "node": "one",
+        "remote": {
+          "empty_stale_time": null,
+          "operation": "MomentTranscodeStatus",
+          "page_size": null,
+          "root": null,
+          "selects_page_info": false,
+          "shape": { "type": "single" },
+          "stale_time": "5.minutes",
+          "variables": { "momentId": { "from": "param", "name": "nodeId" } }
+        },
+        "sort": "server_order",
+        "text_params": ["nodeId"]
+      },
+      {
+        "by_columns": [],
+        "is_global": true,
+        "joins_created": false,
+        "joins_events": false,
+        "name": "recent",
+        "remote": null,
+        "sort": { "fields": [{ "column": "createdAt", "direction": "desc" }] },
+        "text_params": []
+      },
+      {
+        "by_columns": ["userId"],
+        "is_global": false,
+        "joins_created": false,
+        "joins_events": false,
+        "name": "by_user",
+        "remote": null,
+        "sort": { "fields": [{ "column": "createdAt", "direction": "desc" }] },
+        "text_params": []
+      },
+      {
+        "by_columns": [],
+        "edge_fields": [
+          {
+            "app_type": null,
+            "default": null,
+            "from": null,
+            "id_from_parent": null,
+            "indexed": false,
+            "kind": { "kind": "str", "type": "scalar" },
+            "merge": null,
+            "name": "impressionUuid",
+            "nullable": true,
+            "optional": false
+          },
+          {
+            "app_type": null,
+            "default": null,
+            "from": null,
+            "id_from_parent": null,
+            "indexed": false,
+            "kind": { "kind": "int", "type": "scalar" },
+            "merge": null,
+            "name": "impressionScore",
+            "nullable": true,
+            "optional": false
+          }
+        ],
+        "is_global": true,
+        "joins_created": false,
+        "joins_events": false,
+        "name": "feed",
+        "remote": {
+          "empty_stale_time": null,
+          "operation": "MomentsFeed",
+          "page_size": 20,
+          "root": null,
+          "selects_page_info": true,
+          "shape": { "coverage": "page", "cursor": null, "direction": "forward", "max_pages": null, "type": "connection" },
+          "stale_time": "5.minutes",
+          "variables": {}
+        },
+        "sort": "server_order",
+        "text_params": [],
+        "updates": [
+          { "apply": { "effect": "upsert", "matches": {} }, "debounce": null, "deleted_by": "destroyed", "removes": false, "root": null, "set": {}, "subscription": "MomentEvents" }
+        ]
+      },
+      {
+        "by_columns": [],
+        "edge_fields": [
+          {
+            "app_type": null,
+            "default": null,
+            "from": null,
+            "id_from_parent": null,
+            "indexed": false,
+            "kind": { "kind": "str", "type": "scalar" },
+            "merge": null,
+            "name": "impressionUuid",
+            "nullable": true,
+            "optional": false
+          },
+          {
+            "app_type": null,
+            "default": null,
+            "from": "impressionScore",
+            "id_from_parent": null,
+            "indexed": false,
+            "kind": { "kind": "int", "type": "scalar" },
+            "merge": null,
+            "name": "score",
+            "nullable": true,
+            "optional": false
+          },
+          {
+            "app_type": "FeedRank",
+            "default": null,
+            "from": null,
+            "id_from_parent": null,
+            "indexed": false,
+            "kind": { "type": "enum", "values": ["top", "normal"] },
+            "merge": null,
+            "name": "rank",
+            "nullable": true,
+            "optional": false
+          }
+        ],
+        "is_global": false,
+        "joins_created": false,
+        "joins_events": false,
+        "name": "vibe_feed",
+        "remote": {
+          "empty_stale_time": null,
+          "operation": "MomentsFeed",
+          "page_size": 20,
+          "root": null,
+          "selects_page_info": true,
+          "shape": { "coverage": "page", "cursor": null, "direction": "forward", "max_pages": null, "type": "connection" },
+          "stale_time": "5.minutes",
+          "variables": {}
+        },
+        "sort": "server_order",
+        "text_params": ["vibeId"]
+      }
+    ],
+    "storage": "disk",
+    "upload_steps": {
+      "create_blob": { "name": "CreateBlob", "root_path": "blobCreate" },
+      "multipart": {
+        "abort": { "name": "AbortMultipart" },
+        "complete": { "name": "CompleteMultipart" },
+        "initiate": { "name": "InitMultipart", "root_path": "initMultipart.multipartUpload" },
+        "presign": { "name": "PresignParts" }
+      }
+    }
+  },
+  {
+    "actions": [],
+    "associations": [],
+    "ephemeral": [
+      {
+        "app_type": null,
+        "default": false,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "kind": "bool", "type": "scalar" },
+        "merge": null,
+        "name": "typing",
+        "nullable": false,
+        "optional": false,
+        "reset_after": "5.seconds"
+      },
+      {
+        "app_type": null,
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "kind": "str", "type": "scalar" },
+        "merge": null,
+        "name": "mood",
+        "nullable": true,
+        "optional": false,
+        "reset_after": null
+      }
+    ],
+    "expire_after": null,
+    "fields": [
+      {
+        "app_type": null,
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "kind": "id", "type": "scalar" },
+        "merge": null,
+        "name": "id",
+        "nullable": false,
+        "optional": false
+      },
+      {
+        "app_type": null,
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "kind": "str", "type": "scalar" },
+        "merge": null,
+        "name": "name",
+        "nullable": false,
+        "optional": false
+      },
+      {
+        "app_type": null,
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "type": "file" },
+        "merge": null,
+        "name": "avatar",
+        "nullable": true,
+        "optional": false
+      },
+      {
+        "app_type": null,
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "kind": "date", "type": "scalar" },
+        "merge": null,
+        "name": "birthday",
+        "nullable": true,
+        "optional": false
+      }
+    ],
+    "indexes": [],
+    "key": "User",
+    "listens": [],
+    "relations": [
+      {
+        "by_columns": [],
+        "is_global": true,
+        "joins_created": false,
+        "joins_events": false,
+        "name": "profile",
+        "remote": {
+          "empty_stale_time": null,
+          "operation": "UserProfile",
+          "page_size": null,
+          "root": null,
+          "selects_page_info": false,
+          "shape": { "type": "single" },
+          "stale_time": "5.minutes",
+          "variables": {}
+        },
+        "sort": "server_order",
+        "text_params": [],
+        "updates": [
+          {
+            "apply": { "effect": "upsert", "matches": {} },
+            "debounce": null,
+            "deleted_by": null,
+            "removes": false,
+            "root": null,
+            "set": { "typing": true },
+            "subscription": "UserTyping"
+          }
+        ]
+      },
+      {
+        "by_columns": [],
+        "is_global": false,
+        "joins_created": false,
+        "joins_events": false,
+        "name": "container_members",
+        "remote": {
+          "empty_stale_time": null,
+          "operation": "ContainerMembers",
+          "page_size": 30,
+          "root": "node.members",
+          "selects_page_info": true,
+          "shape": { "coverage": "page", "cursor": null, "direction": "forward", "max_pages": null, "type": "connection" },
+          "stale_time": "5.minutes",
+          "total_from": "node.membersCount",
+          "variables": {}
+        },
+        "sort": "server_order",
+        "text_params": ["containerId"]
+      },
+      {
+        "by_columns": [],
+        "is_global": false,
+        "joins_created": false,
+        "joins_events": false,
+        "members_complete": true,
+        "name": "complete_members",
+        "remote": {
+          "empty_stale_time": null,
+          "operation": "ContainerMembers",
+          "page_size": 100,
+          "root": "node.members",
+          "selects_page_info": true,
+          "shape": { "coverage": "page", "cursor": null, "direction": "forward", "max_pages": null, "type": "connection" },
+          "stale_time": "5.minutes",
+          "total_from": "node.membersCount",
+          "variables": {}
+        },
+        "sort": "server_order",
+        "text_params": ["containerId"]
+      }
+    ],
+    "storage": "disk"
+  },
+  {
+    "actions": [],
+    "associations": [],
+    "ephemeral": [],
+    "expire_after": null,
+    "fields": [
+      {
+        "app_type": null,
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "kind": "id", "type": "scalar" },
+        "merge": null,
+        "name": "id",
+        "nullable": false,
+        "optional": false
+      },
+      {
+        "app_type": null,
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": true,
+        "kind": { "kind": "id", "type": "scalar" },
+        "merge": null,
+        "name": "momentId",
+        "nullable": false,
+        "optional": false
+      },
+      {
+        "app_type": null,
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "kind": "id", "type": "scalar" },
+        "merge": null,
+        "name": "userId",
+        "nullable": false,
+        "optional": false
+      },
+      {
+        "app_type": "VibeKind",
+        "default": null,
+        "from": null,
+        "id_from_parent": null,
+        "indexed": false,
+        "kind": { "type": "enum", "values": ["like", "love", "laugh"] },
+        "merge": null,
+        "name": "kind",
+        "nullable": false,
+        "optional": false
+      }
+    ],
+    "indexes": [["userId"]],
+    "key": "Vibe",
+    "listens": [],
+    "relations": [],
+    "storage": "disk"
+  }
+]

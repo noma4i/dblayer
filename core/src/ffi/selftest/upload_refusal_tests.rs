@@ -133,7 +133,7 @@ async fn a_complete_failure_then_retry_keeps_the_confirmed_parts() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("video");
     std::fs::File::create(&source).unwrap().set_len(11 * MEBIBYTE).unwrap();
-    stand.script.data("InitMultipart", r#"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#);
+    stand.script.data("InitMultipart", r#"{"data":{"initMultipart":{"multipartUpload":{"key":"key","uploadId":"upload"}}}}"#);
     for _ in 0..3 {
         stand.script.data("PresignParts", r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}"#);
     }
@@ -178,7 +178,7 @@ async fn an_offline_discard_routes_its_reopened_abort_as_a_transfer() {
     std::fs::File::create(&source).unwrap().set_len(11 * MEBIBYTE).unwrap();
     let operations = [CREATE_MOMENT];
     let database = stand.open(Some(&path), &operations).await;
-    stand.script.data("InitMultipart", r#"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#);
+    stand.script.data("InitMultipart", r#"{"data":{"initMultipart":{"multipartUpload":{"key":"key","uploadId":"upload"}}}}"#);
     let presign = stand.script.hold("PresignParts", r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}}"#);
     let epoch = database.session_epoch();
     let sent = bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &source, epoch))).await.unwrap();

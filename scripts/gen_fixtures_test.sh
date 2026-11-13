@@ -6,7 +6,7 @@ work="$(mktemp -d)"
 trap '/bin/rm -rf "$work"' EXIT
 
 root="$work/repo"
-mkdir -p "$root/scripts" "$root/bin" "$root/fixtures/operations" "$root/swift/Tests/DBlayerTests" "$root/kotlin/src/test/kotlin/com/noma4i/dblayer/models"
+mkdir -p "$root/scripts" "$root/bin" "$root/fixtures/operations" "$root/swift/Tests/DBlayerTests" "$root/kotlin/src/test/kotlin/com/noma4i/dblayer/models" "$root/core/src/ffi/selftest" "$root/core/tests/corpus/matrix"
 touch "$root/Cargo.toml" "$root/fixtures/a.dbl" "$root/fixtures/operations/a.dbl" "$root/fixtures/operations/schema.graphql"
 sed '/^export PATH=/d' "$script" > "$root/scripts/gen_fixtures.sh"
 
@@ -18,7 +18,7 @@ case "$*" in *--schema*) kind=operations ;; esac
 for arg in "$@"; do
   case "$arg" in
     swift|kotlin) if [ "$kind" = models ]; then echo "$kind-$arg-${FAKE_CARGO_TAG:-v1},\"operations\":[]}"; else echo "$kind-$arg-${FAKE_CARGO_TAG:-v1}"; fi ;;
-    spec) echo '{"models":[],"operations":[]}' ;;
+    spec) echo '{"models":[{"key":"Asset"},{"key":"Chat"},{"key":"Container"},{"key":"CurrentRegion"},{"key":"CurrentUser"},{"key":"MediaEntry"},{"key":"Message"},{"key":"Moment"},{"key":"Notice"},{"key":"Record"},{"key":"User"},{"key":"Vibe"}],"operations":[]}' ;;
   esac
 done
 CARGO
@@ -58,13 +58,16 @@ done
 seed
 run
 [ "$code" -eq 0 ] || check "generation failed"
-[ "$(wc -l < "$FAKE_CARGO_LOG" | tr -d ' ')" -eq 5 ] || check "generation did not run cargo 5 times"
+[ "$(wc -l < "$FAKE_CARGO_LOG" | tr -d ' ')" -eq 10 ] || check "generation did not run cargo 10 times"
 grep -qxF 'models-swift-v1,"operations":[]}' "${outputs[0]}" || check "generation did not write outputs"
 
 run --check
 [ "$code" -eq 0 ] || check "--check failed on matching outputs"
 FAKE_CARGO_TAG=v2 run --check
 [ "$code" -ne 0 ] || check "--check passed on stale outputs"
+echo '{"models":[]}' > "$root/core/tests/corpus/models.json"
+run --check
+[ "$code" -ne 0 ] || check "--check passed on a stale model snapshot"
 
 [ "$fail" -eq 0 ] || exit 1
 echo "gen_fixtures_test: ok"

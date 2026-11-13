@@ -51,7 +51,7 @@ async fn image_of(origin: Holder, directory: &Path, stand: &Stand, clock: &Arc<T
             bound(database.send(plain("Moment", r#"{"text":"B"}"#, epoch))).await.unwrap();
         }
         Holder::AbortDebt => {
-            stand.script.data("InitMultipart", r#"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#);
+            stand.script.data("InitMultipart", r#"{"data":{"initMultipart":{"multipartUpload":{"key":"key","uploadId":"upload"}}}}"#);
             let presign = stand.script.hold("PresignParts", r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}}"#);
             let sent = bound(database.send(clip("Moment", r#"{"text":"clip"}"#, "upload_clip", &source, epoch))).await.unwrap();
             let id = sent.optimistic_value.unwrap().id;

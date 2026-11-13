@@ -13,7 +13,15 @@ swift_out="$root/swift/Tests/DBlayerTests/FixtureModels.swift"
 kotlin_out="$root/kotlin/src/test/kotlin/com/noma4i/dblayer/models/FixtureModels.kt"
 swift_operations_out="$root/swift/Tests/DBlayerTests/FixtureOperations.swift"
 kotlin_operations_out="$root/kotlin/src/test/kotlin/com/noma4i/dblayer/models/FixtureOperations.kt"
-wrapper_out="$root/core/src/ffi/selftest/wrapper_models.inc"
+snapshots=(
+  "core/src/ffi/selftest/wrapper_models.inc list * fixtures"
+  "core/src/ffi/selftest/upload_wrapper_models.json list Asset,Moment,User,Vibe fixtures"
+  "core/tests/corpus/models.json models Moment,Notice,User,Vibe,Container fixtures corpus"
+  "core/tests/corpus/models_events.json models Chat,Container,CurrentRegion,CurrentUser,Message,Record,User fixtures"
+  "core/tests/corpus/matrix/kinds.spec.json spec * kinds"
+  "core/tests/corpus/matrix/removed_by.spec.json spec * removed_by"
+  "fixtures/media-marker.json models MediaEntry operations"
+)
 
 gen() { cargo run -p dblayer-gen -- "$1" "$root"/fixtures/*.dbl; }
 gen_operations() { cargo run -p dblayer-gen -- --schema "$root/fixtures/operations/schema.graphql" "$1" "$root"/fixtures/operations/*.dbl | grep -v -e '^public let modelsJSON = ' -e '^val modelsJSON = '; }
@@ -26,10 +34,21 @@ swift="$(gen swift | with_operations "$operation_specs" swift)"
 kotlin="$(gen kotlin | with_operations "$operation_specs" kotlin)"
 swift_operations="$(gen_operations swift)"
 kotlin_operations="$(gen_operations kotlin)"
-wrapper="$(cargo run -p dblayer-gen -- spec "$root"/fixtures/*.dbl | python3 -I -c 'import json, sys; sys.stdout.write(json.dumps(json.load(sys.stdin)["models"], separators=(",", ":")))')"
+sources="$(mktemp -d)"
+trap 'rm -r "$sources"' EXIT
+cargo run -p dblayer-gen -- spec "$root"/fixtures/*.dbl > "$sources/fixtures"
+cargo run -p dblayer-gen -- spec "$root/core/tests/corpus/container_nodes.dbl" > "$sources/corpus"
+cargo run -p dblayer-gen -- spec "$root/fixtures/matrix/kinds.dbl" > "$sources/kinds"
+cargo run -p dblayer-gen -- spec "$root/fixtures/matrix/removed_by.dbl" > "$sources/removed_by"
+cargo run -p dblayer-gen -- --schema "$root/fixtures/operations/schema.graphql" spec "$root"/fixtures/operations/*.dbl > "$sources/operations"
+snapshot() { python3 -I -c 'import json, sys; shape, keys, paths = sys.argv[1], sys.argv[2], sys.argv[3:]; specs = [json.load(open(path)) for path in paths]; found = {model["key"]: model for spec in specs for model in spec["models"]}; models = list(found.values()) if keys == "*" else [found[key] for key in keys.split(",")]; value = {"list": models, "models": {"models": models}, "spec": {"models": models, "operations": specs[0]["operations"]}}[shape]; sys.stdout.write(json.dumps(value, separators=(",", ":")))' "$@"; }
+snapshot_of() { set -f; set -- $1; set +f; local shape="$2" keys="$3"; shift 3; snapshot "$shape" "$keys" "${@/#/$sources/}"; }
 
 if [ "$#" -eq 1 ]; then
-  [ "$swift" = "$(cat "$swift_out")" ] && [ "$kotlin" = "$(cat "$kotlin_out")" ] && [ "$swift_operations" = "$(cat "$swift_operations_out")" ] && [ "$kotlin_operations" = "$(cat "$kotlin_operations_out")" ] && [ "$wrapper" = "$(cat "$wrapper_out")" ] || { echo "Fixture models differ from fixtures. Run scripts/gen_fixtures.sh."; exit 1; }
+  [ "$swift" = "$(cat "$swift_out")" ] && [ "$kotlin" = "$(cat "$kotlin_out")" ] && [ "$swift_operations" = "$(cat "$swift_operations_out")" ] && [ "$kotlin_operations" = "$(cat "$kotlin_operations_out")" ] || { echo "Fixture models differ from fixtures. Run scripts/gen_fixtures.sh."; exit 1; }
+  for entry in "${snapshots[@]}"; do
+    snapshot_of "$entry" | python3 -I -c 'import json, sys; sys.exit(json.load(sys.stdin) != json.load(open(sys.argv[1])))' "$root/${entry%% *}" || { echo "${entry%% *} differs from its declarations. Run scripts/gen_fixtures.sh."; exit 1; }
+  done
   echo "Fixture models match."
   exit 0
 fi
@@ -38,4 +57,6 @@ printf '%s\n' "$swift" > "$swift_out"
 printf '%s\n' "$kotlin" > "$kotlin_out"
 printf '%s\n' "$swift_operations" > "$swift_operations_out"
 printf '%s\n' "$kotlin_operations" > "$kotlin_operations_out"
-printf '%s' "$wrapper" > "$wrapper_out"
+for entry in "${snapshots[@]}"; do
+  snapshot_of "$entry" > "$root/${entry%% *}"
+done

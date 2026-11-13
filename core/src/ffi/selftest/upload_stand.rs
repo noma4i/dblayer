@@ -26,7 +26,7 @@ pub(super) const BLOB: &str = r#"{"data":{"blobCreate":{"url":"https://storage.t
 
 pub(super) const STEPS: [(&str, &str); 6] = [
     ("CreateBlob", "mutation CreateBlob { createBlob { url headers signedId blobId } }"),
-    ("InitMultipart", "mutation InitMultipart { initMultipart { key uploadId } }"),
+    ("InitMultipart", "mutation InitMultipart { initMultipart { multipartUpload { key uploadId } } }"),
     ("PresignParts", "mutation PresignParts { presignParts { parts { partNumber url } } }"),
     ("CompleteMultipart", "mutation CompleteMultipart { completeMultipart { signedId blobId } }"),
     ("AbortMultipart", "mutation AbortMultipart { abortMultipart { ok } }"),

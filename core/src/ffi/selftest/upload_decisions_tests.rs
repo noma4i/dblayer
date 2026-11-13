@@ -15,7 +15,7 @@ async fn a_refused_complete_survives_reopen_without_abort_and_retry_completes() 
     let source = directory.path().join("video");
     std::fs::File::create(&source).unwrap().set_len(11 * MEBIBYTE).unwrap();
     let database = stand.open(Some(&path), &[CREATE_MOMENT]).await;
-    stand.script.data("InitMultipart", r#"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#);
+    stand.script.data("InitMultipart", r#"{"data":{"initMultipart":{"multipartUpload":{"key":"key","uploadId":"upload"}}}}"#);
     for _ in 0..3 {
         stand.script.data("PresignParts", r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}"#);
     }

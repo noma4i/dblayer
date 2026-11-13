@@ -52,7 +52,7 @@ async fn a_refused_round_shows_its_reason_on_the_upload_until_the_next_round_is_
 
 const STEPS: [(&str, &str); 6] = [
     ("CreateBlob", "mutation CreateBlob { createBlob { url headers signedId blobId } }"),
-    ("InitMultipart", "mutation InitMultipart { initMultipart { key uploadId } }"),
+    ("InitMultipart", "mutation InitMultipart { initMultipart { multipartUpload { key uploadId } } }"),
     ("PresignParts", "mutation PresignParts { presignParts { parts { partNumber url } } }"),
     ("CompleteMultipart", "mutation CompleteMultipart { completeMultipart { signedId blobId } }"),
     ("AbortMultipart", "mutation AbortMultipart { abortMultipart { ok } }"),

@@ -1,113 +1,83 @@
-{"models":[
-  {
-    "key": "MediaEntry",
-    "fields": [
-      {
-        "name": "id",
-        "kind": {
-          "type": "scalar",
-          "kind": "id"
+{
+  "models": [
+    {
+      "actions": [],
+      "associations": [],
+      "ephemeral": [],
+      "expire_after": null,
+      "fields": [
+        {
+          "app_type": null,
+          "default": null,
+          "from": null,
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": { "kind": "id", "type": "scalar" },
+          "merge": null,
+          "name": "id",
+          "nullable": false,
+          "optional": false
         },
-        "nullable": false,
-        "optional": false,
-        "default": null,
-        "indexed": false,
-        "id_from_parent": null,
-        "from": null,
-        "app_type": null,
-        "merge": null
-      },
-      {
-        "name": "text",
-        "kind": {
-          "type": "scalar",
-          "kind": "str"
+        {
+          "app_type": null,
+          "default": null,
+          "from": null,
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": { "kind": "str", "type": "scalar" },
+          "merge": null,
+          "name": "text",
+          "nullable": true,
+          "optional": false
         },
-        "nullable": true,
-        "optional": false,
-        "default": null,
-        "indexed": false,
-        "id_from_parent": null,
-        "from": null,
-        "app_type": null,
-        "merge": null
-      },
-      {
-        "name": "sequenceNumber",
-        "kind": {
-          "type": "scalar",
-          "kind": "int"
-        },
-        "nullable": false,
-        "optional": false,
-        "default": null,
-        "indexed": false,
-        "id_from_parent": null,
-        "from": null,
-        "app_type": null,
-        "merge": null
-      }
-    ],
-    "associations": [],
-    "relations": [
-      {
-        "name": "media",
-        "by_columns": [],
-        "text_params": [
-          "chatId"
-        ],
-        "remote": {
-          "operation": "chatMedia",
-          "shape": {
-            "type": "connection",
-            "direction": "forward",
-            "coverage": "page",
-            "max_pages": null,
-            "cursor": null
-          },
-          "stale_time": "5.minutes",
-          "empty_stale_time": null,
-          "selects_page_info": true,
-          "page_size": 2,
-          "variables": {},
-          "root": "node.messages"
-        },
-        "is_global": false,
-        "sort": "server_order",
-        "joins_events": false,
-        "joins_created": false,
-        "media": {
-          "marker": "chatMediaState",
-          "from": "node.mediaLibrary",
-          "fields": [
-            "revision",
-            "visualCount",
-            "audioCount",
-            "giftCount"
-          ],
-          "sequence": "latestSequence",
-          "tail": "chatMedia",
-          "after": "afterSequence",
-          "marker_variables": {
-            "chatId": {
-              "from": "param",
-              "name": "chatId"
-            }
-          },
-          "tail_variables": {
-            "chatId": {
-              "from": "param",
-              "name": "chatId"
-            }
-          }
+        {
+          "app_type": null,
+          "default": null,
+          "from": null,
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": { "kind": "int", "type": "scalar" },
+          "merge": null,
+          "name": "sequenceNumber",
+          "nullable": false,
+          "optional": false
         }
-      }
-    ],
-    "indexes": [],
-    "actions": [],
-    "ephemeral": [],
-    "storage": "disk",
-    "expire_after": null,
-    "listens": []
-  }
-]}
+      ],
+      "indexes": [],
+      "key": "MediaEntry",
+      "listens": [],
+      "relations": [
+        {
+          "by_columns": [],
+          "is_global": false,
+          "joins_created": false,
+          "joins_events": false,
+          "media": {
+            "after": "afterSequence",
+            "fields": ["revision", "visualCount", "audioCount", "giftCount"],
+            "from": "node.mediaLibrary",
+            "marker": "chatMediaState",
+            "marker_variables": { "chatId": { "from": "param", "name": "chatId" } },
+            "sequence": "latestSequence",
+            "tail": "chatMedia",
+            "tail_variables": { "chatId": { "from": "param", "name": "chatId" } }
+          },
+          "name": "media",
+          "remote": {
+            "empty_stale_time": null,
+            "operation": "chatMedia",
+            "page_size": 2,
+            "root": "node.messages",
+            "selects_page_info": true,
+            "shape": { "coverage": "page", "cursor": null, "direction": "forward", "max_pages": null, "type": "connection" },
+            "stale_time": "5.minutes",
+            "variables": {}
+          },
+          "sort": "server_order",
+          "text_params": ["chatId"]
+        }
+      ],
+      "storage": "disk"
+    }
+  ]
+}

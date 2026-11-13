@@ -5,7 +5,7 @@ use super::upload_stand::{clip, Hold, Stand, CREATE_MOMENT};
 use crate::ffi::Database;
 use crate::test_wait::settled;
 
-const INIT: &str = r#"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#;
+const INIT: &str = r#"{"data":{"initMultipart":{"multipartUpload":{"key":"key","uploadId":"upload"}}}}"#;
 const ABORTED: &str = r#"{"data":{"abortMultipart":{"ok":true}}}"#;
 
 fn owed(path: &std::path::Path) -> i64 {

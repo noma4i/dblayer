@@ -30,7 +30,7 @@ fn server(clock: &TestClock) -> Arc<FakeServer> {
     server.register(READ);
     server.reply_with(json!({
         "createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"},
-        "initMultipart": {"key": "blob-key", "uploadId": "multi"},
+        "initMultipart": {"multipartUpload": {"key": "blob-key", "uploadId": "multi"}},
         "presignParts": {"parts": [{"partNumber": 1, "url": "https://p1"}]},
         "completeMultipart": {"signedId": "multi-sid", "blobId": "bid"},
         "abortMultipart": {"ok": true},

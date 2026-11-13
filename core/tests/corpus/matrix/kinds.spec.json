@@ -10,10 +10,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "kind": "bool",
-            "type": "scalar"
-          },
+          "kind": { "kind": "bool", "type": "scalar" },
           "merge": null,
           "name": "typing",
           "nullable": false,
@@ -29,10 +26,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "kind": "id",
-            "type": "scalar"
-          },
+          "kind": { "kind": "id", "type": "scalar" },
           "merge": null,
           "name": "id",
           "nullable": false,
@@ -44,10 +38,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "kind": "str",
-            "type": "scalar"
-          },
+          "kind": { "kind": "str", "type": "scalar" },
           "merge": null,
           "name": "title",
           "nullable": false,
@@ -59,10 +50,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "kind": "int",
-            "type": "scalar"
-          },
+          "kind": { "kind": "int", "type": "scalar" },
           "merge": null,
           "name": "count",
           "nullable": true,
@@ -74,10 +62,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "kind": "num",
-            "type": "scalar"
-          },
+          "kind": { "kind": "num", "type": "scalar" },
           "merge": null,
           "name": "ratio",
           "nullable": true,
@@ -89,10 +74,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "kind": "bool",
-            "type": "scalar"
-          },
+          "kind": { "kind": "bool", "type": "scalar" },
           "merge": null,
           "name": "flag",
           "nullable": true,
@@ -104,10 +86,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "kind": "date",
-            "type": "scalar"
-          },
+          "kind": { "kind": "date", "type": "scalar" },
           "merge": null,
           "name": "when",
           "nullable": true,
@@ -119,10 +98,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "kind": "id",
-            "type": "scalar"
-          },
+          "kind": { "kind": "id", "type": "scalar" },
           "merge": null,
           "name": "ref",
           "nullable": true,
@@ -134,9 +110,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "type": "raw"
-          },
+          "kind": { "type": "raw" },
           "merge": null,
           "name": "payload",
           "nullable": true,
@@ -148,13 +122,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "type": "enum",
-            "values": [
-              "calm",
-              "loud"
-            ]
-          },
+          "kind": { "type": "enum", "values": ["calm", "loud"] },
           "merge": null,
           "name": "mood",
           "nullable": true,
@@ -166,10 +134,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "kind": "str",
-            "type": "scalar"
-          },
+          "kind": { "kind": "str", "type": "scalar" },
           "merge": null,
           "name": "fallback",
           "nullable": false,
@@ -181,10 +146,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "element": "str",
-            "type": "list"
-          },
+          "kind": { "element": "str", "type": "list" },
           "merge": null,
           "name": "tags",
           "nullable": false,
@@ -196,13 +158,8 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "kind": "str",
-            "type": "scalar"
-          },
-          "merge": {
-            "type": "local"
-          },
+          "kind": { "kind": "str", "type": "scalar" },
+          "merge": { "type": "local" },
           "name": "note",
           "nullable": false,
           "optional": true
@@ -213,9 +170,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "type": "file"
-          },
+          "kind": { "type": "file" },
           "merge": null,
           "name": "photo",
           "nullable": true,
@@ -231,10 +186,7 @@
               "from": null,
               "id_from_parent": null,
               "indexed": false,
-              "kind": {
-                "kind": "str",
-                "type": "scalar"
-              },
+              "kind": { "kind": "str", "type": "scalar" },
               "merge": null,
               "name": "label",
               "nullable": false,
@@ -246,10 +198,7 @@
               "from": null,
               "id_from_parent": null,
               "indexed": false,
-              "kind": {
-                "kind": "str",
-                "type": "scalar"
-              },
+              "kind": { "kind": "str", "type": "scalar" },
               "merge": null,
               "name": "stamp",
               "nullable": false,
@@ -265,10 +214,7 @@
                   "from": null,
                   "id_from_parent": null,
                   "indexed": false,
-                  "kind": {
-                    "kind": "int",
-                    "type": "scalar"
-                  },
+                  "kind": { "kind": "int", "type": "scalar" },
                   "merge": null,
                   "name": "depth",
                   "nullable": false,
@@ -284,10 +230,7 @@
                       "from": null,
                       "id_from_parent": null,
                       "indexed": false,
-                      "kind": {
-                        "kind": "str",
-                        "type": "scalar"
-                      },
+                      "kind": { "kind": "str", "type": "scalar" },
                       "merge": null,
                       "name": "value",
                       "nullable": true,
@@ -297,9 +240,7 @@
                   "from": null,
                   "id_from_parent": null,
                   "indexed": false,
-                  "kind": {
-                    "type": "object"
-                  },
+                  "kind": { "type": "object" },
                   "merge": null,
                   "name": "leaf",
                   "nullable": true,
@@ -309,9 +250,7 @@
               "from": null,
               "id_from_parent": null,
               "indexed": false,
-              "kind": {
-                "type": "object"
-              },
+              "kind": { "type": "object" },
               "merge": null,
               "name": "inner",
               "nullable": true,
@@ -321,17 +260,8 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "type": "object"
-          },
-          "merge": {
-            "keys": {
-              "stamp": {
-                "type": "local"
-              }
-            },
-            "type": "keys"
-          },
+          "kind": { "type": "object" },
+          "merge": { "keys": { "stamp": { "type": "local" } }, "type": "keys" },
           "name": "box",
           "nullable": true,
           "optional": false
@@ -346,10 +276,7 @@
               "from": null,
               "id_from_parent": null,
               "indexed": false,
-              "kind": {
-                "kind": "str",
-                "type": "scalar"
-              },
+              "kind": { "kind": "str", "type": "scalar" },
               "merge": null,
               "name": "name",
               "nullable": false,
@@ -359,9 +286,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "type": "array"
-          },
+          "kind": { "type": "array" },
           "merge": null,
           "name": "boxes",
           "nullable": false,
@@ -381,10 +306,7 @@
                   "from": null,
                   "id_from_parent": null,
                   "indexed": false,
-                  "kind": {
-                    "kind": "str",
-                    "type": "scalar"
-                  },
+                  "kind": { "kind": "str", "type": "scalar" },
                   "merge": null,
                   "name": "text",
                   "nullable": false,
@@ -394,9 +316,7 @@
               "from": null,
               "id_from_parent": null,
               "indexed": false,
-              "kind": {
-                "type": "object"
-              },
+              "kind": { "type": "object" },
               "merge": null,
               "name": "word",
               "nullable": false,
@@ -412,10 +332,7 @@
                   "from": null,
                   "id_from_parent": null,
                   "indexed": false,
-                  "kind": {
-                    "kind": "int",
-                    "type": "scalar"
-                  },
+                  "kind": { "kind": "int", "type": "scalar" },
                   "merge": null,
                   "name": "amount",
                   "nullable": false,
@@ -425,9 +342,7 @@
               "from": null,
               "id_from_parent": null,
               "indexed": false,
-              "kind": {
-                "type": "object"
-              },
+              "kind": { "type": "object" },
               "merge": null,
               "name": "number",
               "nullable": false,
@@ -437,9 +352,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "type": "union"
-          },
+          "kind": { "type": "union" },
           "merge": null,
           "name": "attachment",
           "nullable": true,
@@ -459,10 +372,7 @@
                   "from": null,
                   "id_from_parent": null,
                   "indexed": false,
-                  "kind": {
-                    "kind": "str",
-                    "type": "scalar"
-                  },
+                  "kind": { "kind": "str", "type": "scalar" },
                   "merge": null,
                   "name": "text",
                   "nullable": false,
@@ -472,9 +382,7 @@
               "from": null,
               "id_from_parent": null,
               "indexed": false,
-              "kind": {
-                "type": "object"
-              },
+              "kind": { "type": "object" },
               "merge": null,
               "name": "chip",
               "nullable": false,
@@ -490,10 +398,7 @@
                   "from": null,
                   "id_from_parent": null,
                   "indexed": false,
-                  "kind": {
-                    "kind": "int",
-                    "type": "scalar"
-                  },
+                  "kind": { "kind": "int", "type": "scalar" },
                   "merge": null,
                   "name": "amount",
                   "nullable": false,
@@ -503,9 +408,7 @@
               "from": null,
               "id_from_parent": null,
               "indexed": false,
-              "kind": {
-                "type": "object"
-              },
+              "kind": { "type": "object" },
               "merge": null,
               "name": "count",
               "nullable": false,
@@ -515,9 +418,7 @@
           "from": null,
           "id_from_parent": null,
           "indexed": false,
-          "kind": {
-            "type": "union_array"
-          },
+          "kind": { "type": "union_array" },
           "merge": null,
           "name": "attachments",
           "nullable": false,
