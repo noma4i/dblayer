@@ -1,5 +1,5 @@
 use super::*;
-use crate::identity::{Generation, ListKey, ModelKey, RowId};
+use crate::identity::{ListKey, ModelKey, RowId};
 use serde_json::{Map, Value};
 use serde_json::json;
 
@@ -28,7 +28,7 @@ fn touch(id: &str) -> EntityOp {
 }
 
 fn envelope() -> BatchPlan {
-    BatchPlan::from_source(Generation::INITIAL, crate::schema::RowSource::Event)
+    BatchPlan::from_source(crate::schema::RowSource::Event)
 }
 
 #[test]
@@ -42,13 +42,6 @@ fn envelope_with_any_op_is_not_empty() {
 }
 
 #[test]
-fn generation_fence_rejects_other_generation() {
-    let valid = envelope();
-    assert_eq!(valid.validate(Generation::INITIAL), Ok(()));
-    assert_eq!(valid.validate(Generation::INITIAL.next()), Err(PlanFault::StaleGeneration));
-}
-
-#[test]
 fn entity_ops_conflict_only_on_the_same_model_and_id() {
     let other_model = EntityOp::Touch { model: ModelKey::new("chats"), id: row("m1") };
     let cases = [
@@ -59,7 +52,7 @@ fn entity_ops_conflict_only_on_the_same_model_and_id() {
     for (name, second, expected) in cases {
         let mut candidate = envelope();
         candidate.entity_ops = vec![upsert("m1"), second];
-        assert_eq!(candidate.validate(Generation::INITIAL), expected, "{name}");
+        assert_eq!(candidate.validate(), expected, "{name}");
     }
 }
 
@@ -75,13 +68,13 @@ fn several_member_scope_ops_for_one_row_are_duplicates() {
         ScopeOp::Append { scope: scope(), row: row("m1"), order_key: "a".into() },
         ScopeOp::Move { scope: scope(), row: row("m2"), order_key: "b".into() },
     ];
-    assert_eq!(duplicate.validate(Generation::INITIAL), Err(PlanFault::DuplicateScopeOps));
-    assert_eq!(distinct.validate(Generation::INITIAL), Ok(()));
+    assert_eq!(duplicate.validate(), Err(PlanFault::DuplicateScopeOps));
+    assert_eq!(distinct.validate(), Ok(()));
 }
 
 #[test]
 fn upsert_payload_id_must_match_row_id() {
     let mut mismatch = envelope();
     mismatch.entity_ops = vec![EntityOp::Upsert { model: model(), id: row("m1"), row: payload("m2") }];
-    assert_eq!(mismatch.validate(Generation::INITIAL), Err(PlanFault::RowIdMismatch));
+    assert_eq!(mismatch.validate(), Err(PlanFault::RowIdMismatch));
 }

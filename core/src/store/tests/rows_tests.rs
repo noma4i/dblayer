@@ -40,7 +40,7 @@ fn revision_reads_and_resets_distinguish_missing_corrupt_and_unreadable_values()
 
 fn seed(store: &Store, ids: &[(&str, &str)]) {
     let ops = ids.iter().map(|(row_id, chat)| upsert("messages", message(row_id, chat))).collect();
-    store.commit(envelope(store, ops, vec![])).unwrap();
+    store.commit(envelope(ops, vec![])).unwrap();
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn keyword_columns_preserve_values_across_insert_update_and_read() {
     store.boot(&[spec]).unwrap();
     store.mark_ready();
     for value in ["first", "changed"] {
-        store.commit(envelope(&store, vec![upsert("keywords", json!({"id":"k1", "default":value, "select":"chosen"}))], vec![])).unwrap();
+        store.commit(envelope(vec![upsert("keywords", json!({"id":"k1", "default":value, "select":"chosen"}))], vec![])).unwrap();
         let row = store.point("keywords", "k1").unwrap().unwrap();
         assert_eq!((row["default"].as_str(), row["select"].as_str()), (Some(value), Some("chosen")));
     }
@@ -92,7 +92,6 @@ fn scope_rows_follow_membership_limit_and_count() {
     let other = scope("messages", "other");
     store
         .commit(envelope(
-            &store,
             vec![upsert("messages", message("m1", "c1")), upsert("messages", message("m2", "c2"))],
             vec![append(&thread, "m1", "0001"), append(&thread, "m2", "0002")],
         ))
@@ -112,7 +111,7 @@ fn dangling_membership_is_skipped_and_counted() {
     let (store, _) = booted_store();
     let thread = scope("messages", "thread");
     store
-        .commit(envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![append(&thread, "m1", "a"), append(&thread, "ghost", "b")]))
+        .commit(envelope(vec![upsert("messages", message("m1", "c1"))], vec![append(&thread, "m1", "a"), append(&thread, "ghost", "b")]))
         .unwrap();
     let result = store.scope_rows("messages", thread.key.as_str(), None).unwrap();
     assert_eq!(result.rows.len(), 1);

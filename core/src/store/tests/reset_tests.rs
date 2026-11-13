@@ -7,7 +7,6 @@ use crate::identity::ListKey;
 fn seed_two_models(store: &Store) {
     store
         .commit(envelope(
-            store,
             vec![upsert("messages", message("m1", "c1")), upsert("items", json!({"id": "i1"}))],
             vec![append(&scope("messages", "thread"), "m1", "a"), append(&scope("items", "list"), "i1", "a")],
         ))
@@ -92,7 +91,7 @@ fn writes_work_again_after_reset() {
     let (store, _) = booted_store();
     seed_two_models(&store);
     store.erase_account(store.generation().next(), false).unwrap();
-    store.commit(envelope(&store, vec![upsert("messages", message("m2", "c1"))], vec![])).unwrap();
+    store.commit(envelope(vec![upsert("messages", message("m2", "c1"))], vec![])).unwrap();
     assert_eq!(store.row_count("messages").unwrap(), 1);
 }
 
@@ -100,7 +99,7 @@ fn writes_work_again_after_reset() {
 fn resets_advance_the_revision_and_tell_the_hook() {
     use std::sync::{Arc, Mutex};
     let (store, _) = booted_store();
-    store.commit(envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap();
+    store.commit(envelope(vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap();
     type Seen = Vec<(i64, Option<Vec<String>>)>;
     let seen: Arc<Mutex<Seen>> = Arc::default();
     let sink = seen.clone();

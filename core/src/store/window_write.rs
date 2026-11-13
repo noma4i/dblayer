@@ -55,7 +55,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
     let related = page.related.iter().map(|(model, row)| Ok((model.clone(), row_values(row).map_err(fault)?))).collect::<Result<Vec<_>, StoreError>>()?;
     let related: Vec<_> = crate::store::coalesce_rows(related.into_iter().map(|(model, row)| (ModelKey::new(&model), row))).into_iter().map(|(model, row)| (model.to_string(), row)).collect();
     let accepted = admitted_rows(writer, model, &roots, page.base_revision)?;
-    let mut envelope = BatchPlan::new(writer.generation);
+    let mut envelope = BatchPlan::new();
     envelope.request_base = Some(page.base_revision);
     let WindowKind::Relation { relation, params } = page.key.kind() else {
         envelope.entity_ops = related_rows(writer, &related, &BTreeSet::new(), page.base_revision)?;

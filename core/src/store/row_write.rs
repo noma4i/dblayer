@@ -163,7 +163,7 @@ impl RowWrite<'_> {
         let kind = if source == crate::schema::RowSource::Local { RowKind::Local } else { RowKind::Server };
         let closing = self.closing.clone();
         let Some(row) = self.admit(model, patch, kind, Admission { base: None, closing: &closing })? else { return Ok(None) };
-        let mut envelope = BatchPlan::from_source(self.generation, source);
+        let mut envelope = BatchPlan::from_source(source);
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
         if matches!(source, crate::schema::RowSource::Page | crate::schema::RowSource::NodeReread | crate::schema::RowSource::Event | crate::schema::RowSource::Response) { super::correlate::replace_temp_rows(self, &mut envelope)?; }
         self.apply(&envelope).map(Some)
@@ -183,7 +183,7 @@ impl RowWrite<'_> {
 
     fn remove_with_reason(&mut self, model: &str, id: &str, reason: DestroyReason) -> Result<CommitResult, StoreError> {
         let id = RowId::new(id).map_err(|error| StoreError::Constraint(error.to_string()))?;
-        let mut envelope = BatchPlan::new(self.generation);
+        let mut envelope = BatchPlan::new();
         envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id, reason });
         self.apply(&envelope)
     }
@@ -192,7 +192,7 @@ impl RowWrite<'_> {
         let mut parts = key.splitn(3, ':');
         let (Some(model), Some(id), Some(_)) = (parts.next(), parts.next(), parts.next()) else { return Err(StoreError::Constraint(format!("invalid transfer key: {key}"))) };
         let id = RowId::new(id).map_err(|error| StoreError::Constraint(error.to_string()))?;
-        let mut envelope = BatchPlan::new(self.generation);
+        let mut envelope = BatchPlan::new();
         envelope.entity_ops.push(EntityOp::Touch { model: ModelKey::new(model), id });
         let mut result = self.apply(&envelope)?;
         result.uploads_changed = true;
@@ -201,20 +201,20 @@ impl RowWrite<'_> {
 
     pub fn attach(&mut self, record: &crate::store::files::FileRecord) -> Result<CommitResult, StoreError> {
         let current = self.stored(&record.model, &record.row_id)?.map(|stored| stored.row);
-        let mut envelope = BatchPlan::new(self.generation);
+        let mut envelope = BatchPlan::new();
         super::file_write::attach(current, self.models, &mut envelope, record)?;
         self.apply(&envelope)
     }
 
     pub fn detach(&mut self, model: &str, id: &str, field: &str) -> Result<CommitResult, StoreError> {
         let current = self.stored(model, id)?.map(|stored| stored.row);
-        let mut envelope = BatchPlan::new(self.generation);
+        let mut envelope = BatchPlan::new();
         super::file_write::detach(current, self.models, &mut envelope, model, id, field)?;
         self.apply(&envelope)
     }
 
     pub fn local_pending(&mut self, model: &str, rows: &[RowValue]) -> Result<CommitResult, StoreError> {
-        let mut envelope = BatchPlan::new(self.generation);
+        let mut envelope = BatchPlan::new();
         for row in rows {
             let value: Value = serde_json::from_str(&row.values)?;
             let path = value.get("path").and_then(Value::as_str).ok_or_else(|| StoreError::Constraint("pending value has no path".into()))?;
@@ -225,14 +225,14 @@ impl RowWrite<'_> {
     }
 
     pub fn transitions(&mut self, transitions: Vec<OperationTransition>) -> Result<CommitResult, StoreError> {
-        let mut envelope = BatchPlan::new(self.generation);
+        let mut envelope = BatchPlan::new();
         envelope.operation_transitions = transitions;
         self.apply(&envelope)
     }
 
     pub fn stale_families(&mut self, families: &[(String, String)]) -> Result<CommitResult, StoreError> {
         let since = super::windows::max_sequence(self.connection)? + 1;
-        let mut envelope = BatchPlan::new(self.generation);
+        let mut envelope = BatchPlan::new();
         envelope.window_debts.extend(families.iter().map(|(model, relation)| WindowDebt { model: model.clone(), relation: relation.clone(), since }));
         self.apply(&envelope)
     }
@@ -241,7 +241,7 @@ impl RowWrite<'_> {
         let Some(mut row) = self.stored(model, row_id)?.map(|stored| stored.row) else { return Ok(None) };
         for (path, number) in writes { number_at(&mut row, &path.split('.').collect::<Vec<_>>(), *number); }
         let id = RowId::new(row_id).map_err(|error| StoreError::Constraint(error.to_string()))?;
-        let mut envelope = BatchPlan::new(self.generation);
+        let mut envelope = BatchPlan::new();
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
         self.apply(&envelope).map(Some)
     }

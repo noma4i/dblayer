@@ -36,7 +36,7 @@ fn store_with_messages() -> Store {
 }
 
 fn put(store: &Store, value: serde_json::Value) {
-    store.commit(envelope(store, vec![upsert("messages", value)], vec![])).unwrap();
+    store.commit(envelope(vec![upsert("messages", value)], vec![])).unwrap();
 }
 
 fn read(store: &Store, id: &str) -> serde_json::Value {
@@ -140,6 +140,6 @@ fn a_union_inside_a_nested_object_and_an_array_element_is_stored_in_columns() {
             {"key": "k4"}
         ]
     });
-    store.commit(envelope(&store, vec![upsert("screens", value.clone())], vec![])).unwrap();
+    store.commit(envelope(vec![upsert("screens", value.clone())], vec![])).unwrap();
     assert_eq!(serde_json::Value::Object(store.point("screens", "s1").unwrap().unwrap()), value);
 }

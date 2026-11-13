@@ -43,14 +43,14 @@ fn store_follow_ops_are_validated() {
     put(&cascade, "chats", json!({"id": "c1", "title": "t"}));
     put(&cascade, "messages", message("m1", "c1"));
     let before = snapshot(&cascade);
-    let plan = envelope(&cascade, vec![upsert("messages", message("m1", "c1")), destroy("chats", "c1", DestroyReason::Local)], vec![]);
+    let plan = envelope(vec![upsert("messages", message("m1", "c1")), destroy("chats", "c1", DestroyReason::Local)], vec![]);
     let outcome = cascade.commit(plan).map(|_| ());
     check(&mut failures, "cascade", outcome, before, snapshot(&cascade));
 
     let removed = open(true);
     put(&removed, "vibes", json!({"id": "v1", "momentId": "m9", "kind": "k"}));
     let before = snapshot(&removed);
-    let plan = envelope(&removed, vec![upsert("moments", json!({"id": "m9", "userId": "u1"})), upsert("vibes", json!({"id": "v1", "momentId": "m9", "kind": "k2"}))], vec![]);
+    let plan = envelope(vec![upsert("moments", json!({"id": "m9", "userId": "u1"})), upsert("vibes", json!({"id": "v1", "momentId": "m9", "kind": "k2"}))], vec![]);
     let outcome = removed.commit(plan).map(|_| ());
     check(&mut failures, "removed_by", outcome, before, snapshot(&removed));
 

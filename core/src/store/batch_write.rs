@@ -145,7 +145,7 @@ impl Store {
             }
             if let crate::owners::store::StoreOp::RollBack { op_id } = op { rolled_back.insert(*op_id); }
         }
-        let (derived, pointer_rows, named_gone) = super::follow_pointer::settle_parents(&Reader::new(&transaction, &inner.models), &inner.models, &results, |plan| writer.apply(&plan), inner.generation)?;
+        let (derived, pointer_rows, named_gone) = super::follow_pointer::settle_parents(&Reader::new(&transaction, &inner.models), &inner.models, &results, |plan| writer.apply(&plan))?;
         results.extend(derived);
         if let Some(touched) = super::touch_ancestors::touch_ancestors(&mut writer)? { results.push(touched); }
         writes_database |= results.iter().any(|result| !result.is_noop());

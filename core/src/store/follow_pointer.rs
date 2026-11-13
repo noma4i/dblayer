@@ -55,11 +55,11 @@ pub(crate) fn named_parents(reader: &Reader<'_>, info: &ModelInfo, id: &str, bef
 }
 
 /// The one entry of the derived parent fields for the parents a write touched, the derived rows go through `apply` in the same transaction.
-pub(super) fn settle_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, results: &[super::CommitResult], apply: impl FnOnce(super::BatchPlan) -> Result<super::CommitResult, StoreError>, generation: crate::identity::Generation) -> Result<(Option<super::CommitResult>, usize, BTreeSet<String>), StoreError> {
+pub(super) fn settle_parents(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, results: &[super::CommitResult], apply: impl FnOnce(super::BatchPlan) -> Result<super::CommitResult, StoreError>) -> Result<(Option<super::CommitResult>, usize, BTreeSet<String>), StoreError> {
     let parents: BTreeSet<RowRef> = results.iter().flat_map(|result| result.parents.iter().cloned()).collect();
     let (derived, read, mut stale) = derived_parents(reader, models, &parents)?;
     stale.extend(results.iter().flat_map(|result| result.stale.iter().cloned()));
-    let written = if derived.is_empty() { None } else { Some(apply(super::BatchPlan { entity_ops: derived, ..super::BatchPlan::from_source(generation, crate::schema::RowSource::Derived) })?) };
+    let written = if derived.is_empty() { None } else { Some(apply(super::BatchPlan { entity_ops: derived, ..super::BatchPlan::from_source(crate::schema::RowSource::Derived) })?) };
     Ok((written, read, stale))
 }
 

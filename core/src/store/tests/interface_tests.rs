@@ -11,7 +11,7 @@ fn store_with_screens() -> Store {
 }
 
 fn put(store: &Store, value: Value) {
-    store.commit(envelope(store, vec![upsert("screens", value)], vec![])).unwrap();
+    store.commit(envelope(vec![upsert("screens", value)], vec![])).unwrap();
 }
 
 fn read(store: &Store, id: &str) -> Value {

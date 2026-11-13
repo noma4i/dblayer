@@ -228,7 +228,7 @@ pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, op_id: u64) -> 
     }
     for (model, ids) in wanted { writer.prefetch(&model, &ids, &writer.closing.clone())?; }
     let plan = restore(&reader, &Prior::related_operations(&reader, &entry)?, &entry, writer.revision, &writer.current)?;
-    let mut envelope = BatchPlan::new(writer.generation);
+    let mut envelope = BatchPlan::new();
     envelope.entity_ops = plan.entity_ops;
     envelope.scope_ops = plan.scope_ops;
     envelope.operation_transitions = plan.transitions;

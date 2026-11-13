@@ -119,7 +119,7 @@ pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, te
     let real = RowId::new(real).map_err(|error| StoreError::Constraint(error.to_string()))?;
     let held = writer.stored(model, temp.as_str())?.map(|stored| stored.row);
     let reader = Reader::new(writer.connection, writer.models);
-    let mut envelope = BatchPlan::new(writer.generation);
+    let mut envelope = BatchPlan::new();
     let buried = held.is_some() && writer.stored(model, real.as_str())?.is_none() && reader.tombstone_seq(model, real.as_str())?.is_some();
     if buried {
         envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: temp.clone(), reason: DestroyReason::Server });

@@ -17,7 +17,7 @@ fn store_read_snapshot_waits_for_commit_journal() {
     let released = Mutex::new(released);
     store.set_commit_log(Box::new(move |_| { sent.send(()).unwrap(); recv_within(&released.lock().unwrap()); })).unwrap();
     let writer = store.clone();
-    let thread = std::thread::spawn(move || writer.commit(envelope(&writer, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap());
+    let thread = std::thread::spawn(move || writer.commit(envelope(vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap());
     recv_within(&reached);
     let (seen, present) = store.read(&["messages"], |reader| Ok((reader.revision_seq()?, reader.stored_row("messages", "m1")?.is_some()))).unwrap();
     let changed = store.context.changed.changed_between((before, 0), (seen, 0), 100);
@@ -34,7 +34,7 @@ fn inv_conc_07_disk_read_finishes_while_writer_has_uncommitted_changes() {
     let mut presence = items_spec();
     presence.storage = crate::schema::Storage::Memory;
     store.boot(&[messages_spec(), presence]).unwrap();
-    store.commit(envelope(&store, vec![upsert("messages", message("m1", "before"))], vec![])).unwrap();
+    store.commit(envelope(vec![upsert("messages", message("m1", "before"))], vec![])).unwrap();
     let writer = store.lock();
     let transaction = writer.connection.unchecked_transaction().unwrap();
     transaction.execute("DELETE FROM row_messages WHERE id = 'm1'", []).unwrap();

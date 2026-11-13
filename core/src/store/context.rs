@@ -208,7 +208,7 @@ fn recover_operations(store: &Store, models: &[ModelSpec], restore_rows: bool) -
         rebuild_sync(&inner.connection)?;
         (if restore_rows { rebuilt_rows(&inner.connection, &plan, &operations, &known)? } else { Vec::new() }, parents)
     };
-    let mut envelope = BatchPlan::new(store.generation());
+    let mut envelope = BatchPlan::new();
     envelope.parents = parents;
     envelope.entity_ops = rebuilt.into_iter().map(|row| EntityOp::Upsert { model: ModelKey::new(&row.model), id: row.id, row: row.row }).collect();
     store.commit(envelope)?;

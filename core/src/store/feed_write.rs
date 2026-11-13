@@ -29,7 +29,7 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
     let connection = writer.connection;
     let models = writer.models;
     let reader = Reader::new(connection, models);
-    let mut envelope = BatchPlan::from_source(writer.generation, crate::schema::RowSource::Event);
+    let mut envelope = BatchPlan::from_source(crate::schema::RowSource::Event);
     if op == "delete" {
         let owner = RowRef::new(ModelKey::new(model), id.clone());
         let mut children = Vec::new();

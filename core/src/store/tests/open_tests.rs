@@ -32,7 +32,7 @@ fn separate_user_files_do_not_share_rows() {
     let second = Store::open(&directory.path().join("b.sqlite"), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     first.boot(&[messages_spec()]).unwrap();
     second.boot(&[messages_spec()]).unwrap();
-    first.commit(envelope(&first, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap();
+    first.commit(envelope(vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap();
     assert_eq!(first.row_count("messages").unwrap(), 1);
     assert_eq!(second.row_count("messages").unwrap(), 0);
 }

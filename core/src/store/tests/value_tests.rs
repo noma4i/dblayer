@@ -26,7 +26,7 @@ fn store_with_blobs() -> Store {
 }
 
 fn put(store: &Store, value: serde_json::Value) {
-    store.commit(envelope(store, vec![upsert("blobs", value)], vec![])).unwrap();
+    store.commit(envelope(vec![upsert("blobs", value)], vec![])).unwrap();
 }
 
 fn full() -> serde_json::Value {
@@ -52,6 +52,6 @@ fn removing_a_field_or_a_row_removes_its_nodes() {
     put(&store, full());
     put(&store, json!({"id": "b1", "title": "t", "data": null, "meta": {"k": "v"}}));
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_blobs__value WHERE field IN ('data', 'steps')"), 0);
-    store.commit(envelope(&store, vec![destroy("blobs", "b1", DestroyReason::Local)], vec![])).unwrap();
+    store.commit(envelope(vec![destroy("blobs", "b1", DestroyReason::Local)], vec![])).unwrap();
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_blobs__value"), 0);
 }

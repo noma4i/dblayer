@@ -4,7 +4,7 @@ use std::sync::mpsc;
 use crate::test_wait::{join_within, recv_within};
 
 fn written(store: &Arc<Store>, row_id: &str) {
-    store.commit(envelope(store, vec![upsert("messages", message(row_id, "c1"))], vec![])).unwrap();
+    store.commit(envelope(vec![upsert("messages", message(row_id, "c1"))], vec![])).unwrap();
 }
 
 fn completes(work: impl FnOnce() + Send + 'static) {
@@ -89,7 +89,7 @@ fn inv_conc_02_no_store_lock_is_held_while_the_hook_calls_into_other_components(
 }
 
 fn deferred<'a>(store: &'a Store, row_id: &str) -> Committed<'a> {
-    let planned = envelope(store, vec![upsert("messages", message(row_id, "c1"))], vec![]);
+    let planned = envelope(vec![upsert("messages", message(row_id, "c1"))], vec![]);
     store.commit_deferred(planned).unwrap()
 }
 

@@ -21,7 +21,7 @@ fn record() -> OperationRecord {
 }
 
 fn send(store: &Store, items: Vec<OperationTransition>) -> i64 {
-    let mut commit = envelope(store, vec![], vec![]);
+    let mut commit = envelope(vec![], vec![]);
     commit.operation_transitions = items;
     *store.commit(commit).unwrap().operations.iter().next().unwrap()
 }
@@ -97,7 +97,7 @@ fn a_field_that_is_not_json_fails_the_commit_and_stores_nothing() {
     let (store, seq) = begun();
     let extensions = serde_json::from_value(json!({"code":null,"transaction_disposition":null,"fields":{"detail":"{bad"}})).unwrap();
     let failure = OperationFailure { kind: FailureKind::Rejected, message: "refused".into(), extensions: Some(extensions) };
-    let mut commit = envelope(&store, vec![], vec![]);
+    let mut commit = envelope(vec![], vec![]);
     commit.operation_transitions = vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure }];
     let outcome = store.commit(commit);
     assert!(matches!(outcome, Err(StoreError::Sqlite(rusqlite::Error::ToSqlConversionFailure(_)))), "{:?}", outcome.as_ref().err());

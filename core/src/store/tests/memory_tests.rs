@@ -22,7 +22,6 @@ fn seed(store: &Store) {
     let thread = scope("presence", "room");
     store
         .commit(envelope(
-            store,
             vec![upsert("presence", json!({"id": "p1", "room": "r1"})), upsert("messages", message("m1", "c1"))],
             vec![append(&thread, "p1", "a")],
         ))

@@ -1,7 +1,7 @@
 use super::fixtures::*;
 use super::*;
 use crate::store::{
-    DestroyReason, EntityOp, PlanFault, OperationRecord, OperationTransition, RowChangeKind, ScopeOp, ScopeRef,
+    DestroyReason, EntityOp, OperationRecord, OperationTransition, RowChangeKind, ScopeOp, ScopeRef,
 };
 use crate::owners::write::operation_status::OperationStatus;
 use crate::value::sync::{FailureKind, OperationFailure};
@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn commit(store: &Store, entity_ops: Vec<EntityOp>, scope_ops: Vec<ScopeOp>) -> crate::store::CommitResult {
-    store.commit(envelope(store, entity_ops, scope_ops)).unwrap()
+    store.commit(envelope(entity_ops, scope_ops)).unwrap()
 }
 
 #[test]
@@ -215,7 +215,6 @@ fn inv_order_01_order_key_collision_rolls_back_whole_envelope() {
     let thread = scope("messages", "thread");
     commit(&store, vec![], vec![append(&thread, "m1", "a")]);
     let failing = envelope(
-        &store,
         vec![upsert("messages", message("m9", "c1"))],
         vec![append(&thread, "m2", "a")],
     );
@@ -245,19 +244,9 @@ fn an_update_reports_the_scopes_holding_the_row_even_past_one_statement_chunk() 
 #[test]
 fn unknown_model_is_a_plan_error_without_poison() {
     let (store, _) = booted_store();
-    let error = store.commit(envelope(&store, vec![upsert("nope", message("m1", "c1"))], vec![])).unwrap_err();
+    let error = store.commit(envelope(vec![upsert("nope", message("m1", "c1"))], vec![])).unwrap_err();
     assert!(matches!(error, StoreError::UnknownModel(_)));
     assert!(store.apply_failure().is_none());
-}
-
-#[test]
-fn stale_generation_envelope_is_rejected_before_any_write() {
-    let (store, _) = booted_store();
-    let stale = envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
-    store.erase_account(store.generation().next(), false).unwrap();
-    let error = store.commit(stale).unwrap_err();
-    assert!(matches!(error, StoreError::Plan(PlanFault::StaleGeneration)));
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 0);
 }
 
 #[test]
@@ -275,14 +264,14 @@ fn second_apply_failure_poisons_reads_until_reset() {
     for store in [Store::open_in_memory(clock.clone()).unwrap(), Store::open(&directory.path().join("failure.sqlite"), clock.clone()).unwrap()] {
         store.boot(&[messages_spec(), items_spec()]).unwrap();
         exec(&store, "DROP TABLE row_messages");
-        let error = store.commit(envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap_err();
+        let error = store.commit(envelope(vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap_err();
         assert!(matches!(error, StoreError::Sqlite(_)));
         assert!(store.apply_failure().is_some());
         for _ in 0..3 {
             assert!(matches!(store.point("messages", "m1"), Err(StoreError::Poisoned(_))));
         }
         assert!(matches!(
-            store.commit(envelope(&store, vec![upsert("items", json!({"id": "i1"}))], vec![])),
+            store.commit(envelope(vec![upsert("items", json!({"id": "i1"}))], vec![])),
             Err(StoreError::Poisoned(_))
         ));
         store.erase_account(store.generation().next(), false).unwrap();

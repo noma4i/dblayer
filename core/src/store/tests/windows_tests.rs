@@ -94,8 +94,8 @@ fn saving_a_page_has_constant_sql_work() {
         let target = scope("messages", "thread");
         let rows = (0..size).map(|n| upsert("messages", message(&format!("m{n:05}"), "1"))).collect();
         let members = (0..size).map(|n| append(&target, &format!("m{n:05}"), &format!("{n:05}"))).collect();
-        store.commit(envelope(&store, rows, members)).unwrap();
-        let mut page = envelope(&store, vec![upsert("messages", message("new", "1"))], vec![append(&target, "new", "z")]);
+        store.commit(envelope(rows, members)).unwrap();
+        let mut page = envelope(vec![upsert("messages", message("new", "1"))], vec![append(&target, "new", "z")]);
         page.window = Some(WindowSave { marker: None, stale_since: None, key: "page".into(), scope: target, cursor: Some("new".into()), has_next: false, total: None, pages: 1,
             anchor: Some("new".into()), issued: 1, applied: 1, cleared_at: None });
         let steps = Arc::new(AtomicUsize::new(0));

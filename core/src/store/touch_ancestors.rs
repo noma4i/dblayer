@@ -50,6 +50,6 @@ pub(super) fn touch_ancestors(writer: &mut RowWrite<'_>) -> Result<Option<Commit
         level = next;
     }
     if touches.is_empty() { return Ok(None); }
-    let plan = BatchPlan { entity_ops: touches, ..BatchPlan::from_source(writer.generation, crate::schema::RowSource::Derived) };
+    let plan = BatchPlan { entity_ops: touches, ..BatchPlan::from_source(crate::schema::RowSource::Derived) };
     Ok(Some(writer.apply(&plan)?))
 }

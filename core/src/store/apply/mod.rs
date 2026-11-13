@@ -32,14 +32,12 @@ impl Store {
     pub(crate) fn commit_deferred(&self, envelope: BatchPlan) -> Result<Committed<'_>, StoreError> {
         let inner = self.lock();
         inner.ensure_healthy()?;
-        inner.ensure_generation(envelope.generation)?;
         self.write_envelope(inner, envelope)
     }
 
     pub(crate) fn commit(&self, envelope: BatchPlan) -> Result<CommitResult, StoreError> {
         let inner = self.lock();
         inner.ensure_healthy()?;
-        inner.ensure_generation(envelope.generation)?;
         self.write_envelope(inner, envelope).map(Committed::publish)
     }
 
@@ -90,7 +88,7 @@ fn attempt(store: &Store, inner: &Inner, envelope: &BatchPlan, now_ms: i64) -> R
     let revision = Reader::new(&transaction, &inner.models).revision_seq()? + 1;
     let first = apply_envelope_at(&transaction, &inner.models, envelope, (now_ms, revision, inner.generation), None, None)?;
     let apply = |plan: BatchPlan| apply_envelope_at(&transaction, &inner.models, &plan, (now_ms, revision, inner.generation), None, None);
-    let (derived, _, _) = super::follow_pointer::settle_parents(&Reader::new(&transaction, &inner.models), &inner.models, std::slice::from_ref(&first), apply, inner.generation)?;
+    let (derived, _, _) = super::follow_pointer::settle_parents(&Reader::new(&transaction, &inner.models), &inner.models, std::slice::from_ref(&first), apply)?;
     let outcome = match derived { Some(derived) => super::batch_result::consolidate(&transaction, &inner.models, BTreeMap::new(), vec![first, derived], revision)?, None => first };
     let journal = store.context.changed.prepare_commit(&outcome);
     if outcome.is_noop() && envelope.window.is_none() && envelope.window_debts.is_empty() && envelope.pending_locals.is_empty() {

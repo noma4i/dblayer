@@ -16,7 +16,7 @@ pub(super) fn record(seq: Option<i64>, status: OperationStatus, dedupe: Option<&
 }
 
 pub(super) fn transitions(store: &Store, items: Vec<OperationTransition>) -> crate::store::CommitResult {
-    let mut envelope = envelope(store, vec![], vec![]);
+    let mut envelope = envelope(vec![], vec![]);
     envelope.operation_transitions = items;
     store.commit(envelope).unwrap()
 }
@@ -40,7 +40,7 @@ fn operation_transitions_apply_only_from_the_statuses_the_machine_accepts() {
     assert_eq!(row(), "failed:2");
     assert_eq!(refused(OperationTransition::Retry { seq }), 0);
     assert_eq!(row(), "pending:0");
-    let mut misuse = envelope(&store, vec![], vec![]);
+    let mut misuse = envelope(vec![], vec![]);
     misuse.operation_transitions = vec![OperationTransition::Close { seq, status: OperationStatus::Failed }];
     assert!(matches!(store.commit(misuse), Err(StoreError::Constraint(_))));
     assert_eq!(row(), "pending:0");
@@ -52,7 +52,7 @@ fn operation_transitions_apply_only_from_the_statuses_the_machine_accepts() {
 #[test]
 fn closing_unknown_operation_counts_ack_and_still_applies_the_envelope() {
     let (store, _) = booted_store();
-    let mut mixed = envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
+    let mut mixed = envelope(vec![upsert("messages", message("m1", "c1"))], vec![]);
     mixed.operation_transitions = vec![OperationTransition::Close { seq: 99, status: OperationStatus::Committed }];
     let result = store.commit(mixed).unwrap();
     assert_eq!(result.unknown_operation_acks, 1);
@@ -76,7 +76,7 @@ fn remove_respects_expected_status() {
 fn open_dedupe_key_is_unique_and_failed_frees_it() {
     let (store, _) = booted_store();
     let first = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, Some("k"))))]);
-    let mut duplicate = envelope(&store, vec![], vec![]);
+    let mut duplicate = envelope(vec![], vec![]);
     duplicate.operation_transitions = vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, Some("k"))))];
     assert!(matches!(store.commit(duplicate), Err(StoreError::Constraint(_))));
     let seq = *first.operations.iter().next().unwrap();
@@ -151,7 +151,7 @@ fn begin_writes_row_sync_in_the_same_commit_and_reports_the_row_as_synced_when_i
 #[test]
 fn begin_with_an_entity_change_reports_the_row_once_with_its_own_kind() {
     let (store, _) = booted_store();
-    let mut mixed = envelope(&store, vec![upsert("messages", message("temp-1", "c1"))], vec![]);
+    let mut mixed = envelope(vec![upsert("messages", message("temp-1", "c1"))], vec![]);
     mixed.operation_transitions = vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))];
     let result = store.commit(mixed).unwrap();
     assert_eq!(synced_rows(&result), [("temp-1".to_string(), RowChangeKind::Inserted)]);

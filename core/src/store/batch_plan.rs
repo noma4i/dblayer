@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use crate::store::files::FileRecord;
-use crate::identity::{Generation, ModelKey, RowId, RowRef, ListKey};
+use crate::identity::{ModelKey, RowId, RowRef, ListKey};
 use crate::owners::write::operation_status::OperationStatus;
 use crate::value::sync::OperationFailure;
 use crate::value::duplicates;
@@ -198,7 +198,6 @@ pub struct BatchPlan {
     pub window_debts: Vec<WindowDebt>,
     pub snapshot: Option<RowRef>,
     pub item_snapshots: Vec<(String, RowRef)>,
-    pub generation: Generation,
     pub source: crate::schema::RowSource,
     pub pending_locals: Vec<PendingLocal>,
     pub network: Option<NetworkAdmission>,
@@ -218,8 +217,6 @@ pub struct PendingLocal {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum PlanFault {
-    #[error("envelope generation is stale")]
-    StaleGeneration,
     #[error("the network moved between the plan and the commit")]
     NetworkMoved,
     #[error("envelope holds several entity ops for one row")]
@@ -231,7 +228,7 @@ pub enum PlanFault {
 }
 
 impl BatchPlan {
-    pub fn new(generation: Generation) -> Self {
+    pub fn new() -> Self {
         Self {
             tx_id: Uuid::new_v4(),
             entity_ops: Vec::new(),
@@ -243,7 +240,6 @@ impl BatchPlan {
             window_debts: Vec::new(),
             snapshot: None,
             item_snapshots: Vec::new(),
-            generation,
             source: crate::schema::RowSource::Page,
             pending_locals: Vec::new(),
             network: None,
@@ -253,17 +249,14 @@ impl BatchPlan {
         }
     }
 
-    pub fn from_source(generation: Generation, source: crate::schema::RowSource) -> Self { Self { source, ..Self::new(generation) } }
+    pub fn from_source(source: crate::schema::RowSource) -> Self { Self { source, ..Self::new() } }
 
     pub fn is_empty(&self) -> bool {
         self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.edge_writes.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none() && self.window_debts.is_empty() && self.pending_locals.is_empty() && self.parents.is_empty()
     }
 
     /// P-DATA-98: the one check of the final plan, after the follow operations and the reduced repeats.
-    pub fn validate(&self, current: Generation) -> Result<(), PlanFault> {
-        if self.generation != current {
-            return Err(PlanFault::StaleGeneration);
-        }
+    pub fn validate(&self) -> Result<(), PlanFault> {
         let upsert_mismatch = self.entity_ops.iter().any(|operation| match operation {
             EntityOp::Upsert { id, row, .. } => row.get("id").and_then(Value::as_str) != Some(id.as_str()),
             _ => false,

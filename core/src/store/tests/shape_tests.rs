@@ -99,7 +99,7 @@ fn nullable_defaults_preserve_absence_null_and_values_after_reopen() {
 }
 
 fn put(store: &Store, value: serde_json::Value) {
-    store.commit(envelope(store, vec![upsert("gifts", value)], vec![])).unwrap();
+    store.commit(envelope(vec![upsert("gifts", value)], vec![])).unwrap();
 }
 
 fn tree() -> serde_json::Value {
@@ -187,7 +187,7 @@ fn nested_dates_keep_their_text_in_objects_and_lists() {
 fn destroying_a_row_removes_its_child_rows() {
     let store = store_with_gifts();
     put(&store, json!({"id": "g1", "labels": ["a"], "items": [{"title": "t", "tags": ["z"], "size": {"w": 1, "h": 1}}], "tree": tree()}));
-    store.commit(envelope(&store, vec![destroy("gifts", "g1", crate::store::DestroyReason::Local)], vec![])).unwrap();
+    store.commit(envelope(vec![destroy("gifts", "g1", crate::store::DestroyReason::Local)], vec![])).unwrap();
     for table in ["row_gifts__labels", "row_gifts__items", "row_gifts__items__tags", "row_gifts__tree__children"] {
         assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM {table}")), 0, "{table}");
     }
@@ -198,7 +198,7 @@ fn an_identical_typed_upsert_is_a_noop() {
     let store = store_with_gifts();
     let value = json!({"id": "g1", "labels": ["a"], "items": [{"title": "t", "tags": [], "size": {"w": 1, "h": 1}}], "tree": tree(), "meta": {"owner_id": 5}});
     put(&store, value.clone());
-    let repeat = store.commit(envelope(&store, vec![upsert("gifts", value)], vec![])).unwrap();
+    let repeat = store.commit(envelope(vec![upsert("gifts", value)], vec![])).unwrap();
     assert!(repeat.is_noop());
 }
 

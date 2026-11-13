@@ -18,7 +18,7 @@ fn values(text: &str) -> Result<Map<String, Value>, StoreError> {
 }
 
 fn effects(reader: &Reader<'_>, writes: &IntentEffects, writer: &mut RowWrite<'_>) -> Result<(BatchPlan, Prior), StoreError> {
-    let mut envelope = BatchPlan::new(writer.generation);
+    let mut envelope = BatchPlan::new();
     let mut prior = Prior::default();
     let mut wanted = std::collections::BTreeMap::<String, Vec<String>>::new();
     for row in &writes.rows { wanted.entry(row.model.clone()).or_default().push(row.row_id.clone()); }

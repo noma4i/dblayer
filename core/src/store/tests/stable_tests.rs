@@ -18,7 +18,7 @@ fn scope_of(db: &Store) -> (ScopeRef, ListKey) {
 }
 
 fn land(db: &Store, scope: &ScopeRef, rows: &[(&str, serde_json::Value)], append: &[&str]) {
-    let mut envelope = BatchPlan::from_source(db.generation(), crate::schema::RowSource::Event);
+    let mut envelope = BatchPlan::from_source(crate::schema::RowSource::Event);
     for (id, sequence) in rows {
         let row = json!({"id": id, "chatId": CHAT, "sequenceNumber": sequence, "createdAt": "2026-01-01T00:00:00.000Z"}).as_object().unwrap().clone();
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("messages"), id: RowId::new(id).unwrap(), row });
@@ -62,7 +62,7 @@ fn data_stable_order_places() {
     assert_eq!(members(&db, &key), ["old", "a", "b", "mid", "c"].map(String::from), "a server row outside the window stands by its order values among the shown rows");
 
     let temp = RowId::generate_temp(None);
-    let mut envelope = BatchPlan::new(db.generation());
+    let mut envelope = BatchPlan::new();
     let row = json!({"id": temp.as_str(), "chatId": CHAT, "sequenceNumber": 0, "createdAt": "2026-01-01T00:00:00.000Z"}).as_object().unwrap().clone();
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("messages"), id: temp.clone(), row });
     envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: temp.clone(), order_key: "ignored".into() });

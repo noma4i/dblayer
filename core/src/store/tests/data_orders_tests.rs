@@ -228,7 +228,7 @@ fn data_orders_removed_member_and_a_reused_order_key() {
         let first = crate::value::fractional_between(None, None).unwrap();
         let second = crate::value::fractional_between(Some(&first), None).unwrap();
         let append = |id: &str, key: &str| {
-            let mut envelope = BatchPlan::from_source(db.generation(), crate::schema::RowSource::Event);
+            let mut envelope = BatchPlan::from_source(crate::schema::RowSource::Event);
             envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: crate::store::fixtures::id(id), order_key: key.into() });
             db.commit(envelope).unwrap();
         };

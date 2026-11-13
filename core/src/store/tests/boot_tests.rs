@@ -9,7 +9,6 @@ use crate::value::ScalarKind;
 fn seed(store: &Store) {
     store
         .commit(envelope(
-            store,
             vec![upsert("messages", message("m1", "c1")), upsert("items", json!({"id": "i1"}))],
             vec![append(&scope("messages", "thread"), "m1", "a"), append(&scope("items", "list"), "i1", "a")],
         ))
@@ -84,7 +83,7 @@ fn fingerprint_change_clears_cache_and_keeps_intents() {
     assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine WHERE reason = 'schema-changed' AND model = 'messages'"), 0);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM sync_upload WHERE model = 'messages' AND row_id = 'm1' AND attempts = 3 AND seq = 7 AND transfer_id = 9"), 1);
     assert_eq!(store.reset_intent().unwrap(), None);
-    store.commit(envelope(&store, vec![upsert("messages", message("m2", "c1"))], vec![])).unwrap();
+    store.commit(envelope(vec![upsert("messages", message("m2", "c1"))], vec![])).unwrap();
 }
 
 #[test]
@@ -110,7 +109,7 @@ fn added_model_clears_nothing() {
     let path = directory.path().join("a.sqlite");
     {
         let (store, _) = reopen(&path, &[messages_spec()]);
-        store.commit(envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap();
+        store.commit(envelope(vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap();
     }
     let (store, report) = reopen(&path, &[messages_spec(), items_spec()]);
     assert_eq!(report.verdict, ManifestVerdict::Match);

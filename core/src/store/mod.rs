@@ -125,13 +125,6 @@ pub(crate) struct Inner {
 }
 
 impl Inner {
-    pub(crate) fn ensure_generation(&self, generation: Generation) -> Result<(), StoreError> {
-        if generation != self.generation {
-            return Err(StoreError::Plan(crate::store::PlanFault::StaleGeneration));
-        }
-        Ok(())
-    }
-
     pub(crate) fn now_ms(&self) -> i64 {
         i64::try_from(self.clock.now().as_millis()).unwrap_or(i64::MAX)
     }
@@ -332,7 +325,7 @@ impl Store {
         Committed { result, turn: Some((self, ticket)) }
     }
 
-    /// The generation the boot opened the database with: the envelopes of the writes name it, and a database that boots in a later generation must accept them.
+    /// The generation the boot opened the database with: the saved windows record it.
     pub(crate) fn adopt_generation(&self, generation: Generation) {
         self.lock().generation = generation;
         self.generation_now.store(generation.value(), std::sync::atomic::Ordering::SeqCst);

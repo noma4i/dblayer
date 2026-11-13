@@ -12,7 +12,7 @@ pub(in super::super) fn apply_envelope_at(
     super::super::follow_removed::follow_removed_by(connection, models, &mut followed)?;
     super::super::follow_cascade::follow_destroys(connection, models, &mut followed)?;
     followed.reduce_repeats();
-    followed.validate(generation)?;
+    followed.validate()?;
     let envelope = &followed;
     if let Some(originals) = originals.as_deref_mut() {
         let reader = Reader::new(connection, models);
@@ -32,10 +32,10 @@ pub(in super::super) fn apply_envelope_at(
         }
     }
     let result = match feed_cache {
-        None => write_followed(connection, models, envelope, (now_ms, revision), originals, None, &mut EventUndo::default())?,
+        None => write_followed(connection, models, envelope, (now_ms, revision, generation), originals, None, &mut EventUndo::default())?,
         Some((current, hidden, undo)) => {
             undo.rows.extend(envelope.entity_ops.iter().map(|op| { let row = op.row_ref(); let key = (row.model.to_string(), row.id.to_string()); let before = current.get(&key).cloned(); (key, before) }));
-            write_followed(connection, models, envelope, (now_ms, revision), originals, Some((current, hidden)), undo)?
+            write_followed(connection, models, envelope, (now_ms, revision, generation), originals, Some((current, hidden)), undo)?
         }
     };
     Ok(result)
@@ -45,7 +45,7 @@ fn write_followed(
     connection: &Connection,
     models: &BTreeMap<String, ModelInfo>,
     envelope: &BatchPlan,
-    (now_ms, revision): (i64, i64),
+    (now_ms, revision, generation): (i64, i64, Generation),
     originals: Option<&mut BTreeMap<RowRef, Option<Map<String, Value>>>>,
     mut feed_cache: Option<(&mut Prefetched, &HiddenRows)>,
     undo: &mut EventUndo,
@@ -214,7 +214,7 @@ fn write_followed(
     refresh_places(connection, models, changes.changes.iter().chain(&renamed))?;
     apply_edge_writes(connection, &envelope.edge_writes)?;
     if let Some(window) = &envelope.window {
-        save_window(connection, window, envelope.generation, now_ms)?;
+        save_window(connection, window, generation, now_ms)?;
     }
     for debt in &envelope.window_debts {
         super::super::windows::mark_families(connection, &[(debt.model.clone(), debt.relation.clone())], debt.since)?;

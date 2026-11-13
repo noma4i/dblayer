@@ -23,10 +23,10 @@ fn messages(count: usize, body: &str) -> Vec<EntityOp> {
 #[test]
 fn an_envelope_reads_the_old_rows_of_all_its_upserts_in_one_statement() {
     let (store, _) = booted_store();
-    store.commit(envelope(&store, messages(50, "one"), vec![])).unwrap();
+    store.commit(envelope(messages(50, "one"), vec![])).unwrap();
     store.lock().connection.trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(count_old_row_reads));
     OLD_ROW_READS.store(0, Ordering::SeqCst);
-    let result = store.commit(envelope(&store, messages(50, "two"), vec![])).unwrap();
+    let result = store.commit(envelope(messages(50, "two"), vec![])).unwrap();
     store.lock().connection.trace_v2(TraceEventCodes::empty(), None);
     assert_eq!((result.rows.len(), OLD_ROW_READS.load(Ordering::SeqCst)), (50, 1));
 }
