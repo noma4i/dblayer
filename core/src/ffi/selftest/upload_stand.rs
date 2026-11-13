@@ -174,7 +174,7 @@ impl FakeHttp for ScriptedHttp {
                 Some(Answer::Data(text)) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, request["sequence"].as_i64(), serde_json::from_str(&text).unwrap()) }),
                 Some(Answer::Unconfirmed(text)) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, None, serde_json::from_str(&text).unwrap()) }),
                 Some(Answer::Unreadable) => return Ok(EncryptedReply { status: 200, body: "not a sealed answer".into() }),
-                None => panic!("the request {operation} has no scripted answer"),
+                None => panic!("the request {operation} has no scripted answer; accepted in order (operation, pair): {:?}; wires (author, request id, attempt): {:?}", self.script.calls.lock().unwrap().iter().map(|call| (call.operation.clone(), call.pair.clone())).collect::<Vec<_>>(), self.script.wires.lock().unwrap().clone()),
             }
         }
     }

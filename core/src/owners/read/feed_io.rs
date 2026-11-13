@@ -7,6 +7,9 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(test)]
+pub(crate) static FRAMES_QUEUED: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
 use serde_json::{json, Value};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
@@ -119,6 +122,8 @@ impl FeedIo {
                 let (line, reply, gate, cancel, closing, closed) = (line.clone(), reply.clone(), gate.clone(), cancel.clone(), closing.clone(), closed.clone());
                 async move {
                     while let Some((counter, body)) = queued.recv().await {
+                        #[cfg(test)]
+                        FRAMES_QUEUED.fetch_sub(1, Ordering::SeqCst);
                         if crate::runtime::send_in_epoch(&gate, epoch, || crate::lock::effect(|| line.send(counter, body))).await.is_err() {
                             reply(FeedInput::Dropped { connection_id: connection });
                             return false;
@@ -214,6 +219,8 @@ impl FeedIo {
         let body = self.body_of(frame);
         let frames = self.open.get(&connection).and_then(|open| open.frames.clone());
         if let Some(frames) = frames {
+            #[cfg(test)]
+            FRAMES_QUEUED.fetch_add(1, Ordering::SeqCst);
             let _ = crate::lock::effect(|| frames.send((counter, body)));
         }
     }

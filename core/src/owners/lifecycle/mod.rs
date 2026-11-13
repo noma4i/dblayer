@@ -318,6 +318,11 @@ impl StateOwner for Lifecycle {
     type Input = LifecycleInput;
     type Effect = LifecycleEffect;
 
+    #[cfg(test)]
+    fn diagnostic(state: &LifecycleState) -> Option<String> {
+        Some(format!("phase={:?}, restoring={:?}, starting={}", state.phase, state.restoring.as_ref().map(|restoring| (restoring.epoch, &restoring.start_waiting, &restoring.restore_waiting)), state.starting.is_some()))
+    }
+
     fn step(state: &mut LifecycleState, input: LifecycleInput, _now: Time) -> Effects<Self> {
         #[cfg(test)]
         if let LifecycleInput::CredentialCommitted(ref credential) = input {

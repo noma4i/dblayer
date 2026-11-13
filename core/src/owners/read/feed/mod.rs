@@ -465,7 +465,7 @@ impl StateOwner for Feed {
     #[cfg(test)]
     fn diagnostic(state: &FeedState) -> Option<String> {
         let line = |id: Option<ConnectionId>| id.map(|id| format!("{id}:{:?}", state.protocol(id))).unwrap_or_else(|| "none".into());
-        Some(format!("mode={:?}, online={:?}, attempt={}, active={}, opening={}, wanted={:?}, subscribed(sealed)={:?}, confirmed(Subscribed)={:?}, pending={}", state.mode(), state.online(), state.attempts(), line(state.active_connection()), line(state.opening_connection()), state.wanted(), state.subscribed(), state.confirmed(), state.pending()))
+        Some(format!("mode={:?}, online={:?}, attempt={}, active={}, opening={}, wanted={:?}, subscribed(sealed)={:?}, confirmed(Subscribed)={:?}, pending={}, frames_queued={}", state.mode(), state.online(), state.attempts(), line(state.active_connection()), line(state.opening_connection()), state.wanted(), state.subscribed(), state.confirmed(), state.pending(), crate::owners::read::feed_io::FRAMES_QUEUED.load(std::sync::atomic::Ordering::SeqCst)))
     }
 
     fn step(state: &mut FeedState, input: FeedInput, now: crate::runtime::Time) -> Effects<Self> {
