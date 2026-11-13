@@ -2,6 +2,7 @@
 use serde_json::{json, Value};
 
 use super::bridge_support_tests::message;
+use super::crash_image_support::advancing_by;
 use super::rig_tests::{bound, Fault, Rig};
 use super::upload_stand::{clip, Answer, Stand, BLOB, CREATE_MOMENT};
 use crate::ffi::DbError;
@@ -93,17 +94,11 @@ async fn drive_upload(path: Path, faults: Vec<Fault>) -> String {
     stand.script.data("CreateBlob", BLOB);
     stand.script.data("CreateMoment", r#"{"data":{"createMoment":{"id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#);
     let database2 = database.clone();
-    let mut call = tokio::spawn(async move {
+    let call = tokio::spawn(async move {
         let receipt = match database2.send(clip("Moment", r#"{"text":"group"}"#, "upload_clip", &source, epoch)).await { Ok(receipt) => receipt, Err(error) => return format!("Err:{}", tag(&error)) };
         match database2.confirmed(receipt, false).await { Ok(_) => "Ok".to_string(), Err(error) => format!("Err:{}", tag(&error)) }
     });
-    let mut armed = clock.armed();
-    let result = loop {
-        tokio::select! {
-            result = &mut call => break result.unwrap_or_else(|error| format!("task failed: {error}")),
-            () = clock.await_armed(armed) => { armed = clock.armed(); clock.advance(16_000); }
-        }
-    };
+    let result = advancing_by(&clock, 16_000, call).await.unwrap_or_else(|error| format!("task failed: {error}"));
     let sent = stand.script.count(path.operation());
     database.close_now();
     format!("{result}|{sent}")
@@ -117,7 +112,7 @@ async fn drive(path: Path, faults: Vec<Fault>) -> String {
     let hits = rig.world.log().iter().filter(|entry| entry.operation == path.operation()).count();
     for fault in faults { rig.world.fail_next(path.operation(), fault); }
     let database = rig.database.clone();
-    let mut call = match path {
+    let call = match path {
         Path::CallMutation | Path::CallQuery => rig.spawn(async move { match database.run(epoch, path.operation().into(), "{}".into()).await { Ok(_) => "Ok".to_string(), Err(error) => format!("Err:{}", tag(&error)) } }),
         Path::SessionCall => rig.spawn(async move { match database.session_call("otp".into(), "{}".into()).await { Ok(_) => "Ok".to_string(), Err(error) => format!("Err:{}", tag(&error)) } }),
         Path::WindowRead => rig.spawn(async move { match database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into()).await { Ok(()) => "Ok".to_string(), Err(error) => format!("Err:{}", tag(&error)) } }),
@@ -128,13 +123,7 @@ async fn drive(path: Path, faults: Vec<Fault>) -> String {
             match database.confirmed(receipt, false).await { Ok(_) => "Ok".to_string(), Err(error) => format!("Err:{}", tag(&error)) }
         }),
     };
-    let mut armed = rig.clock.armed();
-    let result = loop {
-        tokio::select! {
-            result = &mut call => break result.unwrap_or_else(|error| format!("task failed: {error}")),
-            () = rig.clock.await_armed(armed) => { armed = rig.clock.armed(); rig.clock.advance(5_000); }
-        }
-    };
+    let result = advancing_by(&rig.clock, 5_000, call).await.unwrap_or_else(|error| format!("task failed: {error}"));
     let sent = rig.world.log().iter().filter(|entry| entry.operation == path.operation()).count() - hits;
     rig.database.close_now();
     format!("{result}|{sent}")

@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use super::crash_image_call_tests::copy_image;
-use super::crash_image_support::{advancing, over_images, wal_length, Capture};
+use super::crash_image_support::{advancing, advancing_by, over_images, wal_length, Capture};
 use super::rig_tests::bound;
 use super::upload_stand::{clip, plain};
 use super::upload_tests::Puts;
@@ -77,18 +77,6 @@ async fn open(path: &Path, http: Arc<Recording>, credentials: Arc<WatchedHeld>, 
     database
 }
 
-/// Runs the work and moves the clock by `step` over every wait it arms, until it ends.
-async fn stepping<T>(clock: &TestClock, step: u64, work: impl std::future::Future<Output = T>) -> T {
-    tokio::pin!(work);
-    let mut armed = 0;
-    loop {
-        tokio::select! {
-            result = &mut work => return result,
-            () = clock.await_armed(armed) => { armed = clock.armed(); clock.advance(step); }
-        }
-    }
-}
-
 async fn quiet(database: &Database, clock: &TestClock) {
     advancing(clock, async {
         bound(crate::ffi::settled(database)).await.unwrap();
@@ -149,18 +137,18 @@ async fn drive(exchange: Exchange, live: &Live) {
         Exchange::LogoutRefused => { let _ = bound(database.session_call("logout".into(), "{}".into())).await; }
         Exchange::CallAnswerLost => {
             server.lose_next_answer();
-            let _ = stepping(clock, 1_000, bound(call(database.clone(), epoch, "Ping"))).await;
+            let _ = advancing_by(clock, 1_000, bound(call(database.clone(), epoch, "Ping"))).await;
             quiet(database, clock).await;
         }
         Exchange::CallsInARow => {
             server.lose_next_answer();
-            for operation in ["Ping", "Ping", "Ping"] { let _ = stepping(clock, 1_000, bound(call(database.clone(), epoch, operation))).await; }
+            for operation in ["Ping", "Ping", "Ping"] { let _ = advancing_by(clock, 1_000, bound(call(database.clone(), epoch, operation))).await; }
             quiet(database, clock).await;
         }
         Exchange::CallBesideMutation => {
             server.lose_next_answer();
-            let _ = stepping(clock, 1_000, bound(call(database.clone(), epoch, "Ping"))).await;
-            stepping(clock, 1_000, mutate(database, "a")).await;
+            let _ = advancing_by(clock, 1_000, bound(call(database.clone(), epoch, "Ping"))).await;
+            advancing_by(clock, 1_000, mutate(database, "a")).await;
             quiet(database, clock).await;
         }
         Exchange::CallCancelled => {
@@ -302,7 +290,7 @@ fn an_interactive_call_beside_a_queued_mutation_both_end() {
             let start_call = || tokio::spawn(call(database.clone(), epoch, "Ping"));
             let start_mutation = || { let database = database.clone(); tokio::spawn(async move { mutate(&database, "a").await }) };
             let (called, mutated) = if order == "call_first" { let called = start_call(); (called, start_mutation()) } else { let mutated = start_mutation(); (start_call(), mutated) };
-            stepping(&clock, 1_000, async {
+            advancing_by(&clock, 1_000, async {
                 bound(mutated).await.unwrap();
                 bound(called).await.unwrap().unwrap();
             }).await;

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use super::crash_image_support::advancing_by;
 use super::rig_tests::bound;
 use super::upload_stand::{clip, shows, watched, Answer, Stand, BLOB, CREATE_MOMENT};
 use crate::ffi::wire::{WireRow, WireSyncState};
@@ -31,14 +32,8 @@ async fn out_response_limit_keeps_pending() {
     let receipt = bound(database.send(super::upload_stand::plain("Moment", r#"{"text":"held"}"#, database.session_epoch()))).await.unwrap();
     let operation = receipt.operation.unwrap();
     let db = database.clone();
-    let mut waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move { db.confirmed(receipt, false).await }));
-    let mut armed = clock.armed();
-    let result = loop {
-        tokio::select! {
-            result = &mut waiting => break result.unwrap(),
-            () = clock.await_armed(armed) => { armed = clock.armed(); clock.advance(60_000); }
-        }
-    };
+    let waiting = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move { db.confirmed(receipt, false).await }));
+    let result = advancing_by(&clock, 60_000, waiting).await.unwrap();
     assert!(matches!(result, Err(DbError::Rejected { kept: true, ref failure }) if failure.kind == "response_too_large" && failure.response_limit == Some(limit)), "{result:?}");
     let pairs = stand.script.operation_pairs("CreateMoment");
     assert!(pairs.len() >= 2 && !pairs[0].0.is_empty() && pairs[0].1.is_some());

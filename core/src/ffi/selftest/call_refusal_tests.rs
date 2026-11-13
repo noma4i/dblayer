@@ -1,4 +1,5 @@
 use serde_json::json;
+use super::crash_image_support::advancing_by;
 use super::rig_tests::{bound, Fault, Rig};
 use super::upload_batch_shift_tests::OPERATIONS;
 use super::upload_stand::{plain, Stand, CREATE_MOMENT};
@@ -21,14 +22,8 @@ async fn call_response_limit_unknown_pair() {
     rig.world.fail_next("UnregisterDevice", Fault::AppliedResponseTooLarge(limit));
     let database = rig.database.clone();
     let epoch = database.session_epoch();
-    let mut call = rig.spawn(async move { database.run(epoch, "UnregisterDevice".into(), "{}".into()).await });
-    let mut armed = rig.clock.armed();
-    let result = loop {
-        tokio::select! {
-            result = &mut call => break result.unwrap(),
-            () = rig.clock.await_armed(armed) => { armed = rig.clock.armed(); rig.clock.advance(5_000); }
-        }
-    };
+    let call = rig.spawn(async move { database.run(epoch, "UnregisterDevice".into(), "{}".into()).await });
+    let result = advancing_by(&rig.clock, 5_000, call).await.unwrap();
     assert!(result.is_ok(), "the replay returns the stored server answer: {result:?}");
     let sends: Vec<_> = rig.world.log().into_iter().filter(|entry| entry.operation == "UnregisterDevice").collect();
     assert!(sends.len() >= 2);
@@ -46,14 +41,8 @@ async fn a_mutation_call_with_a_transient_transport_failure_retries_the_held_pai
     rig.world.fail_next("UnregisterDevice", Fault::Down);
     let database = rig.database.clone();
     let epoch = database.session_epoch();
-    let mut call = rig.spawn(async move { database.run(epoch, "UnregisterDevice".into(), "{}".into()).await });
-    let mut armed = rig.clock.armed();
-    let answer = loop {
-        tokio::select! {
-            result = &mut call => break result.unwrap(),
-            () = rig.clock.await_armed(armed) => { armed = rig.clock.armed(); rig.clock.advance(5_000); }
-        }
-    };
+    let call = rig.spawn(async move { database.run(epoch, "UnregisterDevice".into(), "{}".into()).await });
+    let answer = advancing_by(&rig.clock, 5_000, call).await.unwrap();
     assert!(answer.is_ok(), "{answer:?}");
     ends(&rig.database).await;
     let sends: Vec<_> = rig.world.log().into_iter().filter(|entry| entry.operation == "UnregisterDevice").collect();
