@@ -4,8 +4,8 @@ import kotlinx.serialization.json.JsonObject
 
 class Prepare internal constructor(internal val wire: WirePrepare) {
     companion object {
-        fun video(limits: VideoLimits? = null, mirror: Boolean = false, onCannotDecode: CannotDecode = CannotDecode.FAIL, maxBytes: ULong? = null) = Prepare(WirePrepare.Video(limits, mirror, onCannotDecode, maxBytes))
-        fun image(edit: PhotoEdit, quality: Double? = null, format: ImageFormat = ImageFormat.JPEG, maxBytes: ULong? = null) = Prepare(WirePrepare.Image(edit, quality, format, maxBytes))
+        fun video(limits: VideoLimits? = null, mirror: Boolean = false, onCannotDecode: CannotDecode = CannotDecode.FAIL) = Prepare(WirePrepare.Video(limits, mirror, onCannotDecode))
+        fun image(edit: PhotoEdit, quality: Double? = null, format: ImageFormat = ImageFormat.JPEG) = Prepare(WirePrepare.Image(edit, quality, format))
     }
 }
 
@@ -15,8 +15,9 @@ data class UploadRequest(
     val mime: String? = null,
     val variables: JsonObject = JsonObject(emptyMap()),
     val prepare: Prepare? = null,
+    val maxBytes: ULong? = null,
 ) {
-    internal fun wire() = WireUploadRequest(path?.let { WireSource.File(it, name, mime, prepare?.wire) } ?: WireSource.Pending, variables.jsonText())
+    internal fun wire() = WireUploadRequest(path?.let { WireSource.File(it, name, mime, prepare?.wire, maxBytes) } ?: WireSource.Pending, variables.jsonText())
     companion object {
         fun pending(variables: JsonObject = JsonObject(emptyMap())) = UploadRequest(null, variables = variables)
     }
@@ -43,9 +44,10 @@ data class UploadItem(
     val mime: String? = null,
     val variables: JsonObject = JsonObject(emptyMap()),
     val prepare: Prepare? = null,
+    val maxBytes: ULong? = null,
 ) {
-    constructor(values: JsonObject, request: UploadRequest) : this(values, request.path, request.name, request.mime, request.variables, request.prepare)
-    internal fun wire() = WireUploadItem(values.jsonText(), path?.let { WireSource.File(it, name, mime, prepare?.wire) } ?: WireSource.Pending, variables.jsonText())
+    constructor(values: JsonObject, request: UploadRequest) : this(values, request.path, request.name, request.mime, request.variables, request.prepare, request.maxBytes)
+    internal fun wire() = WireUploadItem(values.jsonText(), path?.let { WireSource.File(it, name, mime, prepare?.wire, maxBytes) } ?: WireSource.Pending, variables.jsonText())
 }
 
 data class UploadSource(
@@ -55,8 +57,9 @@ data class UploadSource(
     val values: JsonObject = JsonObject(emptyMap()),
     val variables: JsonObject = JsonObject(emptyMap()),
     val prepare: Prepare? = null,
+    val maxBytes: ULong? = null,
 ) {
-    internal fun wire() = WireUploadSource(path, name, mime, values.jsonText(), variables.jsonText(), prepare?.wire)
+    internal fun wire() = WireUploadSource(path, name, mime, values.jsonText(), variables.jsonText(), prepare?.wire, maxBytes)
 }
 
 suspend fun DBModel.supplySource(action: String, source: UploadSource, account: AccountScope? = null) = onAccountOf(account) { _, database, epoch -> database.supplySource(epoch, modelName, id, action, source.wire()) }

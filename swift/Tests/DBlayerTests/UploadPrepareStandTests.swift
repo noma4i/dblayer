@@ -36,7 +36,7 @@ private func source(_ text: String) throws -> URL {
 extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
-  func anImageSourceWithoutEditsIsSentAsIs() async throws {
+  func aSourceIsSentAsIsAndRefusedAboveItsLimit() async throws {
     let transport = RecordingPutTransport()
     enqueueUpload(transport)
     _ = try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: uploadOperations)
@@ -44,6 +44,11 @@ extension BridgeProbeTests {
     defer { try? FileManager.default.removeItem(at: file) }
     let sent = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path, prepare: .image(edit: PhotoEdit(maxSize: nil, enlarge: false, crop: nil, outputSize: nil, mirror: false, rotationDegrees: 0)))))
     #expect(try await sent.confirmed().value?.id == "m77")
+    #expect(transport.bodies == [Data("abcdef".utf8)])
+    let refused = try await DB.account().send(Moment.self, values: ["text": .string("large")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path, maxBytes: 5)))
+    let id = try #require(refused.optimisticValue).id
+    _ = try await refused.settled()
+    #expect(try await Moment.find(id).current()?.uploads["upload_clip"]?.error?.kind == "too_large")
     #expect(transport.bodies == [Data("abcdef".utf8)])
     await DB.closeForCleanup()
   }

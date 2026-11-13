@@ -31,7 +31,7 @@ private fun enqueueUpload(transport: RecordingPutTransport) {
 
 class UploadPrepareStandTest {
     @Test
-    fun anImageSourceWithoutEditsIsSentAsIs() = bounded {
+    fun aSourceIsSentAsIsAndRefusedAboveItsLimit() = bounded {
         val file = Files.createTempFile("clip", ".bin").toFile().apply { writeText("abcdef") }
         val transport = RecordingPutTransport()
         try {
@@ -40,6 +40,11 @@ class UploadPrepareStandTest {
             val prepare = Prepare.image(PhotoEdit(null, false, null, null, false, 0u))
             val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "hello") }, upload = UploadCommand("upload_clip", UploadRequest(file.path, prepare = prepare)))
             assertEquals("m77", sent.confirmed().value?.id)
+            assertEquals(listOf("abcdef"), transport.bodies.toList())
+            val refused = AccountScope.current().send(Moment, buildJsonObject { put("text", "large") }, upload = UploadCommand("upload_clip", UploadRequest(file.path, maxBytes = 5uL)))
+            val id = refused.optimisticValue!!.id
+            eventually("the refused size is shown") { Moment.find(id).current()?.uploads?.get("upload_clip")?.error != null }
+            assertEquals("too_large", Moment.find(id).current()?.uploads?.get("upload_clip")?.error?.kind)
             assertEquals(listOf("abcdef"), transport.bodies.toList())
         } finally {
             closeForCleanup()

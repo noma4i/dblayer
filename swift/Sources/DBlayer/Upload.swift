@@ -3,8 +3,8 @@ import Foundation
 public struct Prepare: Sendable {
   let wire: WirePrepare
 
-  public static func video(limits: VideoLimits? = nil, mirror: Bool = false, onCannotDecode: CannotDecode = .fail, maxBytes: UInt64? = nil) -> Self { Self(wire: .video(limits: limits, mirror: mirror, onCannotDecode: onCannotDecode, maxBytes: maxBytes)) }
-  public static func image(edit: PhotoEdit, quality: Double? = nil, format: ImageFormat = .jpeg, maxBytes: UInt64? = nil) -> Self { Self(wire: .image(edit: edit, quality: quality, format: format, maxBytes: maxBytes)) }
+  public static func video(limits: VideoLimits? = nil, mirror: Bool = false, onCannotDecode: CannotDecode = .fail) -> Self { Self(wire: .video(limits: limits, mirror: mirror, onCannotDecode: onCannotDecode)) }
+  public static func image(edit: PhotoEdit, quality: Double? = nil, format: ImageFormat = .jpeg) -> Self { Self(wire: .image(edit: edit, quality: quality, format: format)) }
 }
 
 public struct UploadRequest: Sendable {
@@ -13,19 +13,20 @@ public struct UploadRequest: Sendable {
   public var mime: String?
   public var variables: [String: JSONValue]
   public var prepare: Prepare?
+  public var maxBytes: UInt64?
 
-  public init(path: String, name: String? = nil, mime: String? = nil, variables: [String: JSONValue] = [:], prepare: Prepare? = nil) {
-    (self.path, self.name, self.mime, self.variables, self.prepare) = (path, name, mime, variables, prepare)
+  public init(path: String, name: String? = nil, mime: String? = nil, variables: [String: JSONValue] = [:], prepare: Prepare? = nil, maxBytes: UInt64? = nil) {
+    (self.path, self.name, self.mime, self.variables, self.prepare, self.maxBytes) = (path, name, mime, variables, prepare, maxBytes)
   }
 
   private init(variables: [String: JSONValue]) {
-    (path, name, mime, self.variables, prepare) = (nil, nil, nil, variables, nil)
+    (path, name, mime, self.variables, prepare, maxBytes) = (nil, nil, nil, variables, nil, nil)
   }
 
   public static func pending(variables: [String: JSONValue] = [:]) -> Self { Self(variables: variables) }
 
   var wire: WireUploadRequest {
-    get throws { WireUploadRequest(source: path.map { .file(path: $0, name: name, mime: mime, prepare: prepare?.wire) } ?? .pending, variablesJson: try JSONValue.object(variables).text) }
+    get throws { WireUploadRequest(source: path.map { .file(path: $0, name: name, mime: mime, prepare: prepare?.wire, maxBytes: maxBytes) } ?? .pending, variablesJson: try JSONValue.object(variables).text) }
   }
 }
 
@@ -59,17 +60,18 @@ public struct UploadItem: Sendable {
   public var mime: String?
   public var variables: [String: JSONValue]
   public var prepare: Prepare?
+  public var maxBytes: UInt64?
 
-  public init(values: [String: JSONValue], path: String, name: String? = nil, mime: String? = nil, variables: [String: JSONValue] = [:], prepare: Prepare? = nil) {
-    (self.values, self.path, self.name, self.mime, self.variables, self.prepare) = (values, path, name, mime, variables, prepare)
+  public init(values: [String: JSONValue], path: String, name: String? = nil, mime: String? = nil, variables: [String: JSONValue] = [:], prepare: Prepare? = nil, maxBytes: UInt64? = nil) {
+    (self.values, self.path, self.name, self.mime, self.variables, self.prepare, self.maxBytes) = (values, path, name, mime, variables, prepare, maxBytes)
   }
 
   public init(values: [String: JSONValue], request: UploadRequest) {
-    (self.values, path, name, mime, variables, prepare) = (values, request.path, request.name, request.mime, request.variables, request.prepare)
+    (self.values, path, name, mime, variables, prepare, maxBytes) = (values, request.path, request.name, request.mime, request.variables, request.prepare, request.maxBytes)
   }
 
   var wire: WireUploadItem {
-    get throws { WireUploadItem(valuesJson: try JSONValue.object(values).text, source: path.map { .file(path: $0, name: name, mime: mime, prepare: prepare?.wire) } ?? .pending, variablesJson: try JSONValue.object(variables).text) }
+    get throws { WireUploadItem(valuesJson: try JSONValue.object(values).text, source: path.map { .file(path: $0, name: name, mime: mime, prepare: prepare?.wire, maxBytes: maxBytes) } ?? .pending, variablesJson: try JSONValue.object(variables).text) }
   }
 }
 
@@ -80,13 +82,14 @@ public struct UploadSource: Sendable {
   public var values: [String: JSONValue]
   public var variables: [String: JSONValue]
   public var prepare: Prepare?
+  public var maxBytes: UInt64?
 
-  public init(path: String, name: String? = nil, mime: String? = nil, values: [String: JSONValue] = [:], variables: [String: JSONValue] = [:], prepare: Prepare? = nil) {
-    (self.path, self.name, self.mime, self.values, self.variables, self.prepare) = (path, name, mime, values, variables, prepare)
+  public init(path: String, name: String? = nil, mime: String? = nil, values: [String: JSONValue] = [:], variables: [String: JSONValue] = [:], prepare: Prepare? = nil, maxBytes: UInt64? = nil) {
+    (self.path, self.name, self.mime, self.values, self.variables, self.prepare, self.maxBytes) = (path, name, mime, values, variables, prepare, maxBytes)
   }
 
   var wire: WireUploadSource {
-    get throws { WireUploadSource(path: path, name: name, mime: mime, valuesJson: try JSONValue.object(values).text, variablesJson: try JSONValue.object(variables).text, prepare: prepare?.wire) }
+    get throws { WireUploadSource(path: path, name: name, mime: mime, valuesJson: try JSONValue.object(values).text, variablesJson: try JSONValue.object(variables).text, prepare: prepare?.wire, maxBytes: maxBytes) }
   }
 }
 
