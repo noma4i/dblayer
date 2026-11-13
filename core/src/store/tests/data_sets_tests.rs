@@ -107,10 +107,11 @@ fn data_sets_derived_once_per_batch() {
 
 #[test]
 fn data_newer_order_is_total() {
-    let groups: [(Vec<(&str, i64, Option<i64>)>, &str); 3] = [
+    let groups: [(Vec<(&str, i64, Option<i64>)>, &str); 4] = [
         (vec![("9", 2, None), ("10", 2, None), ("8", 2, None), ("m0", 1, None)], "10"),
         (vec![("m1", 2, Some(1)), ("m2", 2, Some(1)), ("m3", 5, None), ("m4", 5, Some(0))], "m2"),
         (vec![("m1", 3, None), ("m2", 3, None), ("m3", 3, None), ("m4", 3, None)], "m4"),
+        (vec![("7", 2, Some(9_007_199_254_740_992)), ("6", 2, Some(9_007_199_254_740_993))], "6"),
     ];
     for (children, first) in groups {
         for order in permutations(&(0..children.len()).collect::<Vec<_>>()) {
@@ -299,12 +300,15 @@ pub(super) fn local_parent(db: &Arc<Store>, path: &str, values: Value) {
 #[test]
 fn data_sets_destroy_marks_the_parent_stale_only_for_the_sql_winner() {
     let nulls: Vec<(&str, i64, Option<i64>)> = vec![("m1", 2, Some(1)), ("m2", 2, Some(1)), ("m3", 5, None), ("m4", 5, Some(0))];
-    let cases: [(&str, &[(&str, i64, Option<i64>)], &str, bool, &str); 5] = [
+    let large: &[(&str, i64, Option<i64>)] = &[("7", 2, Some(9_007_199_254_740_992)), ("6", 2, Some(9_007_199_254_740_993))];
+    let cases: [(&str, &[(&str, i64, Option<i64>)], &str, bool, &str); 7] = [
         ("the winner with NULLs", &nulls, "m2", true, "m1"),
         ("a child with the newer time and no number", &nulls, "m3", false, "m2"),
         ("a child with the lower number", &nulls, "m4", false, "m2"),
         ("a confirmed child with the larger id behind a temporary one", &[("zz", 5, None), ("temp-1", 5, None)], "zz", false, "temp-1"),
         ("the temporary winner", &[("zz", 5, None), ("temp-1", 5, None)], "temp-1", true, "zz"),
+        ("the larger number beyond 2^53 before the id", large, "6", true, "7"),
+        ("the smaller number beyond 2^53 behind the larger id", large, "7", false, "6"),
     ];
     for (name, children, destroyed, stale, winner_after) in cases {
         for order in permutations(&(0..children.len()).collect::<Vec<_>>()) {
