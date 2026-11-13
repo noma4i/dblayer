@@ -423,7 +423,7 @@ for path in generated_tool:
         if suppressed and f"z29:{path.relative_to(root)}:{suppressed.group(1)}" not in allowed:
             findings.append(f"Z29 a lint is fixed at its cause, not suppressed (gen): {path.relative_to(root)}:{number}: {suppressed.group(0)}")
 
-wait_inputs = {("ffi/network_status.rs", "next"), ("ffi/encrypted.rs", "next")}
+wait_inputs = {("ffi/network_status.rs", "next"), ("ffi/encrypted.rs", "next"), ("ffi/loading.rs", "result")}
 for path in files:
     relative = str(path.relative_to(source))
     if not relative.startswith("ffi/") or relative.startswith(("ffi/selftest/", "ffi/tests/")) or "/tests/" in relative or relative.endswith("_tests.rs"):

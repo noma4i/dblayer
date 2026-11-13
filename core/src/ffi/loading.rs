@@ -47,13 +47,11 @@ impl LoadRequest {
     /// Waits for the end of the load. A request cancelled before its end fails with `Interrupted`.
     pub async fn result(&self) -> Result<(), DbError> {
         let mut outcome = self.outcome.clone();
-        super::database::on_core(None, async move {
-            let seen = match outcome.wait_for(Option::is_some).await {
-                Ok(seen) => seen.clone(),
-                Err(_) => return Err(DbError::Internal { detail: "the load ended without an outcome".into() }),
-            };
-            seen.unwrap_or_else(|| Err(load_cancelled()))
-        }).await?
+        let seen = match outcome.wait_for(Option::is_some).await {
+            Ok(seen) => seen.clone(),
+            Err(_) => return Err(DbError::Internal { detail: "the load ended without an outcome".into() }),
+        };
+        seen.unwrap_or_else(|| Err(load_cancelled()))
     }
 
     /// Gives up this caller's interest. The request goes on while another caller waits for it.
