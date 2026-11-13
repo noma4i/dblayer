@@ -99,6 +99,13 @@ pub(super) fn check_scope(node: &ModelDecl, all: &[ModelDecl], scope: &ScopeDecl
             report(pos, format!("scope `{name}`: `refresh_on_foreground: true` needs a scope with `query`"));
         }
     }
+    if let Some(pos) = scope.keep_on_gap {
+        if !scope.is_remote() {
+            report(pos, format!("scope `{name}`: `keep_on_gap` needs a `query`"));
+        } else if scope.refresh_on_foreground.is_some() {
+            report(pos, format!("scope `{name}`: `keep_on_gap` and `refresh_on_foreground` contradict"));
+        }
+    }
     if !scope.is_remote() {
         if scope.members_complete { report(scope.pos, "`members_complete` needs a paginated remote scope".into()); }
         return;

@@ -302,6 +302,7 @@ pub struct ScopeDecl {
     pub insert_on: Option<Spanned<Vec<InsertOn>>>,
     pub stable_order: Option<Pos>,
     pub refresh_on_foreground: Option<Pos>,
+    pub keep_on_gap: Option<Pos>,
     pub members_complete: bool,
     pub parameters: Vec<ParameterDecl>,
     pub where_: Option<WhereDecl>,

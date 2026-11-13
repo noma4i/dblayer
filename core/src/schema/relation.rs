@@ -253,6 +253,8 @@ pub struct RelationSpec {
     pub order_stable: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub refresh_on_foreground: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_on_gap: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node: Option<NodeRead>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -314,6 +316,7 @@ impl RelationSpec {
             joins_created: false,
             order_stable: false,
             refresh_on_foreground: false,
+            keep_on_gap: false,
             node: None,
             edge_fields: Vec::new(),
             preload: None,

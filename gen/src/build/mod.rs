@@ -231,6 +231,7 @@ fn build_scope(scope: &ScopeDecl) -> RelationSpec {
     }
     relation.order_stable = scope.stable_order.is_some();
     relation.refresh_on_foreground = scope.refresh_on_foreground.is_some();
+    relation.keep_on_gap = scope.keep_on_gap.is_some();
     relation.members_complete = scope.members_complete;
     if let (Some(marker), Some(tail)) = (&scope.marker, &scope.tail) {
         let column = |name: &str| scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == name).map_or_else(|| name.to_string(), |(column, _)| column.item.clone());

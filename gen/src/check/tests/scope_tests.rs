@@ -184,6 +184,15 @@ fn refresh_on_foreground_needs_a_scope_with_query() {
 }
 
 #[test]
+fn keep_on_gap_needs_a_query_and_no_foreground_refresh() {
+    run(&[
+        ("remote", &scope(", keep_on_gap: true", "    query \"S\"\n"), None),
+        ("local", &scope(", keep_on_gap: true", "    order createdAt: :desc\n"), Some("scope `s`: `keep_on_gap` needs a `query`")),
+        ("with foreground refresh", &scope(", keep_on_gap: true, refresh_on_foreground: true", "    query \"S\"\n"), Some("scope `s`: `keep_on_gap` and `refresh_on_foreground` contradict")),
+    ]);
+}
+
+#[test]
 fn membership_checks_parameter_fields_types_and_conflicts() {
     for (rule, expected) in [
         ("membership list: { contains: :lists }", None),

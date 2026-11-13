@@ -191,11 +191,12 @@ pub(super) fn scope(cx: &mut Cx, call: &Call) -> Option<ScopeDecl> {
     let insert = line.opt(cx, "insert_on").and_then(|pair| insert_on(cx, pair));
     let stable = line.opt(cx, "stable_order").and_then(|pair| boolean(cx, &pair.value, "`stable_order`").filter(|flag| *flag).map(|_| pair_pos(pair)));
     let foreground = line.opt(cx, "refresh_on_foreground").and_then(|pair| boolean(cx, &pair.value, "`refresh_on_foreground`").filter(|flag| *flag).map(|_| pair_pos(pair)));
+    let keep_on_gap = line.opt(cx, "keep_on_gap").and_then(|pair| boolean(cx, &pair.value, "`keep_on_gap`").filter(|flag| *flag).map(|_| pair_pos(pair)));
     let members_complete = line.opt(cx, "members_complete").and_then(|pair| boolean(cx, &pair.value, "`members_complete`")).unwrap_or(false);
     line.finish(cx);
     let lines = block(cx, call)?;
     let mut decl = ScopeDecl {
-        pos: line.pos, name, node, insert_on: insert, stable_order: stable, refresh_on_foreground: foreground, members_complete, parameters: Vec::new(), where_: None, membership: Vec::new(), row_rules: Vec::new(), order: None, query: None, variables: None,
+        pos: line.pos, name, node, insert_on: insert, stable_order: stable, refresh_on_foreground: foreground, keep_on_gap, members_complete, parameters: Vec::new(), where_: None, membership: Vec::new(), row_rules: Vec::new(), order: None, query: None, variables: None,
         response: None, paginate: None, freshness: None, preload: None, marker: None, tail: None, total: None, edges: Vec::new(), subscriptions: Vec::new(), has_block: true,
     };
     let remote = lines.iter().any(|candidate| candidate.word == "query");
