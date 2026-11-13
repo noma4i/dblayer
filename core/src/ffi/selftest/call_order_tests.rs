@@ -144,7 +144,7 @@ fn bridge_prop_calls_enter_in_the_order_they_started() {
 }
 
 /// Requirement P-BR-10: a place that never reaches an owner does not hold the next one.
-/// Observable: the call of the next place ends and its request leaves in all 3 cases.
+/// Observable: the call of the next place ends and its request leaves in all 3 cases, and a pull of a stream gets its value while a place of the database is held.
 /// Defect caught: a place without a pass stops the queue.
 #[tokio::test(flavor = "multi_thread")]
 async fn bridge_call_place_never_holds_the_next() {
@@ -162,6 +162,10 @@ async fn bridge_call_place_never_holds_the_next() {
     drop(never_polled);
     let (values, args) = create("after-dropped-future");
     bound(second.create(epoch, "Group".into(), values, args)).await.unwrap();
+    let base_place = rig.database.in_order();
+    let stream = rig.database.subscribe_values(epoch, crate::ffi::ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Group"}"#) });
+    assert!(matches!(bound(stream.pull_next()).await, Some(crate::ffi::ReadValue::Snapshot { .. })), "a pull of a stream waited for a place of the database that never entered an owner");
+    drop(base_place);
     let held = rig.world.hold_next("CreateGroup");
     let (holder, waiting, next) = (rig.database.in_order(), rig.database.in_order(), rig.database.in_order());
     let (values, args) = create("holder");
@@ -180,4 +184,35 @@ async fn bridge_call_place_never_holds_the_next() {
     }
     assert!(!names.iter().any(|name| name == "never-polled"), "a dropped call sent a request: {names:?}");
     rig.database.close_now();
+}
+
+/// Requirement P-BR-10 (5): a call that follows a dropped waiting call of the same reader enters the owner after the cancel of the dropped one.
+/// Observable: the pull that starts right after the drop gets the end of its stream by the cancel (`Cancelled`), not the refusal of a second waiting pull.
+/// Defect caught: the abort of the dropped call is asynchronous, so the new pull reaches the owner before the cancel of the old one (D-420B).
+/// Hold: both workers of the executor stand in blocking tasks, so the abort of the first task cannot run before the second call is queued; one worker is released and takes the queued second call first.
+#[tokio::test(flavor = "multi_thread")]
+async fn bridge_call_after_a_dropped_call_enters_after_its_cancel() {
+    let mut note = crate::schema::ModelSpec::new("Note", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id)]);
+    note.storage = crate::schema::Storage::Local;
+    let database = Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![note]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap();
+    let stream = database.subscribe_values(database.session_epoch(), crate::ffi::ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
+    assert!(matches!(crate::test_wait::within(stream.pull_next()).await, Some(crate::ffi::ReadValue::Snapshot { .. })));
+    let mut pending = Box::pin(stream.pull_next());
+    assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(pending.as_mut().poll(cx).is_pending())).await);
+    crate::ffi::owners_drained(&database).await.unwrap();
+    let executor = crate::ffi::database::executor().unwrap().handle().clone();
+    let stands: Vec<_> = (0..2).map(|_| (Arc::new(crate::test_wait::Flag::default()), Arc::new(crate::test_wait::Flag::default()))).collect();
+    for (entered, release) in &stands {
+        let (entered, release) = (entered.clone(), release.clone());
+        drop(crate::task::spawn_on(&executor, async move { entered.set(); release.wait_blocking("release the worker"); }));
+    }
+    for (entered, _) in &stands { entered.wait("a worker of the executor stands").await; }
+    let next = stream.clone();
+    let second = crate::task::spawn_on(&executor, async move { next.pull_next().await });
+    drop(pending);
+    stands[0].1.set();
+    let value = crate::test_wait::within(second).await.unwrap();
+    stands[1].1.set();
+    assert!(matches!(value, Some(crate::ffi::ReadValue::Ended { cause: crate::ffi::EndCause::Cancelled })), "the pull after the dropped pull entered before its cancel: {value:?}");
+    crate::test_wait::within(database.close_database()).await.unwrap();
 }
