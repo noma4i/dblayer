@@ -125,3 +125,4 @@ mod crash_image_server_tests;
 mod crash_image_secret_refused_tests;
 mod core_caller_stand;
 mod core_caller_tests;
+mod waiter_wake_tests;
