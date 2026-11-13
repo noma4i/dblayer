@@ -4,11 +4,16 @@ set -euo pipefail
 root="${CHECK_ZOO_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}"
 python3 - "$root" <<'PY'
 import re
+import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 root = Path(sys.argv[1])
+tracked_files = set(subprocess.run(["git", "-C", str(root), "ls-files", "-z"], check=True, capture_output=True, text=True).stdout.split("\0")) if (root / ".git").exists() else None
+
+def tracked_rglob(folder, pattern):
+    return [path for path in folder.rglob(pattern) if tracked_files is None or str(path.relative_to(root)) in tracked_files]
 source = root / "core" / "src"
 allowlist_path = root / "scripts" / "zoo_allowlist.txt"
 allowed = set()
@@ -281,7 +286,7 @@ def z18_allowed(relative, line):
     return any(len(entry) == 2 and entry[0] == relative and entry[1] in line for entry in z18_entries)
 
 for directory, suffix, generated in [("swift/Sources/DBlayer", "*.swift", "dblayer.swift"), ("kotlin/src/main/kotlin/com/noma4i/dblayer", "*.kt", "dblayer.kt")]:
-    for path in (root / directory).rglob(suffix):
+    for path in tracked_rglob(root / directory, suffix):
         if path.name == generated:
             continue
         relative = str(path.relative_to(root))
@@ -768,14 +773,14 @@ for path in sorted((source / "store").rglob("*.rs")):
 
 put_outside = re.compile(r"PutExecutor|put_executor|putExecutor|PutMode|PutIdentity|PutEnded|PutSent|PutMissing|ResumePuts|CancelPut|detached_put|writesQuiet|UrlSessionPuts|handleBackgroundEvents")
 for folder, suffix in ((source, "*.rs"), (root / "swift" / "Sources", "*.swift"), (root / "kotlin" / "src" / "main", "*.kt")):
-    for path in sorted(folder.rglob(suffix)):
+    for path in sorted(tracked_rglob(folder, suffix)):
         for number, line in enumerate(path.read_text().splitlines(), 1):
             if put_outside.search(line):
                 findings.append(f"Z59 the PUT outside the process is off for good, the PUT of a step runs in the process only (D-404): {path.relative_to(root)}:{number}")
 
 manifest = source / "ffi" / "selftest" / "manifest.tsv"
 lanes = {"core": (source, ".rs", "fn"), "swift": (root / "swift" / "Tests", ".swift", "func"), "kotlin": (root / "kotlin" / "src", ".kt", "fun")}
-declared = {lane: set(re.findall(rf"\b{word}\s+`?(\w+)`?\s*\(", "".join(path.read_text() for path in sorted(folder.rglob(f"*{suffix}"))))) for lane, (folder, suffix, word) in lanes.items() if folder.is_dir()}
+declared = {lane: set(re.findall(rf"\b{word}\s+`?(\w+)`?\s*\(", "".join(path.read_text() for path in sorted(tracked_rglob(folder, f"*{suffix}"))))) for lane, (folder, suffix, word) in lanes.items() if folder.is_dir()}
 for number, line in enumerate(manifest.read_text().splitlines()[2:] if manifest.is_file() else [], start=3):
     cells = line.split("\t")
     if len(cells) < 4 or cells[2] not in declared: continue
