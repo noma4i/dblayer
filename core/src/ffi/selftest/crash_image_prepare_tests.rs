@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use super::crash_image_support::{copy_tree, drained, files_of, over_images, reopen_preparing, saved_work, unaccepted, Capture};
 use super::rig_tests::bound;
-use super::upload_prepare_tests::{probed_image, send, shrink, upload_of, PREPARED, SOURCE};
+use super::upload_prepare_tests::{probed_image, send, send_limited, shrink, upload_of, PREPARED, SOURCE};
 use crate::ffi::wire::WireUploadStatus;
 use super::upload_stand::{ScriptedPreparer, Stand, BLOB, CREATE_MOMENT};
 
@@ -71,4 +71,54 @@ async fn crash_image_prepare() {
     assert!(!landed_cuts[0] && *landed_cuts.last().unwrap() && landed_cuts.windows(2).all(|pair| !pair[0] || pair[1]), "{landed_cuts:?}");
     assert!(cuts.iter().any(|cut| cut.1 > 0 && cut.0 && cut.2 == 1), "a cut holds the upload before the step ends and the step runs again from the copy");
     database.close_now();
+}
+
+/// The `max_bytes` of the source survives a process killed while the step runs, or after the copy and before the refusal: the fresh process ends the upload with `too_large` and no transfer request.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_too_large_after_restart() {
+    for prepared in [true, false] {
+        let directory = tempfile::tempdir().unwrap();
+        let live = directory.path().join("live.sqlite");
+        let file = directory.path().join("clip.jpg");
+        std::fs::write(&file, SOURCE).unwrap();
+        let preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[]);
+        let stand = if prepared { Stand::new().with_preparer(preparer.clone()) } else { Stand::new() };
+        let operations = [CREATE_MOMENT];
+        let database = stand.open(Some(&live), &operations).await;
+        rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+        let base = Capture::begin(&live);
+        let run_hold = prepared.then(|| preparer.hold_next());
+        let (prepare, limit) = if prepared { (Some(shrink()), PREPARED.len() as u64 - 1) } else { (None, SOURCE.len() as u64 - 1) };
+        let receipt = bound(database.send(send_limited(database.session_epoch(), &file, prepare, Some(limit)))).await.unwrap();
+        let id = receipt.optimistic_value.as_ref().unwrap().id.clone();
+        let kept_files = directory.path().join("kept.files");
+        if let Some(hold) = &run_hold { hold.entered().await; }
+        else { crate::test_wait::settled(&database, "the refused size is shown", || upload_of(&database, &id).is_some_and(|upload| upload.status == WireUploadStatus::Failed)).await; }
+        copy_tree(&files_of(&live), &kept_files);
+        let (capture, _) = base.end(&live);
+        let secret = stand.rig.credentials.inner.value().unwrap();
+        if let Some(hold) = &run_hold { hold.release(); }
+        database.close_now();
+
+        let cuts = over_images(&capture, &kept_files, |_, image: PathBuf| {
+            let secret = secret.clone();
+            let id = id.clone();
+            async move {
+                let accepted = !unaccepted(&image) && saved_work(&image).0 > 0;
+                let fresh_preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[]);
+                let (fresh, reopened) = reopen_preparing(&image, &secret, &[CREATE_MOMENT], Some(fresh_preparer as Arc<dyn crate::ffi::Preparer>), |fresh| {
+                    fresh.script.data("CreateBlob", BLOB);
+                }).await;
+                let kind = if accepted {
+                    crate::test_wait::settled(&reopened, "the refused size is shown", || upload_of(&reopened, &id).is_some_and(|upload| upload.status == WireUploadStatus::Failed)).await;
+                    upload_of(&reopened, &id).and_then(|upload| upload.error).map(|error| error.kind)
+                } else { None };
+                let requests = (fresh.script.count("CreateBlob"), fresh.puts.bodies.lock().unwrap().len());
+                bound(reopened.close_database()).await.unwrap();
+                (accepted, kind, requests)
+            }
+        }).await;
+        assert!(cuts.iter().any(|cut| cut.0), "prepared={prepared}: a cut holds the accepted upload");
+        assert!(cuts.iter().filter(|cut| cut.0).all(|cut| cut.1.as_deref() == Some("too_large") && cut.2 == (0, 0)), "prepared={prepared}: {cuts:?}");
+    }
 }

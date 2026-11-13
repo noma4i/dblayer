@@ -24,17 +24,19 @@ impl Preparer for Refusing {
 fn video(change: impl FnOnce(&mut VideoLimits)) -> WirePrepare {
     let mut limits = default_video_limits();
     change(&mut limits);
-    WirePrepare::Video { limits: Some(limits), mirror: false, on_cannot_decode: crate::ffi::upload_wire::CannotDecode::Fail, max_bytes: None }
+    WirePrepare::Video { limits: Some(limits), mirror: false, on_cannot_decode: crate::ffi::upload_wire::CannotDecode::Fail }
 }
 
 pub(super) fn image(change: impl FnOnce(&mut PhotoEdit)) -> WirePrepare {
     let mut edit = PhotoEdit { max_size: None, enlarge: false, crop: None, output_size: None, mirror: false, rotation_degrees: 0 };
     change(&mut edit);
-    WirePrepare::Image { edit, quality: None, format: ImageFormat::Jpeg, max_bytes: None }
+    WirePrepare::Image { edit, quality: None, format: ImageFormat::Jpeg }
 }
 
-pub(super) fn send(epoch: u64, path: &std::path::Path, prepare: WirePrepare) -> CommandRequest {
-    let source = WireSource::File { path: path.to_str().unwrap().into(), name: None, mime: None, prepare: Some(prepare) };
+pub(super) fn send(epoch: u64, path: &std::path::Path, prepare: WirePrepare) -> CommandRequest { send_limited(epoch, path, Some(prepare), None) }
+
+pub(super) fn send_limited(epoch: u64, path: &std::path::Path, prepare: Option<WirePrepare>, max_bytes: Option<u64>) -> CommandRequest {
+    let source = WireSource::File { path: path.to_str().unwrap().into(), name: None, mime: None, prepare, max_bytes };
     CommandRequest { epoch, model: "Moment".into(), values_json: r#"{"text":"clip"}"#.into(), args_json: "{}".into(), upload: Some(CommandUpload { action: "upload_clip".into(), request: WireUploadRequest { source, variables_json: "{}".into() } }) }
 }
 
@@ -62,19 +64,20 @@ async fn xfer_prepare_invalid_settings() {
         ("crop without pixels", image(|edit| edit.crop = Some(CropFractions { x: 0.0, y: 0.0, width: 0.0, height: 0.5 }))),
         ("rotation 45", image(|edit| edit.rotation_degrees = 45)),
         ("rotation 360", image(|edit| edit.rotation_degrees = 360)),
-        ("quality 1.5", WirePrepare::Image { edit: PhotoEdit { max_size: None, enlarge: false, crop: None, output_size: None, mirror: false, rotation_degrees: 0 }, quality: Some(1.5), format: ImageFormat::Jpeg, max_bytes: None }),
-        ("max bytes of 0", limited(video(|_| {}), 0)),
+        ("quality 1.5", WirePrepare::Image { edit: PhotoEdit { max_size: None, enlarge: false, crop: None, output_size: None, mirror: false, rotation_degrees: 0 }, quality: Some(1.5), format: ImageFormat::Jpeg }),
     ];
     for (name, prepare) in invalid {
         let refused = bound(database.send(send(epoch, &source, prepare))).await.map(|_| ());
         assert!(matches!(refused, Err(DbError::Invalid { .. })), "{name}: {refused:?}");
     }
+    let refused = bound(database.send(send_limited(epoch, &source, None, Some(0)))).await.map(|_| ());
+    assert!(matches!(refused, Err(DbError::Invalid { .. })), "max bytes of 0: {refused:?}");
     assert_eq!((rows(&database), transfer_files(&path)), (0, 0));
     database.close_now();
 
     let without = Stand::new();
     let database = without.open(Some(&directory.path().join("other.sqlite")), &[CREATE_MOMENT]).await;
-    let refused = bound(database.send(send(database.session_epoch(), &source, WirePrepare::Video { limits: None, mirror: false, on_cannot_decode: crate::ffi::upload_wire::CannotDecode::Fail, max_bytes: None }))).await.map(|_| ());
+    let refused = bound(database.send(send(database.session_epoch(), &source, WirePrepare::Video { limits: None, mirror: false, on_cannot_decode: crate::ffi::upload_wire::CannotDecode::Fail }))).await.map(|_| ());
     assert!(matches!(refused, Err(DbError::Invalid { .. })), "no preparer: {refused:?}");
     database.close_now();
 }
@@ -331,7 +334,7 @@ async fn xfer_prepare_mirror_makes_the_plan_reencode() {
     let database = stand.open(Some(&directory.path().join("db.sqlite")), &[CREATE_MOMENT]).await;
     stand.script.data("CreateBlob", BLOB);
     stand.script.data("CreateMoment", LANDED);
-    let mirrored = WirePrepare::Video { limits: None, mirror: true, on_cannot_decode: crate::ffi::upload_wire::CannotDecode::Fail, max_bytes: None };
+    let mirrored = WirePrepare::Video { limits: None, mirror: true, on_cannot_decode: crate::ffi::upload_wire::CannotDecode::Fail };
     let receipt = bound(database.send(send(database.session_epoch(), &source, mirrored))).await.unwrap();
     bound(database.confirmed(receipt, false)).await.unwrap();
     match &preparer.jobs()[0].plan {
@@ -444,44 +447,83 @@ fn upload_of_asset(database: &crate::ffi::Database, id: &str) -> Option<WireUplo
     row.uploads.into_iter().find(|entry| entry.action == "create_files").map(|entry| entry.upload)
 }
 
-fn limited(prepare: WirePrepare, max_bytes: u64) -> WirePrepare {
-    match prepare {
-        WirePrepare::Video { limits, mirror, on_cannot_decode, .. } => WirePrepare::Video { limits, mirror, on_cannot_decode, max_bytes: Some(max_bytes) },
-        WirePrepare::Image { edit, quality, format, .. } => WirePrepare::Image { edit, quality, format, max_bytes: Some(max_bytes) },
-    }
-}
-
-/// D-369: the file that would go to the network after the prepare step is larger than `max_bytes`: the upload fails with `prepare_failed` and the reason `too_large`, and nothing is sent. A file of exactly the limit goes.
+/// D-412: the file that goes to the network is larger than the `max_bytes` of its source: the upload fails with the kind `too_large` and nothing is sent, with a prepare step or without, alone or as a member of a batch. A file of exactly the limit goes.
 #[tokio::test(flavor = "multi_thread")]
-async fn xfer_prepare_too_large() {
-    let cases: Vec<(&str, ProbeOutcome, WirePrepare, usize, bool)> = vec![
-        ("the prepared result above the limit", probed_image(), limited(shrink(), PREPARED.len() as u64 - 1), 1, true),
-        ("the source as it is above the limit", video_probe(&[], false), limited(video(|_| {}), SOURCE.len() as u64 - 1), 0, true),
-        ("the prepared result of exactly the limit", probed_image(), limited(shrink(), PREPARED.len() as u64), 1, false),
+async fn xfer_too_large() {
+    let cases: Vec<(&str, ProbeOutcome, Option<WirePrepare>, u64, usize, bool)> = vec![
+        ("no prepare, above the limit", probed_image(), None, SOURCE.len() as u64 - 1, 0, true),
+        ("prepare, the source as it is above the limit", video_probe(&[], false), Some(video(|_| {})), SOURCE.len() as u64 - 1, 0, true),
+        ("the prepared result above the limit", probed_image(), Some(shrink()), PREPARED.len() as u64 - 1, 1, true),
+        ("no prepare, exactly the limit", probed_image(), None, SOURCE.len() as u64, 0, false),
+        ("the prepared result of exactly the limit", probed_image(), Some(shrink()), PREPARED.len() as u64, 1, false),
     ];
-    for (what, probe, prepare, runs, refused) in cases {
+    for (what, probe, prepare, limit, runs, refused) in cases {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("db.sqlite");
         let source = source_file(directory.path(), "clip", SOURCE);
         let preparer = ScriptedPreparer::new(probe, PREPARED, &[]);
-        let stand = Stand::new().keep_moment().with_preparer(preparer.clone());
+        let stand = if prepare.is_some() { Stand::new().keep_moment().with_preparer(preparer.clone()) } else { Stand::new().keep_moment() };
         let database = stand.open(Some(&path), &[CREATE_MOMENT]).await;
         stand.script.data("CreateBlob", BLOB);
         stand.script.data("CreateMoment", LANDED);
-        let receipt = bound(database.send(send(database.session_epoch(), &source, prepare))).await.unwrap();
+        let receipt = bound(database.send(send_limited(database.session_epoch(), &source, prepare, Some(limit)))).await.unwrap();
         let id = receipt.optimistic_value.as_ref().unwrap().id.clone();
         let outcome = bound(database.confirmed(receipt, false)).await;
         assert_eq!(preparer.runs().len(), runs, "{what}");
         if refused {
             crate::test_wait::settled(&database, "the refused size is shown", || upload_of(&database, &id).is_some_and(|upload| upload.status == WireUploadStatus::Failed)).await;
             let failed = upload_of(&database, &id).unwrap();
-            assert_eq!((failed.error.as_ref().map(|error| error.kind.clone()), failure_reason(&failed)), (Some("prepare_failed".to_string()), Some("too_large".to_string())), "{what}");
+            assert_eq!((failed.error.as_ref().map(|error| error.kind.clone()), failure_reason(&failed)), (Some("too_large".to_string()), None), "{what}");
             assert_eq!((stand.script.count("CreateBlob"), stand.puts.bodies.lock().unwrap().len(), stand.script.count("CreateMoment")), (0, 0, 0), "{what}: nothing goes to the network");
         } else {
             outcome.unwrap();
-            assert_eq!(*stand.puts.bodies.lock().unwrap(), vec![PREPARED.to_vec()], "{what}");
+            assert_eq!(stand.puts.bodies.lock().unwrap().len(), 1, "{what}");
             assert_eq!(stand.script.count("CreateMoment"), 1, "{what}");
         }
         database.close_now();
     }
+
+    let directory = tempfile::tempdir().unwrap();
+    let source = source_file(directory.path(), "cached", SOURCE);
+    let stand = Stand::new().keep_moment();
+    let database = stand.open(Some(&directory.path().join("cached.sqlite")), &[CREATE_MOMENT]).await;
+    stand.script.data("CreateBlob", BLOB);
+    stand.script.data("CreateMoment", LANDED);
+    let first = bound(database.send(send_limited(database.session_epoch(), &source, None, None))).await.unwrap();
+    bound(database.confirmed(first, false)).await.unwrap();
+    stand.script.data("CreateMoment", LANDED_NEXT);
+    let again = bound(database.send(send_limited(database.session_epoch(), &source, None, None))).await.unwrap();
+    bound(database.confirmed(again, false)).await.unwrap();
+    assert_eq!((stand.script.count("CreateBlob"), stand.script.count("CreateMoment"), stand.puts.bodies.lock().unwrap().len()), (1, 2, 1), "the same file again is a hit of the blob cache: the final mutation only");
+    let receipt = bound(database.send(send_limited(database.session_epoch(), &source, None, Some(SOURCE.len() as u64 - 1)))).await.unwrap();
+    let id = receipt.optimistic_value.as_ref().unwrap().id.clone();
+    crate::test_wait::settled(&database, "the refused size is shown over a cached blob", || upload_of(&database, &id).is_some_and(|upload| upload.status == WireUploadStatus::Failed)).await;
+    assert_eq!(upload_of(&database, &id).and_then(|upload| upload.error).map(|error| error.kind), Some("too_large".to_string()), "a cached blob");
+    assert_eq!((stand.script.count("CreateBlob"), stand.script.count("CreateMoment"), stand.puts.bodies.lock().unwrap().len()), (1, 2, 1), "a cached blob: no request for the limited file");
+    bound(database.retry(database.session_epoch(), "Moment".into(), id.clone(), Some("upload_clip".into()), None)).await.unwrap();
+    quiet(&database).await;
+    assert_eq!(upload_of(&database, &id).and_then(|upload| upload.error).map(|error| error.kind), Some("too_large".to_string()), "a retry ends at the same point with the same outcome");
+    assert_eq!((stand.script.count("CreateBlob"), stand.script.count("CreateMoment"), stand.puts.bodies.lock().unwrap().len()), (1, 2, 1), "a retry: no request for the limited file");
+    let deferred = bound(database.send(CommandRequest { epoch: database.session_epoch(), model: "Moment".into(), values_json: r#"{"text":"later"}"#.into(), args_json: "{}".into(), upload: Some(CommandUpload { action: "upload_clip".into(), request: WireUploadRequest { source: WireSource::Pending, variables_json: "{}".into() } }) })).await.unwrap();
+    let deferred_id = deferred.optimistic_value.as_ref().unwrap().id.clone();
+    let large_file = source_file(directory.path(), "late", b"late-bytes-above-the-limit");
+    let late = crate::ffi::upload_wire::WireUploadSource { path: large_file.to_str().unwrap().into(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into(), prepare: None, max_bytes: Some(10) };
+    bound(database.supply_source(database.session_epoch(), "Moment".into(), deferred_id.clone(), "upload_clip".into(), late)).await.unwrap();
+    crate::test_wait::settled(&database, "the refused size is shown for a supplied source", || upload_of(&database, &deferred_id).is_some_and(|upload| upload.status == WireUploadStatus::Failed)).await;
+    assert_eq!(upload_of(&database, &deferred_id).and_then(|upload| upload.error).map(|error| error.kind), Some("too_large".to_string()), "a supplied source");
+    assert_eq!((stand.script.count("CreateBlob"), stand.script.count("CreateMoment")), (1, 2), "a supplied source: no request");
+    database.close_now();
+
+    let directory = tempfile::tempdir().unwrap();
+    let (large, small) = (source_file(directory.path(), "large", SOURCE), source_file(directory.path(), "small", b"abc"));
+    let stand = Stand::new();
+    let database = stand.open(Some(&directory.path().join("batch.sqlite")), &OPERATIONS).await;
+    stand.script.data("CreateBlob", &blob(1));
+    let items = [&large, &small].iter().enumerate().map(|(index, path)| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":3,"position":{index}}}"#), source: WireSource::File { path: path.to_str().unwrap().into(), name: None, mime: None, prepare: None, max_bytes: Some(10) }, variables_json: "{}".into() }).collect();
+    let batch = bound(database.upload_create_batch(database.session_epoch(), "Asset".into(), items, WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
+    let member = batch.items[0].optimistic_value.id.clone();
+    crate::test_wait::settled(&database, "the large member failed", || upload_of_asset(&database, &member).is_some_and(|upload| upload.status == WireUploadStatus::Failed)).await;
+    assert_eq!(upload_of_asset(&database, &member).and_then(|upload| upload.error).map(|error| error.kind), Some("too_large".to_string()), "a member of a batch");
+    assert!(stand.puts.bodies.lock().unwrap().iter().all(|body| body.as_slice() != SOURCE), "no byte of the large member goes");
+    database.close_now();
 }
