@@ -31,6 +31,7 @@ const OPERATIONS: &str = r#"[
     {"name":"ChatList","document":"query ChatList($list: String) { chats(list: $list) { id name lists } }"},
     {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id name lists } } }"},
     {"name":"ChatUpdate","document":"mutation ChatUpdate($id: ID!, $name: String!) { chatUpdate(id: $id, name: $name) { id name } }"},
+    {"name":"ChatCreate","document":"mutation ChatCreate($name: String!, $clientKey: String!) { chatCreate(name: $name, clientKey: $clientKey) { id name clientKey lists } }"},
     {"name":"ChatPin","document":"mutation ChatPin($id: ID!, $pinned: Boolean!) { chatPin(id: $id, pinned: $pinned) { id pinned } }"},
     {"name":"ChatMute","document":"mutation ChatMute($id: ID!, $muted: Boolean!) { chatMute(id: $id, muted: $muted) { id muted } }"},
     {"name":"ChatMarkRead","document":"mutation ChatMarkRead($id: ID!) { chatMarkRead(id: $id) { id unreadCount } }"},
