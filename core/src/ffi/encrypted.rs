@@ -103,7 +103,7 @@ impl RetrySubscription {
 impl Database {
     pub fn retry_progress(&self) -> Arc<RetryProgress> { RetryProgress::new() }
 
-    pub async fn session_call(&self, operation: String, body_json: String) -> Result<String, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn session_call(&self, operation: String, body_json: String) -> Result<String, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.not_closed()?;
         let body_json = this_db.offload(move || { parse_json::<Value>(&body_json)?; Ok(body_json) }).await?;
         match this_db.await_life(this_db.life.session_call(operation, body_json)).await? {
@@ -113,7 +113,7 @@ impl Database {
         }
     }).await? }
 
-    pub async fn interrupted_session_answer(&self) -> Result<Option<String>, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn interrupted_session_answer(&self) -> Result<Option<String>, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         match this_db.await_life(this_db.life.interrupted_session_answer()).await? {
             LifeReply::SessionResume(Ok(Some(body))) => Ok(Some(body)),
             LifeReply::SessionResume(Ok(None)) => Ok(None),
@@ -123,7 +123,7 @@ impl Database {
     }).await? }
 
     /// Ends the session: the old work ends, the credential and the data of the account go. Returns after the clearing. The same call ends a plain or local database too.
-    pub async fn session_reset(&self) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn session_reset(&self) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         match this_db.await_life(this_db.life.session_reset()).await? {
             LifeReply::Life(Ok(())) => Ok(()),
             LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Storage)) => Err(DbError::Storage { detail: "the account could not be cleared".into() }),
@@ -167,7 +167,7 @@ pub(crate) fn session_failure(error: crate::owners::session::SessionError) -> Db
 /// The server config before the database exists: `observers` report the network state to the fetch and stop when it ends.
 #[uniffi::export]
 pub async fn fetch_server_config(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retries: Option<Arc<RetryProgress>>, observers: Option<Arc<dyn super::PlatformObserver>>) -> Result<ServerConfig, DbError> {
-    super::database::on_core(None, fetch_observed(encrypted, platform, version, build, FetchPorts { http, retries, observers }, Arc::new(crate::runtime::SystemClock))).await?
+    super::database::on_core(super::database::Scope::root(), fetch_observed(encrypted, platform, version, build, FetchPorts { http, retries, observers }, Arc::new(crate::runtime::SystemClock))).await?
 }
 
 #[derive(uniffi::Record)]
@@ -179,7 +179,7 @@ pub struct FetchPorts {
 
 #[uniffi::export]
 pub async fn fetch_server_config_with_clock(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, ports: FetchPorts, clock: Arc<super::TestClock>) -> Result<ServerConfig, DbError> {
-    super::database::on_core(None, fetch_observed(encrypted, platform, version, build, ports, clock.manual())).await?
+    super::database::on_core(super::database::Scope::root(), fetch_observed(encrypted, platform, version, build, ports, clock.manual())).await?
 }
 
 async fn fetch_observed(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, ports: FetchPorts, clock: Arc<dyn crate::runtime::Clock>) -> Result<ServerConfig, DbError> {

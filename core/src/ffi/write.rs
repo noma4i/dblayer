@@ -178,11 +178,11 @@ impl Database {
 
 #[uniffi::export]
 impl Database {
-    pub async fn create(&self, epoch: u64, model: String, values_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn create(&self, epoch: u64, model: String, values_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.create_row(epoch, model, values_json, args_json).await
     }).await? }
 
-    pub async fn update(&self, epoch: u64, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn update(&self, epoch: u64, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
         this_db.mutation_needs_transport(&model, "update")?;
         let (db, name) = (this_db.db.clone(), model.clone());
@@ -198,7 +198,7 @@ impl Database {
         this_db.write_planned(epoch, "update", planned).await
     }).await? }
 
-    pub async fn act(&self, epoch: u64, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn act(&self, epoch: u64, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
         if !this_db.db.spec(&model)?.actions.iter().any(|declared| declared.name == action) { return Err(DbError::Invalid { detail: format!("{model} declares no action {action}") }); }
         this_db.mutation_needs_transport(&model, &action)?;
@@ -215,7 +215,7 @@ impl Database {
         this_db.write_planned(epoch, &action, planned).await
     }).await? }
 
-    pub async fn destroy(&self, epoch: u64, model: String, row_id: String) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn destroy(&self, epoch: u64, model: String, row_id: String) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
         this_db.mutation_needs_transport(&model, "destroy")?;
         let row = this_db.resolved(epoch, &model, id(&row_id)?).await?;
@@ -224,7 +224,7 @@ impl Database {
         this_db.write_planned(epoch, "destroy", planned).await
     }).await? }
 
-    pub async fn set_local(&self, epoch: u64, model: String, row_id: String, path: String, value_json: String) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn set_local(&self, epoch: u64, model: String, row_id: String, path: String, value_json: String) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
         let (db, name, field) = (this_db.db.clone(), model.clone(), path.clone());
         let value = this_db.offload(move || {
@@ -244,7 +244,7 @@ impl Database {
         this_db.outbox_answer(epoch, waiter, "set local").await.map(drop)
     }).await? }
 
-    pub async fn set_ephemeral(&self, epoch: u64, model: String, row_id: String, values_json: String) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn set_ephemeral(&self, epoch: u64, model: String, row_id: String, values_json: String) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
         let (db, name, text) = (this_db.db.clone(), model.clone(), values_json.clone());
         this_db.offload(move || Ok(db.plan_set_ephemeral(&name, &parse_json(&text)?)?)).await?;
@@ -254,7 +254,7 @@ impl Database {
     }).await? }
 
     /// Attaches the local file at `source_path`: the library copies it in pieces and the row shows the copy.
-    pub async fn attach_file(&self, epoch: u64, model: String, row_id: String, field: String, source_path: String, name: String, mime: String) -> Result<super::wire::WireFile, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn attach_file(&self, epoch: u64, model: String, row_id: String, field: String, source_path: String, name: String, mime: String) -> Result<super::wire::WireFile, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
         let source_path = local_source(&source_path)?;
         let row = this_db.file_row(epoch, &model, &row_id, &field, true).await?;
@@ -276,7 +276,7 @@ impl Database {
         }
     }).await? }
 
-    pub async fn detach(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<bool, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn detach(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<bool, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         let row = this_db.file_row(epoch, &model, &row_id, &field, true).await?;
         let waiter = this_db.life.local_write(epoch, model, LocalWriteKind::Detach, row.to_string(), field);
         let OutboxAnswer::Written { files_removed, .. } = this_db.outbox_answer(epoch, waiter, "detach").await? else { return Err(super::database::foreign_reply()) };
@@ -284,11 +284,11 @@ impl Database {
     }).await? }
 
     /// The one outcome of a receipt (D-286): the value `Confirmed{value, answer_json}`, a refusal is `Rejected{failure, kept}` (`kept` = the failed intent stays for `retry` or `discard`), the end of the wait is the error of `cause_error`.
-    pub async fn confirmed(&self, receipt: WireOperationReceipt, discard_on_failure: bool) -> Result<WireConfirmed, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn confirmed(&self, receipt: WireOperationReceipt, discard_on_failure: bool) -> Result<WireConfirmed, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.settle(receipt, discard_on_failure).await
     }).await? }
 
-    pub async fn discard(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn discard(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         let (row_id, transfer) = this_db.operation_target(epoch, &model, &row_id, action.as_deref(), false).await?;
         if let Some(declared) = action.as_deref().filter(|_| transfer) {
             return this_db.discard_transfer(epoch, &model, &row_id, declared).await;

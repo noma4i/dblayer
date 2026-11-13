@@ -144,7 +144,7 @@ impl Database {
         self.begin(LoadArgs { epoch, model, relation, params_json, goal: Goal::First, force: false })
     }
 
-    pub async fn refresh(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn refresh(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
         let relation = relation_named(&model, relation)?;
         let Some(call) = this_db.start_load(epoch, &model, &relation, &params_json, (Goal::First, true), Some("refresh")).await? else { return Ok(()) };
@@ -158,14 +158,14 @@ impl Database {
         self.begin(LoadArgs { epoch, model, relation, params_json, goal: Goal::All, force })
     }
 
-    pub async fn load_more(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<LoadMoreResult, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn load_more(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<LoadMoreResult, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
         let relation = relation_named(&model, relation)?;
         let Some(call) = this_db.start_load(epoch, &model, &relation, &params_json, (Goal::Next, false), Some("load more")).await? else { return Ok(LoadMoreResult::NoMore) };
         this_db.finish_load(call).await
     }).await? }
 
-    pub async fn node(&self, epoch: u64, model: String, relation: String, row_id: String, force: bool) -> Result<Option<WireRow>, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn node(&self, epoch: u64, model: String, relation: String, row_id: String, force: bool) -> Result<Option<WireRow>, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
         this_db.node_relation(&model, &relation, NodeRead::One)?;
         let id = RowId::new(&row_id).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
@@ -183,7 +183,7 @@ impl Database {
     }).await? }
 
     /// The rows of the ids that the answer of the server returned, in the order of the call.
-    pub async fn nodes(&self, epoch: u64, model: String, relation: String, row_ids: Vec<String>) -> Result<Vec<WireRow>, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn nodes(&self, epoch: u64, model: String, relation: String, row_ids: Vec<String>) -> Result<Vec<WireRow>, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.admit_now(epoch)?;
         this_db.node_relation(&model, &relation, NodeRead::Many)?;
         let asked = row_ids.iter().map(|id| RowId::new(id).map_err(|error| DbError::Invalid { detail: error.to_string() })).collect::<Result<Vec<_>, _>>()?;

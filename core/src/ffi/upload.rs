@@ -191,7 +191,7 @@ impl Database {
 
 #[uniffi::export]
 impl Database {
-    pub async fn supply_source(&self, epoch: u64, model: String, row_id: String, action: String, source: WireUploadSource) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn supply_source(&self, epoch: u64, model: String, row_id: String, action: String, source: WireUploadSource) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         let (row, _) = this_db.operation_target(epoch, &model, &row_id, Some(&action), true).await?;
         let row = id(&row)?;
         let database = this_db.me.upgrade().ok_or_else(super::command::closed)?;
@@ -203,7 +203,7 @@ impl Database {
         }
     }).await? }
 
-    pub async fn fail_source(&self, epoch: u64, model: String, row_id: String, action: String, message: String) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn fail_source(&self, epoch: u64, model: String, row_id: String, action: String, message: String) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         let (row, _) = this_db.operation_target(epoch, &model, &row_id, Some(&action), true).await?;
         match this_db.transfer_answer(epoch, this_db.life.fail_source(epoch, key_of(&model, row.as_str(), &action), message), "fail source").await? {
             TransferAnswer::Ok => Ok(()),
@@ -211,7 +211,7 @@ impl Database {
         }
     }).await? }
 
-    pub async fn upload(&self, epoch: u64, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn upload(&self, epoch: u64, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
         let file = this_db.offload(move || request.into_file()).await?;
         let single = this_db.single_of(&model, &action, &file, false)?;
@@ -233,7 +233,7 @@ impl Database {
     }).await? }
 
     /// The file goes up before its row exists: `commit_staged` sends the final mutation (D-372).
-    pub async fn stage(&self, epoch: u64, model: String, action: String, request: WireUploadRequest) -> Result<WireStagedUpload, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn stage(&self, epoch: u64, model: String, action: String, request: WireUploadRequest) -> Result<WireStagedUpload, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
         let file = this_db.offload(move || request.into_file()).await?;
         let single = this_db.single_of(&model, &action, &file, true)?;
@@ -246,7 +246,7 @@ impl Database {
         Ok(WireStagedUpload { row_id: row.to_string(), receipt: this_db.transfer_receipt(epoch, model, held, None) })
     }).await? }
 
-    pub async fn commit_staged(&self, epoch: u64, model: String, row_id: String, action: String, values_json: String, variables_json: String) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn commit_staged(&self, epoch: u64, model: String, row_id: String, action: String, values_json: String, variables_json: String) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
         let (db, name, row) = (this_db.db.clone(), model.clone(), row_id.clone());
         let (planned, variables) = this_db.offload(move || {
@@ -267,7 +267,7 @@ impl Database {
         Ok(this_db.transfer_receipt(epoch, model, held, value))
     }).await? }
 
-    pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<WireBatchReceipt, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<WireBatchReceipt, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
         let (items, request) = this_db.offload(move || Ok((items.into_iter().map(WireUploadItem::into_item).collect::<Result<Vec<_>, _>>()?, request.into_input()?))).await?;
         this_db.upload_operations()?;
@@ -300,7 +300,7 @@ impl Database {
         Ok(WireBatchReceipt { epoch, items })
     }).await? }
 
-    pub async fn cancel_upload(&self, epoch: u64, model: String, row_id: String, action: String) -> Result<bool, DbError> { let this_db = self.clone(); super::database::on_core(Some(self.life.clone()), async move {
+    pub async fn cancel_upload(&self, epoch: u64, model: String, row_id: String, action: String) -> Result<bool, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         let (row, _) = this_db.operation_target(epoch, &model, &row_id, Some(&action), true).await?;
         if this_db.uploads.is_none() { return Err(DbError::NotFound { detail: "cancel upload: there is no such operation".into() }); }
         let waiter = this_db.life.cancel_upload(epoch, key_of(&model, &row, &action));
