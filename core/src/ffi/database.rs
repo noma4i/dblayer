@@ -127,6 +127,11 @@ pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T,
     crate::task::spawn_blocking_on(executor()?.handle(), None, work).await.map_err(joined)?
 }
 
+/// Starts the observer of the platform on a blocking thread of the executor: its start runs neither on the thread of the poll nor on a worker of the runtime.
+pub(super) fn start_observer(observer: Arc<dyn super::PlatformObserver>, sink: Arc<super::OnlineSink>) -> Result<tokio::task::JoinHandle<()>, DbError> {
+    Ok(crate::task::spawn_blocking_on(executor()?.handle(), None, move || crate::lock::effect(|| observer.start(sink))))
+}
+
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Config { pub path: Option<String>, pub data_version: Option<String> }
 

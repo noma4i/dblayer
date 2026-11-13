@@ -57,14 +57,12 @@ impl NetworkStatus {
     /// The first call starts `observer` once for the process, it feeds the value through `OnlineSink.set_path` and is never stopped. Later calls ignore their `observer`.
     #[uniffi::constructor]
     pub fn new(observer: Arc<dyn PlatformObserver>) -> Arc<Self> {
-        static STARTED: std::sync::OnceLock<Arc<dyn PlatformObserver>> = std::sync::OnceLock::new();
-        STARTED.get_or_init(|| {
-            if let Ok(executor) = super::database::executor() {
-                let started = observer.clone();
-                crate::task::spawn_on(executor.handle(), async move { crate::lock::effect(|| started.start(OnlineSink::of_status())); });
-            }
-            observer
-        });
+        static STARTED: std::sync::Mutex<Option<Arc<dyn PlatformObserver>>> = std::sync::Mutex::new(None);
+        let mut started = STARTED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if started.is_none() && super::database::start_observer(observer.clone(), OnlineSink::of_status()).is_ok() {
+            *started = Some(observer);
+        }
+        drop(started);
         Arc::new(Self)
     }
 

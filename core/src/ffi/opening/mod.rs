@@ -145,7 +145,7 @@ impl Database {
         if self.db.observers().set(Arc::new(ObserverStop(observers.clone(), sink.registrations()))).is_err() {
             return Err(DbError::Invalid { detail: "the observers are already set".into() });
         }
-        super::database::blocking(move || { observers.start(sink); Ok(()) }).await
+        super::database::start_observer(observers, sink)?.await.map_err(super::database::joined)
     }
 }
 

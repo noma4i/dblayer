@@ -2,7 +2,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 use crate::transport::{self as core, EncryptedConfig, EncryptedTransport, Exchange, ServerConfig, SessionCode};
-use super::database::{blocking, parse_json, Database, Encrypted, Wiring};
+use super::database::{parse_json, Database, Encrypted, Wiring};
 use crate::owners::life::LifeReply;
 use super::transport::{transport_error, ForeignTransport};
 use super::{DbError, Transport};
@@ -193,7 +193,7 @@ async fn fetch_observed(encrypted: EncryptedConfig, platform: core::AppPlatform,
     let _stop = StopOnDrop(observers.clone());
     if let Some(observers) = observers {
         let sink = super::OnlineSink::of_connectivity(connectivity.clone());
-        blocking(move || { observers.start(sink); Ok(()) }).await?;
+        super::database::start_observer(observers, sink)?.await.map_err(super::database::joined)?;
     }
     fetch_server_config_with(encrypted, platform, version, build, http, retries, Waits { connectivity, clock }).await
 }
