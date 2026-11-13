@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Fix the Android crash at start when a reader of the network status waits.
+
 ## 6.34.0 - 2026-11-13
 
 ### Added
