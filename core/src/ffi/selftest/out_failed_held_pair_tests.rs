@@ -120,10 +120,12 @@ async fn out_failed_held_pair_restart_frees_the_queue() {
     let secret = stand.rig.credentials.inner.value().unwrap();
     let epoch = database.session_epoch();
     for _ in 0..40 { stand.script.enqueue("CreateMoment", Answer::Lost); }
-    stand.script.data("CreateMoment", REFUSED);
+    let released = stand.script.hold("CreateMoment", REFUSED);
     let first = bound(database.send(plain("Moment", r#"{"text":"A"}"#, epoch))).await.unwrap();
     let temporary = first.optimistic_value.as_ref().unwrap().id.clone();
     advancing(&clock, until_failed(&database)).await;
+    released.entered().await;
+    crate::ffi::owners_drained(&database).await.unwrap();
     rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
     let image = directory.path().join("image.sqlite");
     super::crash_image_call_tests::copy_image(&live, &image);
