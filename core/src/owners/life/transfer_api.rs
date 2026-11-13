@@ -35,6 +35,8 @@ impl Life {
 
     pub fn commit_upload(&self, epoch: Epoch, key: String, request: CommitRequest) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Commit { epoch, key, request, reply }) }
 
+    pub fn staged_dimensions(&self, epoch: Epoch, key: String) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::StagedDimensions { key, reply }) }
+
     pub fn discard_upload(&self, epoch: Epoch, key: String) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Discard { key, reply }) }
 
     pub fn upload_outcome(&self, epoch: Epoch, receipt: Receipt, discard_on_failure: bool) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Outcome { receipt, reply, discard_on_failure }) }

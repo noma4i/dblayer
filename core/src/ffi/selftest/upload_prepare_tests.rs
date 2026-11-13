@@ -362,6 +362,30 @@ async fn xfer_prepare_recode_above_bytes() {
     }
 }
 
+/// D-413: the declared attributes hold the size a user sees of the prepared file from the first commit of the row and go to the final mutation; the prepare step takes the probe of the acceptance.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_dimensions_of_the_result_from_the_acceptance() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = source_file(directory.path(), "clip.mp4", SOURCE);
+    let preparer = ScriptedPreparer::new(video_probe(&[], true), PREPARED, &[]);
+    let stand = Stand::new().with_preparer(preparer.clone()).with_dimensions();
+    let database = stand.open(Some(&directory.path().join("db.sqlite")), &[CREATE_MOMENT]).await;
+    stand.script.data("CreateBlob", BLOB);
+    stand.script.data("CreateMoment", LANDED);
+    let receipt = bound(database.send(send(database.session_epoch(), &source, video(|limits| limits.max_long_side = 640)))).await.unwrap();
+    let spec = database.db.spec("Moment").unwrap();
+    let fields = crate::ffi::wire::wire_fields(spec);
+    let row = receipt.optimistic_value.clone().expect("the row of the send");
+    let size_of = |name: &str| row.cells[fields.iter().position(|field| field.name == name).unwrap()].clone();
+    let shown = (size_of("width"), size_of("height"));
+    bound(database.confirmed(receipt, false)).await.unwrap();
+    let sent = &stand.script.variables("CreateMoment")[0];
+    let sent = (sent["width"].clone(), sent["height"].clone());
+    let int = |value: i64| crate::ffi::wire::Cell::Int { value };
+    assert_eq!((shown, sent, preparer.probes().len()), ((int(360), int(640)), (serde_json::json!(360), serde_json::json!(640)), 1), "a 1280x720 video turned by 90 and limited to 640 on its long side, probed once");
+    database.close_now();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn xfer_prepare_refuses_a_rotation_outside_the_set() {
     let directory = tempfile::tempdir().unwrap();

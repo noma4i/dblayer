@@ -7,6 +7,7 @@
 - recodeAboveBytes in the video limits: a smaller video is not encoded again.
 - prepare and maxBytes on the generated upload and stage helpers.
 - batchProgress in uploads: the share of the whole uploadBatch on each of its records.
+- dimensions on an upload operation: the row gets the width and height of the uploaded file.
 
 ## 6.34.1 - 2026-11-14
 

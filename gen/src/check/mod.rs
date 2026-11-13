@@ -258,6 +258,7 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
     }
     check_batch(node, operation, report);
     check_processing(node, operation, report);
+    check_dimensions(node, operation, report);
 }
 
 fn check_optimistic_value(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDecl, (field, value): (&str, &OptimisticValue), pos: Pos, report: &mut impl FnMut(Pos, String)) {
@@ -298,6 +299,19 @@ fn check_optimistic_value(node: &ModelDecl, all: &[ModelDecl], operation: &Opera
             }
         }
         _ => {}
+    }
+}
+
+fn check_dimensions(node: &ModelDecl, operation: &OperationDecl, report: &mut impl FnMut(Pos, String)) {
+    let Some(dimensions) = &operation.dimensions else { return };
+    let name = &operation.name;
+    if operation.upload.is_none() {
+        report(dimensions.pos, format!("operation `{name}`: `dimensions` belongs to an operation with `upload: true`"));
+    }
+    for field in [&dimensions.width, &dimensions.height] {
+        if !node.attributes.iter().any(|attribute| attribute.name == *field && matches!(attribute.ty, TypeRef::Scalar(ScalarKind::Int))) {
+            report(dimensions.pos, format!("operation `{name}`: `dimensions` names `{field}`, which is no integer attribute of `{}`", node.name));
+        }
     }
 }
 

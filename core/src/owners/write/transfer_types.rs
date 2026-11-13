@@ -84,6 +84,7 @@ pub struct SuppliedSource {
     pub local: String,
     pub variables: serde_json::Map<String, serde_json::Value>,
     pub wrap: Option<String>,
+    pub probed: Option<crate::ffi::ProbeOutcome>,
 }
 
 #[derive(Clone, Debug)]
@@ -236,6 +237,10 @@ pub struct BatchItem {
     pub max_bytes: Option<u64>,
     pub mutation: NewOp,
     pub steps: Option<Steps>,
+    /// The probe of the source at the acceptance: the first attempt of the prepare step takes it, no second probe runs (D-413).
+    pub probed: Option<crate::ffi::ProbeOutcome>,
+    /// The width and height a staged upload measured at its acceptance, given to its commit (D-413).
+    pub dimensions: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// What `Commit` gives a held transfer: the effects of the new row and the variables the final mutation gets.
@@ -307,6 +312,8 @@ pub enum TransferInput {
     Cancel { key: Key, reply: ReplyId },
     SupplySource { epoch: Epoch, key: Key, source: SuppliedSource, reply: ReplyId },
     Commit { epoch: Epoch, key: Key, request: CommitRequest, reply: ReplyId },
+    /// The width and height a staged upload measured: `commit_staged` writes them with the row (D-413).
+    StagedDimensions { key: Key, reply: ReplyId },
     SourceFailed { epoch: Epoch, key: Key, message: String, reply: ReplyId },
     Retry { key: Key, source: Option<SuppliedSource>, reply: ReplyId },
     Discard { key: Key, reply: ReplyId },
@@ -377,6 +384,7 @@ pub enum TransferAnswer {
     #[cfg(test)]
     Quiet(u64),
     Cancelled(bool),
+    Dimensions(Option<serde_json::Map<String, serde_json::Value>>),
     Err(Fault),
 }
 
@@ -528,6 +536,8 @@ pub struct Transfer {
     pub source: Option<Source>,
     pub prepare: Option<crate::ffi::upload_wire::WirePrepare>,
     pub max_bytes: Option<u64>,
+    pub probed: Option<crate::ffi::ProbeOutcome>,
+    pub dimensions: Option<serde_json::Map<String, serde_json::Value>>,
     pub batch_id: Option<BatchId>,
     pub epoch: Epoch,
     pub stage: TransferStage,

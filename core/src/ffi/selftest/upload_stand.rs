@@ -260,6 +260,7 @@ pub(super) struct Stand {
     pub(super) puts: Arc<Puts>,
     root: Option<Option<&'static str>>,
     keep_moment: bool,
+    dimensions: bool,
     preparer: Option<Arc<dyn Preparer>>,
     signed_out: bool,
     /// The registration of the app is complete: the open checks the operations, as an app does.
@@ -273,7 +274,7 @@ impl Drop for Stand {
 }
 
 impl Stand {
-    pub(super) fn new() -> Self { Self { rig: SessionRig::new(), script: Arc::default(), puts: Arc::default(), root: None, keep_moment: false, preparer: None, signed_out: false, complete: AtomicBool::new(false), store: None } }
+    pub(super) fn new() -> Self { Self { rig: SessionRig::new(), script: Arc::default(), puts: Arc::default(), root: None, keep_moment: false, dimensions: false, preparer: None, signed_out: false, complete: AtomicBool::new(false), store: None } }
 
 
     /// The open does not sign in: the test signs in itself.
@@ -285,6 +286,9 @@ impl Stand {
     }
 
     pub(super) fn keep_moment(mut self) -> Self { self.keep_moment = true; self }
+
+    /// `Moment` has the integer attributes `width` and `height`, and `upload_clip` declares them as its `dimensions` (D-413).
+    pub(super) fn with_dimensions(mut self) -> Self { self.dimensions = true; self }
 
     pub(super) fn reporting_bytes(self) -> Self {
         self.puts.reports.store(true, Ordering::SeqCst);
@@ -298,9 +302,21 @@ impl Stand {
 
     fn models(&self) -> String {
         let text = include_str!("upload_wrapper_models.json");
-        if self.root.is_none() && !self.keep_moment { return text.to_string() }
+        if self.root.is_none() && !self.keep_moment && !self.dimensions { return text.to_string() }
         let mut models: Value = serde_json::from_str(text).unwrap();
         for model in models.as_array_mut().unwrap() {
+            if self.dimensions && model["key"] == "Moment" {
+                let fields = model["fields"].as_array_mut().unwrap();
+                let mut width = fields.iter().find(|field| field["name"] == "id").unwrap().clone();
+                width["kind"] = json!({"type": "scalar", "kind": "int"});
+                width["nullable"] = json!(true);
+                let mut height = width.clone();
+                width["name"] = json!("width");
+                height["name"] = json!("height");
+                fields.extend([width, height]);
+                let action = model["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "upload_clip").unwrap();
+                action["dimensions"] = json!({"width": "width", "height": "height"});
+            }
             if self.keep_moment && model["key"] == "Moment" {
                 let action = model["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "create").unwrap();
                 action["on_failure"] = json!("keep");

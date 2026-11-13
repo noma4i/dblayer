@@ -286,7 +286,7 @@ pub(super) fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
     line.finish(cx);
     let lines = block(cx, call)?;
     let mut decl = OperationDecl {
-        pos: line.pos, name: name.clone(), kind, upload, expires_after, processing: None, mutation: None, parameters: Vec::new(), variables: None, local: None, local_from: Vec::new(), local_sites: Vec::new(), wrap: None, response: None, match_by: None,
+        pos: line.pos, name: name.clone(), kind, upload, expires_after, processing: None, dimensions: None, mutation: None, parameters: Vec::new(), variables: None, local: None, local_from: Vec::new(), local_sites: Vec::new(), wrap: None, response: None, match_by: None,
         on_failure: None, optimistic: None, upserts: Vec::new(), refetch: Vec::new(), returns: None, batch: None, length: None,
         removes_receiver: None, copies_receiver_to: None, scope_effects: Vec::new(),
     };
@@ -299,7 +299,7 @@ pub(super) fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
                 | (OperationKind::Create | OperationKind::Update | OperationKind::Custom, "parameter")
                 | (OperationKind::Create | OperationKind::Update, "local" | "refetch" | "match_by" | "on_failure")
                 | (OperationKind::Custom, "match_by" | "on_failure" | "optimistic" | "upsert" | "refetch" | "returns" | "batch" | "validates")
-                | (OperationKind::Custom, "processing" | "removes_receiver" | "copies_receiver_to" | "joins_scope" | "leaves_scope")
+                | (OperationKind::Custom, "processing" | "dimensions" | "removes_receiver" | "copies_receiver_to" | "joins_scope" | "leaves_scope")
         );
         if !allowed {
             cx.fail(Pos::of(item), format!("`{word}` does not apply to operation `{name}`"));
@@ -385,6 +385,17 @@ pub(super) fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl)
                 decl.processing = Some(ProcessingDecl { pos: line.pos, field, done, progress });
             } else {
                 cx.fail(line.pos, "`processing` needs a field path and a non-empty `done: [...]`");
+            }
+        }
+        "dimensions" => {
+            no_block(cx, call);
+            line.no_args(cx);
+            let width = line.opt(cx, "width").and_then(|pair| symbol(cx, &pair.value, "`width`"));
+            let height = line.opt(cx, "height").and_then(|pair| symbol(cx, &pair.value, "`height`"));
+            line.finish(cx);
+            match (width, height) {
+                (Some(width), Some(height)) => decl.dimensions = Some(DimensionsDecl { pos: line.pos, width, height }),
+                _ => cx.fail(line.pos, "`dimensions` needs `width: :attribute, height: :attribute`"),
             }
         }
         "response" => decl.response = response(cx, call),

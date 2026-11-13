@@ -1134,6 +1134,8 @@ For file uploads, name each operation and declare it with `operation :name, uplo
 
 An upload operation can declare that the server works on the file after the transfer: `processing "status", done: ["READY"], progress: "percent"`. The first argument is the field of the model that holds the state, `done` lists its terminal values and `progress` names the field that holds the progress. While the field holds another value, the upload entry of the action carries the processing and its progress. A new value of the row, from an answer or an event, updates it. A terminal value removes it. A path or a `done` value that the model does not declare fails the generator with the file and line.
 
+An upload operation can name the integer attributes that hold the size of the uploaded file: `dimensions width: :width, height: :height`. The library reads the file during the call and writes both attributes with the first values of the row, and the final mutation gets them as variables of the same names. The size is the one a user sees: the result of `prepare`, or the source turned upright. A file the platform cannot read leaves both attributes empty.
+
 ```ruby
 operation :answer_connection do
   mutation "ConnectionUpdate"

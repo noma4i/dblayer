@@ -436,6 +436,14 @@ pub struct LengthDecl {
     pub maximum: usize,
 }
 
+/// `dimensions width: :width, height: :height`: the attributes that hold the size of the uploaded file as a user sees it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DimensionsDecl {
+    pub pos: Pos,
+    pub width: String,
+    pub height: String,
+}
+
 /// `processing "status", done: ["READY"], progress: "percent"`: the server works on the file after the transfer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProcessingDecl {
@@ -453,6 +461,7 @@ pub struct OperationDecl {
     pub upload: Option<Pos>,
     pub expires_after: Option<u64>,
     pub processing: Option<ProcessingDecl>,
+    pub dimensions: Option<DimensionsDecl>,
     pub mutation: Option<Spanned<String>>,
     pub parameters: Vec<ParameterDecl>,
     pub variables: Option<Vec<VariableBinding>>,

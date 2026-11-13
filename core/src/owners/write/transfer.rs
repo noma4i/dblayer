@@ -961,7 +961,7 @@ impl TransferState {
     }
 
     fn handle(&mut self, now: Time, input: TransferInput, fx: &mut Fx) {
-        if let (Some(error), TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::Commit { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::SelectRow { reply: id, .. }) = (&self.queue_error, &input) {
+        if let (Some(error), TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::Commit { reply: id, .. } | TransferInput::StagedDimensions { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::SelectRow { reply: id, .. }) = (&self.queue_error, &input) {
             return reply(fx, *id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
         match input {
@@ -1018,6 +1018,10 @@ impl TransferState {
             TransferInput::Cancel { key, reply } => self.cancel(now, &key, reply, true, fx),
             TransferInput::SupplySource { epoch, key, source, reply } => self.supply_source(epoch, &key, source, reply, fx),
             TransferInput::Commit { epoch, key, request, reply } => self.commit(epoch, &key, request, reply, fx),
+            TransferInput::StagedDimensions { key, reply: rep } => {
+                let dimensions = self.open_id(&key).and_then(|id| self.transfers.get(&id)).and_then(|transfer| transfer.dimensions.clone());
+                reply(fx, rep, TransferAnswer::Dimensions(dimensions));
+            }
             TransferInput::SourceFailed { epoch, key, message, reply } => self.source_failed(now, epoch, &key, message, reply, fx),
             TransferInput::Discard { key, reply } => self.cancel(now, &key, reply, false, fx),
             TransferInput::SelectRow { model, rows, outbox_min, kind, reply, version } => self.select_row((model, rows), outbox_min, kind, reply, version, fx),
@@ -1068,7 +1072,7 @@ impl TransferState {
                 self.replay_held(now, fx);
             }
             held @ (TransferInput::Accept { .. } | TransferInput::AcceptBatch { .. }) if Self::in_epoch(&held, self.epoch) => self.held.push(held),
-            held @ (TransferInput::Cancel { .. } | TransferInput::SupplySource { .. } | TransferInput::Commit { .. } | TransferInput::SourceFailed { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. } | TransferInput::MutationOutcome { .. } | TransferInput::MutationOutcomes { .. }) => self.held.push(held),
+            held @ (TransferInput::Cancel { .. } | TransferInput::SupplySource { .. } | TransferInput::Commit { .. } | TransferInput::StagedDimensions { .. } | TransferInput::SourceFailed { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. } | TransferInput::MutationOutcome { .. } | TransferInput::MutationOutcomes { .. }) => self.held.push(held),
             TransferInput::EpochStarted(started) => {
                 self.epoch = started.epoch;
                 self.base_generation = started.generation;
@@ -1119,7 +1123,7 @@ impl TransferState {
         let fault = Fault::Ended(cause.clone());
         for input in std::mem::take(&mut self.held) {
             match input {
-                TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::Commit { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::SelectRow { reply: id, .. } => reply(fx, id, TransferAnswer::Err(fault.clone())),
+                TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::Commit { reply: id, .. } | TransferInput::StagedDimensions { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::SelectRow { reply: id, .. } => reply(fx, id, TransferAnswer::Err(fault.clone())),
                 TransferInput::Outcome { reply: id, .. } => reply(fx, id, TransferAnswer::Outcome(OutboxOutcome::Ended(cause.clone()), None)),
                 _ => {}
             }

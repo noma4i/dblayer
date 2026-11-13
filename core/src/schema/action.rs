@@ -68,6 +68,9 @@ pub struct ActionDeclaration {
     /// The server works on the file after `Confirmed`: the field, its terminal values and the field of the progress (M37).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub processing: Option<ProcessingDeclaration>,
+    /// The attributes of the row that hold the width and height of the uploaded file as a user sees it (D-413).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dimensions: Option<DimensionsDeclaration>,
     /// Closed effect: the receiver row leaves every list before the answer and returns when the server refuses.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub removes_receiver: bool,
@@ -139,6 +142,12 @@ pub struct UploadBatchRenumber {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DimensionsDeclaration {
+    pub width: String,
+    pub height: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessingDeclaration {
     pub field: String,
     pub done: Vec<String>,
@@ -183,6 +192,7 @@ impl ActionDeclaration {
             lands: Vec::new(),
             returns: None,
             processing: None,
+            dimensions: None,
             removes_receiver: false,
             copies_receiver_to: None,
             scope_effects: Vec::new(),

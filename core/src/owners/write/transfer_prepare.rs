@@ -105,7 +105,9 @@ impl TransferState {
         let Some(kind) = transfer.prepare.as_ref().map(WirePrepare::kind) else { return };
         transfer.attempt_id = attempt_id;
         if let Some(prep) = transfer.prep.as_mut() { prep.phase = PreparePhase::Probe; }
-        run(fx, TransferEffect::Probe { transfer_id: id, attempt_id, kind });
+        let Some(outcome) = transfer.probed.take() else { return run(fx, TransferEffect::Probe { transfer_id: id, attempt_id, kind }) };
+        let timer = self.timer();
+        fx.push(Effect::Schedule { id: timer, after: Duration::ZERO, input: TransferInput::Probed { transfer_id: id, attempt_id, outcome } });
     }
 
     /// An input of an attempt the owner does not know: the platform is told to stop it (R2), an old attempt of a live step changes nothing (R4).

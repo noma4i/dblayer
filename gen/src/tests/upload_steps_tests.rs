@@ -68,3 +68,22 @@ fn xfer_processing_by_event() {
         assert!(errors.iter().any(|error| error.message.contains(message)), "{case}: {errors:?}");
     }
 }
+
+/// D-413: `dimensions` reaches the action and names integer attributes of the model only.
+#[test]
+fn xfer_dimensions_declared() {
+    let steps = "uploads do\n  create_blob :CreateBlob, root: \"blobCreate\"\nend\n";
+    let model = |dimensions: &str| format!("{steps}model Clip do\n  attribute :width, :int, null: true\n  attribute :height, :int, null: true\n  attribute :title, :string, null: true\n  operation :send, upload: true do\n    mutation \"ClipSend\"\n    optimistic false\n    {dimensions}\n    response from: \"clipSend\"\n  end\nend\n");
+    let models = parse_models(&model("dimensions width: :width, height: :height")).unwrap();
+    let action = models[0].actions.iter().find(|action| action.name == "send").unwrap();
+    let declared = action.dimensions.as_ref().expect("the declaration reaches the action");
+    assert_eq!((declared.width.as_str(), declared.height.as_str()), ("width", "height"));
+    for (case, message) in [
+        ("dimensions width: :title, height: :height", "no integer attribute"),
+        ("dimensions width: :missing, height: :height", "no integer attribute"),
+        ("dimensions width: :width", "needs `width: :attribute, height: :attribute`"),
+    ] {
+        let errors = parse_models(&model(case)).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains(message)), "{case}: {errors:?}");
+    }
+}

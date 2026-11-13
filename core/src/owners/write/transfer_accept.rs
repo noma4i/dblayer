@@ -29,6 +29,7 @@ impl TransferState {
         let (file, staged) = (source.source.clone(), transfer.previous.is_some());
         transfer.source = Some(file.clone());
         transfer.prepare.clone_from(&source.prepare);
+        transfer.probed.clone_from(&source.probed);
         transfer.max_bytes = source.max_bytes;
         transfer.steps = Some(source.steps.clone());
         transfer.supply_values = source.values.clone();
@@ -58,7 +59,7 @@ impl TransferState {
         let (transfer_id, seq) = (self.next_id, self.next_seq);
         self.next_id += 1;
         self.next_seq += 1;
-        let BatchItem { key, held, fields, urgent, source, prepare, max_bytes, mutation, steps } = item;
+        let BatchItem { key, held, fields, urgent, source, prepare, max_bytes, mutation, steps, probed, dimensions } = item;
         let transfer = Transfer {
             held,
             multipart_forced: held,
@@ -73,6 +74,8 @@ impl TransferState {
             source,
             prepare,
             max_bytes,
+            probed,
+            dimensions,
             batch_id,
             epoch: self.epoch,
             stage,
