@@ -6,6 +6,7 @@
 
 - Keep the revision when the server repeats the delete of a removed row.
 - Keep the rows of local models and local field values when the database format changes.
+- Keep the order of calls started one after another when the device is under load.
 
 ## 6.35.0 - 2026-11-14
 

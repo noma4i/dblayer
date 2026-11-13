@@ -126,9 +126,9 @@ impl Drop for Alive {
 
 impl Router {
     fn push(&self, to: usize, command: Command) {
-        super::order::entered_owner();
         self.inflight.add();
         self.boxes[to].push(Queued::new(command));
+        super::order::entered_owner();
         if self.stopped[to].load(Ordering::SeqCst) { self.inflight.done(self.boxes[to].drain()); }
     }
 
