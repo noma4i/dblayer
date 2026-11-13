@@ -22,7 +22,7 @@ async fn boundary_selector_without_action() {
         let path = directory.path().join("logo.jpg");
         std::fs::write(&path, b"jpeg").unwrap();
         let epoch = rig.database.session_epoch();
-        rig.database.set_online(false).unwrap();
+        rig.database.set_online(false).await.unwrap();
 
         let upload = || async { bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), WireUploadRequest::of(&{ let mut file = UploadFile::new(path.to_str().unwrap()); file.variables = json!({"id": "c1"}).as_object().unwrap().clone(); file }))).await.unwrap() };
         let pin = || async { bound(rig.database.act(epoch, "Chat".into(), "c1".into(), "pin".into(), "{}".into(), json!({"pinned": true}).to_string())).await.unwrap() };
@@ -38,7 +38,7 @@ async fn boundary_selector_without_action() {
         let (ended, kept) = if transfer_first { (transfer, mutation) } else { (mutation, transfer) };
         assert!(matches!(bound(rig.database.confirmed(ended, false)).await, Err(DbError::Interrupted { detail }) if detail.to_lowercase().contains("discard")), "transfer_first {transfer_first}: the first operation ended");
 
-        rig.database.set_online(true).unwrap();
+        rig.database.set_online(true).await.unwrap();
         assert!(bound(rig.database.confirmed(kept, false)).await.is_ok(), "transfer_first {transfer_first}: the other operation went out");
         settled(&rig, "the server saw the kept operation only", || rig.world.count("ChatPin") + rig.world.count("ChatUpdatePhoto") == 1).await;
         assert_eq!(rig.world.count(if transfer_first { "ChatPin" } else { "ChatUpdatePhoto" }), 1, "transfer_first {transfer_first}");
@@ -59,7 +59,7 @@ async fn boundary_transfer_selector() {
         let path = directory.path().join("logo.jpg");
         std::fs::write(&path, b"jpeg").unwrap();
         let epoch = rig.database.session_epoch();
-        rig.database.set_online(false).unwrap();
+        rig.database.set_online(false).await.unwrap();
         let mut file = UploadFile::new(path.to_str().unwrap());
         file.variables = json!({"id": "c1"}).as_object().unwrap().clone();
         let upload = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), WireUploadRequest::of(&file))).await.unwrap();
@@ -78,7 +78,7 @@ async fn boundary_transfer_selector() {
             assert!(matches!(refused, Err(DbError::NotFound { .. })), "a declared action with no transfer on the row is NotFound, discard_first {discard_first}: {refused:?}");
         }
 
-        rig.database.set_online(true).unwrap();
+        rig.database.set_online(true).await.unwrap();
         assert!(bound(rig.database.confirmed(upload, false)).await.is_ok(), "discard_first {discard_first}: the upload of the other action went out");
         settled(&rig, "the server saw the upload once", || rig.world.count("ChatUpdatePhoto") == 1).await;
         rig.database.close_now();

@@ -10,7 +10,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1))) @MainActor func aSessionCallSendsTheEncodedBodyAndDecodesTheAnswerAfterAResetOfTheSession() async throws {
     try await openSignedOffline(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
     try await DB.sessionReset()
-    try DB.database.setOnline(online: true)
+    try await DB.database.setOnline(online: true)
     let answer = try await DB.sessionCall("login_link", body: AccountBody(account: "stand"), as: SessionAnswer.self)
     #expect(answer == SessionAnswer(sessionId: "stand"))
     try await DB.sessionCall("login_link", body: AccountBody(account: "stand"))

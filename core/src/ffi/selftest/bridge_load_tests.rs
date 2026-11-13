@@ -185,7 +185,7 @@ async fn cancelling_the_last_load_interest_cancels_the_request() {
     let transport = Arc::new(CancelledLoadTransport::default());
     let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(crate::ffi::tests::lifecycle_tests::models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
     database.register_operations(json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string()).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     let request = database.begin_load(database.session_epoch(), "User".into(), Some("all".into()), "{}".into()).unwrap();
     bound(transport.started.notified()).await;
     request.cancel();
@@ -199,7 +199,7 @@ async fn the_last_load_interest_leaves_through_the_owner_after_the_earlier_regis
     let transport = Arc::new(CancelledLoadTransport::default());
     let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(crate::ffi::tests::lifecycle_tests::models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
     database.register_operations(json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string()).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     let request = database.begin_load(database.session_epoch(), "User".into(), Some("all".into()), "{}".into()).unwrap();
     bound(transport.started.notified()).await;
     let (_earlier, earlier_id) = database.life.reserve_load(database.session_epoch());
@@ -225,7 +225,7 @@ async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     let switch = Switchable::new(Some(world_a.clone()), false);
     let first = bound(opener.open_with_clock(config.clone(), crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(switch.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000), crate::ffi::OpenOptions::default(), None)).await.unwrap();
     first.register_operations(plain_operations()).await.unwrap();
-    first.set_online(true).unwrap();
+    first.set_online(true).await.unwrap();
     bound(first.refresh(first.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
     let query = r#"{"model":"User","relation":"profile","params":{}}"#.to_string();
     let rows = bound(first.read_query(first.session_epoch(), crate::ffi::QuerySpec::json(query.clone()))).await.unwrap();
@@ -235,7 +235,7 @@ async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     switch.set(Some(world_b.clone()));
     let second = bound(opener.open_with_clock(config, crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(switch), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(100), crate::ffi::OpenOptions::default(), None)).await.unwrap();
     second.register_operations(plain_operations()).await.unwrap();
-    second.set_online(true).unwrap();
+    second.set_online(true).await.unwrap();
     bound(second.refresh(second.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
     let rows = bound(second.read_query(second.session_epoch(), crate::ffi::QuerySpec::json(query))).await.unwrap();
     assert!(rows.iter().any(|row| named(row, "B")));
@@ -517,7 +517,7 @@ async fn the_outcome_of_an_offline_command_waits_and_ends_with_the_epoch_of_its_
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
-    rig.database.set_online(false).unwrap();
+    rig.database.set_online(false).await.unwrap();
     let receipt = bound(rig.database.send(message(epoch, "queued", 2))).await.unwrap();
     let waiting = rig.database.life.waiting_calls();
     let outcome = { let database = rig.database.clone(); let receipt = receipt.clone(); rig.spawn(async move { database.confirmed(receipt, false).await }) };
@@ -526,7 +526,7 @@ async fn the_outcome_of_an_offline_command_waits_and_ends_with_the_epoch_of_its_
     assert!(!outcome.is_finished(), "the outcome of a queued command returned before the command settled");
     bound(rig.database.session_reset()).await.unwrap();
     assert!(matches!(bound(outcome).await.unwrap(), Err(DbError::NoSession { .. })));
-    rig.database.set_online(true).unwrap();
+    rig.database.set_online(true).await.unwrap();
     rig.login_ios("B").await;
     assert!(matches!(bound(rig.database.confirmed(receipt, false)).await, Err(DbError::NoSession { .. })));
     assert_eq!(rig.world.count("SendMessage"), 0);
@@ -612,7 +612,7 @@ async fn the_cancel_of_a_reader_returns_while_a_delivery_runs_and_none_is_admitt
     let stream = rig.database.subscribe_reading(epoch, thread(), blocking.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
     settled(&rig, "the thread shows the first message", || blocking.inner.texts().iter().any(|text| text.contains("first"))).await;
-    rig.database.set_online(false).unwrap();
+    rig.database.set_online(false).await.unwrap();
     blocking.armed.store(true, Ordering::SeqCst);
     bound(rig.database.send(message(epoch, "second", 2))).await.unwrap();
     tokio::task::spawn_blocking(move || crate::test_wait::recv_within(&entered_rx)).await.unwrap();

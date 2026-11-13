@@ -27,9 +27,9 @@ async fn net_first_value_gives_one_reaction() {
 
         let database = bound(open()).await.unwrap();
         bound(database.register_operations(plain_operations())).await.unwrap();
-        database.set_online(true).unwrap();
+        database.set_online(true).await.unwrap();
         bound(database.session_call("login_link".into(), json!({"account": "A"}).to_string())).await.unwrap();
-        database.set_online(false).unwrap();
+        database.set_online(false).await.unwrap();
         let epoch = database.session_epoch();
         bound(database.create(epoch, "Message".into(), json!({"chatId":"c1","text":"t","at":1}).to_string(), "{}".into())).await.unwrap();
         bound(database.close_database()).await.unwrap();
@@ -44,10 +44,10 @@ async fn net_first_value_gives_one_reaction() {
         crate::test_wait::settled(&database, "the owners heard every input", || true).await;
         assert_eq!((world.count("Thread"), world.count("SendMessage"), switch.events.peer.connects()), before, "no value yet: nothing leaves");
         if first_is_false {
-            database.set_online(false).unwrap();
+            database.set_online(false).await.unwrap();
             crate::test_wait::settled(&database, "the owners heard offline", || true).await;
         }
-        database.set_online(true).unwrap();
+        database.set_online(true).await.unwrap();
         crate::test_wait::settled(&database, "the write left", || world.count("SendMessage") > before.1).await;
         crate::ffi::settled(&database).await.unwrap();
         table.push((first_is_false, world.count("Thread") - before.0, world.count("SendMessage") - before.1, switch.events.peer.connects() - before.2));

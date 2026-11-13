@@ -17,7 +17,7 @@ async fn a_file_cut_at_any_commit_of_a_server_end_of_a_session_opens_whole_or_en
     let database = stand.open(Some(&live), &operations).await;
     let signed = database.session_status().unwrap();
     let secret = stand.rig.credentials.inner.value().unwrap();
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     let epoch = database.session_epoch();
     let created = bound(database.send(plain("Moment", r#"{"text":"offline"}"#, epoch))).await.unwrap();
     let temporary = created.optimistic_value.as_ref().unwrap().id.clone();
@@ -25,7 +25,7 @@ async fn a_file_cut_at_any_commit_of_a_server_end_of_a_session_opens_whole_or_en
     rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
     let base = Capture::begin(&live);
     stand.script.data("CreateMoment", ENDED);
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     crate::test_wait::settled(&database, "the server ended the session", || database.session_status().is_ok_and(|status| status.phase == SessionStanding::None)).await;
     let (capture, files) = base.end(&live);
 
@@ -40,7 +40,7 @@ async fn a_file_cut_at_any_commit_of_a_server_end_of_a_session_opens_whole_or_en
             assert!(ended || status.phase == SessionStanding::Active, "cut {index}: {:?}", status.phase);
             if ended {
                 assert_eq!(queue_now(&reopened).await, 0, "cut {index}: the ended session has no work");
-                assert!(!matches!(reopened.peek_row(epoch, "Moment".into(), temporary.clone()), Ok(Some(_))), "cut {index}: the ended session has no optimistic row");
+                assert!(!matches!(reopened.peek_row(epoch, "Moment".into(), temporary.clone()).await, Ok(Some(_))), "cut {index}: the ended session has no optimistic row");
                 assert!(fresh.rig.credentials.inner.value().is_none(), "cut {index}: the open clears the old credential");
                 assert_eq!(fresh.script.count("CreateMoment"), 0, "cut {index}: the old work is not sent");
             } else {

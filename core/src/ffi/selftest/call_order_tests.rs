@@ -38,6 +38,7 @@ where
     after_first_entered();
     let mut second = Box::pin(call(rig.database.clone()));
     std::future::poll_fn(|cx| { drop(second.as_mut().poll(cx)); std::task::Poll::Ready(()) }).await;
+    crate::ffi::owners_drained(&rig.database).await.unwrap();
     first.abort();
     assert!(first.await.unwrap_err().is_cancelled());
     let second = tokio::spawn(second);
@@ -73,8 +74,8 @@ async fn load_more_waits_for_the_page_that_an_earlier_cancelled_load_more_starte
     rig.world.answer_with("MomentsFeed", feed_page("2"));
     let world = rig.world.clone();
     second_call_survives_cancel_of_first(&rig, "MomentsFeed", move |db| async move { db.load_more(epoch, "Moment".into(), Some("feed".into()), "{}".into()).await.map(drop) }, move || world.answer_with("MomentsFeed", feed_page("3"))).await;
-    assert!(rig.database.peek_row(epoch, "Moment".into(), "2".into()).unwrap().is_some(), "the page of the held request did not land: the cancel of the first call stopped it");
-    assert!(rig.database.peek_row(epoch, "Moment".into(), "3".into()).unwrap().is_some(), "the second load more did not read its own page");
+    assert!(rig.database.peek_row(epoch, "Moment".into(), "2".into()).await.unwrap().is_some(), "the page of the held request did not land: the cancel of the first call stopped it");
+    assert!(rig.database.peek_row(epoch, "Moment".into(), "3".into()).await.unwrap().is_some(), "the second load more did not read its own page");
     rig.database.close_now();
 }
 

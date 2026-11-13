@@ -135,11 +135,11 @@ async fn xfer_confirmed_discard_exact_op() {
     settled(&rig, "the chat is visible", || chat.len() == 1).await;
     let (_directory, path) = source("logo.jpg", b"jpeg");
     let epoch = rig.database.session_epoch();
-    rig.database.set_online(false).unwrap();
+    rig.database.set_online(false).await.unwrap();
     let upload = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
     let put = rig.world.hold_then("PUT", Fault::Http(400));
     let held = rig.world.hold_next("ChatPin");
-    rig.database.set_online(true).unwrap();
+    rig.database.set_online(true).await.unwrap();
     put.entered().await;
     let other = bound(rig.database.act(epoch, "Chat".into(), "c2".into(), "pin".into(), "{}".into(), json!({"pinned": true}).to_string())).await.unwrap();
     held.entered().await;

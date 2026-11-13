@@ -14,7 +14,7 @@ async fn local() -> Arc<Database> {
 async fn a_database_without_a_transport_hands_out_an_online_sink_that_ignores_the_signal() {
     let database = local().await;
     database.online_sink().unwrap().set_online(false);
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
 }
 
 #[tokio::test]

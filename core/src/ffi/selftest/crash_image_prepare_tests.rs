@@ -9,7 +9,7 @@ use super::upload_stand::{ScriptedPreparer, Stand, BLOB, CREATE_MOMENT};
 
 const LANDED: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#;
 
-fn landed(database: &crate::ffi::Database) -> bool { database.peek_row(database.session_epoch(), "Moment".into(), "m77".into()).unwrap().is_some() }
+fn landed(database: &crate::ffi::Database) -> bool { database.peek_row_now(database.session_epoch(), "Moment".into(), "m77".into()).unwrap().is_some() }
 
 /// A process killed after any commit of an upload with a prepare step leaves a file that runs the step again from the copy, finishes the upload with the final mutation sent once and a body that is the prepared file, and never goes back from a landed row.
 #[tokio::test(flavor = "multi_thread")]

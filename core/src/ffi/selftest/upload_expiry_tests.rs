@@ -69,10 +69,10 @@ async fn a_failed_blob_older_than_seven_days_is_gone_when_the_network_returns() 
     let source = directory.path().join("video");
     std::fs::write(&source, b"video").unwrap();
     let id = failed_upload(&stand, &database, &source).await;
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     clock.advance(WEEK_MILLIS + 1);
 
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
 
     until_gone(&database, &id).await;
     database.close_now();

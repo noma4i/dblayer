@@ -116,7 +116,7 @@ async fn chat_events() -> (Arc<Database>, Arc<CableTransport>, Arc<World>) {
         {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},
         {"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } } } }"}
     ]).to_string()).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     bound(database.session_call("login_link".into(), json!({"account": world.account()}).to_string())).await.unwrap();
     (database, transport, world)
 }
@@ -290,7 +290,7 @@ async fn a_message_sent_offline_goes_out_once_and_keeps_its_position() {
     bound(rig.database.loaded(stream)).await.unwrap();
     settled(&rig, "the thread shows the first message", || reader.texts().iter().any(|text| text.contains("first"))).await;
 
-    rig.database.set_online(false).unwrap();
+    rig.database.set_online(false).await.unwrap();
     let receipt = bound(rig.database.send(message(epoch, "second", 2))).await.unwrap();
     settled(&rig, "the thread shows the queued message", || reader.rows().len() == 2).await;
     let queued = reader.rows();
@@ -299,7 +299,7 @@ async fn a_message_sent_offline_goes_out_once_and_keeps_its_position() {
     assert_eq!(receipt.optimistic_value.as_ref().unwrap().sync.state, WireSyncState::Pending);
     assert_eq!(rig.world.count("SendMessage"), 0, "the offline send reached the server");
 
-    rig.database.set_online(true).unwrap();
+    rig.database.set_online(true).await.unwrap();
     let outcome = bound(rig.database.confirmed(receipt.clone(), false)).await.unwrap();
     assert!(matches!(outcome.value, Some(row) if row.id == "m2"));
     settled(&rig, "the thread shows the confirmed message", || reader.rows().get(1).is_some_and(|row| row.id == "m2")).await;

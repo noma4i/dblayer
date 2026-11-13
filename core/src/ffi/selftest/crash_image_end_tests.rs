@@ -16,7 +16,7 @@ async fn a_file_cut_at_any_commit_of_the_end_of_a_session_opens_whole_or_ended()
     let database = stand.open(Some(&live), &operations).await;
     let signed = database.session_status().unwrap();
     let secret = stand.rig.credentials.inner.value().unwrap();
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     let epoch = database.session_epoch();
     let created = bound(database.send(plain("Moment", r#"{"text":"offline"}"#, epoch))).await.unwrap();
     let temporary = created.optimistic_value.as_ref().unwrap().id.clone();
@@ -40,13 +40,13 @@ async fn a_file_cut_at_any_commit_of_the_end_of_a_session_opens_whole_or_ended()
             assert!(ended || status.phase == SessionStanding::Active, "cut {index}: {:?}", status.phase);
             if ended {
                 assert_eq!(queue_now(&reopened).await, 0, "cut {index}: the ended session has no work");
-                assert!(!matches!(reopened.peek_row(epoch, "Moment".into(), temporary.clone()), Ok(Some(_))), "cut {index}: the ended session has no optimistic row");
+                assert!(!matches!(reopened.peek_row(epoch, "Moment".into(), temporary.clone()).await, Ok(Some(_))), "cut {index}: the ended session has no optimistic row");
                 assert!(fresh.rig.credentials.inner.value().is_none(), "cut {index}: the open clears the old credential");
                 assert_eq!(fresh.script.count("CreateMoment"), 0, "cut {index}: the old work is not sent");
             } else {
                 assert_eq!(status.identity, signed.identity, "cut {index}: the session is the same");
                 assert_eq!(queue_now(&reopened).await, 1, "cut {index}: the offline work is intact");
-                assert!(reopened.peek_row(epoch, "Moment".into(), temporary.clone()).unwrap().is_some(), "cut {index}: the optimistic row is intact");
+                assert!(reopened.peek_row(epoch, "Moment".into(), temporary.clone()).await.unwrap().is_some(), "cut {index}: the optimistic row is intact");
                 held.release();
                 drained(&reopened).await;
                 assert_eq!(fresh.script.count("CreateMoment"), 1, "cut {index}: the work is sent once");

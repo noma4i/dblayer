@@ -34,9 +34,9 @@ async fn a_reconnect_reads_each_observed_window_once() {
     bound(rig.settle()).await;
     let before = rig.world.log().iter().filter(|entry| entry.operation == "MyProfile").count();
     for flap in 1..=3u64 {
-        rig.database.set_online(false).unwrap();
+        rig.database.set_online(false).await.unwrap();
         bound(rig.settle()).await;
-        rig.database.set_online(true).unwrap();
+        rig.database.set_online(true).await.unwrap();
         bound(rig.settle()).await;
         let reads = rig.world.log().iter().filter(|entry| entry.operation == "MyProfile").count() - before;
         matrix.check(&format!("reads of an unwatched window after flap {flap}"), "0", &reads.to_string());

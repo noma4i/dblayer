@@ -35,7 +35,7 @@ async fn out_discard_two_ops_same_key_failed_only() {
         refused.entered().await;
         refused.release();
         assert!(matches!(bound(rig.database.confirmed(failed.clone(), false)).await, Err(DbError::Rejected { kept: true, .. })));
-        rig.database.set_online(false).unwrap();
+        rig.database.set_online(false).await.unwrap();
         let waiting = if failed_second { None } else { Some(update(&rig, json!({"secondaryChatsCount":7}), "waiting").await) };
         let result = bound(rig.database.discard(epoch, "User".into(), "user".into(), Some("update".into()))).await;
         assert!(result.is_ok(), "failed_second={failed_second}: {result:?}");
@@ -43,7 +43,7 @@ async fn out_discard_two_ops_same_key_failed_only() {
         assert_eq!(cell(&rig, "User", &row, "name"), text(if failed_second { "first" } else { "A" }));
         if let Some(waiting) = waiting {
             assert_eq!(cell(&rig, "User", &row, "secondaryChatsCount"), int(7));
-            rig.database.set_online(true).unwrap();
+            rig.database.set_online(true).await.unwrap();
             assert!(bound(rig.database.confirmed(waiting, false)).await.is_ok());
         }
         rig.database.close_now();
@@ -59,10 +59,10 @@ async fn out_retry_two_ops_same_key_failed_only() {
     refused.entered().await;
     refused.release();
     assert!(matches!(bound(rig.database.confirmed(failed, false)).await, Err(DbError::Rejected { kept: true, .. })));
-    rig.database.set_online(false).unwrap();
+    rig.database.set_online(false).await.unwrap();
     let waiting = update(&rig, json!({"secondaryChatsCount":7}), "waiting").await;
     let retried = bound(rig.database.retry(epoch, "User".into(), "user".into(), Some("update".into()), None)).await.unwrap();
-    rig.database.set_online(true).unwrap();
+    rig.database.set_online(true).await.unwrap();
     assert!(bound(rig.database.confirmed(retried, false)).await.is_ok());
     assert!(bound(rig.database.confirmed(waiting, false)).await.is_ok());
     assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "ProfileUpdate").count(), 3, "one refusal and one request per operation");

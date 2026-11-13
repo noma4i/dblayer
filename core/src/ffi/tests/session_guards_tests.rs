@@ -127,7 +127,7 @@ impl Rig {
 
     async fn open_models(&self, path: Option<&Path>, pin: &str, models: String) -> Result<Arc<Database>, DbError> {
         let database = Database::open(Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None }, models, crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin.to_string(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(self.credentials.clone()), http: Some(Arc::new(ThroughServer(self.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await?;
-        database.set_online(true)?;
+        database.set_online(true).await?;
         Ok(database)
     }
 
@@ -232,7 +232,7 @@ async fn consumer_login_beside_a_session_end_after_a_race_a_logout_and_a_close()
         let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
         encrypted.endpoints.session_operations.insert("first_login".into(), EncryptedSessionOperation { path: "/api/auth/social".into(), class: EncryptedOperationClass::Login });
         let database = within(Database::open(Config { path: None, data_version: None }, crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
-        database.set_online(true).unwrap();
+        database.set_online(true).await.unwrap();
         within(database.session_call("first_login".into(), SOCIAL_BODY.into())).await.unwrap();
         let original = rig.credentials.inner.value().unwrap();
         let identity = database.session_status().unwrap().identity;
@@ -290,7 +290,7 @@ async fn consumer_login_during_session_end_orders() {
         let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
         encrypted.endpoints.session_operations.insert("first_login".into(), crate::transport::EncryptedSessionOperation { path: "/api/auth/social".into(), class: crate::transport::EncryptedOperationClass::Login });
         let database = Database::open(Config { path: Some(path.to_string_lossy().into_owned()), data_version: None }, crate::ffi::specs(super::lifecycle_tests::models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
-        database.set_online(true).unwrap();
+        database.set_online(true).await.unwrap();
         within(database.session_call("first_login".into(), SOCIAL_BODY.into())).await.unwrap();
         crate::store::fixtures::put(&database.db, "User", serde_json::json!({"id":"a", "name":"A"}));
         assert_eq!(database.db.row_count("User").unwrap(), 1);

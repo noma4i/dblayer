@@ -23,13 +23,13 @@ async fn a_file_cut_at_any_commit_of_a_row_update_finishes_it_once_or_finds_it_n
         bound(database.confirmed(created, false)).await.unwrap();
         drained(&database).await;
         rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
-        let before = database.peek_row(epoch, "Moment".into(), "m77".into()).unwrap().unwrap().cells;
+        let before = database.peek_row(epoch, "Moment".into(), "m77".into()).await.unwrap().unwrap().cells;
         let base = Capture::begin(&live);
         stand.script.data("UpdateMoment", reply);
         let receipt = bound(database.update(epoch, "Moment".into(), "m77".into(), r#"{"text":"edited"}"#.into(), "{}".into())).await.unwrap();
         let _ = bound(database.confirmed(receipt, false)).await;
         drained(&database).await;
-        let after = database.peek_row(epoch, "Moment".into(), "m77".into()).unwrap().unwrap().cells;
+        let after = database.peek_row(epoch, "Moment".into(), "m77".into()).await.unwrap().unwrap().cells;
         assert_eq!(after != before, edited, "the live run ends with the row edited or rolled back");
         let (capture, files) = base.end(&live);
         let secret = stand.rig.credentials.inner.value().unwrap();
@@ -46,7 +46,7 @@ async fn a_file_cut_at_any_commit_of_a_row_update_finishes_it_once_or_finds_it_n
                 if answered == 0 { assert_eq!(queue_now(&reopened).await as i64, saved, "cut {index}: the open keeps the saved operation until it is answered"); }
                 held.release();
                 drained(&reopened).await;
-                let row = reopened.peek_row(epoch, "Moment".into(), "m77".into()).unwrap().unwrap().cells;
+                let row = reopened.peek_row(epoch, "Moment".into(), "m77".into()).await.unwrap().unwrap().cells;
                 let sent = fresh.script.count("UpdateMoment");
                 assert_eq!(sent, usize::from(saved == 1 && answered == 0), "cut {index}: the update goes out once, never when the answer is saved");
                 if saved == 1 { assert_eq!(row, after, "cut {index}: the unfinished update finishes"); } else { assert!(row == before || row == after, "cut {index}: the row is old or finished"); }

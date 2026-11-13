@@ -103,7 +103,7 @@ async fn life_register_bad_preload() {
         let database = Database::open(config(), crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
         let definitions = r#"[{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}]"#;
         assert!(matches!(database.register_operations(definitions.into()).await, Err(DbError::Invalid { .. })));
-        database.set_online(true).unwrap();
+        database.set_online(true).await.unwrap();
         let answer = crate::test_wait::within(database.run(database.session_epoch(), "Greeting".into(), r#"{"name":"Ada"}"#.into())).await;
         assert!(matches!(answer, Err(DbError::Invalid { .. })));
         database.close_database().await.unwrap();
@@ -137,7 +137,7 @@ async fn life_register_missing_own_operation() {
     model.listens.push(UpdatesSpec { subscription: "ItemListen".into(), deleted_by: None, deleted_unless: None, set: Default::default(), removes: false, debounce: None, root: None, id: Vec::new(), apply: None });
     let model_with_steps = model.clone();
     let database = Database::open(config(), crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     for (left_out, expected) in [(vec!["Changes"], "Changes"), (vec!["ItemNode"], "ItemNode"), (vec!["OwnerItems"], "OwnerItems"), (vec!["ItemListen"], "ItemListen"), (vec!["ItemNode", "Changes"], "Changes, ItemNode")] {
         let given: Vec<&str> = documents.iter().filter(|(name, _)| !left_out.contains(name)).map(|(_, text)| *text).chain([greeting]).collect();
         match database.register_operations(format!("[{}]", given.join(","))).await {
@@ -350,7 +350,7 @@ async fn life_open_executor_runs_the_operation() {
     let operations = vec![OperationDefinition { name: "Greeting".into(), document: "query Greeting($name: String!) { greeting(name: $name) }".into() }];
     let ports = OpenPorts { endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), executor: Some(Arc::new(crate::ffi::tests::database_tests::Plain)), ..Default::default() };
     let database = slot.open(config(), crate::ffi::EMPTY_SPECS.into(), OpenOptions { operations }, ports, None).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     assert_eq!(database.run(database.session_epoch(), "Greeting".into(), r#"{"name":"Ada"}"#.into()).await.unwrap(), r#""Hello Ada""#);
     database.close_database().await.unwrap();
 }

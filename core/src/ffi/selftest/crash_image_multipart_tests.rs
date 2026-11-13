@@ -42,7 +42,7 @@ async fn a_file_cut_at_any_commit_of_a_multipart_upload_reopens_with_the_upload_
     let kept_files = directory.path().join("kept.files");
     copy_tree(&files_of(&live), &kept_files);
     held.release();
-    crate::test_wait::settled(&database, "the upload landed", || database.peek_row(epoch, "Moment".into(), "m77".into()).unwrap().is_some()).await;
+    crate::test_wait::settled(&database, "the upload landed", || database.peek_row_now(epoch, "Moment".into(), "m77".into()).unwrap().is_some()).await;
     drained(&database).await;
     let (capture, _) = base.end(&live);
     let secret = stand.rig.credentials.inner.value().unwrap();
@@ -55,7 +55,7 @@ async fn a_file_cut_at_any_commit_of_a_multipart_upload_reopens_with_the_upload_
             let confirmed = confirmed_parts(&image);
             let (fresh, reopened) = reopen(&image, &secret, &operations, script).await;
             if saved > 0 { drained(&reopened).await; } else { crate::test_wait::settled(&reopened, "opened", || true).await; }
-            let landed = reopened.peek_row(reopened.session_epoch(), "Moment".into(), "m77".into()).unwrap().is_some();
+            let landed = reopened.peek_row(reopened.session_epoch(), "Moment".into(), "m77".into()).await.unwrap().is_some();
             assert!(landed || saved == 0 || unaccepted, "cut {index}: a saved upload is finished");
             let offsets: Vec<u64> = fresh.puts.seen.lock().unwrap().iter().map(|put| put.offset).collect();
             assert_eq!(offsets.iter().collect::<HashSet<_>>().len(), offsets.len(), "cut {index}: no part goes out twice: {offsets:?}");

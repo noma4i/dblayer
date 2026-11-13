@@ -30,7 +30,7 @@ async fn row_present(database: &Database, clock: &TestClock, id: &'static str, w
     let stream = database.subscribe_values(epoch, crate::ffi::ReadRequest::Operations);
     let wait = async {
         loop {
-            if database.peek_row(epoch, "Moment".into(), id.into()).unwrap().is_some() { return; }
+            if database.peek_row(epoch, "Moment".into(), id.into()).await.unwrap().is_some() { return; }
             match bound(stream.pull_next()).await {
                 Some(crate::ffi::ReadValue::Operations { .. }) => {}
                 other => panic!("{what}: the operation queue ended: {other:?}"),

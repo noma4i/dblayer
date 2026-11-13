@@ -108,7 +108,7 @@ async fn reopening_through_the_same_opener_after_a_close_gives_a_clean_database(
     let switch = super::rig_tests::Switchable::new(Some(b.clone()), false);
     let remote = rig.open_again(Some(switch as Arc<dyn Transport>)).await.expect("the opener refused the second reopen");
     remote.register_operations(r#"[{"name":"Users","document":"query Users { users { id name } }"}]"#.into()).await.unwrap();
-    remote.set_online(true).unwrap();
+    remote.set_online(true).await.unwrap();
     let rows = Arc::new(Rows::default());
     let live = remote.watch_query(ALL, rows.clone());
     bound(live.wait_for_initial_load()).await.unwrap();
@@ -134,7 +134,7 @@ async fn harness_cycles_survive_tests_that_leave_offline_logout_and_subscription
         assert!(first_error(&rows).is_none(), "test {index} inherited {:?}", first_error(&rows));
         assert_eq!(world.count("Users"), 1, "test {index} read its transport {} times", world.count("Users"));
         match *leftover {
-            "offline" => rig.database.set_online(false).unwrap(),
+            "offline" => rig.database.set_online(false).await.unwrap(),
             "logout" => bound(rig.database.session_reset()).await.unwrap(),
             _ => {}
         }
@@ -142,7 +142,7 @@ async fn harness_cycles_survive_tests_that_leave_offline_logout_and_subscription
         let hits: Vec<usize> = worlds.iter().map(|world| world.hits()).collect();
 
         rig.harness_cycle(Some(worlds[index + 1].clone())).await;
-        rig.database.set_online(true).unwrap();
+        rig.database.set_online(true).await.unwrap();
 
         assert_eq!(worlds.iter().map(|world| world.hits()).collect::<Vec<_>>(), hits, "the cycle after {leftover} sent a request");
     }

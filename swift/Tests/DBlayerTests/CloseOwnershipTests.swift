@@ -8,7 +8,7 @@ extension BridgeProbeTests {
     defer { Task { @MainActor in try? await DB.close() } }
     await DB.closeForCleanup()
     try await openSignedClocked(modelsJson: modelsJSON, transport: MockTransport())
-    try DB.database.setOnline(online: false)
+    try await DB.database.setOnline(online: false)
     let cursor = Cursor(try await Moment.recent.live.stream())
     #expect(await cursor.next("the initial delivery") != nil)
     let waiting = Task { await cursor.next("the end of the stream after the close") }

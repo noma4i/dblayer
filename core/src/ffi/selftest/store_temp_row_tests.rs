@@ -24,11 +24,11 @@ fn temporary_rows(image: &Path) -> Vec<String> {
 }
 
 fn upload_status(database: &crate::ffi::Database, id: &str) -> Option<WireUploadStatus> {
-    let row = database.peek_row(database.session_epoch(), "Moment".into(), id.into()).unwrap()?;
+    let row = database.peek_row_now(database.session_epoch(), "Moment".into(), id.into()).unwrap()?;
     row.uploads.iter().find(|entry| entry.action == "upload_clip").map(|entry| entry.upload.status)
 }
 
-fn present(database: &crate::ffi::Database, id: &str) -> bool { database.peek_row(database.session_epoch(), "Moment".into(), id.into()).unwrap().is_some() }
+fn present(database: &crate::ffi::Database, id: &str) -> bool { database.peek_row_now(database.session_epoch(), "Moment".into(), id.into()).unwrap().is_some() }
 
 #[derive(Clone, Copy, Debug)]
 enum Case { RefusedCreate, DiscardedFailedCreate, DiscardedFailedUpload, CancelledUpload, LandedUpload, CancelledDuringSend, OfflineSend, PreparedLanded, RefusedFinal, RefusedFinalKept }
@@ -118,12 +118,12 @@ async fn store_prop_temp_row_has_a_holder() {
                 crate::test_wait::settled(&database, "the row ended", || !present(&database, &temporary)).await;
             }
             Case::OfflineSend => {
-                database.set_online(false).unwrap();
+                database.set_online(false).await.unwrap();
                 stand.script.data("CreateBlob", BLOB);
                 stand.script.data("CreateMoment", LANDED);
                 bound(database.send(clip("Moment", r#"{"text":"A"}"#, "upload_clip", &file, epoch))).await.unwrap();
                 copy_tree(&files_of(&live), &kept_files);
-                database.set_online(true).unwrap();
+                database.set_online(true).await.unwrap();
                 crate::test_wait::settled(&database, "the row landed", || present(&database, "m77")).await;
             }
             Case::PreparedLanded => {

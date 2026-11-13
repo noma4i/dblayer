@@ -27,7 +27,7 @@ async fn a_refused_round_shows_its_reason_on_the_upload_until_the_next_round_is_
     let database = stand.open(None, &[CREATE_MOMENT]).await;
     let jobs = Arc::new(Jobs::default());
     database.set_round_jobs(jobs.clone());
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip");
     std::fs::write(&source, b"clip").unwrap();
@@ -85,7 +85,7 @@ async fn round_old_epoch_after_reopen_cannot_refuse_restored_upload() {
     std::fs::write(&source, b"clip").unwrap();
     let stand = Stand::new();
     let first = stand.open(Some(&path), &[CREATE_MOMENT]).await;
-    first.set_online(false).unwrap();
+    first.set_online(false).await.unwrap();
     let old_jobs = Arc::new(Jobs::default());
     first.set_round_jobs(old_jobs.clone());
     let old_epoch = first.session_epoch();
@@ -95,7 +95,7 @@ async fn round_old_epoch_after_reopen_cannot_refuse_restored_upload() {
     bound(first.close_database()).await.unwrap();
     drop(first);
     let reopened = stand.open(Some(&path), &[CREATE_MOMENT]).await;
-    reopened.set_online(false).unwrap();
+    reopened.set_online(false).await.unwrap();
     let jobs = Arc::new(Jobs::default());
     reopened.set_round_jobs(jobs.clone());
     let new_epoch = reopened.session_epoch();

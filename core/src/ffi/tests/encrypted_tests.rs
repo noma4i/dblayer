@@ -47,7 +47,7 @@ async fn sess_prop_security_code_kept() {
     let credentials = Arc::new(MemoryCredentials::default());
     let http = Arc::new(SecurityHttp { server, refused: false.into(), journal: Default::default() });
     let database = within(Database::open(Config { path: None, data_version: None }, crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(crate::transport::encrypted::tests::protocol_tests::config()), credentials: Some(Arc::new(Held(credentials))), http: Some(http.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     within(crate::ffi::settled(&database)).await.unwrap();
     within(database.session_call("social".into(), "{}".into())).await.unwrap();
     within(crate::ffi::settled(&database)).await.unwrap();
@@ -105,7 +105,7 @@ pub(in super::super) async fn rig(server_key: &str, pin: &str) -> (Arc<Database>
     let encrypted = EncryptedConfig { origin: origin().to_string(), server_key: server_key.to_string(), pin: pin.to_string(), ..crate::transport::encrypted::tests::protocol_tests::config() };
     let database = Database::open(Config { path: None, data_version: None }, crate::ffi::EMPTY_SPECS.to_string(), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(ThroughServer(server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await
     .unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     (database, server, credentials)
 }
 
@@ -132,7 +132,7 @@ async fn interrupted_session_answer_returns_the_restored_call_once() {
     let config = || Config { path: Some(path.to_string_lossy().into_owned()), data_version: None };
     let open = || Database::open(config(), crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(crate::transport::encrypted::tests::protocol_tests::config()), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(ThroughServer(server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() });
     let database = within(open()).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     within(database.session_call("social".into(), "{}".into())).await.unwrap();
     within(database.close_database()).await.unwrap();
     drop(database);
@@ -145,7 +145,7 @@ async fn interrupted_session_answer_returns_the_restored_call_once() {
         session_state::store_pending(&inner.connection, &pending).unwrap();
     }
     let database = within(open()).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     assert_eq!(within(database.interrupted_session_answer()).await.unwrap(), Some(r#"{"nextStep":"authenticated"}"#.into()));
     assert_eq!(within(database.interrupted_session_answer()).await.unwrap(), None);
     assert_eq!(server.seen().iter().filter(|request| request["requestId"] == request_id).count(), 1);
@@ -178,7 +178,7 @@ async fn restored_first_login_finishes_after_open() {
         session_state::store_pending(&inner.connection, &pending).unwrap();
     }
     let database = within(open()).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     assert_eq!(within(database.interrupted_session_answer()).await.unwrap(), Some(r#"{"nextStep":"authenticated"}"#.into()));
     assert_eq!(within(database.interrupted_session_answer()).await.unwrap(), None);
     let requests: Vec<_> = server.seen().into_iter().filter(|request| request["requestId"] == request_id).collect();
@@ -218,7 +218,7 @@ async fn failed_session_restore_opens_and_refuses_calls_until_reset() {
             }
         }
         let database = within(open()).await.unwrap();
-        database.set_online(true).unwrap();
+        database.set_online(true).await.unwrap();
         assert!(matches!(within(database.session_call("social".into(), "{}".into())).await, Err(DbError::Storage { .. })), "{broken}");
         assert!(server.seen().is_empty());
         within(database.session_reset()).await.unwrap();
@@ -308,7 +308,7 @@ async fn a_sessionless_operation_posts_all_fields_without_a_session() {
     encrypted.endpoints.session_operations = [("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), class: crate::transport::EncryptedOperationClass::Sessionless })].into();
     let credentials = Arc::new(MemoryCredentials::default());
     let database = Database::open(Config { path: None, data_version: None }, crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(TicketPost)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     assert!(credentials.value().is_none());
 
     database.session_call("ticket".into(), body.into()).await.unwrap();
@@ -361,7 +361,7 @@ async fn sessionless_calls_leave_no_session_state_even_when_refused() {
         encrypted.endpoints.session_operations.insert("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), class: crate::transport::EncryptedOperationClass::Sessionless });
         let credentials = Arc::new(MemoryCredentials::default());
         let database = Database::open(Config { path: None, data_version: None }, crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(Reply(status))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
-        database.set_online(true).unwrap();
+        database.set_online(true).await.unwrap();
         let result = database.session_call("ticket".into(), "{}".into()).await;
         if status == 200 { assert_eq!(result.unwrap(), "{}"); }
         else { assert!(matches!(result, Err(DbError::Http { status: s, .. }) if s == status), "{result:?}"); }

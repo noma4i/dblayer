@@ -16,11 +16,11 @@ async fn life_storage_failed_exits_on_foreground_and_not_on_online() {
     let first = refused().await;
     assert!(matches!(first, Err(DbError::Storage { .. })), "a call while the disk refuses: {first:?}");
 
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     bound(crate::ffi::settled(database)).await.unwrap();
     let offline = refused().await;
     assert!(matches!(offline, Err(DbError::Storage { .. })), "going offline does not write: {offline:?}");
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     bound(crate::ffi::settled(database)).await.unwrap();
     let online = refused().await;
     assert!(matches!(online, Err(DbError::Storage { .. })), "the disk still refuses: {online:?}");

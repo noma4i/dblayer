@@ -33,13 +33,13 @@ async fn forgotten_hash(way: PairPath) {
     let operations = [CREATE_MOMENT];
     let database = stand.open_with(Some(&live), &operations, Some(clock.clone())).await;
     let secret = stand.rig.credentials.inner.value().unwrap();
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     first_send(&database).await;
     let (served, process, clock, image): (Stand, Arc<Database>, Arc<TestClock>, std::path::PathBuf) = match way {
         PairPath::LostAnswerRetry => {
             let hold = Arc::new(Hold::default());
             stand.script.enqueue("CreateMoment", Answer::Held(hold.clone(), Box::new(Answer::Lost)));
-            database.set_online(true).unwrap();
+            database.set_online(true).await.unwrap();
             hold.entered().await;
             stand.script.forget_documents();
             stand.script.data("CreateMoment", LANDED);
@@ -50,21 +50,21 @@ async fn forgotten_hash(way: PairPath) {
         PairPath::AfterOffline => {
             let hold = Arc::new(Hold::default());
             stand.script.enqueue("CreateMoment", Answer::Held(hold.clone(), Box::new(Answer::Lost)));
-            database.set_online(true).unwrap();
+            database.set_online(true).await.unwrap();
             hold.entered().await;
             stand.script.forget_documents();
-            database.set_online(false).unwrap();
+            database.set_online(false).await.unwrap();
             hold.dropped().await;
             stand.script.data("CreateMoment", LANDED);
             stand.script.data("CreateMoment", NEXT);
-            database.set_online(true).unwrap();
+            database.set_online(true).await.unwrap();
             advancing(&clock, drained(&database)).await;
             (stand, database, clock, live)
         }
         PairPath::AfterRestart => {
             let hold = Arc::new(Hold::default());
             stand.script.enqueue("CreateMoment", Answer::Held(hold.clone(), Box::new(Answer::Lost)));
-            database.set_online(true).unwrap();
+            database.set_online(true).await.unwrap();
             hold.entered().await;
             let image = directory.path().join("image.sqlite");
             copy_image(&live, &image);
@@ -86,7 +86,7 @@ async fn forgotten_hash(way: PairPath) {
     assert_eq!(own[tail].1, own[0].1, "{way:?}: the full pair keeps the number: {own:?}");
     assert!(!own_full[0] && own_full[tail], "{way:?}: hash-only first, then the full document: {own_full:?}");
     assert_eq!(own_full.iter().filter(|full| **full).count(), 1, "{way:?}: the full document goes once: {own_full:?}");
-    process.set_online(true).unwrap();
+    process.set_online(true).await.unwrap();
     let epoch = process.session_epoch();
     bound(process.send(plain("Moment", r#"{"text":"second"}"#, epoch))).await.unwrap();
     advancing(&clock, drained(&process)).await;
@@ -111,11 +111,11 @@ async fn sess_refused_held_pair_is_not_sent_again_and_spends_no_number() {
     let operations = [CREATE_MOMENT];
     let database = stand.open_with(Some(&live), &operations, Some(clock.clone())).await;
     let secret = stand.rig.credentials.inner.value().unwrap();
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     first_send(&database).await;
     let hold = Arc::new(Hold::default());
     stand.script.enqueue("CreateMoment", Answer::Held(hold.clone(), Box::new(Answer::Lost)));
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     hold.entered().await;
     let image = directory.path().join("image.sqlite");
     copy_image(&live, &image);

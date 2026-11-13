@@ -37,7 +37,7 @@ fn config() -> Config { Config { path: None, data_version: None } }
 async fn life_register_ok() {
     let database = Database::open(config(), crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     database.register_operations(r#"[{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}]"#.into()).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     assert_eq!(database.run(database.session_epoch(), "Greeting".into(), r#"{"name":"Ada"}"#.into()).await.unwrap(), r#""Hello Ada""#);
     database.session_reset().await.unwrap();
 }
@@ -51,7 +51,7 @@ async fn net_open_before_first_value_run_waits() {
         let call = tokio::spawn(async move { waiting.run(waiting.session_epoch(), "Greeting".into(), r#"{"name":"Ada"}"#.into()).await });
         crate::test_wait::within(crate::ffi::settled(&database)).await.unwrap();
         assert!(!call.is_finished(), "no value yet: the call waits");
-        database.set_online(first).unwrap();
+        database.set_online(first).await.unwrap();
         let answer = crate::test_wait::within(call).await.unwrap();
         if first {
             assert_eq!(answer.unwrap(), r#""Hello Ada""#);
@@ -68,10 +68,10 @@ async fn net_prop_set_online_no_wall_clock() {
     let database = Database::open_with_clock(config(), crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000)).await.unwrap();
     let sink = database.online_sink().unwrap();
     let live = Arc::clone(&database);
-    crate::test_wait::within(async move { crate::task::spawn_blocking(None, move || live.set_online(true)).await.unwrap() }).await.unwrap();
+    crate::test_wait::within(async move { live.set_online(true).await }).await.unwrap();
     database.close_database().await.unwrap();
     let after = Arc::clone(&database);
-    let closed = crate::test_wait::within(async move { crate::task::spawn_blocking(None, move || after.set_online(false)).await.unwrap() }).await;
+    let closed = crate::test_wait::within(async move { after.set_online(false).await }).await;
     assert!(matches!(closed, Err(DbError::Closed { .. })), "{closed:?}");
     crate::test_wait::within(async move { crate::task::spawn_blocking(None, move || sink.set_online(true)).await.unwrap() }).await;
 }

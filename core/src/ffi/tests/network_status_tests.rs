@@ -45,13 +45,15 @@ async fn open_database(rig: &Rig) -> Arc<Database> {
 async fn platform(target: &str) -> Platform {
     let rig = Rig::new();
     let database = if target == "database" { Some(open_database(&rig).await) } else { None };
-    Platform { sink: process_sink(), rig, database }
+    Platform { sink: process_sink().await, rig, database }
 }
 
 /// The status input of the process: the first status of the process starts its double.
-fn process_sink() -> Arc<OnlineSink> {
+async fn process_sink() -> Arc<OnlineSink> {
     static SINK: std::sync::OnceLock<Arc<OnlineSink>> = std::sync::OnceLock::new();
-    SINK.get_or_init(|| observed().1.sink()).clone()
+    if let Some(sink) = SINK.get() { return sink.clone(); }
+    let sink = observed().1.sink().await;
+    SINK.get_or_init(|| sink).clone()
 }
 
 impl Platform {
@@ -292,7 +294,7 @@ impl super::FakeHttp for Answering {
 fn net_status_follows_without_database() {
     in_own_process(module_path!(), "net_status_follows_without_database", &["status"], |_| run(async {
         let (status, double) = observed();
-        let sink = double.sink();
+        let sink = double.sink().await;
         assert_eq!(status.current(), None, "no value before the first input");
         let reader = status.subscribe();
         let mut first = reading!(&reader);
@@ -312,7 +314,7 @@ fn net_status_follows_without_database() {
 fn net_status_follows_between_bootstrap_and_open() {
     in_own_process(module_path!(), "net_status_follows_between_bootstrap_and_open", &["status"], |_| run(async {
         let (status, double) = observed();
-        let sink = double.sink();
+        let sink = double.sink().await;
         let reader = status.subscribe();
         sink.set_online(true);
         let ports = super::FetchPorts { http: Arc::new(Answering), retries: None, observers: None };
@@ -340,14 +342,14 @@ fn net_status_follows_after_close() {
         let rig = Rig::new();
         let database = open_database(&rig).await;
         let (status, double) = observed();
-        double.sink().set_online(true);
+        double.sink().await.set_online(true);
         let reader = status.subscribe();
         assert_eq!(within(reader.next()).await, on(true));
         let mut held = reading!(&reader);
         within(database.close_database()).await.unwrap();
         assert!(poll_once(&mut held).is_pending(), "the close woke the reader");
         assert_eq!(status.current(), on(true), "the close moved the value");
-        let sink = double.sink();
+        let sink = double.sink().await;
         sink.set_online(false);
         assert_eq!(within(held).await, on(false), "a status value after the close");
         assert_eq!(status.current(), on(false));
@@ -359,7 +361,7 @@ fn net_status_follows_after_close() {
 fn net_status_observer_starts_once() {
     in_own_process(module_path!(), "net_status_observer_starts_once", &["status"], |_| run(async {
         let (first, double) = observed();
-        let sink = double.sink();
+        let sink = double.sink().await;
         sink.set_online(true);
         let reader = first.subscribe();
         assert_eq!(within(reader.next()).await, on(true));
@@ -375,24 +377,28 @@ fn net_status_observer_starts_once() {
 }
 
 /// The observer double of the platform: it keeps the status input it was started with and counts its starts.
-struct StatusDouble { sink: std::sync::Mutex<Option<Arc<OnlineSink>>>, starts: std::sync::atomic::AtomicUsize }
+struct StatusDouble { sink: std::sync::Mutex<Option<Arc<OnlineSink>>>, starts: std::sync::atomic::AtomicUsize, started: crate::test_wait::Flag }
 
 impl super::PlatformObserver for StatusDouble {
     fn start(&self, sink: Arc<OnlineSink>) {
         self.starts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         *self.sink.lock().unwrap() = Some(sink);
+        self.started.set();
     }
     fn stop(&self) { panic!("the status observer must never be stopped"); }
 }
 
 impl StatusDouble {
-    fn sink(&self) -> Arc<OnlineSink> { self.sink.lock().unwrap().clone().expect("the first status started the observer") }
+    async fn sink(&self) -> Arc<OnlineSink> {
+        self.started.wait("the first status starts the observer").await;
+        self.sink.lock().unwrap().clone().expect("the first status started the observer")
+    }
     fn starts(&self) -> usize { self.starts.load(std::sync::atomic::Ordering::SeqCst) }
 }
 
 /// A status over a new observer double. Only the first call of a process starts its double.
 fn observed() -> (Arc<NetworkStatus>, Arc<StatusDouble>) {
-    let double = Arc::new(StatusDouble { sink: Default::default(), starts: Default::default() });
+    let double = Arc::new(StatusDouble { sink: Default::default(), starts: Default::default(), started: Default::default() });
     (NetworkStatus::new(double.clone()), double)
 }
 
@@ -404,7 +410,7 @@ fn path(kind: NetworkKind, network: u64) -> NetworkPath { NetworkPath { online: 
 fn net_path_wakes_on_change_only() {
     in_own_process(module_path!(), "net_path_wakes_on_change_only", &["status"], |_| run(async {
         let (status, double) = observed();
-        let sink = double.sink();
+        let sink = double.sink().await;
         sink.set_path(path(NetworkKind::Wifi, 1));
         let reader = status.subscribe();
         assert_eq!(within(reader.next()).await, Some(path(NetworkKind::Wifi, 1)));

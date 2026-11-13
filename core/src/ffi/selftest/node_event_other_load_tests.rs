@@ -55,7 +55,7 @@ async fn open(world: Arc<World>) -> (Arc<Database>, Arc<Cable>, Arc<crate::ffi::
         {"name":"PresenceDetails","document":"query PresenceDetails($id: ID!) { presence(id: $id) { id online } }"},
         {"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId } } }"}
     ]).to_string()).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     bound(database.session_call("login_link".into(), json!({"account":"A"}).to_string())).await.unwrap();
     (database, cable, clock)
 }
@@ -134,8 +134,8 @@ async fn a_lost_subscription_rereads_the_rows_with_open_readers() {
             crate::test_wait::settled(&database, "the closed cable is seen", || true).await;
             clock.advance(120_000);
         } else {
-            database.set_online(false).unwrap();
-            database.set_online(true).unwrap();
+            database.set_online(false).await.unwrap();
+            database.set_online(true).await.unwrap();
         }
         crate::test_wait::signalled(&cable.opened, "the subscription opens again", || cable.token.lock().unwrap().is_some()).await;
         crate::test_wait::settled(&database, "the reread after the reconnect lands", || online_of(&rows) == Some(false)).await;

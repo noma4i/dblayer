@@ -154,7 +154,7 @@ extension BridgeProbeTests {
     guard let initial = await next.next("the new stream receives the current value"), case .snapshot = initial else { Issue.record("the new stream did not receive a snapshot"); return }
     var projection = ListProjection<Moment>()
     _ = try projection.apply(initial)
-    try DB.database.setOnline(online: false)
+    try await DB.database.setOnline(online: false)
     let sent = try await scope.send(Moment.self, values: ["text": .string("after cancellation")])
     let id = try #require(sent.optimisticValue?.id)
     guard let changed = await next.next("the new reader receives the write") else { Issue.record("the new reader did not receive the write"); return }
@@ -224,7 +224,7 @@ extension BridgeProbeTests {
     var projection = ListProjection<Moment>()
     var received = 0
     await consuming(cursor, "the first settled snapshot", until: { projection.state?.settled == true }) { _ = try? projection.apply($0) }
-    try DB.database.setOnline(online: false)
+    try await DB.database.setOnline(online: false)
     for number in 1...300 { _ = try await scope.send(Moment.self, values: ["text": .string("m\(number)")]) }
     for _ in 0..<400 {
       if projection.rows.count == 300 { break }

@@ -59,7 +59,7 @@ async fn pending_source_rejects_unknown_row_fields() {
 async fn transfers_use_the_row_id_when_batches_share_a_correlation_key() {
     let stand = Stand::new();
     let database = stand.open(None, &OPERATIONS).await;
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     let epoch = database.session_epoch();
     let items = || (0..2).map(|index| WireUploadItem { values_json: format!(r#"{{"clientKey":"key-{index}","size":2,"position":{index}}}"#), source: crate::ffi::upload_wire::WireSource::Pending, variables_json: "{}".into() }).collect();
     let batch = || WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() };
@@ -78,7 +78,7 @@ async fn transfers_use_the_row_id_when_batches_share_a_correlation_key() {
     let first_id = first.items[0].optimistic_value.id.clone();
     let second_id = second.items[0].optimistic_value.id.clone();
     bound(database.supply_source(epoch, "Asset".into(), first_id.clone(), "create_files".into(), source())).await.unwrap();
-    let other = database.peek_row(epoch, "Asset".into(), second_id).unwrap().unwrap();
+    let other = database.peek_row(epoch, "Asset".into(), second_id).await.unwrap().unwrap();
     assert_eq!(other.uploads[0].upload.wait_reason.as_deref(), Some("source_pending"));
     assert_ne!(first_id, first.items[0].item.value);
     database.close_now();
@@ -96,7 +96,7 @@ async fn pending_source_values_reach_the_row_and_rollback() {
     std::fs::write(&path, b"data").unwrap();
     let id = receipt.items[0].optimistic_value.id.clone();
     let source = WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: r#"{"size":42}"#.into(), variables_json: "{}".into(), prepare: None };
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     bound(database.supply_source(epoch, "Asset".into(), id.clone(), "create_files".into(), source)).await.unwrap();
     let row = database.db.read(&["Asset"], |reader| reader.point("Asset", &id)).unwrap().unwrap();
     assert_eq!(row.get("size"), Some(&serde_json::json!(42)));

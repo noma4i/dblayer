@@ -80,7 +80,7 @@ async fn xfer_progress_is_true_and_never_goes_back() {
     advancing(&clock, create.entered()).await;
     crate::test_wait::settled(&database, "1 is shown after complete", || shown(&database, &id) == Some(1.0) && frames.lock().unwrap().last() == Some(&1.0)).await;
     create.release();
-    advancing(&clock, async { crate::test_wait::settled(&database, "the upload landed", || database.peek_row(epoch, "Moment".into(), "m77".into()).unwrap().is_some()).await; drained(&database).await }).await;
+    advancing(&clock, async { crate::test_wait::settled(&database, "the upload landed", || database.peek_row_now(epoch, "Moment".into(), "m77".into()).unwrap().is_some()).await; drained(&database).await }).await;
     let live_frames = frames.lock().unwrap().clone();
     collector.abort();
     assert!(live_frames.iter().all(|frame| (0.0..=1.0).contains(frame)) && never_goes_back(&live_frames), "the share never goes back and stays in 0..1: {live_frames:?}");
@@ -107,7 +107,7 @@ async fn xfer_progress_is_true_and_never_goes_back() {
                     if let ReadValue::Status { progress, .. } = value { sink.lock().unwrap().push(progress); }
                 }
             });
-            advancing(&clock, async { crate::test_wait::settled(&reopened, "the upload landed", || reopened.peek_row(reopened.session_epoch(), "Moment".into(), "m77".into()).unwrap().is_some()).await; drained(&reopened).await }).await;
+            advancing(&clock, async { crate::test_wait::settled(&reopened, "the upload landed", || reopened.peek_row_now(reopened.session_epoch(), "Moment".into(), "m77".into()).unwrap().is_some()).await; drained(&reopened).await }).await;
             task.abort();
             let seen = frames.lock().unwrap().clone();
             let parts = fresh.puts.seen.lock().unwrap().len();

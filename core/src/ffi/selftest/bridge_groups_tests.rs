@@ -166,7 +166,7 @@ async fn every_entry_of_a_left_account_is_refused_and_reaches_nothing() {
         case("node", |db, old| Box::pin(async move { bound(db.node(old, "User".into(), "node".into(), "user".into(), true)).await.map(drop) })),
         case("nodes", |db, old| Box::pin(async move { bound(db.nodes(old, "User".into(), "nodes".into(), vec!["user".into()])).await.map(drop) })),
         case("edge_values", |db, old| Box::pin(async move { bound(db.edge_values(old, "User".into(), Some("all".into()), "{}".into(), vec!["user".into()])).await.map(drop) })),
-        case("peek_row", |db, old| Box::pin(async move { db.peek_row(old, "User".into(), "user".into()).map(drop) })),
+        case("peek_row", |db, old| Box::pin(async move { db.peek_row(old, "User".into(), "user".into()).await.map(drop) })),
         case("cancel_upload", |db, old| Box::pin(async move { bound(db.cancel_upload(old, "User".into(), "user".into(), "upload".into())).await.map(drop) })),
     ];
     for (name, call) in calls {
@@ -189,14 +189,14 @@ async fn a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_re
     bound(rig.database.loaded(stream)).await.unwrap();
     settle(&rig).await;
     let before = rig.world.count("Thread");
-    rig.database.set_online(false).unwrap();
-    rig.database.set_online(true).unwrap();
+    rig.database.set_online(false).await.unwrap();
+    rig.database.set_online(true).await.unwrap();
     settled(&rig, "the list loaded again", || rig.world.count("Thread") > before).await;
     settle(&rig).await;
     assert_eq!(rig.world.count("Thread"), before + 1, "the stream loaded more or less than once on reconnect");
     rig.database.cancel_stream(stream);
-    rig.database.set_online(false).unwrap();
-    rig.database.set_online(true).unwrap();
+    rig.database.set_online(false).await.unwrap();
+    rig.database.set_online(true).await.unwrap();
     settle(&rig).await;
     assert_eq!(rig.world.count("Thread"), before + 1, "a cancelled stream loaded on reconnect");
     rig.database.close_now();

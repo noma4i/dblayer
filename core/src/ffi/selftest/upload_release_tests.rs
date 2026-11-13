@@ -38,9 +38,9 @@ async fn sess_request_identity_on_wire() {
     let epoch = database.session_epoch();
     let sent = bound(database.send(plain("Moment", r#"{"text":"A"}"#, epoch))).await.unwrap();
     held.entered().await;
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     held.dropped().await;
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
 
     bound(database.confirmed(sent, false)).await.unwrap();
     let wires = stand.script.wires();

@@ -86,7 +86,7 @@ fn state_report(stand: &Stand, database: &Database, ids: &[&str]) -> String {
     let per_operation: Vec<String> = ["CreateBlob", "CreateAssets", "CreateAsset"].iter().map(|name| format!("{name}={}", stand.script.count(name))).collect();
     let files: Vec<Value> = stand.script.variables("CreateBlob").iter().map(|variables| variables["filename"].clone()).collect();
     let puts = stand.puts.seen.lock().unwrap().clone();
-    let rows: Vec<String> = ids.iter().map(|id| match database.peek_row(database.session_epoch(), "Asset".into(), (*id).into()) {
+    let rows: Vec<String> = ids.iter().map(|id| match database.peek_row_now(database.session_epoch(), "Asset".into(), (*id).into()) {
         Ok(Some(row)) => format!("{id}: sync={:?} uploads={:?}", row.sync, row.uploads),
         other => format!("{id}: {other:?}"),
     }).collect();
@@ -99,7 +99,7 @@ fn keys_of(sent: &[Value]) -> Vec<String> { sent.iter().map(|item| item["clientK
 async fn a_batch_owns_its_sources_and_confirms_every_member_with_one_request() {
     let stand = Stand::new();
     let database = stand.open(None, &ALBUM_OPERATIONS).await;
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("image.png");
     std::fs::write(&source, b"image").unwrap();
@@ -112,7 +112,7 @@ async fn a_batch_owns_its_sources_and_confirms_every_member_with_one_request() {
     std::fs::remove_file(&source).unwrap();
     for _ in 0..2 { stand.script.data("CreateBlob", &blob(0).replace("signed-0", "signed")); }
     stand.script.data("CreateAssets", &assets(&[("a1", "key-1", 1), ("a0", "key-0", 0)]));
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
 
     assert_eq!(outcomes(&database, &receipt).await, ["confirmed a0", "confirmed a1"]);
     let landed = bound(database.confirmed(receipt.items[0].receipt.clone(), false)).await.unwrap().value.expect("the item is confirmed with its row");

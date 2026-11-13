@@ -51,7 +51,7 @@ struct EncryptedSessionTests {
   func oversizedSessionCallsFailLocallyAndLeaveTheNextCallAvailable() async throws {
     let http = RecordedHttp(status: 400)
     let database = try await openDatabase(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: MockTransport(), encrypted: EncryptedConfig(origin: Self.origin.absoluteString, serverKey: serverKey, pin: serverPin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["otp": EncryptedSessionOperation(path: "/api/auth/otp", class: .sessionless), "confirm": EncryptedSessionOperation(path: "/api/auth/confirm", class: .sessionless), "social": EncryptedSessionOperation(path: "/api/auth/social", class: .sessionless), "ticket": EncryptedSessionOperation(path: "/api/ticket", class: .sessionless)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel"), credentials: HeldCredential(), http: http)
-    try database.setOnline(online: true)
+    try await database.setOnline(online: true)
     do {
       _ = try await database.sessionCall(operation: "otp", bodyJson: "{\"phone\":\"\(String(repeating: "x", count: 260_000))\"}")
       Issue.record("expected a local size refusal")
@@ -93,7 +93,7 @@ struct EncryptedSessionTests {
     let http = RecordedHttp(status: 400)
     let credentials = HeldCredential()
     let database = try await openDatabase(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: MockTransport(), encrypted: EncryptedConfig(origin: Self.origin.absoluteString, serverKey: serverKey, pin: serverPin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["otp": EncryptedSessionOperation(path: "/api/auth/otp", class: .sessionless), "confirm": EncryptedSessionOperation(path: "/api/auth/confirm", class: .sessionless), "social": EncryptedSessionOperation(path: "/api/auth/social", class: .sessionless), "ticket": EncryptedSessionOperation(path: "/api/ticket", class: .sessionless)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel"), credentials: credentials, http: http)
-    try database.setOnline(online: true)
+    try await database.setOnline(online: true)
 
     await expectDbError("Http") { try await database.sessionCall(operation: "ticket", bodyJson: "{}") }
     #expect(credentials.current == nil)

@@ -44,14 +44,14 @@ async fn a_send_needs_a_session_and_a_plain_action_waits_for_the_network() {
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let (values, args) = group("g");
-    rig.database.set_online(false).unwrap();
+    rig.database.set_online(false).await.unwrap();
     settle(&rig).await;
     let plain = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
     assert_eq!(plain.optimistic_value.as_ref().unwrap().sync.state, WireSyncState::Pending);
     settle(&rig).await;
     assert_eq!(crate::ffi::tests::queue_view_tests::queued(&rig.database).len(), 1, "a plain action was not queued while the network was away");
     assert_eq!(rig.world.count("CreateGroup"), 0, "a plain action went out without the network");
-    rig.database.set_online(true).unwrap();
+    rig.database.set_online(true).await.unwrap();
     assert!(bound(rig.database.confirmed(plain, false)).await.is_ok());
     assert_eq!(rig.world.count("CreateGroup"), 1, "a plain action went out more or less than once after the network returned");
     let receipt = bound(rig.database.send(message(epoch, "offline", 2))).await.unwrap();
@@ -151,7 +151,7 @@ async fn a_queued_message_shows_as_pending_in_the_thread_before_the_server_answe
     let reader = Reader::open();
     let stream = rig.database.subscribe_reading(epoch, thread(), reader.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
-    rig.database.set_online(false).unwrap();
+    rig.database.set_online(false).await.unwrap();
     bound(rig.database.send(message(epoch, "queued", 2))).await.unwrap();
     settled(&rig, "the thread shows the queued message", || reader.rows().iter().any(|row| row.sync.state == WireSyncState::Pending)).await;
     assert_eq!(rig.world.count("SendMessage"), 0, "the message was shown only after the server answered");
@@ -174,7 +174,7 @@ async fn a_cancelled_list_stream_leaves_no_observer_and_a_later_write_does_no_re
     let census = rig.database.subscription_census().await.unwrap();
     assert_eq!((census.subscriptions, census.observed_queries, census.retained_observers), (0, 0, 0), "a left list stream kept an observer");
     let reads = rig.database.db.counters().observation_reads;
-    rig.database.set_online(false).unwrap();
+    rig.database.set_online(false).await.unwrap();
     bound(rig.database.send(message(epoch, "after", 3))).await.unwrap();
     settle(&rig).await;
     assert_eq!(rig.database.db.counters().observation_reads, reads, "a write after the last reader left woke an observer");
@@ -191,7 +191,7 @@ async fn a_refresh_and_a_load_more_fail_at_once_offline_and_the_entity_stream_sh
     let stream = rig.database.subscribe_reading(epoch, ReadRequest::Entity { model: "User".into(), id: "user".into(), fetch: crate::ffi::ReadFetch::Force }, entity.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
     let hits = rig.world.log().len();
-    rig.database.set_online(false).unwrap();
+    rig.database.set_online(false).await.unwrap();
     let refreshed = bound(rig.database.refresh_stream(stream)).await;
     assert!(matches!(refreshed, Err(DbError::Offline { .. })), "refresh of a stream offline: {refreshed:?}");
     let refreshed = bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), Some("all".into()), "{}".into())).await;
@@ -213,11 +213,11 @@ async fn a_run_offline_after_open_fails_at_once_and_the_transport_makes_no_attem
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let hits = rig.world.log().len();
-    rig.database.set_online(false).unwrap();
+    rig.database.set_online(false).await.unwrap();
     let run = bound(rig.database.run(epoch, "SessionProfile".into(), "{}".into())).await;
     assert!(matches!(run, Err(DbError::Offline { .. })), "run offline: {run:?}");
     assert_eq!(rig.world.log().len(), hits, "a run offline reached the server");
-    rig.database.set_online(true).unwrap();
+    rig.database.set_online(true).await.unwrap();
     bound(rig.database.run(epoch, "SessionProfile".into(), "{}".into())).await.unwrap();
     assert_eq!(rig.world.log().len(), hits + 1, "the run online made another number of attempts than 1");
     rig.database.close_now();

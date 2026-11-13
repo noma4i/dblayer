@@ -143,7 +143,7 @@ async fn open_models(server: Arc<Server>, model_text: String) -> Arc<Database> {
         {"name":"PagedUsers","document":"query PagedUsers($after: String) { pagedUsers(after: $after) { nodes { id name } pageInfo { hasNextPage endCursor } } }","rootPath":"pagedUsers"},
         {"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"}
     ]).to_string()).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     database
 }
 

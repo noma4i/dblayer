@@ -36,7 +36,7 @@ async fn open(replies: &[&str]) -> (Arc<Database>, Arc<TestClock>) {
     let clock = TestClock::new(1_000_000);
     let db = Database::open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone()).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).await.unwrap();
-    db.set_online(true).unwrap();
+    db.set_online(true).await.unwrap();
     (db, clock)
 }
 
@@ -146,7 +146,7 @@ async fn open_with_authors(replies: &[&str]) -> (Arc<Database>, Arc<TestClock>) 
     let clock = TestClock::new(1_000_000);
     let db = Database::open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![user, model]).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone()).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text author { id name } } }","rootPath":"moments"}]"#.into()).await.unwrap();
-    db.set_online(true).unwrap();
+    db.set_online(true).await.unwrap();
     (db, clock)
 }
 
@@ -170,7 +170,7 @@ async fn open_file(path: &str, replies: &[&str], clock: Arc<TestClock>) -> Arc<D
     let transport = Arc::new(Replying(Mutex::new(replies.iter().map(|reply| reply.to_string()).collect())));
     let db = Database::open_with_clock(Config { path: Some(path.to_string()), data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).await.unwrap();
-    db.set_online(true).unwrap();
+    db.set_online(true).await.unwrap();
     db
 }
 

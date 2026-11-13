@@ -56,7 +56,7 @@ async fn image_of(origin: Holder, directory: &Path, stand: &Stand, clock: &Arc<T
             let sent = bound(database.send(clip("Moment", r#"{"text":"clip"}"#, "upload_clip", &source, epoch))).await.unwrap();
             let id = sent.optimistic_value.unwrap().id;
             presign.entered().await;
-            database.set_online(false).unwrap();
+            database.set_online(false).await.unwrap();
             presign.dropped().await;
             bound(database.discard(epoch, "Moment".into(), id, Some("upload_clip".into()))).await.unwrap();
             presign.release();
@@ -125,7 +125,7 @@ async fn sess_held_pair_of_every_origin_goes_first_after_restart() {
             bound(reopened.send(plain("Moment", r#"{"text":"B"}"#, epoch))).await.unwrap();
         }
         match origin {
-            Holder::ReleasedPair => advancing(&clock, crate::test_wait::settled(&reopened, "the write behind the pair landed", || reopened.peek_row(reopened.session_epoch(), "Moment".into(), "m78".into()).unwrap().is_some())).await,
+            Holder::ReleasedPair => advancing(&clock, crate::test_wait::settled(&reopened, "the write behind the pair landed", || reopened.peek_row_now(reopened.session_epoch(), "Moment".into(), "m78".into()).unwrap().is_some())).await,
             _ => advancing(&clock, drained(&reopened)).await,
         }
         let names = fresh.script.names();

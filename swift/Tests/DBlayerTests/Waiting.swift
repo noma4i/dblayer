@@ -435,7 +435,7 @@ func opened<Model: DBModel>(_ events: EventStream<Model>, sourceLocation: Source
 @MainActor
 func networkDrops(during held: Hold) async throws {
   await held.entered()
-  try DB.database.setOnline(online: false)
+  try await DB.database.setOnline(online: false)
 }
 
 extension Projected {

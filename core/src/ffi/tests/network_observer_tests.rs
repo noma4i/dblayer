@@ -10,17 +10,21 @@ use crate::transport::encrypted::tests::vectors_tests::{origin, pin, public_key_
 fn run(work: impl std::future::Future<Output = ()>) { tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap().block_on(work); }
 
 /// The observer of the platform: it keeps the input of the process value it was started with.
-struct ProcessDouble { sink: Mutex<Option<Arc<OnlineSink>>> }
+struct ProcessDouble { sink: Mutex<Option<Arc<OnlineSink>>>, started: crate::test_wait::Flag }
 
 impl super::PlatformObserver for ProcessDouble {
-    fn start(&self, sink: Arc<OnlineSink>) { *self.sink.lock().unwrap() = Some(sink); }
+    fn start(&self, sink: Arc<OnlineSink>) {
+        *self.sink.lock().unwrap() = Some(sink);
+        self.started.set();
+    }
     fn stop(&self) {}
 }
 
 /// The status of the process over its one observer: the returned sink is the OS value of the network.
-fn process() -> (Arc<NetworkStatus>, Arc<OnlineSink>) {
-    let double = Arc::new(ProcessDouble { sink: Default::default() });
+async fn process() -> (Arc<NetworkStatus>, Arc<OnlineSink>) {
+    let double = Arc::new(ProcessDouble { sink: Default::default(), started: Default::default() });
     let status = NetworkStatus::new(double.clone());
+    double.started.wait("the first status starts the observer").await;
     let sink = double.sink.lock().unwrap().clone().expect("the first status starts the observer");
     (status, sink)
 }
@@ -59,7 +63,7 @@ impl super::FakeHttp for Posts {
 #[test]
 fn net_open_takes_the_process_value() {
     in_own_process(module_path!(), "net_open_takes_the_process_value", &["online", "offline"], |value| run(async {
-        let (_status, os) = process();
+        let (_status, os) = process().await;
         os.set_online(value == "online");
         let rig = Rig::new();
         let database = open_database(&rig).await;
@@ -82,7 +86,7 @@ fn net_open_takes_the_process_value() {
 #[test]
 fn net_open_before_first_value() {
     in_own_process(module_path!(), "net_open_before_first_value", &["status"], |_| run(async {
-        let (status, os) = process();
+        let (status, os) = process().await;
         assert_eq!(status.current(), None);
         let rig = Rig::new();
         let database = open_database(&rig).await;
@@ -102,7 +106,7 @@ fn net_open_before_first_value() {
 #[test]
 fn net_status_feeds_database_and_config() {
     in_own_process(module_path!(), "net_status_feeds_database_and_config", &["status"], |_| run(async {
-        let (status, os) = process();
+        let (status, os) = process().await;
         let rig = Rig::new();
         let database = open_database(&rig).await;
         let posts = Arc::new(Posts(AtomicUsize::new(0)));
@@ -130,9 +134,9 @@ fn net_status_feeds_database_and_config() {
 #[test]
 fn net_database_input_keeps_the_process_value() {
     in_own_process(module_path!(), "net_database_input_keeps_the_process_value", &["direct"], |_| run(async {
-        let (status, _os) = process();
+        let (status, _os) = process().await;
         let first = open_database(&Rig::new()).await;
-        first.set_online(true).unwrap();
+        first.set_online(true).await.unwrap();
         assert_eq!(status.current(), None, "the call of the database moved the value of the process");
         within(first.close_database()).await.unwrap();
         let rig = Rig::new();

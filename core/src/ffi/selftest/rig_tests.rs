@@ -473,7 +473,7 @@ impl Rig {
             .await
             .unwrap();
         database.register_operations(plain_operations()).await.unwrap();
-        database.set_online(true).unwrap();
+        database.set_online(true).await.unwrap();
         Rig { opener, database, world, switch, clock }
     }
 
@@ -489,7 +489,7 @@ impl Rig {
         let opener = OpenDatabase::new();
         let database = opener.open_with_clock(config(), crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(switch.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
         database.register_operations(plain_operations()).await.unwrap();
-        database.set_online(true).unwrap();
+        database.set_online(true).await.unwrap();
         Rig { opener, database, world: first, switch, clock }
     }
 
@@ -539,7 +539,7 @@ impl Rig {
         edit(&mut models);
         let database = opener.open_with_clock(config(), crate::ffi::specs(models.to_string()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(switch.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(WatchedHeld::default())), http: Some(first.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
         database.register_operations(plain_operations()).await.unwrap();
-        database.set_online(true).unwrap();
+        database.set_online(true).await.unwrap();
         bound(database.session_call("login_link".into(), json!({"account": first.account()}).to_string())).await.unwrap();
         Rig { opener, database, world: first, switch, clock }
     }
@@ -551,7 +551,7 @@ impl Rig {
         self.switch.set(next);
         let database = self.opener.open_with_clock(config(), crate::ffi::specs(plain_models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(self.switch.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, self.clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
         database.register_operations(plain_operations()).await.unwrap();
-        database.set_online(true).unwrap();
+        database.set_online(true).await.unwrap();
         self.database = database;
     }
 

@@ -55,7 +55,7 @@ async fn open(gated: bool) -> (Arc<Database>, Arc<Pages>) {
     let transport = Arc::new(Pages { asked: Mutex::new(Vec::new()), gate: Arc::new(Semaphore::new(0)), gated, count: AtomicUsize::new(0), last_page: AtomicUsize::new(1), response: Mutex::new(None), panics: std::sync::atomic::AtomicBool::new(false) });
     let db = Database::open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000)).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).await.unwrap();
-    db.set_online(true).unwrap();
+    db.set_online(true).await.unwrap();
     (db, transport)
 }
 
@@ -147,11 +147,11 @@ async fn win_loading_error_preserves_graphql_messages_and_extensions() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_load_without_the_network_waits_and_asks_when_the_network_returns_while_a_refresh_fails_at_once() {
     let (db, transport) = open(false).await;
-    db.set_online(false).unwrap();
+    db.set_online(false).await.unwrap();
     let call = begin(&db).await;
     crate::test_wait::within(crate::ffi::settled(&db)).await.unwrap();
     assert_eq!(transport.requests(), 0, "no request leaves while the network is away");
-    db.set_online(true).unwrap();
+    db.set_online(true).await.unwrap();
     crate::test_wait::within(call.result()).await.unwrap();
     assert_eq!(transport.requests(), 1);
 }
@@ -160,11 +160,11 @@ async fn a_load_without_the_network_waits_and_asks_when_the_network_returns_whil
 #[tokio::test(flavor = "multi_thread")]
 async fn net_prop_offline_decided_by_owner() {
     let (db, transport) = open(false).await;
-    db.set_online(false).unwrap();
+    db.set_online(false).await.unwrap();
     assert!(matches!(refresh(&db).await, Err(DbError::Offline { detail }) if detail == "Moment.feed refresh needs the network"));
     assert!(matches!(more(&db).await, Err(DbError::Offline { detail }) if detail == "Moment.feed load more needs the network"));
     assert_eq!(transport.requests(), 0, "no request leaves while the owner is offline");
-    db.set_online(true).unwrap();
+    db.set_online(true).await.unwrap();
     crate::test_wait::within(refresh(&db)).await.unwrap();
     assert_eq!(transport.requests(), 1, "the owner took the call once it was online");
 }

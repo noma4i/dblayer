@@ -80,16 +80,16 @@ impl Rig {
     }
 
     pub async fn login(&self) -> Result<String, DbError> {
-        self.database.set_online(true).ok();
+        self.database.set_online(true).await.ok();
         let answer = crate::test_wait::timeout(STEP_LIMIT, self.database.session_call("social".into(), SOCIAL.into())).await;
-        self.database.set_online(false).ok();
+        self.database.set_online(false).await.ok();
         answer.unwrap_or_else(|_| Err(timeout()))
     }
 
     pub async fn logout(&self) -> Result<String, DbError> {
-        self.database.set_online(true).ok();
+        self.database.set_online(true).await.ok();
         let answer = crate::test_wait::timeout(STEP_LIMIT, self.database.session_call("logout".into(), "{}".into())).await;
-        self.database.set_online(false).ok();
+        self.database.set_online(false).await.ok();
         answer.unwrap_or_else(|_| Err(timeout()))
     }
 

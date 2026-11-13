@@ -48,7 +48,7 @@ async fn xfer_retry_source_swap_reopen() {
     rig.server.register(BLOB);
     rig.server.register(MUTATION);
     let database = open(&path, &rig).await;
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     within(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     crate::test_wait::settled(&database, "session setup completes", || true).await;
     let epoch = database.session_epoch();
@@ -66,7 +66,7 @@ async fn xfer_retry_source_swap_reopen() {
     let copy = PathBuf::from(upload.local_url.as_ref().unwrap().strip_prefix("file://").unwrap());
     assert_eq!(std::fs::read(&copy).unwrap(), b"original image");
     let before = names(copy.parent().unwrap());
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     let bad = WireUploadSource { path: directory.path().to_string_lossy().into_owned(), name: None, mime: None, values_json: "{}".into(), variables_json: "{}".into(), prepare: None };
     let retry = within(database.retry(epoch, "Moment".into(), "r1".into(), Some("upload".into()), Some(bad))).await;
     assert!(matches!(retry, Err(DbError::Copy { .. })), "retry: {retry:?}");

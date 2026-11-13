@@ -38,7 +38,7 @@ async fn held(stand: &Stand, database: &Database, parts: usize) {
     bound(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
 }
 
-fn row_exists(database: &Database, id: &str) -> bool { database.peek_row(database.session_epoch(), "Moment".into(), id.into()).unwrap().is_some() }
+fn row_exists(database: &Database, id: &str) -> bool { database.peek_row_now(database.session_epoch(), "Moment".into(), id.into()).unwrap().is_some() }
 
 /// A file staged before its row goes up as a multipart upload from 1 byte, shows `uploading` at 0.99 to the stream of its key and sends neither `complete` nor the mutation; `commit_staged` then shows the row and finishes the upload once.
 #[tokio::test(flavor = "multi_thread")]
@@ -117,7 +117,7 @@ async fn xfer_stage_commit_early() {
         }
         assert_eq!(stand.script.count("CompleteMultipart") + stand.script.count("CreateMoment"), 0, "{case}: nothing is completed before the commit");
         let committed = bound(database.commit_staged(database.session_epoch(), "Moment".into(), staged.row_id.clone(), "upload_clip".into(), r#"{"text":"hi"}"#.into(), "{}".into())).await.unwrap();
-        let shown = database.peek_row(database.session_epoch(), "Moment".into(), staged.row_id.clone()).unwrap().expect("the row is shown at once");
+        let shown = database.peek_row(database.session_epoch(), "Moment".into(), staged.row_id.clone()).await.unwrap().expect("the row is shown at once");
         assert_eq!(committed.optimistic_value.as_ref().map(|row| row.id.clone()), Some(staged.row_id.clone()), "{case}");
         assert!(format!("{:?}", shown.cells).contains("hi"), "{case}: the row shows the values of the commit");
         assert!(upload_of(&database, &staged.row_id).is_some(), "{case}: the row shows its upload");
@@ -165,7 +165,7 @@ async fn crash_image_held() {
             let files = || std::fs::read_dir(files_of(&image).join("transfers")).map_or(0, |found| found.count());
             let aborts = usize::try_from(known).unwrap().max(usize::from(init_pair));
             crate::test_wait::settled(&reopened, "the held transfer is gone", || { rows() == 0 && files() == 0 && fresh.script.count("AbortMultipart") == aborts }).await;
-            assert!(reopened.peek_row(reopened.session_epoch(), "Moment".into(), id).unwrap().is_none(), "cut {index}: no optimistic row");
+            assert!(reopened.peek_row(reopened.session_epoch(), "Moment".into(), id).await.unwrap().is_none(), "cut {index}: no optimistic row");
             let sent = fresh.script.names();
             assert!(sent.iter().all(|name| matches!(name.as_str(), "AbortMultipart" | "InitMultipart" | "PresignParts")), "cut {index}: nothing completes and nothing is created: {sent:?}");
             assert!(pairs > 0 || sent.iter().all(|name| name == "AbortMultipart"), "cut {index}: only the pair the image saved goes again: {sent:?}");
@@ -230,7 +230,7 @@ async fn xfer_stage_commit_twice() {
     bound(commit("first")).await.unwrap();
     let second = bound(commit("second")).await;
     assert!(matches!(second, Err(crate::ffi::DbError::Invalid { .. })), "{second:?}");
-    let shown = database.peek_row(database.session_epoch(), "Moment".into(), staged.row_id.clone()).unwrap().expect("the row of the first commit");
+    let shown = database.peek_row(database.session_epoch(), "Moment".into(), staged.row_id.clone()).await.unwrap().expect("the row of the first commit");
     assert!(format!("{:?}", shown.cells).contains("first"));
     crate::test_wait::settled(&database, "the final mutation went", || stand.script.count("CreateMoment") == 1).await;
     assert_eq!(stand.script.count("CreateMoment"), 1);

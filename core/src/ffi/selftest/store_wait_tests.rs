@@ -26,19 +26,19 @@ fn all_files() -> QuerySpec {
 #[tokio::test(flavor = "multi_thread")]
 async fn every_store_read_answers_its_value_no_session_for_a_stale_epoch_and_closed_after_close() {
     let (db, epoch, id, _directory) = stand().await;
-    assert!(db.peek_row(epoch, "Files".into(), id.clone()).unwrap().is_some());
+    assert!(db.peek_row(epoch, "Files".into(), id.clone()).await.unwrap().is_some());
     assert!(db.read_row(epoch, "Files".into(), id.clone()).await.unwrap().is_some());
     let rows = db.read_query(epoch, all_files()).await.unwrap();
     assert_eq!((rows.len(), rows[0].id.as_str()), (1, id.as_str()));
     assert_eq!(db.file(epoch, "Files".into(), id.clone(), "photo".into()).await.unwrap().unwrap().size, 3);
     assert!(db.open_report().unwrap().dropped.is_empty());
-    assert!(no_session(db.peek_row(epoch + 1, "Files".into(), id.clone())));
+    assert!(no_session(db.peek_row(epoch + 1, "Files".into(), id.clone()).await));
     assert!(no_session(db.read_row(epoch + 1, "Files".into(), id.clone()).await));
     assert!(no_session(db.read_query(epoch + 1, all_files()).await));
     assert!(no_session(db.edge_values(epoch + 1, "Files".into(), Some("feed".into()), "{}".into(), vec![]).await));
     assert!(no_session(db.file(epoch + 1, "Files".into(), id.clone(), "photo".into()).await));
     db.close_database().await.unwrap();
-    assert!(closed(db.peek_row(epoch, "Files".into(), id.clone())));
+    assert!(closed(db.peek_row(epoch, "Files".into(), id.clone()).await));
     assert!(closed(db.read_row(epoch, "Files".into(), id.clone()).await));
     assert!(closed(db.read_query(epoch, all_files()).await));
     assert!(closed(db.edge_values(epoch, "Files".into(), Some("feed".into()), "{}".into(), vec![]).await));

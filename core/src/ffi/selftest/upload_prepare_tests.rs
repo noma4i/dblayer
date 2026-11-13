@@ -89,11 +89,11 @@ pub(super) fn probed_image() -> ProbeOutcome { ProbeOutcome::Image { width: 400,
 pub(super) fn shrink() -> WirePrepare { image(|edit| edit.max_size = Some(PixelSize { width: 200, height: 200 })) }
 
 pub(super) fn upload_of(database: &crate::ffi::Database, id: &str) -> Option<WireUpload> {
-    let row = database.peek_row(database.session_epoch(), "Moment".into(), id.into()).unwrap()?;
+    let row = database.peek_row_now(database.session_epoch(), "Moment".into(), id.into()).unwrap()?;
     row.uploads.into_iter().find(|entry| entry.action == "upload_clip").map(|entry| entry.upload)
 }
 
-fn shown(database: &crate::ffi::Database, id: &str) -> bool { database.peek_row(database.session_epoch(), "Moment".into(), id.into()).unwrap().is_some() }
+fn shown(database: &crate::ffi::Database, id: &str) -> bool { database.peek_row_now(database.session_epoch(), "Moment".into(), id.into()).unwrap().is_some() }
 
 pub(super) fn files_left(database: &std::path::Path) -> usize {
     fn walk(path: &std::path::Path) -> usize {
@@ -440,7 +440,7 @@ async fn xfer_prepare_of_a_supplied_source() {
 }
 
 fn upload_of_asset(database: &crate::ffi::Database, id: &str) -> Option<WireUpload> {
-    let row = database.peek_row(database.session_epoch(), "Asset".into(), id.into()).unwrap()?;
+    let row = database.peek_row_now(database.session_epoch(), "Asset".into(), id.into()).unwrap()?;
     row.uploads.into_iter().find(|entry| entry.action == "create_files").map(|entry| entry.upload)
 }
 

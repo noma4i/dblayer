@@ -193,13 +193,13 @@ async fn write_dependents_of_an_ended_create_end_refused() {
             _ => {
                 let rig = message_rig().await;
                 let epoch = rig.database.session_epoch();
-                rig.database.set_online(false).unwrap();
+                rig.database.set_online(false).await.unwrap();
                 let create = bound(rig.database.create(epoch, "Message".into(), json!({"chatId":"c1","text":"hi","at":1}).to_string(), "{}".into())).await.unwrap();
                 let temp = create.optimistic_value.clone().unwrap().id;
                 let rows = watched(&rig.database, "Message", &temp);
                 let edit = bound(rig.database.act(epoch, "Message".into(), temp.clone(), "edit".into(), json!({"text":"edited"}).to_string(), "{}".into())).await.unwrap();
                 bound(rig.database.discard(epoch, "Message".into(), temp, None)).await.unwrap();
-                rig.database.set_online(true).unwrap();
+                rig.database.set_online(true).await.unwrap();
                 let ended = bound(rig.database.confirmed(edit, false)).await;
                 rig.settle().await;
                 let outcome = (ended, sent_strings(&rig, "MessageEdit").len(), rows.emptied());

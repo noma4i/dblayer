@@ -47,7 +47,7 @@ async fn call_result_normalized() {
         {"name": "Raw", "document": "query Raw { profile { id } }"},
         {"name": "Bare", "document": "query Bare { profile { id } }"},
     ]).to_string()).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     let call = |root: Value| {
         *answer.lock().unwrap() = json!({"data": {"profile": root}}).to_string();
         let database = database.clone();

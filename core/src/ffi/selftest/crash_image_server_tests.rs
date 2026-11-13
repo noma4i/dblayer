@@ -72,7 +72,7 @@ async fn open(path: &Path, http: Arc<Recording>, credentials: Arc<WatchedHeld>, 
     let mut declared: Vec<Value> = MUTATIONS.iter().map(|(name, root)| json!({"name": name, "document": mutation(name, root), "rootPath": root})).collect();
     declared.push(json!({"name": "Pong", "document": READ, "rootPath": "read"}));
     database.register_operations(Value::Array(declared).to_string()).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     if !restored { bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap(); }
     database
 }

@@ -12,12 +12,12 @@ async fn a_load_whose_request_is_at_the_server_waits_for_the_network_and_ends_wi
     let held = rig.world.hold_next("MyProfile");
     let loading = { let database = rig.database.clone(); rig.spawn(async move { database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into()).await }) };
     held.entered().await;
-    rig.database.set_online(false).unwrap();
+    rig.database.set_online(false).await.unwrap();
     held.release();
     rig.settle().await;
     assert!(!loading.is_finished(), "the load ended while the network was away");
     assert_eq!(profile_requests(&rig), before + 1, "a request went out while the network was away");
-    rig.database.set_online(true).unwrap();
+    rig.database.set_online(true).await.unwrap();
     settled(&rig, "the load goes out again", || profile_requests(&rig) == before + 2).await;
     bound(loading).await.unwrap().unwrap();
     rig.database.close_now();

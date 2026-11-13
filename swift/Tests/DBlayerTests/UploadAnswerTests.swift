@@ -12,7 +12,7 @@ extension BridgeProbeTests {
     defer { try? FileManager.default.removeItem(at: source) }
     let transport = MockTransport()
     let database = try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"}]"#)
-    try database.setOnline(online: false)
+    try await database.setOnline(online: false)
     let local = try await Moment.create(text: "intro", in: DB.account()).optimisticValue!
     _ = try await local.uploadClip(UploadRequest(path: source.path), in: DB.account())
     let current = try #require(try await Moment.find(local.id).current())

@@ -59,11 +59,11 @@ struct BridgeProbeTests {
     try await Moment.feed.load()
     let loaded = await changes.first("the loaded row") { $0.map(\.text) == ["m"] }
     let moment = try #require(loaded?.first)
-    try DB.database.setOnline(online: false)
+    try await DB.database.setOnline(online: false)
     let receipt = try await moment.update(text: "edited")
     #expect(await changes.first("the edited row") { $0.map(\.text) == ["edited"] } != nil)
     #expect(transport.calls.filter { $0.operationName == "UpdateMoment" }.isEmpty, "a request left while the network was away")
-    try DB.database.setOnline(online: true)
+    try await DB.database.setOnline(online: true)
     _ = try await receipt.confirmed()
     #expect(transport.calls.filter { $0.operationName == "UpdateMoment" }.count == 1)
   }

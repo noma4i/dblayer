@@ -93,7 +93,7 @@ async fn preloads_and_three_media_loads_finish_on_empty_pages() {
     let options = OpenOptions { operations };
     let opener = OpenDatabase::new();
     let database = within_secs(20, opener.open(Config { path: None, data_version: None }, crate::ffi::specs(models()), options, crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None)).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     within_secs(20, transport.preload.notified()).await;
     let epoch = database.session_epoch();
     for (relation, id) in [("visual_media", "v1"), ("audio_media", "a1"), ("gift_media", "g1")] {

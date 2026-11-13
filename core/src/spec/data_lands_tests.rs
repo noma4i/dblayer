@@ -58,7 +58,7 @@ async fn data_upsert_lands() {
     operations.as_array_mut().unwrap().iter_mut().find(|operation| operation["name"] == "MakeMoment").unwrap()["document"] = json!(MAKE_MOMENT);
     db.register_operations(operations.to_string()).await.unwrap();
     db.register_operations(r#"[{"name":"Annotations","document":"query Annotations { annotations { id text } }","rootPath":"annotations"}]"#.into()).await.unwrap();
-    db.set_online(true).unwrap();
+    db.set_online(true).await.unwrap();
     within(db.session_call("login_link".into(), json!({"account": "A"}).to_string())).await.unwrap();
     let epoch = db.session_epoch();
     let load = db.begin_load(epoch, "Annotation".into(), Some("all".into()), "{}".into()).unwrap();

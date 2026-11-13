@@ -186,7 +186,7 @@ async fn an_offline_discard_routes_its_reopened_abort_as_a_transfer() {
     presign.entered().await;
     let files = directory.path().join("db.sqlite.files/transfers");
     assert_eq!(std::fs::read_dir(&files).unwrap().count(), 1);
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     presign.dropped().await;
 
     bound(database.discard(epoch, "Moment".into(), id, Some("upload_clip".into()))).await.unwrap();
@@ -201,9 +201,9 @@ async fn an_offline_discard_routes_its_reopened_abort_as_a_transfer() {
     abort.release();
     bound(crate::ffi::settled(&reopened)).await.unwrap();
     assert_eq!(stand.script.count("AbortMultipart"), 1, "the reopened abort was answered and its orphan record removed before the network flaps");
-    reopened.set_online(false).unwrap();
+    reopened.set_online(false).await.unwrap();
     bound(crate::ffi::settled(&reopened)).await.unwrap();
-    reopened.set_online(true).unwrap();
+    reopened.set_online(true).await.unwrap();
     bound(crate::ffi::settled(&reopened)).await.unwrap();
     assert_eq!(stand.script.names(), ["InitMultipart", "PresignParts", "PresignParts", "AbortMultipart"]);
     let asked = stand.script.variables("PresignParts");

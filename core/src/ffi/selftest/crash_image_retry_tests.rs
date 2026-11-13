@@ -35,7 +35,7 @@ async fn a_file_cut_around_the_retry_of_a_kept_refusal_sends_only_after_the_retr
     stand.script.data("CreateMoment", LANDED);
     bound(database.retry(epoch, "Moment".into(), temporary.clone(), None, None)).await.unwrap();
     advancing(&clock, drained(&database)).await;
-    assert!(database.peek_row(epoch, "Moment".into(), "m77".into()).unwrap().is_some(), "the live retry lands the row");
+    assert!(database.peek_row(epoch, "Moment".into(), "m77".into()).await.unwrap().is_some(), "the live retry lands the row");
     let (capture, files) = base.end(&live);
 
     let kept = over_images(&capture, &files, |index, image| {
@@ -53,7 +53,7 @@ async fn a_file_cut_around_the_retry_of_a_kept_refusal_sends_only_after_the_retr
             }
             advancing(&clock, drained(&reopened)).await;
             assert_eq!(fresh.script.count("CreateMoment"), usize::from(kept || (saved == 1 && answered == 0)), "cut {index}: the operation is sent once, never when its answer was saved or it had landed");
-            assert!(reopened.peek_row(epoch, "Moment".into(), "m77".into()).unwrap().is_some(), "cut {index}: the row landed");
+            assert!(reopened.peek_row(epoch, "Moment".into(), "m77".into()).await.unwrap().is_some(), "cut {index}: the row landed");
             bound(reopened.close_database()).await.unwrap();
             kept
         }

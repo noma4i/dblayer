@@ -7,7 +7,7 @@ use crate::ffi::upload_wire::WireUploadBatch;
 const ASSETS: &str = r#"{"data":{"createAssets":{"assets":[{"id":"a0","clientKey":"key-0","size":3,"position":0},{"id":"a1","clientKey":"key-1","size":3,"position":1},{"id":"a2","clientKey":"key-2","size":3,"position":2}]}}}"#;
 
 fn landed(database: &crate::ffi::Database) -> usize {
-    ["a0", "a1", "a2"].iter().filter(|id| database.peek_row(database.session_epoch(), "Asset".into(), id.to_string()).unwrap().is_some()).count()
+    ["a0", "a1", "a2"].iter().filter(|id| database.peek_row_now(database.session_epoch(), "Asset".into(), id.to_string()).unwrap().is_some()).count()
 }
 
 /// A process killed after any commit of a three file batch upload, also while the final request is held, leaves a file that finishes the batch with every step sent at most once and all three rows landed, or finds nothing begun, and never lands a part of the batch.

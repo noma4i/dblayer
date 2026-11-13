@@ -312,9 +312,9 @@ impl Run {
                 (format!("discard of the kept row {temp}"), false)
             }
             "resubscribe" => {
-                self.rig.database.set_online(false).unwrap();
+                self.rig.database.set_online(false).await.unwrap();
                 self.rig.settle().await;
-                self.rig.database.set_online(true).unwrap();
+                self.rig.database.set_online(true).await.unwrap();
                 ("the connection is lost and comes back".into(), false)
             }
             other => unreachable!("{other}"),

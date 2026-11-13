@@ -45,7 +45,7 @@ async fn an_orphan_abort_goes_out_once(order: OpenOrder) {
     let sent = bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &source, epoch))).await.unwrap();
     let id = sent.optimistic_value.unwrap().id;
     presign.entered().await;
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     bound(database.discard(epoch, "Moment".into(), id, Some("upload_clip".into()))).await.unwrap();
     presign.release();
     database.close_now();
@@ -82,7 +82,7 @@ async fn xfer_reopen_discarded_batch_replays_in_every_open_order() {
         let receipt = bound(database.upload_create_batch(epoch, "Asset".into(), items(directory.path()), WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
         held.entered().await;
         bound(database.discard(epoch, "Asset".into(), receipt.items[0].optimistic_value.id.clone(), Some("create_files".into()))).await.unwrap();
-        database.set_online(false).unwrap();
+        database.set_online(false).await.unwrap();
         held.release();
         held.dropped().await;
         bound(database.close_database()).await.unwrap();

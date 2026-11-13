@@ -55,7 +55,7 @@ async fn the_outcome_of_a_write_with_a_lost_answer_is_internal() {
     use super::upload_stand::{plain, Stand, CREATE_MOMENT};
     let stand = Stand::new();
     let database = stand.open(None, &[CREATE_MOMENT]).await;
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     let receipt = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, database.session_epoch()))).await.unwrap();
 
     let answer = outcome_whose_answer_is_lost(&database, receipt).await;
@@ -71,7 +71,7 @@ async fn the_outcome_of_an_upload_with_a_lost_answer_is_internal() {
     use super::upload_stand::{plain, request, Stand, CREATE_MOMENT};
     let stand = Stand::new();
     let database = stand.open(None, &[CREATE_MOMENT]).await;
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     let epoch = database.session_epoch();
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("intro.mp4");

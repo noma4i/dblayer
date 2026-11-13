@@ -271,7 +271,7 @@ private class DatabaseRunner {
     suspend fun receiptDone(name: String, row: String, op: String, call: suspend () -> WireOperationReceipt): Done =
         Done(listOf(obs("receipt", "row" to row, "op" to op)), receipt = name to call())
 
-    fun start(database: Database, name: String, args: JsonObject): List<JsonObject>? {
+    suspend fun start(database: Database, name: String, args: JsonObject): List<JsonObject>? {
         val epoch = database.sessionEpoch()
         fun text(key: String): String? = args.text(key)
         fun label(row: String, suffix: String): String = text("as") ?: "$row:$suffix"

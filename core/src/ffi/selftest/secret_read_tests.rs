@@ -44,7 +44,7 @@ async fn a_vanished_secret_stops_the_cable_connect_and_creates_nothing() {
     let peer = Arc::new(Peer::new(config.clone(), subscribed, closed));
     let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(super::rig_models::plain_models()), OpenPorts { partial_operations: true, transport: Some(peer.clone()), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}]"#.into()).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     let (kept, sets) = (stored(&database), rig.touched().0);
     CredentialSlot::clear(&rig.credentials.inner).unwrap();

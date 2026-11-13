@@ -54,7 +54,7 @@ async fn source_file_of_the_caller_is_not_read_after_the_receipt() {
                 fresh.script.data("CreateMoment", LANDED);
             }).await;
             drained(&reopened).await;
-            let landed = reopened.peek_row(reopened.session_epoch(), "Moment".into(), "m77".into()).unwrap().is_some();
+            let landed = reopened.peek_row(reopened.session_epoch(), "Moment".into(), "m77".into()).await.unwrap().is_some();
             let bodies = fresh.puts.bodies.lock().unwrap().clone();
             bound(reopened.close_database()).await.unwrap();
             Some((landed, fresh.script.count("CreateMoment"), bodies))
@@ -131,11 +131,11 @@ async fn source_deferred_without_attach_reopens_failed_missing_file() {
     let secret = stand.rig.credentials.inner.value().unwrap();
     let (fresh, reopened) = reopen(&live, &secret, &OPERATIONS, |_| {}).await;
     let epoch = reopened.session_epoch();
-    let status = || reopened.peek_row(reopened.session_epoch(), "Asset".into(), id.clone()).unwrap().and_then(|row| row.uploads.iter().find(|entry| entry.action == "create_files").map(|entry| format!("{:?} {:?}", entry.upload.status, entry.upload.error)));
+    let status = || reopened.peek_row_now(reopened.session_epoch(), "Asset".into(), id.clone()).unwrap().and_then(|row| row.uploads.iter().find(|entry| entry.action == "create_files").map(|entry| format!("{:?} {:?}", entry.upload.status, entry.upload.error)));
     crate::test_wait::settled(&reopened, "the transfer failed", || status().is_some_and(|text| text.contains("Failed") && text.contains("missing_file"))).await;
     assert!(bound(reopened.retry(epoch, "Asset".into(), id.clone(), Some("create_files".into()), None)).await.is_err(), "a retry needs a new source");
     bound(reopened.discard(epoch, "Asset".into(), id.clone(), Some("create_files".into()))).await.unwrap();
-    crate::test_wait::settled(&reopened, "the row ended", || reopened.peek_row(reopened.session_epoch(), "Asset".into(), id.clone()).unwrap().is_none()).await;
+    crate::test_wait::settled(&reopened, "the row ended", || reopened.peek_row_now(reopened.session_epoch(), "Asset".into(), id.clone()).unwrap().is_none()).await;
     assert_eq!(fresh.script.names().len(), 0, "no request");
     reopened.close_now();
 }

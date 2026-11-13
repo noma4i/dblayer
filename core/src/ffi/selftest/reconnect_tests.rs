@@ -22,8 +22,8 @@ async fn a_list_with_an_events_subscription_loads_once_when_the_network_returns(
     drop(database.watch(ReadRequest::List { query: crate::ffi::QuerySpec::json(query) }, rows.clone()));
     settled(&database, "the list shows its first load", || rows.len() == 1).await;
     assert_eq!(list_requests(&world), 1);
-    database.set_online(false).unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(false).await.unwrap();
+    database.set_online(true).await.unwrap();
     settled(&database, "the list loaded again", || list_requests(&world) >= 2).await;
     loop {
         if matches!(bound(events.pull_next()).await, Some(ReadValue::Gap)) { break; }

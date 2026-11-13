@@ -55,7 +55,7 @@ impl DatabaseSut {
                 Ok(sink) => { sink.set_online(input.flag("online").unwrap_or(false)); Vec::new() }
                 Err(_) => error("online"),
             },
-            "set_online" => match database.set_online(input.flag("online").unwrap_or(false)) {
+            "set_online" => match database.set_online(input.flag("online").unwrap_or(false)).await {
                 Ok(()) => vec![Observation::new("online", json!(input.flag("online").unwrap_or(false)))],
                 Err(_) => error("online"),
             },
@@ -72,7 +72,7 @@ impl DatabaseSut {
                 if let Some(cancel) = self.loads.get(target) { cancel(); } else if let Some(pulled) = self.streams.get(target) { let stream = pulled.stream.clone(); self.launch(async move { let _ = stream.cancel().await; Done::default() }); } else { return error("unknown_target"); }
                 Vec::new()
             }
-            _ => match self.start(database, input) {
+            _ => match self.start(database, input).await {
                 Some(immediate) => immediate,
                 None => return vec![Observation::new("unsupported", json!(input.name))],
             },

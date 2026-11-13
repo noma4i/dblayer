@@ -132,7 +132,7 @@ public final class SilentPlatform: PlatformObserver {
 }
 
 private func signIn(restored: Bool = false, setsOnline: Bool = true) async throws {
-  if setsOnline { try DB.opener.opened().setOnline(online: true) }
+  if setsOnline { try await DB.opener.opened().setOnline(online: true) }
   if !restored { try await DB.sessionCall("login_link", body: StandLogin(account: "stand")) }
   try await DB.call("SessionProfile", variables: [:])
 }
@@ -191,7 +191,7 @@ public func openSignedClocked(modelsJson: String, transport: MockTransport, oper
 @MainActor @discardableResult
 public func openSignedOffline(config: Config, modelsJson: String, operations: String = sendMoment, preparer: Preparer? = ScriptedPreparer()) async throws -> Database {
   let database = try await openSigned(config: config, modelsJson: modelsJson, transport: MockTransport(), operations: operations, preparer: preparer)
-  try database.setOnline(online: false)
+  try await database.setOnline(online: false)
   return database
 }
 

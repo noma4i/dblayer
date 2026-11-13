@@ -51,7 +51,7 @@ async fn invoke(name: &str, database: &Arc<Database>, args: &Args) -> Option<Res
     let (epoch, model, row) = (args.epoch, args.model.clone(), args.row.clone());
     let field = args.field.clone();
     Some(match name {
-        "peek_row" => database.peek_row(epoch, model, row).map(|_| ()),
+        "peek_row" => database.peek_row(epoch, model, row).await.map(|_| ()),
         "read_row" => database.read_row(epoch, model, row).await.map(|_| ()),
         "file" => database.file(epoch, model, row, field).await.map(|_| ()),
         "url" => database.url(epoch, model, row, field).await.map(|_| ()),
@@ -221,7 +221,7 @@ async fn the_upload_calls_answer_the_first_violated_admission_step() {
     let stand = Stand::new();
     let database = stand.open(None, &[CREATE_MOMENT]).await;
     let epoch = database.session_epoch();
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     let row = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, epoch))).await.unwrap().optimistic_value.unwrap().id;
     let supply_row = bound(database.send(plain("Moment", r#"{"text":"supply"}"#, epoch))).await.unwrap().optimistic_value.unwrap().id;
     let fail_row = bound(database.send(plain("Moment", r#"{"text":"fail"}"#, epoch))).await.unwrap().optimistic_value.unwrap().id;
@@ -261,7 +261,7 @@ async fn an_upload_on_a_missing_row_leaves_the_database_open() {
     let stand = Stand::new();
     let database = stand.open(None, &[CREATE_MOMENT]).await;
     let epoch = database.session_epoch();
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     let row = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, epoch))).await.unwrap().optimistic_value.unwrap().id;
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");
@@ -269,14 +269,14 @@ async fn an_upload_on_a_missing_row_leaves_the_database_open() {
     let request = || WireUploadRequest { source: crate::ffi::upload_wire::WireSource::File { path: source.to_string_lossy().into_owned(), name: None, mime: None, prepare: None }, variables_json: "{}".into() };
     let first = database.upload(epoch, "Moment".into(), "absent-row".into(), "upload_clip".into(), request()).await;
     matrix.cell("upload(missing row)", "first call", "missing_row", "admitted", observed(&first.map(|_| ())));
-    let next = database.peek_row(epoch, "Moment".into(), row.clone());
+    let next = database.peek_row(epoch, "Moment".into(), row.clone()).await;
     matrix.cell("peek_row(present row)", "next call on the same database", "after the refused upload", "admitted", observed(&next.map(|_| ())));
     let again = database.upload(epoch + 1000, "Moment".into(), "absent-row".into(), "upload_clip".into(), request()).await;
     matrix.cell("upload(stale epoch, missing row)", "second upload", "after the refused upload", "NoSession", observed(&again.map(|_| ())));
     let valid = database.upload(epoch, "Moment".into(), row.clone(), "upload_clip".into(), request()).await;
     matrix.cell("upload(valid row)", "first call", "valid arguments", "admitted", observed(&valid.map(|_| ())));
     let _ = bound(crate::ffi::settled(&database)).await;
-    let after = database.peek_row(epoch, "Moment".into(), row);
+    let after = database.peek_row(epoch, "Moment".into(), row).await;
     matrix.cell("peek_row(present row)", "next call after a valid upload", "the server has no scripted answer", "admitted", observed(&after.map(|_| ())));
     matrix.finish();
 }

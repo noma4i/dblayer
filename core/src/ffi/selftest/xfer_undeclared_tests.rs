@@ -18,7 +18,7 @@ async fn xfer_saved_upload_without_its_operation_fails_and_goes_after_declaring_
     let file = directory.path().join("clip.mp4");
     std::fs::write(&file, b"clip").unwrap();
     let database = stand.open_with(Some(&live), &[CREATE_MOMENT], Some(clock.clone())).await;
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     let epoch = database.session_epoch();
     let sent = bound(database.send(clip("Moment", r#"{"text":"A"}"#, "upload_clip", &file, epoch))).await.unwrap();
     let temporary = sent.optimistic_value.as_ref().unwrap().id.clone();
@@ -29,7 +29,7 @@ async fn xfer_saved_upload_without_its_operation_fails_and_goes_after_declaring_
     database.close_now();
     let (fresh, reopened, clock) = reopen_timed(&image, &secret, &SUBSCRIPTIONS, |fresh| fresh.complete.store(true, std::sync::atomic::Ordering::SeqCst), false).await;
     let epoch = reopened.session_epoch();
-    let upload = || reopened.peek_row(epoch, "Moment".into(), temporary.clone()).unwrap().and_then(|row| row.uploads.into_iter().find(|entry| entry.action == "upload_clip")).map(|entry| entry.upload);
+    let upload = || reopened.peek_row_now(epoch, "Moment".into(), temporary.clone()).unwrap().and_then(|row| row.uploads.into_iter().find(|entry| entry.action == "upload_clip")).map(|entry| entry.upload);
     advancing(&clock, crate::test_wait::settled(&reopened, "the upload failed", || upload().is_some_and(|upload| upload.status == WireUploadStatus::Failed))).await;
     let error = upload().unwrap().error.unwrap();
     assert!(error.message.contains("is not declared"), "{error:?}");
@@ -43,6 +43,6 @@ async fn xfer_saved_upload_without_its_operation_fails_and_goes_after_declaring_
     let defs: Vec<serde_json::Value> = named.iter().map(|(name, document)| serde_json::json!({"name": name, "document": document})).collect();
     reopened.register_operations(serde_json::Value::Array(defs).to_string()).await.unwrap();
     bound(reopened.retry(epoch, "Moment".into(), temporary.clone(), Some("upload_clip".into()), None)).await.unwrap();
-    advancing(&clock, async { crate::test_wait::settled(&reopened, "the upload landed", || reopened.peek_row(epoch, "Moment".into(), "m77".into()).unwrap().is_some()).await; drained(&reopened).await; }).await;
+    advancing(&clock, async { crate::test_wait::settled(&reopened, "the upload landed", || reopened.peek_row_now(epoch, "Moment".into(), "m77".into()).unwrap().is_some()).await; drained(&reopened).await; }).await;
     assert_eq!(fresh.script.count("CreateBlob"), 1);
 }

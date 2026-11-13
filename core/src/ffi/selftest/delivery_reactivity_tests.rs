@@ -103,7 +103,7 @@ pub(super) async fn feed_database_over(path: Option<String>, held: Arc<crate::ff
     let transport = Arc::new(FeedTransport { cable, token, opened });
     let database = bound(Database::open_with_clock(crate::ffi::Config { path, data_version: None }, crate::ffi::specs(models), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(held.clone()), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
     database.register_operations(operations.to_string()).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     if crate::transport::CredentialSlot::get(&held.inner).unwrap().is_none() { bound(database.session_call("login_link".into(), json!({"account":"A"}).to_string())).await.unwrap(); }
     (database, transport)
 }
@@ -604,8 +604,8 @@ async fn feed_node_event_for_an_unshown_row_is_paid_by_the_first_reader() {
     assert_eq!(world.count("ChatList"), lists, "the list is fresh and is not read");
     world.answer_with("ChatNode", json!({"data":{"node":debt_chat("c1", "after")}}));
     world.answer_with("ChatList", json!({"data":{"chats":[debt_chat("c1", "after")]}}));
-    database.set_online(false).unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(false).await.unwrap();
+    database.set_online(true).await.unwrap();
     crate::test_wait::settled(&database, "the refused read repeats when the network returns", || shows(&first, "after")).await;
     crate::test_wait::settled(&database, "the payment is done", || true).await;
     assert_eq!(world.count("ChatNode"), nodes + 1, "one answered node request after the refused one, nothing after the payment");

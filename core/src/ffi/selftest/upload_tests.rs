@@ -71,7 +71,7 @@ async fn opened_with_model(rig: &SessionRig, puts: Arc<Puts>, model: crate::sche
         json!({"name": name, "document": document, "rootPath": root})
     }).collect();
     database.register_operations(json!(registered).to_string()).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     rig.server.reply_with(json!({
         "createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"},
@@ -96,7 +96,7 @@ async fn a_send_with_a_file_joins_a_loaded_create_window() {
     let epoch = database.session_epoch();
     let load = database.begin_load(epoch, "Moment".into(), Some("feed".into()), "{}".into()).unwrap();
     bound(load.result()).await.unwrap();
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"abc").unwrap();
@@ -153,14 +153,14 @@ async fn a_cancelled_upload_sends_nothing() {
     let rig = SessionRig::new();
     let puts = Arc::new(Puts::default());
     let database = opened_with_row(&rig, puts.clone()).await;
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"abc").unwrap();
     let epoch = database.session_epoch();
     bound(database.upload(epoch, "Moment".into(), "42".into(), "upload".into(), request(&source))).await.unwrap();
     assert!(bound(database.cancel_upload(epoch, "Moment".into(), "42".into(), "upload".into())).await.unwrap());
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     crate::test_wait::settled(&database, "the cancelled upload sent no PUT", || puts.0.lock().unwrap().is_empty()).await;
     assert!(executed(&rig, "MakeMoment").is_empty());
     database.close_now();
@@ -180,6 +180,6 @@ async fn store_resolve_peek_row_temp_id() {
     assert_eq!(shown.uploads.iter().map(|entry| entry.action.as_str()).collect::<Vec<_>>(), ["upload"], "the row shows the transfer of its action at once");
     let value = bound(database.confirmed(receipt, false)).await.unwrap().value;
     assert_eq!(value.map(|row| row.id), Some("42".to_string()));
-    assert_eq!(database.peek_row(epoch, "Moment".into(), shown.id).unwrap().map(|row| row.id), Some("42".to_string()));
+    assert_eq!(database.peek_row(epoch, "Moment".into(), shown.id).await.unwrap().map(|row| row.id), Some("42".to_string()));
     database.close_now();
 }

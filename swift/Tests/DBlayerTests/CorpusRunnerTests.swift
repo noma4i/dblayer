@@ -322,7 +322,7 @@ private final class DatabaseRunner {
       let opened = try await OpenDatabase().openWithClock(config: Config(path: nil, dataVersion: nil), modelsJson: withRawCalls(try modelsText(models == "events" ? "models_events.json" : "models.json"), try (JSONSerialization.jsonObject(with: Data(contentsOf: corpusDirectory().appendingPathComponent("operations.json"))) as! [[String: Any]]).map { $0["name"] as! String }), ports: OpenPorts(transport: mock, encrypted: session, credentials: encrypted ? Credentials() : nil, http: encrypted ? mock : nil, endpoint: scriptedEndpoint, partialOperations: true), clock: clock, options: OpenOptions(operations: []), observers: nil)
       let operations = try String(contentsOf: corpusDirectory().appendingPathComponent("operations.json"), encoding: .utf8)
       try await registerStandOperations(opened, defsJson: operations)
-      try opened.setOnline(online: true)
+      try await opened.setOnline(online: true)
       database = opened
       _ = await settle(already: wanted)
       return [observation("opened")]
@@ -336,7 +336,7 @@ private final class DatabaseRunner {
     } catch { return failed(error) }
   }
 
-  func start(_ database: Database, _ name: String, _ args: [String: Any]) -> [String]? {
+  func start(_ database: Database, _ name: String, _ args: [String: Any]) async -> [String]? {
     let epoch = database.sessionEpoch()
     let text = { (key: String) in args[key] as? String }
     switch name {
@@ -448,7 +448,7 @@ private final class DatabaseRunner {
       } catch { return failure(kind(of: error as? DbError ?? .Invalid(detail: ""))) }
     case "peek_row":
       guard let row = text("row") else { return failure("arguments") }
-      do { return [observation("peeked", ["row": row, "present": try database.peekRow(epoch: epoch, model: textOr(args, "model", "Moment"), rowId: idOf(row)) != nil])] } catch { return failure(kind(of: error as? DbError ?? .Invalid(detail: ""))) }
+      do { return [observation("peeked", ["row": row, "present": try await database.peekRow(epoch: epoch, model: textOr(args, "model", "Moment"), rowId: idOf(row)) != nil])] } catch { return failure(kind(of: error as? DbError ?? .Invalid(detail: ""))) }
     case "edge_values":
       guard let relation = text("relation"), let names = args["rows"] as? [String] else { return failure("arguments") }
       let model = textOr(args, "model", "Moment")
@@ -578,7 +578,7 @@ private final class DatabaseRunner {
       if let sink = try? database.onlineSink() { sink.setOnline(online: args["online"] as? Bool ?? false); observed = [] } else { observed = failure("online") }
     case "set_online":
       let online = args["online"] as? Bool ?? false
-      do { try database.setOnline(online: online); observed = [observation("online", online)] } catch { observed = failure("online") }
+      do { try await database.setOnline(online: online); observed = [observation("online", online)] } catch { observed = failure("online") }
     case "published":
       observed = [observation("published", ["epoch": database.sessionEpoch()])]
     case "open_list", "open_count", "open_entity", "open_events":
@@ -595,7 +595,7 @@ private final class DatabaseRunner {
       if let load = loads[target] { load.cancel() } else if let pulled = streams[target] { let stream = pulled.stream; spawn { await stream.cancel(); return CallResult() } } else { return failure("unknown_target") }
       observed = []
     default:
-      guard let immediate = start(database, name, args) else { return [observation("unsupported", name)] }
+      guard let immediate = await start(database, name, args) else { return [observation("unsupported", name)] }
       observed = immediate
     }
     observed += await settle(already: observed.count)

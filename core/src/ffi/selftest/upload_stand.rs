@@ -335,9 +335,9 @@ impl Stand {
         let register = || database.register_operations(Value::Array(declared.clone()).to_string());
         let session = || async { if !restored { super::rig_tests::bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap(); } };
         match order {
-            OpenOrder::OnlineFirst => { database.set_online(true).unwrap(); register().await.unwrap(); session().await; }
-            OpenOrder::RegisterFirst => { register().await.unwrap(); session().await; database.set_online(true).unwrap(); }
-            OpenOrder::OnlineBetweenRegisterAndSession => { register().await.unwrap(); database.set_online(true).unwrap(); session().await; }
+            OpenOrder::OnlineFirst => { database.set_online(true).await.unwrap(); register().await.unwrap(); session().await; }
+            OpenOrder::RegisterFirst => { register().await.unwrap(); session().await; database.set_online(true).await.unwrap(); }
+            OpenOrder::OnlineBetweenRegisterAndSession => { register().await.unwrap(); database.set_online(true).await.unwrap(); session().await; }
         }
         database
     }

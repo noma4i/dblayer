@@ -12,7 +12,7 @@ async fn open(path: &std::path::Path, world: Arc<World>, credentials: Arc<Watche
     encrypted.endpoints.session_operations.insert("login_link".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: EncryptedOperationClass::Authenticated });
     let transport = Switchable::new(Some(world.clone()), false);
     let database = bound(Database::open(Config { path: Some(path.to_string_lossy().into_owned()), data_version: None }, crate::ffi::specs(plain_models()), OpenPorts { partial_operations: true, transport: Some(transport), encrypted: Some(encrypted), credentials: Some(credentials), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     database
 }
 

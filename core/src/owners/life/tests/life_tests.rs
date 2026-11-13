@@ -320,7 +320,7 @@ async fn net_open_power_saving() {
     life.on_network(Peer::Windows, move |event| sink.lock().unwrap().push(event));
     let epoch = life.published().epoch;
     life.wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Windows, epoch });
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     crate::test_wait::settled(&database, "the snapshot contains power saving", || heard.lock().unwrap().contains(&NetworkEvent::PowerSaving { saving: true, epoch: Some(epoch) })).await;
     database.close_database().await.unwrap();
 }

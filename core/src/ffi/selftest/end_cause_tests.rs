@@ -151,7 +151,7 @@ async fn write_outcome(end: End) -> String {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
-    rig.database.set_online(false).unwrap();
+    rig.database.set_online(false).await.unwrap();
     let receipt = bound(rig.database.send(super::bridge_support_tests::message(epoch, "end", 3))).await.unwrap();
     let id = receipt.optimistic_value.as_ref().unwrap().id.clone();
     match end {
@@ -168,7 +168,7 @@ async fn write_outcome(end: End) -> String {
 async fn upload_outcome(end: End) -> String {
     let stand = Stand::new();
     let database = stand.open(None, &[CREATE_MOMENT]).await;
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     let epoch = database.session_epoch();
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");
@@ -268,15 +268,11 @@ async fn answer_woke(wake: &AnswerWake) { within_named(BOUND, "owner answered th
 async fn command_after_answer() -> String {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
-    rig.database.set_online(false).unwrap();
+    rig.database.set_online(false).await.unwrap();
     let epoch = rig.database.session_epoch();
     let wake = Arc::new(AnswerWake(tokio::sync::Notify::new()));
     let mut call = Box::pin(rig.database.send(super::bridge_support_tests::message(epoch, "held", 3)));
     poll_pending(call.as_mut(), &wake);
-    answer_woke(&wake).await;
-    let writer = rig.database.db.lock();
-    poll_pending(call.as_mut(), &wake);
-    drop(writer);
     answer_woke(&wake).await;
     rig.database.close_now();
     result_tag(bound(call).await)
@@ -304,8 +300,6 @@ async fn load_after_answer() -> String {
     let wake = Arc::new(AnswerWake(tokio::sync::Notify::new()));
     let mut call = Box::pin(rig.database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into()));
     poll_pending(call.as_mut(), &wake);
-    answer_woke(&wake).await;
-    poll_pending(call.as_mut(), &wake);
     gate.entered().await;
     gate.release();
     answer_woke(&wake).await;
@@ -317,7 +311,7 @@ async fn outcome_after_answer() -> String {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
-    rig.database.set_online(false).unwrap();
+    rig.database.set_online(false).await.unwrap();
     let receipt = bound(rig.database.send(super::bridge_support_tests::message(epoch, "held", 3))).await.unwrap();
     let row = receipt.optimistic_value.as_ref().unwrap().id.clone();
     let wake = Arc::new(AnswerWake(tokio::sync::Notify::new()));

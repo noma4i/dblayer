@@ -190,7 +190,7 @@ async fn a_run_and_a_load_after_reset_and_login_end() {
     rig.login_ios("A").await;
     rig.database.session_reset().await.unwrap();
     let database = &rig.database;
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     bound(database.session_call("login_link".into(), json!({"account":"A"}).to_string())).await.unwrap();
     bound(database.run(database.session_epoch(), "SessionProfile".into(), "{}".into())).await.unwrap();
     let load = database.begin_load(database.session_epoch(), "User".into(), Some("profile".into()), "{}".into()).unwrap();

@@ -331,7 +331,7 @@ impl DatabaseSut {
         match opened {
             Ok(database) => {
                 if database.register_operations(OPERATIONS.into()).await.is_err() { return error("operations"); }
-                if self.symbolic.is_none() && database.set_online(true).is_err() { return error("online"); }
+                if self.symbolic.is_none() && database.set_online(true).await.is_err() { return error("online"); }
                 self.database = Some(database);
                 let _ = self.settle().await;
                 vec![Observation::bare("opened")]
@@ -347,7 +347,7 @@ impl DatabaseSut {
         }
     }
 
-    fn start(&mut self, database: Arc<Database>, input: &Input) -> Option<Vec<Observation>> {
+    async fn start(&mut self, database: Arc<Database>, input: &Input) -> Option<Vec<Observation>> {
         let epoch = database.session_epoch();
         let text = |key: &str| input.text(key).map(str::to_string);
         let params = input.args.get("params").map_or_else(|| "{}".to_string(), Value::to_string);
@@ -494,7 +494,7 @@ impl DatabaseSut {
             "peek_row" => {
                 let Some(name) = text("row") else { return Some(error("arguments")) };
                 let id = self.id_of(&name);
-                return Some(match database.peek_row(epoch, text_or(input, "model", "Moment"), id) {
+                return Some(match database.peek_row(epoch, text_or(input, "model", "Moment"), id).await {
                     Ok(found) => vec![Observation::new("peeked", json!({ "row": name, "present": found.is_some() }))],
                     Err(error) => self::error(error_kind(&error)),
                 });

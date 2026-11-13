@@ -347,12 +347,12 @@ async fn an_offline_action_and_a_message_are_each_sent_once_after_reconnect() {
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let group = confirmed_group(&rig).await;
-    rig.database.set_online(false).unwrap();
+    rig.database.set_online(false).await.unwrap();
     let action = bound(rig.database.act(epoch, "Group".into(), group.id, "add_member".into(), "{}".into(), json!({"userIds": ["u9"]}).to_string())).await.unwrap();
     let receipt = bound(rig.database.send(message(epoch, "offline", 2))).await.unwrap();
     assert!(receipt.optimistic_value.is_some());
     assert_eq!((rig.world.count("SendMessage"), rig.world.count("AddMember")), (0, 0));
-    rig.database.set_online(true).unwrap();
+    rig.database.set_online(true).await.unwrap();
     assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     assert!(bound(rig.database.confirmed(action, false)).await.is_ok());
     assert_eq!((rig.world.count("SendMessage"), rig.world.count("AddMember")), (1, 1));
@@ -431,7 +431,7 @@ async fn a_command_read_between_its_confirming_commit_and_the_announcement_is_de
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
-    rig.database.set_online(false).unwrap();
+    rig.database.set_online(false).await.unwrap();
     let receipt = bound(rig.database.send(message(epoch, "second", 2))).await.unwrap();
     let shared = rig.database.db.clone();
     let (in_window, read_done) = (Arc::new(crate::test_wait::Flag::default()), Arc::new(crate::test_wait::Flag::default()));
@@ -441,7 +441,7 @@ async fn a_command_read_between_its_confirming_commit_and_the_announcement_is_de
         probe_window.set();
         probe_done.wait_blocking("the read of the command never came");
     }));
-    rig.database.set_online(true).unwrap();
+    rig.database.set_online(true).await.unwrap();
     in_window.wait("the confirming commit is visible and not announced").await;
     let reading = {
         let (database, receipt, done) = (rig.database.clone(), receipt.clone(), read_done.clone());

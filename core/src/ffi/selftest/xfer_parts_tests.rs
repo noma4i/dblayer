@@ -45,7 +45,7 @@ async fn upload(length: u64, cut_part_two: bool, expire_part_two: bool) -> Obser
     });
     advancing(&clock, create.entered()).await;
     create.release();
-    crate::test_wait::settled(&database, &format!("the upload of {length} bytes landed"), || database.peek_row(epoch, "Moment".into(), "m77".into()).unwrap().is_some()).await;
+    crate::test_wait::settled(&database, &format!("the upload of {length} bytes landed"), || database.peek_row_now(epoch, "Moment".into(), "m77".into()).unwrap().is_some()).await;
     drained(&database).await;
     collector.abort();
     let frames = frames.lock().unwrap().clone();

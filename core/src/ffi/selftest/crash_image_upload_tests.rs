@@ -9,11 +9,11 @@ const LANDED: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m77
 const REFUSED: &str = r#"{"errors":[{"message":"refused","extensions":{"code":"FORBIDDEN"}}]}"#;
 
 fn status(database: &crate::ffi::Database, id: &str) -> Option<WireUploadStatus> {
-    let row = database.peek_row(database.session_epoch(), "Moment".into(), id.into()).unwrap()?;
+    let row = database.peek_row_now(database.session_epoch(), "Moment".into(), id.into()).unwrap()?;
     row.uploads.iter().find(|entry| entry.action == "upload_clip").map(|entry| entry.upload.status)
 }
 
-fn landed(database: &crate::ffi::Database) -> bool { database.peek_row(database.session_epoch(), "Moment".into(), "m77".into()).unwrap().is_some() }
+fn landed(database: &crate::ffi::Database) -> bool { database.peek_row_now(database.session_epoch(), "Moment".into(), "m77".into()).unwrap().is_some() }
 
 /// A process killed after any commit of a single file upload, from its first run or from the retry of a refused one, leaves a file that finishes the upload with every step sent at most once and the row landed once, that keeps a refusal as a refusal until the retry commits, and never goes back from a landed row.
 #[tokio::test(flavor = "multi_thread")]

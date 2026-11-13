@@ -14,13 +14,13 @@ async fn pair_held_at_every_commit(fault: fn() -> Answer) {
     let database = stand.open_with(Some(&live), &operations, Some(clock.clone())).await;
     let secret = stand.rig.credentials.inner.value().unwrap();
     let epoch = database.session_epoch();
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     bound(database.send(plain("Moment", r#"{"text":"first"}"#, epoch))).await.unwrap();
     rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
     let base = Capture::begin(&live);
     stand.script.enqueue("CreateMoment", fault());
     stand.script.data("CreateMoment", LANDED);
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     advancing(&clock, drained(&database)).await;
     let held = stand.script.operation_pairs("CreateMoment");
     assert!(held.len() >= 2 && held.iter().all(|pair| pair == &held[0]), "the live run sends the held pair again: {held:?}");

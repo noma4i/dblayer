@@ -28,11 +28,11 @@ struct Places {
 impl Places {
     fn from_rows(&self, database: &Database, ids: &[String]) -> Vec<(Option<String>, bool)> {
         let (model, action) = if matches!(self.entry, Entry::Batch) { ("Asset", "create_files") } else { ("Moment", "upload_clip") };
-        ids.iter().filter_map(|id| database.peek_row(database.session_epoch(), model.into(), id.clone()).unwrap()).filter_map(|row| row.uploads.into_iter().find(|upload| upload.action == action)).map(|upload| (upload.upload.local_url.clone(), upload.upload.status == WireUploadStatus::Sending)).collect()
+        ids.iter().filter_map(|id| database.peek_row_now(database.session_epoch(), model.into(), id.clone()).unwrap()).filter_map(|row| row.uploads.into_iter().find(|upload| upload.action == action)).map(|upload| (upload.upload.local_url.clone(), upload.upload.status == WireUploadStatus::Sending)).collect()
     }
 
     async fn wait(&self, database: &Database, ids: &[String], what: &str, ready: impl Fn(&[(Option<String>, bool)]) -> bool) -> Vec<(Option<String>, bool)> {
-        if matches!(self.entry, Entry::Stage) && database.peek_row(database.session_epoch(), "Moment".into(), ids[0].clone()).unwrap().is_none() {
+        if matches!(self.entry, Entry::Stage) && database.peek_row(database.session_epoch(), "Moment".into(), ids[0].clone()).await.unwrap().is_none() {
             let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Blob { model: "Moment".into(), id: ids[0].clone(), action: "upload_clip".into() });
             loop {
                 let Some(ReadValue::Status { state, local_url, .. }) = bound(stream.pull_next()).await else { panic!("{what}: the stream ended") };
@@ -155,7 +155,7 @@ async fn xfer_prop_local_url() {
 }
 
 fn readable_url(database: &Database, model: &str, id: &str, action: &str) -> Option<Vec<u8>> {
-    let row = database.peek_row(database.session_epoch(), model.into(), id.into()).unwrap()?;
+    let row = database.peek_row_now(database.session_epoch(), model.into(), id.into()).unwrap()?;
     let url = row.uploads.into_iter().find(|upload| upload.action == action)?.upload.local_url?;
     std::fs::read(url.strip_prefix("file://").unwrap()).ok()
 }

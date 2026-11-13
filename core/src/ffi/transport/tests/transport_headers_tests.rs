@@ -67,7 +67,7 @@ async fn life_prop_headers_per_request() {
     let request = || crate::transport::GraphQLRequest::new("query Q { x }", "Q", serde_json::json!({})).by(crate::transport::WireIds::bootstrap());
     let ports = OpenPorts { partial_operations: true, executor: Some(port.clone()), encrypted: Some(crate::transport::encrypted::tests::protocol_tests::config()), credentials: Some(Arc::new(crate::ffi::tests::encrypted_tests::Held(Arc::new(MemoryCredentials::default())))), ..Default::default() };
     let database = within(crate::ffi::OpenDatabase::new().open(Config { path: None, data_version: None }, crate::ffi::EMPTY_SPECS.into(), OpenOptions::default(), ports, None)).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     let origin = crate::transport::encrypted::tests::vectors_tests::origin().trim_end_matches('/').to_string();
     for value in ["first", "second"] {
         port.set(value);

@@ -23,14 +23,14 @@ async fn xfer_step_behind_a_held_pair_keeps_attempts() {
     stand.script.data("CreateMoment", B);
     let sent = bound(database.send(clip("Moment", r#"{"text":"B"}"#, "upload_clip", &file, epoch))).await.unwrap();
     let temporary = sent.optimistic_value.as_ref().unwrap().id.clone();
-    let upload = || database.peek_row(epoch, "Moment".into(), temporary.clone()).unwrap().and_then(|row| row.uploads.into_iter().find(|entry| entry.action == "upload_clip")).map(|entry| entry.upload);
+    let upload = || database.peek_row_now(epoch, "Moment".into(), temporary.clone()).unwrap().and_then(|row| row.uploads.into_iter().find(|entry| entry.action == "upload_clip")).map(|entry| entry.upload);
     crate::test_wait::settled(&database, "the step started", || upload().is_some_and(|upload| upload.attempts == 1)).await;
     clock.advance(3 * 120_000);
     let waiting = upload().unwrap();
     assert_eq!((stand.script.count("CreateBlob"), waiting.attempts, waiting.status != WireUploadStatus::Failed, waiting.error.is_none()), (0, 1, true, true), "the step behind the held pair neither failed nor burned an attempt: {waiting:?}");
     held.release();
     advancing(&clock, async {
-        crate::test_wait::settled(&database, "the upload landed", || database.peek_row(epoch, "Moment".into(), "m78".into()).unwrap().is_some()).await;
+        crate::test_wait::settled(&database, "the upload landed", || database.peek_row_now(epoch, "Moment".into(), "m78".into()).unwrap().is_some()).await;
         drained(&database).await;
     }).await;
     assert_eq!(stand.script.count("CreateBlob"), 1, "the step went out once after the slot was free");

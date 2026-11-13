@@ -11,7 +11,7 @@ const ROW: &str = r#""__typename":"Moment","id":"m77","uuid":"u","likedByMe":fal
 async fn a_waiting_upload_reports_the_copied_file_size() {
     let stand = Stand::new();
     let database = stand.open(None, &[CREATE_MOMENT]).await;
-    database.set_online(false).unwrap();
+    database.set_online(false).await.unwrap();
     let epoch = database.session_epoch();
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("intro.mp4");

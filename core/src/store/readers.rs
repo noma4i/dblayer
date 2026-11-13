@@ -13,6 +13,16 @@ impl super::Store {
     }
 }
 
+#[cfg(test)]
+impl super::Store {
+    pub(crate) fn hold_readers(&self, held: &crate::test_wait::Flag, release: &crate::test_wait::Flag) {
+        let leases: Vec<_> = self.readers.iter().flat_map(|pool| (0..pool.connections.len()).map(|_| pool.lease())).collect();
+        held.set();
+        release.wait_blocking("release the readers of the pool");
+        drop(leases);
+    }
+}
+
 pub(super) struct Readers {
     connections: Vec<Mutex<Connection>>,
     idle: Mutex<Vec<usize>>,

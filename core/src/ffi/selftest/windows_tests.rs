@@ -46,7 +46,7 @@ async fn open_pages_limited(max_pages: Option<u32>) -> (Arc<Database>, Arc<Pages
     let pages = Arc::new(Pages { queries: AtomicUsize::new(0), gates: Mutex::new(HashMap::new()) });
     let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(pages.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000), crate::ffi::OpenOptions::default(), None).await.unwrap();
     database.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).await.unwrap();
-    database.set_online(true).unwrap();
+    database.set_online(true).await.unwrap();
     (database, pages)
 }
 
@@ -149,13 +149,13 @@ async fn repeated_online_and_power_saving_signals_add_no_request() {
         let sink = rig.database.online_sink().unwrap();
 
         for _ in 0..3 {
-            rig.database.set_online(true).unwrap();
+            rig.database.set_online(true).await.unwrap();
             sink.set_power_saving(false);
             rig.settle().await;
         }
-        rig.database.set_online(false).unwrap();
+        rig.database.set_online(false).await.unwrap();
         rig.settle().await;
-        rig.database.set_online(true).unwrap();
+        rig.database.set_online(true).await.unwrap();
         rig.settle().await;
 
         assert_eq!(rig.world.hits(), baseline, "observed={observed}: a repeated signal sent {:?}", rig.world.log().iter().skip(baseline).collect::<Vec<_>>());
@@ -182,9 +182,9 @@ async fn memory_expiry_follows_the_last_write() {
     clock.advance(29_000);
     bound(database.update(database.session_epoch(), "presence".into(), "p1".into(), r#"{"room":"a"}"#.into(), "{}".into())).await.unwrap();
     clock.advance(29_999);
-    assert!(database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_some(), "an equal write did not renew the expiry");
+    assert!(database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).await.unwrap().is_some(), "an equal write did not renew the expiry");
     clock.advance(1);
-    settled(&database, "the row outlived its new boundary", || database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_none()).await;
+    settled(&database, "the row outlived its new boundary", || database.peek_row_now(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_none()).await;
 }
 
 /// P-DATA-124, D-367: destroy of a memory row that expired is a success without a delivery, twice; a disk model keeps NotFound.
@@ -195,9 +195,9 @@ async fn data_destroy_of_a_gone_memory_row_is_a_success() {
     let clock = TestClock::new(1_000_000);
     let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&models).unwrap()), crate::ffi::OpenPorts::default(), clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
     bound(database.create(database.session_epoch(), "presence".into(), r#"{"id":"p1","room":"a"}"#.into(), "{}".into())).await.unwrap();
-    assert!(database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_some());
+    assert!(database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).await.unwrap().is_some());
     clock.advance(30_000);
-    settled(&database, "the row outlived its expiry", || database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_none()).await;
+    settled(&database, "the row outlived its expiry", || database.peek_row_now(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_none()).await;
 
     for attempt in 1..=2 {
         let answer = bound(database.destroy(database.session_epoch(), "presence".into(), "p1".into())).await;
