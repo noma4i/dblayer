@@ -91,7 +91,7 @@ class Query<Model : DBModel>(
     suspend fun readRow(id: String, account: AccountScope? = null): Model? = onAccount(account) { database, epoch -> database.readRow(epoch, modelName, id)?.let(decoder::read) }
 
     suspend fun cachedRow(id: String, account: AccountScope? = null): Model? =
-        admit(account).let { admission -> offCaller { admission.database.peekRow(admission.epoch, modelName, id)?.let(decoder::read) } }
+        onAccount(account) { database, epoch -> database.peekRow(epoch, modelName, id)?.let(decoder::read) }
 
     suspend fun edgeValues(id: String, account: AccountScope? = null): JsonObject? =
         onAccount(account) { database, epoch -> database.edgeValues(epoch, modelName, relation, params.jsonText(), listOf(id)).firstOrNull()?.let { Cell.Keyed(it.values).asJson() as JsonObject } }

@@ -62,7 +62,7 @@ public struct Query<Model: DBModel>: Sendable {
 
   @concurrent public func cachedRow(_ id: String, in scope: AccountScope? = nil) async throws -> Model? {
     let (database, epoch) = try DB.admitted(scope)
-    guard let row = try database.peekRow(epoch: epoch, model: Model.modelName, rowId: id) else { return nil }
+    guard let row = try await database.peekRow(epoch: epoch, model: Model.modelName, rowId: id) else { return nil }
     return try Model.decode(row)
   }
 
