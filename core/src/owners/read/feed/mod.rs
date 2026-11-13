@@ -462,6 +462,12 @@ impl StateOwner for Feed {
     type Input = FeedInput;
     type Effect = FeedEffect;
 
+    #[cfg(test)]
+    fn diagnostic(state: &FeedState) -> Option<String> {
+        let line = |id: Option<ConnectionId>| id.map(|id| format!("{id}:{:?}", state.protocol(id))).unwrap_or_else(|| "none".into());
+        Some(format!("mode={:?}, online={:?}, attempt={}, active={}, opening={}, wanted={:?}, subscribed(sealed)={:?}, confirmed(Subscribed)={:?}, pending={}", state.mode(), state.online(), state.attempts(), line(state.active_connection()), line(state.opening_connection()), state.wanted(), state.subscribed(), state.confirmed(), state.pending()))
+    }
+
     fn step(state: &mut FeedState, input: FeedInput, now: crate::runtime::Time) -> Effects<Self> {
         let mut fx = Vec::new();
         if let FeedInput::CableClosed(event) = input {
