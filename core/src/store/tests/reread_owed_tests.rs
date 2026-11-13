@@ -139,7 +139,7 @@ fn feed_event_debt_survives_restart() {
         let op = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: list.name.clone(), model: list.model.clone(), page: 1, replace_all: false, cursor: None, roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
         write_as(&db, 1, BatchAuthor::Window, Vec::new(), vec![op]);
         assert!(!db.window_saved("Chat", "list", &params).unwrap().expect("the list is saved").stale);
-        write_as(&db, 2, BatchAuthor::Feed, Vec::new(), vec![StoreOp::OweReread { model: "Chat".into(), id: "c1".into() }, StoreOp::StaleWindows { keys: vec![("Chat".into(), list.name.clone())] }]);
+        write_as(&db, 2, BatchAuthor::Feed, Vec::new(), vec![StoreOp::OweReread { model: "Chat".into(), id: "c1".into() }, StoreOp::MarkStale { models: Vec::new(), keys: vec![("Chat".into(), list.name.clone())] }]);
     }
     let db = Arc::new(Store::open_models(Some(path.as_path()), vec![chat_spec()], None, Arc::new(crate::runtime::SystemClock)).unwrap());
     assert!(owed(&db, "c1"), "the row still owes the reread");

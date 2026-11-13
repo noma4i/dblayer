@@ -393,8 +393,7 @@ impl Feed {
             }
         }
         let mut ops: Vec<StoreOp> = owed.into_iter().map(|(model, id)| StoreOp::OweReread { model, id }).collect();
-        if !models.is_empty() { ops.push(StoreOp::MarkStale { models: models.into_iter().collect(), keys: Vec::new() }); }
-        if !windows.is_empty() { ops.push(StoreOp::StaleWindows { keys: windows.into_iter().collect() }); }
+        if !models.is_empty() || !windows.is_empty() { ops.push(StoreOp::MarkStale { models: models.into_iter().collect(), keys: windows.into_iter().collect() }); }
         if !families.is_empty() { ops.push(StoreOp::StaleFamilies { families: families.into_iter().collect() }); }
         ops
     }

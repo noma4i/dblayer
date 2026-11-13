@@ -37,8 +37,7 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             if let Some(result) = writer.upsert(model, &joined, crate::schema::RowSource::Local)? { results.push(result); }
         }
         StoreOp::StaleFamilies { families } => results.push(writer.stale_families(families)?),
-        StoreOp::MarkStale { models, keys } => super::windows::mark_stale(writer.connection, models, keys)?,
-        StoreOp::StaleWindows { keys } => super::windows::mark_stale(writer.connection, &[], &super::windows::query_window_keys(writer.models, keys)?)?,
+        StoreOp::MarkStale { models, keys } => super::windows::mark_stale(writer.connection, models, &super::windows::query_window_keys(writer.models, keys)?)?,
         StoreOp::Numbers { model, row_id, writes } => {
             if let Some(result) = writer.numbers(model, row_id, writes)? { results.push(result); }
         }

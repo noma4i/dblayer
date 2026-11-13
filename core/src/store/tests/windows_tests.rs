@@ -177,23 +177,33 @@ fn mark_family_marks_only_thread_keys() {
 #[test]
 fn mark_stale_op_sets_stale_since_for_models_and_keys_in_the_batch_transaction() {
     use crate::owners::contract::BatchAuthor;
+    use crate::owners::read::windows::WindowKey;
     use crate::owners::store::{StoreBatch, StoreOp};
-    let (store, _) = booted_store();
-    let (messages, items) = (key("messages", "thread", "1"), key("items", "list", "1"));
-    store.save_window(&window(&messages)).unwrap();
-    store.save_window(&window(&items)).unwrap();
-    let write = |models: Vec<String>, keys: Vec<String>| {
-        let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::MarkStale { models, keys }] };
-        store.write_batch(&batch, store.files(), None).unwrap();
+    let land = |db: &Store, chat: &str| {
+        let params = serde_json::json!({"chatId": chat}).as_object().unwrap().clone();
+        let key = WindowKey::relation("messages", "thread", &params);
+        let page = StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, key: key.name.clone(), model: key.model.clone(), page: 1, replace_all: false, cursor: None, roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() };
+        db.write_queue_ops(&[page]).unwrap();
+        key
     };
-    write(vec!["messages".into()], Vec::new());
-    assert_eq!(store.stale_window_keys().unwrap(), vec![messages.clone()], "a model marks the windows of its lists");
-    write(Vec::new(), vec![items.clone()]);
-    let mut stale = store.stale_window_keys().unwrap();
-    stale.sort();
-    let mut wanted = vec![messages, items];
-    wanted.sort();
-    assert_eq!(stale, wanted, "a key marks its own window");
+    let write = |db: &Store, models: Vec<String>, keys: Vec<(String, String)>| {
+        let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::MarkStale { models, keys }] };
+        db.write_batch(&batch, db.files(), None).unwrap();
+    };
+    let fresh = || Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], None, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let db = fresh();
+    let (first, second) = (land(&db, "c1"), land(&db, "c2"));
+    write(&db, Vec::new(), vec![(first.model.clone(), first.name.clone())]);
+    let marked = db.stale_window_keys().unwrap();
+    assert_eq!(marked.len(), 1, "a key marks its own window only");
+    write(&db, Vec::new(), vec![(second.model.clone(), second.name.clone())]);
+    let both = db.stale_window_keys().unwrap();
+    assert!(both.len() == 2 && both.contains(&marked[0]), "the second key marks the second window: {both:?}");
+    let db = fresh();
+    land(&db, "c1");
+    land(&db, "c2");
+    write(&db, vec!["messages".into()], Vec::new());
+    assert_eq!(db.stale_window_keys().unwrap().len(), 2, "a model marks the windows of its lists");
 }
 
 thread_local! { static PAGE_ADMISSION_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
