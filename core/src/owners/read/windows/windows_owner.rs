@@ -6,6 +6,8 @@ pub(super) struct Window {
     pub(super) opening: Option<Opening>,
     /// The value the streams got last.
     pub(super) announced: Option<WindowState>,
+    #[cfg(test)]
+    pub(super) steps: u64,
 }
 
 pub(super) struct Opening {
@@ -59,7 +61,6 @@ impl Window {
             has_rows: false,
             outcome: LastLoad::None,
             landed_revision: 0,
-            store_seen: 0,
             request_base: std::cell::Cell::new(0),
             end_cause: EndCause::SessionEnded,
             stale_marked: std::cell::Cell::new(false),
@@ -73,7 +74,7 @@ impl Window {
             fx: RefCell::new(Vec::new()),
         };
         let mut ctx = Ctx { request_ids: ids.0, next_attempt: ids.1, now };
-        Self { machine: facts.uninitialized_state_machine().init_with_context(&mut ctx), opening, announced: None }
+        Self { machine: facts.uninitialized_state_machine().init_with_context(&mut ctx), opening, announced: None, #[cfg(test)] steps: 0 }
     }
 
     pub(super) fn handle(&mut self, event: Ev, ids: (&mut RequestIds, &mut u32), now: i64) -> Vec<Emit> {
@@ -87,7 +88,7 @@ impl Window {
                     effects.extend(self.run(event, ids, now));
                     return effects;
                 }
-                Ev::StoreSeen { .. } | Ev::SourceChanged { .. } => return self.run(event, ids, now),
+                Ev::SourceChanged { .. } => return self.run(event, ids, now),
                 Ev::Foreground { .. } => return Vec::new(),
                 held => {
                     opening.held.push(held);
@@ -111,6 +112,8 @@ impl Window {
     }
 
     pub(super) fn run(&mut self, event: Ev, ids: (&mut RequestIds, &mut u32), now: i64) -> Vec<Emit> {
+        #[cfg(test)]
+        { self.steps += 1; }
         let previous = self.request_id();
         let mut ctx = Ctx { request_ids: ids.0, next_attempt: ids.1, now };
         self.machine.handle_with_context(&event, &mut ctx);
@@ -227,6 +230,7 @@ pub struct WindowsState {
     pub(super) next_read: u64,
     pub(super) on_foreground: OnForeground,
     pub(super) foreground_seen: u64,
+    pub(super) store_seen: i64,
     pub(super) peers: WindowsPeers,
     /// `LoadNoWait` calls that came before the addressed snapshot of the epoch.
     pub(super) held_nowait: Vec<WindowsInput>,
@@ -248,7 +252,7 @@ pub struct WindowsPeers {
 impl WindowsState {
     /// `online` is the value of the first addressed `Online`, `None` before it.
     pub fn new(epoch: Epoch, online: Option<bool>, peers: WindowsPeers) -> Self {
-        Self { epoch, online, online_seq: 0, saving: false, generation: 0, preload: Vec::new(), operations_awaited: false, identity: false, ended: None, sources: BTreeSet::new(), request_ids: RequestIds::Process, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), local_order: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers, held_nowait: Vec::new(), reserved: BTreeSet::new(), held_loads: BTreeMap::new(), held_leaves: Vec::new() }
+        Self { epoch, online, online_seq: 0, saving: false, generation: 0, preload: Vec::new(), operations_awaited: false, identity: false, ended: None, sources: BTreeSet::new(), request_ids: RequestIds::Process, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), local_order: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, store_seen: 0, peers, held_nowait: Vec::new(), reserved: BTreeSet::new(), held_loads: BTreeMap::new(), held_leaves: Vec::new() }
     }
 
     #[cfg(test)]
@@ -317,6 +321,9 @@ impl WindowsState {
     pub fn load_state(&self, key: &WindowKey) -> Option<WindowState> { self.windows.get(key).map(Window::load_state) }
 
     pub fn windows(&self) -> usize { self.windows.len() }
+
+    #[cfg(test)]
+    pub fn window_steps(&self) -> u64 { self.windows.values().map(|window| window.steps).sum() }
 
     /// The read of the saved window the key waits for.
     pub fn reading(&self, key: &WindowKey) -> Option<u64> { self.windows.get(key).and_then(|window| window.opening.as_ref().map(|opening| opening.read_id)) }
@@ -456,8 +463,8 @@ impl Windows {
 
     /// The RowsOf keys of a source window that rests with rows: one derivation for open, `RegisterOperations` and a source write.
     pub(super) fn derive_source(state: &mut WindowsState, key: &WindowKey, now: i64, out: &mut Effects<Self>) {
-        let Some(window) = state.windows.get(key).filter(|window| state.sources.contains(key) && window.stage() == WindowStage::Idle && window.machine.has_rows) else { return };
-        let revision = window.machine.store_seen;
+        let Some(_) = state.windows.get(key).filter(|window| state.sources.contains(key) && window.stage() == WindowStage::Idle && window.machine.has_rows) else { return };
+        let revision = state.store_seen;
         Self::on(state, key, Ev::SourceChanged { revision }, now, out);
     }
 
@@ -479,7 +486,8 @@ impl Windows {
         }
         if Self::refused_after_end(state, &key, id, out) { return; }
         state.ensure(&key, now, out);
-        Self::on(state, &key, Ev::Load { id, goal, force, store_revision }, now, out);
+        state.store_seen = state.store_seen.max(store_revision);
+        Self::on(state, &key, Ev::Load { id, goal, force }, now, out);
     }
 }
 
@@ -574,10 +582,7 @@ impl StateOwner for Windows {
                 }
             }
             WindowsInput::StoreCommitted { models, revision } => {
-                let keys: Vec<WindowKey> = state.windows.keys().cloned().collect();
-                for key in keys {
-                    Self::on(state, &key, Ev::StoreSeen { revision }, now, &mut out);
-                }
+                state.store_seen = state.store_seen.max(revision);
                 let sources: Vec<WindowKey> = state.sources.iter().filter(|key| models.contains(&key.model) && state.windows.contains_key(*key)).cloned().collect();
                 for key in sources {
                     Self::on(state, &key, Ev::SourceChanged { revision }, now, &mut out);

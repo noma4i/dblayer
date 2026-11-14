@@ -287,9 +287,7 @@ pub(super) enum Ev {
     ReloadOnConnect { id: InterestId },
     OfflineRefused { message: String },
     InterestMinus { id: InterestId },
-    Load { id: InterestId, goal: Goal, force: bool, store_revision: i64 },
-    /// The Store published this revision: a request issued from now on is based on it.
-    StoreSeen { revision: i64 },
+    Load { id: InterestId, goal: Goal, force: bool },
     Response { request: RequestId, attempt: u32, page: AnswerPage },
     /// `Failure` and `Dropped`: the cells are the same, a dropped request is a temporary network error.
     Failure { request: RequestId, attempt: u32, error: RequestError },

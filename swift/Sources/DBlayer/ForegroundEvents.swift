@@ -26,20 +26,20 @@ enum ForegroundEvents {
     #endif
   }
 
-  static var systemActive: Bool {
+  static var systemInBackground: Bool {
     #if canImport(UIKit)
-    UIApplication.shared.applicationState == .active
+    UIApplication.shared.applicationState == .background
     #elseif canImport(AppKit)
-    NSApplication.shared.isActive
+    !NSApplication.shared.isActive
     #else
     false
     #endif
   }
 
-  /// Calls `deliver` once at registration when the app is active, then on every notification, and `background` on every move to the background. The core drops a delivery of a registration that ended, so the stop needs no wait.
-  static func observe(name: Notification.Name? = ForegroundEvents.systemName, active: @escaping @Sendable () -> Bool = { ForegroundEvents.systemActive }, backgroundName: Notification.Name? = ForegroundEvents.backgroundName, _ deliver: @escaping @Sendable () -> Void, background: @escaping @Sendable () -> Void = {}) -> @Sendable () -> Void {
+  /// Calls `deliver` once at registration unless the app is in the background, then `background` once instead (an inactive app counts as foreground), then on every notification, and `background` on every move to the background. The core drops a delivery of a registration that ended, so the stop needs no wait.
+  static func observe(name: Notification.Name? = ForegroundEvents.systemName, inBackground: @escaping @Sendable () -> Bool = { ForegroundEvents.systemInBackground }, backgroundName: Notification.Name? = ForegroundEvents.backgroundName, _ deliver: @escaping @Sendable () -> Void, background: @escaping @Sendable () -> Void = {}) -> @Sendable () -> Void {
     guard let name else { return {} }
-    let initial = DispatchWorkItem { if active() { deliver() } }
+    let initial = DispatchWorkItem { if inBackground() { background() } else { deliver() } }
     DispatchQueue.main.async(execute: initial)
     let token = NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in deliver() }
     let backgroundToken = backgroundName.map { NotificationCenter.default.addObserver(forName: $0, object: nil, queue: nil) { _ in background() } }

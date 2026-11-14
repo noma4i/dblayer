@@ -45,7 +45,6 @@ pub(super) struct Facts {
     pub(super) outcome: LastLoad,
     /// The revision of the last `Committed` of a landing of this machine, 0 before the first.
     pub(super) landed_revision: i64,
-    pub(super) store_seen: i64,
     pub(super) request_base: std::cell::Cell<i64>,
     pub(super) end_cause: EndCause,
     pub(super) stale_marked: std::cell::Cell<bool>,
@@ -103,8 +102,6 @@ impl Facts {
                 if !self.covers(*cause) { self.stale_marked.set(true) }
                 if matches!(cause, StaleCause::Change { .. }) && self.reads_node && (!self.covers(*cause) || self.answer_base.get() == i64::MAX) { self.reread_by_event.set(true); }
             }
-            Ev::Load { store_revision, .. } => self.store_seen = self.store_seen.max(*store_revision),
-            Ev::StoreSeen { revision } => self.store_seen = self.store_seen.max(*revision),
             _ => {}
         }
     }

@@ -88,6 +88,7 @@ impl StateOwner for Network {
                 state.online_stamp = stamp;
                 run(vec![reply(id)])
             }
+            (NetworkMode::Open { foreground: true, .. }, NetworkInput::Foreground { reply: id }) => run(vec![reply(id)]),
             (NetworkMode::Open { online, online_seq, foreground_seq, foreground, saving }, NetworkInput::Foreground { reply: id }) => {
                 let reopens = !foreground && online == Some(true);
                 let online_seq = online_seq + u64::from(reopens);

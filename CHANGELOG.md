@@ -14,6 +14,8 @@
 - Leave the revision and subscribers untouched when a write changes no stored data.
 - Refuse a server row whose list holds a value of another type instead of storing it shorter.
 - Report an upload whose saved data cannot be read as failed to restore instead of sending it empty.
+- Keep the server subscription closed when the database opens while the app is in the background.
+- Reload a refresh-on-foreground window only when the app returns from the background.
 
 ## 6.37.0 - 2026-11-14
 
