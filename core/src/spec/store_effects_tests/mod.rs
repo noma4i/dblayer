@@ -90,7 +90,7 @@ fn action_of(effect: &StoreEffect) -> Option<Action> {
             },
         },
         StoreEffect::Write { batch, .. } => Action::Write(batch.id),
-        StoreEffect::Pinned { .. } => return None,
+        StoreEffect::Pinned { .. } | StoreEffect::ReadReady { .. } => return None,
         StoreEffect::EraseAccount { io_id, generation_new, erase_encrypted } => Action::EraseAccount { io_id: *io_id, generation_new: *generation_new, erase_encrypted: *erase_encrypted },
         StoreEffect::ClearSecret { io_id } => Action::ClearSecret { io_id: *io_id },
         StoreEffect::SavePublished { io_id, publication_id, .. } => Action::SavePublished { io_id: *io_id, publication_id: *publication_id },

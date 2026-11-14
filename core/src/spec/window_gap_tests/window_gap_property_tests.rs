@@ -123,7 +123,7 @@ fn win_windows_of_keys_are_independent() {
     {
         let mut det = DetScheduler::new(5);
         let log = new_log();
-        let windows = add_windows(&mut det, &log, w::WindowsState::new(EPOCH, Some(true), peers()).with_local_request_ids(), Reads::auto(), PinState::default());
+        let windows = add_windows(&mut det, &log, w::WindowsState::new(EPOCH, Some(true), peers()).with_local_request_ids(), Reads::auto(RestedMap::default()), PinState::default());
         det.start_epoch(EPOCH);
         let other = WindowKey { model: "Chat".into(), name: "room".into() };
         for (key, id) in [(key(), 1), (other.clone(), 2)] {
@@ -146,7 +146,8 @@ fn win_windows_of_keys_are_independent() {
     {
         let mut det = DetScheduler::new(5);
         let log = new_log();
-        let windows = add_windows(&mut det, &log, w::WindowsState::new(EPOCH, Some(true), peers()).with_local_request_ids(), Reads::auto(), PinState::default());
+        let rested = RestedMap::default();
+        let windows = add_windows(&mut det, &log, w::WindowsState::new(EPOCH, Some(true), peers()).with_local_request_ids().with_rested(rested_sink(&rested)), Reads::auto(rested), PinState::default());
         det.start_epoch(EPOCH);
         let other = WindowKey { model: "Chat".into(), name: "room".into() };
         let load = |key: WindowKey, id: u64, revision: i64| w::WindowsInput::Load { key, id, goal: w::Goal::First, force: false, store_revision: revision };
@@ -162,7 +163,7 @@ fn win_windows_of_keys_are_independent() {
         take(&log);
         det.post(windows, EpochStamp::Epoch(EPOCH), load(key(), 3, 99));
         det.run_until_quiet(100).expect("quiet");
-        assert!(runs(take(&log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 3, outcome: WindowOutcome::Loaded { revision: 5, .. } }, .. })), "the fresh key answers with its own landing");
+        assert!(runs(take(&log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 3, outcome: WindowOutcome::Loaded { revision: 99, .. } }, .. })), "the fresh key answers from its saved window with the store revision of the call");
     }
 }
 

@@ -117,11 +117,12 @@ fn win_marked_load_keeps_its_mark_until_it_lands() {
         request: Option<(u64, u32)>,
         sources: Vec<crate::schema::RowSource>,
         reads: u64,
+        owed: bool,
     }
     impl Run {
         fn new() -> Run {
             let key = WindowKey::relation("Moment", "node", &[(crate::schema::NODE_PARAM.to_string(), serde_json::json!("n1"))].into_iter().collect());
-            let mut run = Run { state: state(), key, pin: None, loading: 0, request: None, sources: Vec::new(), reads: 0 };
+            let mut run = Run { state: state(), key, pin: None, loading: 0, request: None, sources: Vec::new(), reads: 0, owed: false };
             run.interest();
             run
         }
@@ -143,7 +144,8 @@ fn win_marked_load_keeps_its_mark_until_it_lands() {
         fn interest(&mut self) {
             self.reads += 1;
             self.step(WindowsInput::InterestPassive { key: self.key.clone(), id: 8 + self.reads });
-            self.step(WindowsInput::WindowRead { key: self.key.clone(), read_id: self.reads, result: Ok(None) });
+            let saved = self.owed.then(|| crate::owners::read::windows::SavedWindow { landed_at: 0, fresh_until: 0, stale: true, owed: true, cursor: None, pages: 0, has_rows: false, generation: 0, marker: None, members: 0 });
+            self.step(WindowsInput::WindowRead { key: self.key.clone(), read_id: self.reads, result: Ok(saved) });
         }
         fn load(&mut self) {
             self.step(WindowsInput::Load { key: self.key.clone(), id: self.reads, goal: Goal::First, force: true, store_revision: 0 });
@@ -197,6 +199,7 @@ fn win_marked_load_keeps_its_mark_until_it_lands() {
             run.step(WindowsInput::InterestMinus { key: run.key.clone(), id: 9 });
             run.step(WindowsInput::InterestMinus { key: run.key.clone(), id: 1 });
             run.request = None;
+            run.owed = true;
             run.interest();
             run.load();
             run.answer();
@@ -257,4 +260,16 @@ fn a_preload_key_and_a_source_window_stay_in_memory_without_interest() {
         leave(&mut state);
         assert_eq!(state.windows(), 1);
     }
+}
+
+/// D-467 (d): the read of the saved window starts only after the Store answers `ReadAfter`, behind the batches queued before it.
+#[test]
+fn the_saved_window_is_read_after_the_store_answers() {
+    let mut state = state();
+    let key = WindowKey { model: "Item".into(), name: "items".into() };
+    let opened = Windows::step(&mut state, WindowsInput::Load { key: key.clone(), id: 1, goal: Goal::First, force: false, store_revision: 0 }, crate::runtime::Time(0));
+    assert!(opened.iter().all(|effect| !matches!(effect, Effect::Run(WindowsEffect::ReadWindow { .. }))), "no read before the Store is ready");
+    assert!(matches!(store_inputs(opened).as_slice(), [StoreInput::ReadAfter { epoch: 1, read_id: 1 }]));
+    let ready = Windows::step(&mut state, WindowsInput::ReadReady { read_id: 1 }, crate::runtime::Time(0));
+    assert!(ready.iter().any(|effect| matches!(effect, Effect::Run(WindowsEffect::ReadWindow { read_id: 1, .. }))));
 }

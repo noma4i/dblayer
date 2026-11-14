@@ -138,7 +138,7 @@ impl Facts {
                 if self.watched() {
                     return Handled;
                 }
-                self.fresh = false;
+                self.drop_fresh();
                 self.reread_due = false;
                 self.answer_base.set(-1);
                 self.push_fx(WindowEffect::Cancel { request: load.step, attempt: load.attempt });
@@ -303,7 +303,7 @@ impl Facts {
                 if self.watched() {
                     Handled
                 } else {
-                    self.fresh = false;
+                    self.drop_fresh();
                     Transition(WinState::idle())
                 }
             }

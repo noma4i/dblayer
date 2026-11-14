@@ -34,6 +34,8 @@ pub(super) struct Facts {
     pub(super) cursor_reset_used: bool,
     pub(super) replace_all: bool,
     pub(super) reread_due: bool,
+    /// The window lost its freshness here and the Store still carries it fresh: a mark is owed before the machine leaves memory.
+    pub(super) mark_owed: std::cell::Cell<bool>,
     /// The largest Store revision of a commit that changed rows of this window (D-454).
     pub(super) change_due: i64,
     /// The Store base of the load that rereads every row (page 1, not media) and answers the window or answered it last: -1 none, `i64::MAX` its pin is pending (D-454).
@@ -84,8 +86,10 @@ impl Facts {
             Ev::InterestMinus { id } => {
                 self.reload.remove(id);
             }
-            Ev::Saved(Some(saved)) => {
+            Ev::Saved(Some(saved), store_seen) => {
+                self.landed_revision = *store_seen;
                 self.fresh = !saved.stale;
+                self.mark_owed.set(false);
                 if saved.stale { self.stale_marked.set(true); }
                 if saved.owed && self.reads_node { self.reread_by_event.set(true); }
                 self.landed_at = saved.landed_at;
@@ -107,6 +111,11 @@ impl Facts {
     }
 
     /// A backward clock remains fresh while its offset is shorter than the window lifetime.
+    pub(super) fn drop_fresh(&mut self) {
+        self.mark_owed.set(self.mark_owed.get() || self.fresh);
+        self.fresh = false;
+    }
+
     pub(super) fn is_fresh(&self, now: i64) -> bool { self.fresh && now < self.fresh_until && i128::from(self.landed_at) - i128::from(now) < i128::from(self.fresh_until) - i128::from(self.landed_at) }
 
     pub(super) fn page_source(marked: bool) -> crate::schema::RowSource { if marked { crate::schema::RowSource::NodeReread } else { crate::schema::RowSource::Page } }
@@ -329,7 +338,7 @@ impl Facts {
     pub(super) fn fail(&mut self, failure: crate::ffi::DbError) -> Outcome<WinState> {
         self.landing_marker = None;
         self.answer_base.set(-1);
-        self.fresh = false;
+        self.drop_fresh();
         self.reread_due = false;
         self.outcome = LastLoad::Failed(failure.clone());
         self.answer_all(&WindowOutcome::Failed { failure });
@@ -421,7 +430,7 @@ impl Facts {
                 return self.begin(ctx, page + 1, false, true);
             }
             self.answer_all(&WindowOutcome::Loaded { revision, has_more: self.can_load_next(), fetched: true });
-            self.fresh = false;
+            self.drop_fresh();
             self.announce();
             return Transition(WinState::idle());
         }
@@ -448,12 +457,13 @@ impl Facts {
     fn land_end(&mut self, ctx: &mut Ctx<'_>) -> Outcome<WinState> {
         if !self.reread_due {
             self.fresh = true;
+            self.mark_owed.set(false);
             self.announce();
             return Transition(WinState::idle());
         }
         self.reread_due = false;
         if !self.watched() {
-            self.fresh = false;
+            self.drop_fresh();
             self.announce();
             return Transition(WinState::idle());
         }

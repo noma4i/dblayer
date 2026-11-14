@@ -85,11 +85,18 @@ fn win_orders_opening_held() {
     for order in all {
         let mut twin = opening_twin();
         let mut seen = Seen::default();
+        let mut left = false;
         for held in order.iter().copied() {
             let effects = match held {
-                Watch => twin.watch(),
+                Watch => {
+                    if left && twin.stage().is_none() { twin.hold.store(false, Ordering::SeqCst); }
+                    twin.watch()
+                }
                 Call => twin.call(1, Goal::First),
-                Leave => twin.step(Input::InterestMinus { id: 1 }),
+                Leave => {
+                    left = true;
+                    twin.step(Input::InterestMinus { id: 1 })
+                }
                 Stray => twin.step(Input::Read(Read::Stray)),
                 Answer => twin.step(Input::Read(Read::None)),
             };
@@ -240,19 +247,15 @@ fn win_orders_preload_sets() {
     assert_eq!(all.len(), 6);
     for order in all {
         let mut twin = Twin::new();
-        let mut named = Vec::new();
         for index in order.iter().copied() {
             twin.post(w::WindowsInput::PreloadKeys { keys: sets[index].clone() });
-            named.extend(sets[index].iter().cloned());
         }
         let last = &sets[*order.last().expect("an order")];
         for each in [key(), other.clone(), third.clone()] {
             let holds = twin.state().interest(&each).contains(&w::PRELOAD);
             assert_eq!(holds, last.contains(&each), "{order:?}: {each:?}");
         }
-        named.sort_by(|a, b| a.name.cmp(&b.name));
-        named.dedup();
-        assert_eq!(twin.state().windows(), named.len(), "{order:?}: a window for every key named");
+        assert_eq!(twin.state().windows(), last.len(), "{order:?}: a window for every key the last set names, a key that left the set and has no reader is gone");
     }
 }
 

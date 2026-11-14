@@ -344,6 +344,7 @@ pub enum StoreEffect {
     /// One transaction: `rows`, `intents`, `files`.
     Write { batch: StoreBatch, min_pin_revision: Option<u64> },
     Pinned { epoch: Epoch, request_id: u64, base_revision: u64 },
+    ReadReady { epoch: Epoch, read_id: u64 },
     /// One transaction: erase the account (`erase_encrypted` for `SessionReset` and `ServerEnded`).
     EraseAccount { io_id: u64, generation_new: u64, erase_encrypted: bool },
     /// The secret of `CredentialStore` after the commit of SQLite.
@@ -377,6 +378,8 @@ pub enum StoreInput {
     Commit(StoreBatch),
     Pin { epoch: Epoch, request_id: u64 },
     Unpin { request_id: u64 },
+    /// The saved window read of `read_id` starts once every batch queued before this input is committed.
+    ReadAfter { epoch: Epoch, read_id: u64 },
     Written { author: BatchAuthor, batch: BatchId, result: Result<WriteDone, RejectReason> },
     ClearAccount { epoch_old: Epoch, cause: Cause, generation_new: u64, erase_id: u64 },
     Erased { io_id: u64, result: Result<Done, String> },

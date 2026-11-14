@@ -50,6 +50,8 @@ pub struct StoreState {
     pins: BTreeMap<u64, (Epoch, u64)>,
     reads: BTreeSet<u64>,
     reads_closed: bool,
+    /// Saved window reads and the Window and Feed batches queued before them: a read starts when none of those is left.
+    read_waits: Vec<(Epoch, u64, Vec<(BatchAuthor, BatchId)>)>,
 }
 
 impl StoreState {
@@ -71,6 +73,7 @@ impl StoreState {
             pins: BTreeMap::new(),
             reads: BTreeSet::new(),
             reads_closed: false,
+            read_waits: Vec::new(),
         }
     }
 
@@ -125,7 +128,10 @@ impl StoreState {
         }
         if self.mode == StoreMode::Closed {
             match input {
-                StoreInput::Commit(batch) => fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::Closed) }),
+                StoreInput::Commit(batch) => {
+                    self.commit_left(batch.author, batch.id, fx);
+                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::Closed) });
+                }
                 StoreInput::ClearAccount { erase_id, .. } => fx.push(StoreEffect::ClearFailed { erase_id, error: "closed".into() }),
                 _ => {}
             }
@@ -170,6 +176,21 @@ impl StoreState {
         }
     }
 
+    /// A Window or Feed batch is done or refused: the saved window reads that waited for it go on.
+    fn commit_left(&mut self, author: BatchAuthor, batch: BatchId, fx: &mut Vec<StoreEffect>) {
+        if !matches!(author, BatchAuthor::Window | BatchAuthor::Feed) {
+            return;
+        }
+        for wait in &mut self.read_waits {
+            wait.2.retain(|ahead| *ahead != (author, batch));
+        }
+        let (ready, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.read_waits).into_iter().partition(|wait| wait.2.is_empty());
+        self.read_waits = waiting;
+        for (epoch, read_id, _) in ready {
+            fx.push(StoreEffect::ReadReady { epoch, read_id });
+        }
+    }
+
     fn wipe_account(&mut self, generation_new: u64) {
         self.generation = generation_new;
     }
@@ -178,6 +199,7 @@ impl StoreState {
         if self.closing {
             match &input {
                 StoreInput::Commit(batch) if batch.stamp != crate::runtime::EpochStamp::Control => {
+                    self.commit_left(batch.author, batch.id, fx);
                     fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::Closed) });
                     return;
                 }
@@ -205,6 +227,7 @@ impl StoreState {
                         fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::Invalid("the control batch carries rows or an operation of an epoch".into())) });
                     }
                 } else if batch.stamp != crate::runtime::EpochStamp::Epoch(self.epoch) {
+                    self.commit_left(batch.author, batch.id, fx);
                     fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, stamp: batch.stamp, reply: StoreReply::Rejected(RejectReason::NoSession) });
                 } else {
                     self.writing = Some(batch.clone());
@@ -222,11 +245,20 @@ impl StoreState {
                 }
             }
             StoreInput::Unpin { request_id } => { self.pins.remove(&request_id); }
+            StoreInput::ReadAfter { epoch, read_id } => {
+                let ahead: Vec<(BatchAuthor, BatchId)> = self.writing.iter().map(|batch| (batch.author, batch.id)).chain(self.deferred.iter().filter_map(|input| match input { StoreInput::Commit(batch) => Some((batch.author, batch.id)), _ => None })).filter(|(author, _)| matches!(author, BatchAuthor::Window | BatchAuthor::Feed)).collect();
+                if epoch != self.epoch || ahead.is_empty() {
+                    fx.push(StoreEffect::ReadReady { epoch, read_id });
+                } else {
+                    self.read_waits.push((epoch, read_id, ahead));
+                }
+            }
             StoreInput::Written { author, batch, result } => {
                 if !self.writing.as_ref().is_some_and(|writing| writing.author == author && writing.id == batch) {
                     return;
                 }
                 let Some(written) = self.writing.take() else { return };
+                self.commit_left(author, batch, fx);
                 let written_epoch = match written.stamp { crate::runtime::EpochStamp::Epoch(epoch) => epoch, crate::runtime::EpochStamp::Control => self.epoch };
                 match result {
                     Err(reason) => fx.push(StoreEffect::Reply { author, batch, stamp: written.stamp, reply: StoreReply::Rejected(reason) }),

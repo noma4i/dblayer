@@ -45,6 +45,7 @@ fn win_phase_after_last_interest_left() {
         assert_eq!(twin.stage(), Some(WindowStage::Loading));
         twin.step(Input::InterestMinus { id: STREAM });
         assert_eq!(twin.stage(), Some(WindowStage::Idle));
+        twin.hold.store(false, Ordering::SeqCst);
         offline_watch(&mut twin);
         assert_eq!(twin.load_state().phase, OwnerPhase::Idle);
     }

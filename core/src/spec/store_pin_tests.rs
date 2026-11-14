@@ -14,8 +14,10 @@ fn state(revision: u64) -> StoreState {
     state
 }
 
-fn batch(id: u64) -> StoreInput {
-    StoreInput::Commit(StoreBatch { author: BatchAuthor::Outbox, id, stamp: crate::runtime::EpochStamp::Epoch(0), rows: Vec::new(), intents: 0, credential: None, ops: Vec::new() })
+fn batch(id: u64) -> StoreInput { batch_by(BatchAuthor::Outbox, id) }
+
+fn batch_by(author: BatchAuthor, id: u64) -> StoreInput {
+    StoreInput::Commit(StoreBatch { author, id, stamp: crate::runtime::EpochStamp::Epoch(0), rows: Vec::new(), intents: 0, credential: None, ops: Vec::new() })
 }
 
 fn pin(state: &mut StoreState, epoch: u64, request_id: u64) -> Vec<StoreEffect> {
@@ -116,4 +118,20 @@ fn store_prop_tombstone_flight() {
     let min = limit(&step(&mut owner, batch(2))).unwrap();
     db.write_queue_ops_with_pin(&[StoreOp::Rows { model: "moments".into(), rows: vec![row("m3")] }], min).unwrap();
     assert!(!db.is_tombstoned("moments", "m1").unwrap());
+}
+
+/// D-467 (d): a saved window read starts behind the batches queued before it.
+#[test]
+fn store_read_after_waits_for_the_queued_window_batches() {
+    let ready = |read_id| StoreEffect::ReadReady { epoch: 0, read_id };
+    for (author, waits) in [(BatchAuthor::Window, true), (BatchAuthor::Outbox, false)] {
+        let mut state = state(4);
+        assert_eq!(step(&mut state, StoreInput::ReadAfter { epoch: 0, read_id: 1 }), vec![ready(1)], "{author:?}: no batch ahead");
+        step(&mut state, batch_by(author, 1));
+        let asked = step(&mut state, StoreInput::ReadAfter { epoch: 0, read_id: 2 });
+        assert_eq!(asked, if waits { Vec::new() } else { vec![ready(2)] }, "{author:?}: only a Window or Feed batch ahead holds the read");
+        let written = step(&mut state, StoreInput::Written { author, batch: 1, result: Ok(WriteDone { revision: 5, ..WriteDone::default() }) });
+        let released: Vec<StoreEffect> = written.into_iter().filter(|effect| matches!(effect, StoreEffect::ReadReady { .. })).collect();
+        assert_eq!(released, if waits { vec![ready(2)] } else { Vec::new() }, "{author:?}: the read starts when the batch is written");
+    }
 }

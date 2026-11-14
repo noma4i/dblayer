@@ -111,7 +111,7 @@ fn win_waiting_stage_inputs() {
     {
         let mut twin = waiting();
         assert!(twin.step(Input::InterestMinus { id: 1 }).is_empty());
-        assert_eq!(twin.stage(), Some(WindowStage::Idle));
+        assert_eq!(twin.stage(), None, "the last waiter left a window that never landed: no machine, nothing saved");
     }
 }
 
@@ -125,24 +125,30 @@ fn win_waiting_stage_inputs() {
 #[test]
 fn win_epoch_end_and_close_end_every_stage() {
     {
-        for build in [loading as fn() -> Twin, landing, waiting, fresh] {
+        for build in [loading as fn() -> Twin, landing, waiting] {
             let mut twin = build();
             let in_flight = twin.stage() == Some(WindowStage::Loading);
             let effects = twin.step(Input::EpochEnded);
             assert_eq!(effects.iter().filter(|effect| matches!(effect, Effect::Cancel { .. })).count(), usize::from(in_flight));
             assert_eq!(twin.stage(), Some(WindowStage::Ended));
         }
+        let mut rested = fresh();
+        assert!(rested.step(Input::EpochEnded).is_empty());
+        assert_eq!(rested.state().stage(&key()), None, "a window nobody watches has no machine to end");
         let mut retry = loading();
         retry.fail(Failure::Network);
         assert!(retry.step(Input::EpochEnded).is_empty(), "a window that waits for a retry has nothing in flight");
     }
     {
-        for build in [loading as fn() -> Twin, landing, waiting, fresh] {
+        for build in [loading as fn() -> Twin, landing, waiting] {
             let mut twin = build();
             let effects = twin.step(Input::Closing);
             assert_eq!(effects.last(), Some(&Effect::Drained));
             assert_eq!(twin.stage(), Some(WindowStage::Ended));
         }
+        let mut rested = fresh();
+        assert_eq!(rested.step(Input::Closing), [Effect::Drained]);
+        assert_eq!(rested.state().stage(&key()), None);
     }
     {
         let mut twin = loading();
@@ -214,8 +220,10 @@ fn win_wait_nodes() {
     twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["m1".into()], None) });
     twin.post(w::WindowsInput::Committed(committed_at(1, 11, &[])));
     assert!(runs(take(&twin.log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 1, outcome: WindowOutcome::Loaded { revision: 11, .. } }, .. })));
-    twin.post_call(w::WindowsInput::Load { key: nodes, id: 2, goal: w::Goal::First, force: false, store_revision: 0 });
-    assert!(runs(take(&twin.log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 2, outcome: WindowOutcome::Loaded { revision: 11, .. } }, .. })), "a fresh nodes key answers at once");
+    twin.post_call(w::WindowsInput::Load { key: nodes, id: 2, goal: w::Goal::First, force: false, store_revision: 11 });
+    let seen = runs(take(&twin.log));
+    assert!(seen.iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 2, outcome: WindowOutcome::Loaded { revision: 11, .. } }, .. })), "a fresh nodes key answers at once");
+    assert!(!seen.iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Request { .. }, .. })), "the saved window asks nothing");
 }
 
 // Properties. An executor stub answers requests and commits in the same scheduler, the explorer orders everything it sends.
@@ -269,6 +277,9 @@ impl StateOwner for WindowStore {
     type Effect = crate::spec::support::NoEffect;
 
     fn step(state: &mut Self::State, input: Self::Input, now: crate::runtime::Time) -> Effects<Self> {
+        if let StoreInput::ReadAfter { read_id, .. } = input {
+            return vec![RuntimeEffect::Send(Outbound::new(state.to, w::WindowsInput::ReadReady { read_id }))];
+        }
         if let StoreInput::Pin { request_id, .. } = input {
             return vec![RuntimeEffect::Send(Outbound::new(state.to, w::WindowsInput::Pinned { request_id, base_revision: u64::try_from(state.revision).unwrap() }))];
         }

@@ -6,6 +6,8 @@ pub(super) struct Window {
     pub(super) opening: Option<Opening>,
     /// The value the streams got last.
     pub(super) announced: Option<WindowState>,
+    /// The batch that marks the saved window stale before the machine leaves memory.
+    pub(super) marking: Option<RequestId>,
     #[cfg(test)]
     pub(super) steps: u64,
 }
@@ -36,8 +38,9 @@ impl Window {
             online_seq,
             load_seq: std::cell::Cell::new(0),
             interest: BTreeSet::new(),
+            mark_owed: std::cell::Cell::new(false),
             reload: BTreeSet::new(),
-            dropped: false,
+            dropped: online == Some(false),
             reconnected: false,
             waiters: BTreeMap::new(),
             fresh: false,
@@ -74,7 +77,7 @@ impl Window {
             fx: RefCell::new(Vec::new()),
         };
         let mut ctx = Ctx { request_ids: ids.0, next_attempt: ids.1, now };
-        Self { machine: facts.uninitialized_state_machine().init_with_context(&mut ctx), opening, announced: None, #[cfg(test)] steps: 0 }
+        Self { machine: facts.uninitialized_state_machine().init_with_context(&mut ctx), opening, announced: None, marking: None, #[cfg(test)] steps: 0 }
     }
 
     pub(super) fn handle(&mut self, event: Ev, ids: (&mut RequestIds, &mut u32), now: i64) -> Vec<Emit> {
@@ -100,11 +103,11 @@ impl Window {
     }
 
     /// The saved window arrived: the machine takes it if its generation matches, then runs the held inputs in order.
-    pub(super) fn opened(&mut self, saved: Option<SavedWindow>, ids: (&mut RequestIds, &mut u32), now: i64) -> Vec<Emit> {
+    pub(super) fn opened(&mut self, saved: Option<SavedWindow>, (ids, store_seen): ((&mut RequestIds, &mut u32), i64), now: i64) -> Vec<Emit> {
         let Some(opening) = self.opening.take() else { return Vec::new() };
         let saved = saved.filter(|saved| saved.generation == opening.generation);
         let (request_ids, next_attempt) = ids;
-        let mut effects = self.run(Ev::Saved(saved), (&mut *request_ids, &mut *next_attempt), now);
+        let mut effects = self.run(Ev::Saved(saved, store_seen), (&mut *request_ids, &mut *next_attempt), now);
         for held in opening.held {
             effects.extend(self.run(held, (&mut *request_ids, &mut *next_attempt), now));
         }
@@ -180,6 +183,10 @@ impl Window {
 
     pub(super) fn load_state(&self) -> WindowState { self.machine.load_state(self.opening.is_none() && matches!(self.machine.state(), WinState::Loading { .. } | WinState::Landing { .. })) }
 
+    pub(super) fn unwatched(&self) -> bool {
+        self.opening.is_none() && matches!(self.machine.state(), WinState::Idle {}) && self.machine.interest.is_empty() && self.machine.waiters.is_empty() && self.machine.reload.is_empty() && !self.machine.reread_due && !self.machine.reread_by_event.get()
+    }
+
     pub(super) fn reading(&self, read_id: u64) -> bool { self.opening.as_ref().is_some_and(|opening| opening.read_id == read_id) }
 
     pub(super) fn owns(&self, id: RequestId) -> bool {
@@ -240,7 +247,13 @@ pub struct WindowsState {
     pub(super) held_loads: BTreeMap<InterestId, WindowsInput>,
     /// `InterestMinus` of a registered call with the ids that were reserved when it came: it applies after they registered.
     pub(super) held_leaves: Vec<(BTreeSet<InterestId>, WindowKey, InterestId)>,
+    #[cfg(test)]
+    pub(super) rested: Option<Rested>,
 }
+
+/// What a stand reads back of the windows that left memory: the Store keeps it in the saved window.
+#[cfg(test)]
+pub type Rested = Arc<dyn Fn(&WindowKey, Option<(SavedWindow, WindowState)>) + Send + Sync>;
 
 /// The owners `Windows` sends inputs to.
 #[derive(Clone, Copy, Debug)]
@@ -252,7 +265,7 @@ pub struct WindowsPeers {
 impl WindowsState {
     /// `online` is the value of the first addressed `Online`, `None` before it.
     pub fn new(epoch: Epoch, online: Option<bool>, peers: WindowsPeers) -> Self {
-        Self { epoch, online, online_seq: 0, saving: false, generation: 0, preload: Vec::new(), operations_awaited: false, identity: false, ended: None, sources: BTreeSet::new(), request_ids: RequestIds::Process, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), local_order: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, store_seen: 0, peers, held_nowait: Vec::new(), reserved: BTreeSet::new(), held_loads: BTreeMap::new(), held_leaves: Vec::new() }
+        Self { epoch, online, online_seq: 0, saving: false, generation: 0, preload: Vec::new(), operations_awaited: false, identity: false, ended: None, sources: BTreeSet::new(), request_ids: RequestIds::Process, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), local_order: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, store_seen: 0, peers, held_nowait: Vec::new(), reserved: BTreeSet::new(), held_loads: BTreeMap::new(), held_leaves: Vec::new(), #[cfg(test)] rested: None }
     }
 
     #[cfg(test)]
@@ -276,6 +289,12 @@ impl WindowsState {
     /// Keys whose rows name other keys to preload: a Store commit of their model asks `DerivePreload`.
     pub fn with_sources(mut self, keys: Vec<WindowKey>) -> Self {
         self.sources = keys.into_iter().collect();
+        self
+    }
+
+    #[cfg(test)]
+    pub fn with_rested(mut self, rested: Rested) -> Self {
+        self.rested = Some(rested);
         self
     }
 
@@ -334,8 +353,28 @@ impl WindowsState {
             let read_id = self.next_read;
             self.next_read += 1;
             self.create(key, read_id, now);
-            out.push(Effect::Run(WindowsEffect::ReadWindow { key: key.clone(), read_id }));
+            out.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::ReadAfter { epoch: self.epoch, read_id })));
         }
+    }
+
+    fn drop_window(&mut self, key: &WindowKey) {
+        #[cfg(test)]
+        self.rest(key);
+        if let Some(window) = self.windows.remove(key) {
+            self.store_seen = self.store_seen.max(window.machine.landed_revision);
+        }
+    }
+
+    #[cfg(test)]
+    fn rest(&self, key: &WindowKey) {
+        let (Some(rested), Some(window)) = (&self.rested, self.windows.get(key)) else { return };
+        let facts = &window.machine;
+        if facts.fresh_until == 0 {
+            rested(key, None);
+            return;
+        }
+        let saved = SavedWindow { landed_at: facts.landed_at, fresh_until: facts.fresh_until, stale: !facts.fresh, owed: false, cursor: facts.cursor.clone(), pages: facts.page_count, has_rows: facts.has_rows, generation: self.generation, marker: facts.marker.clone(), members: facts.members };
+        rested(key, Some((saved, window.load_state())));
     }
 
     fn create(&mut self, key: &WindowKey, read_id: u64, now: i64) {
@@ -352,6 +391,41 @@ impl Windows {
         let Some(window) = state.windows.get_mut(key) else { return };
         let emits = window.handle(event, (&mut state.request_ids, &mut state.next_attempt), now);
         Self::emitted(state, key, emits, out);
+        Self::release_unwatched(state, key, out);
+    }
+
+    fn removable(state: &WindowsState, key: &WindowKey) -> bool { state.windows.get(key).is_some_and(Window::unwatched) && !state.sources.contains(key) && !state.preload.contains(key) }
+
+    /// A window nobody watches, awaits or pins and no source or preload names leaves memory: its next input reads the saved window.
+    /// A window that lost its freshness without a mark of the Store waits for the commit of that mark first.
+    fn release_unwatched(state: &mut WindowsState, key: &WindowKey, out: &mut Effects<Self>) {
+        if !Self::removable(state, key) { return; }
+        let Some(window) = state.windows.get_mut(key) else { return };
+        if window.marking.is_some() { return; }
+        if window.machine.mark_owed.get() {
+            let batch = state.request_ids.next();
+            window.marking = Some(batch);
+            window.machine.mark_owed.set(false);
+            let epoch = window.machine.epoch;
+            let ops = vec![StoreOp::MarkStale { models: Vec::new(), keys: vec![(key.model.clone(), key.name.clone())], kept: Vec::new() }];
+            let batch = StoreBatch { author: BatchAuthor::Window, id: batch, stamp: crate::runtime::EpochStamp::Epoch(epoch), rows: Vec::new(), intents: 0, credential: None, ops };
+            out.push(Effect::Send(Outbound::new(state.peers.store, StoreInput::Commit(batch))));
+            return;
+        }
+        state.drop_window(key);
+    }
+
+    /// The Store answered the mark of a window that waited to leave memory: a committed mark lets it go, or sends the next one when freshness was lost again meanwhile.
+    fn mark_answered(state: &mut WindowsState, batch: RequestId, committed: bool, out: &mut Effects<Self>) -> bool {
+        let Some(key) = state.windows.iter().find(|(_, window)| window.marking == Some(batch)).map(|(key, _)| key.clone()) else { return false };
+        let Some(window) = state.windows.get_mut(&key) else { return true };
+        window.marking = None;
+        if committed {
+            Self::release_unwatched(state, &key, out);
+        } else {
+            window.machine.mark_owed.set(true);
+        }
+        true
     }
 
     pub(super) fn emitted(state: &mut WindowsState, key: &WindowKey, emits: Vec<Emit>, out: &mut Effects<Self>) {
@@ -555,8 +629,21 @@ impl StateOwner for Windows {
             WindowsInput::Response { request, attempt, page } => Self::by_request(state, request, Ev::Response { request, attempt, page }, now, &mut out),
             WindowsInput::Failure { request, attempt, error } => Self::by_request(state, request, Ev::Failure { request, attempt, error: error.clone() }, now, &mut out),
             WindowsInput::Dropped { request, attempt } => Self::by_request(state, request, Ev::Failure { request, attempt, error: RequestError { class: ErrorClass::Network, failure: crate::ffi::DbError::Dropped { detail: "the request left and the answer did not come".into() } } }, now, &mut out),
-            WindowsInput::Committed(committed) => Self::by_request(state, committed.batch, Ev::Committed { request: committed.batch, revision: committed.revision }, now, &mut out),
-            WindowsInput::Rejected(rejected) => Self::by_request(state, rejected.batch, Ev::Rejected { request: rejected.batch, reason: rejected.reason }, now, &mut out),
+            WindowsInput::Committed(committed) => {
+                if !Self::mark_answered(state, committed.batch, true, &mut out) {
+                    Self::by_request(state, committed.batch, Ev::Committed { request: committed.batch, revision: committed.revision }, now, &mut out);
+                }
+            }
+            WindowsInput::Rejected(rejected) => {
+                if !Self::mark_answered(state, rejected.batch, false, &mut out) {
+                    Self::by_request(state, rejected.batch, Ev::Rejected { request: rejected.batch, reason: rejected.reason }, now, &mut out);
+                }
+            }
+            WindowsInput::ReadReady { read_id } => {
+                if let Some(key) = state.windows.iter().find(|(_, window)| window.reading(read_id)).map(|(key, _)| key.clone()) {
+                    out.push(Effect::Run(WindowsEffect::ReadWindow { key, read_id }));
+                }
+            }
             WindowsInput::Stale { model, keys, cause } => {
                 let named: Vec<WindowKey> = state.windows.keys().filter(|key| key.model == model && keys.names(key)).cloned().collect();
                 for key in named {
@@ -614,9 +701,10 @@ impl StateOwner for Windows {
             WindowsInput::WindowRead { key, read_id, result } => {
                 let Some(window) = state.windows.get_mut(&key).filter(|window| window.reading(read_id)) else { return out };
                 let saved = result.unwrap_or(None);
-                let emits = window.opened(saved, (&mut state.request_ids, &mut state.next_attempt), now);
+                let emits = window.opened(saved, ((&mut state.request_ids, &mut state.next_attempt), state.store_seen), now);
                 Self::emitted(state, &key, emits, &mut out);
                 Self::derive_source(state, &key, now, &mut out);
+                Self::release_unwatched(state, &key, &mut out);
             }
             WindowsInput::TaskFailed { id } if id & REQUEST_TASK != 0 => {
                 let (request, attempt) = task_request(id);

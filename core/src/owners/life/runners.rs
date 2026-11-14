@@ -159,6 +159,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 back.reply(EpochStamp::Control, StoreInput::Written { author: batch.author, batch: batch.id, result });
             }
             StoreEffect::Pinned { epoch, request_id, base_revision } => wiring.to_windows_in(epoch, WindowsInput::Pinned { request_id, base_revision }),
+            StoreEffect::ReadReady { epoch, read_id } => wiring.to_windows_in(epoch, WindowsInput::ReadReady { read_id }),
             StoreEffect::EraseAccount { io_id, generation_new, erase_encrypted } => {
                 self.erased(back, io_id, store.erase_account(Generation::from_value(generation_new), erase_encrypted));
             }

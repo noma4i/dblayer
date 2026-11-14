@@ -46,6 +46,9 @@ impl StateOwner for WindowStore {
     type Effect = crate::spec::support::NoEffect;
 
     fn step(state: &mut Batches, input: StoreInput, now: crate::runtime::Time) -> Effects<Self> {
+        if let StoreInput::ReadAfter { read_id, .. } = input {
+            return vec![Effect::Send(Outbound::new(Address::<Windows>::new(2), WindowsInput::ReadReady { read_id }))];
+        }
         if let StoreInput::Pin { request_id, .. } = input {
             return vec![Effect::Send(Outbound::new(Address::<Windows>::new(2), WindowsInput::Pinned { request_id, base_revision: 0 }))];
         }

@@ -252,6 +252,8 @@ pub enum WindowsInput {
     /// `refresh`, `load_more`, `node(force)`: a `Load` that does not wait for the network. Without `online = Some(true)` the owner answers `Offline` and applies `OfflineRefused`.
     LoadNoWait { key: WindowKey, id: InterestId, goal: Goal, force: bool, store_revision: i64, verb: &'static str },
     Pinned { request_id: RequestId, base_revision: u64 },
+    /// The Store committed every batch queued before the read of the saved window of `read_id`.
+    ReadReady { read_id: u64 },
     Response { request: RequestId, attempt: u32, page: AnswerPage },
     Failure { request: RequestId, attempt: u32, error: RequestError },
     Dropped { request: RequestId, attempt: u32 },
@@ -300,7 +302,7 @@ pub(super) enum Ev {
     Online { online: bool, online_seq: u64 },
     PowerSaving { saving: bool },
     /// The saved window of the key: `None` before its first page or after a reset of its generation.
-    Saved(Option<SavedWindow>),
+    Saved(Option<SavedWindow>, i64),
     EpochEnded { cause: crate::owners::read::deliveries::EndCause },
     Closing,
 }

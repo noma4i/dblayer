@@ -315,3 +315,28 @@ fn win_idle_stale_lost_rereads() {
     let (effects, _) = twin.split(take(&twin.log));
     assert_eq!(requests(&effects), 1, "a lost event requires a new load: {effects:?}");
 }
+
+/// D-467 (a): a force load of a fresh window that its last reader abandons marks the saved window stale in the Store, and the next reader loads it.
+#[test]
+fn win_abandoned_force_load_marks_the_saved_window() {
+    let mut twin = fresh_watched();
+    twin.step(Input::Load { id: 1, goal: Goal::First, force: true });
+    assert_eq!(twin.stage(), Some(WindowStage::Loading));
+    twin.step(Input::InterestMinus { id: 1 });
+    twin.step(Input::InterestMinus { id: STREAM });
+    let marks: Vec<StoreBatch> = snapshot(&twin.stored).into_iter().filter(marks_only).collect();
+    assert_eq!(marks.len(), 1, "one mark batch for the abandoned load");
+    assert!(matches!(marks[0].ops.as_slice(), [StoreOp::MarkStale { keys, .. }] if keys.as_slice() == [("Moment".to_string(), "feed".to_string())]), "{:?}", marks[0].ops);
+    assert_eq!(requests(&twin.watch()), 1, "the saved window is stale: the next reader loads it inside the lifetime");
+}
+
+/// D-467 (c): a window re-opened while the network is away remembers that it was away: the return of the network loads it for a reader that asked to reload on connect.
+#[test]
+fn win_reopened_window_reloads_on_connect_after_the_network_left() {
+    let mut twin = fresh_watched();
+    twin.step(Input::InterestMinus { id: STREAM });
+    twin.step(Input::Online(false));
+    twin.watch();
+    twin.post_call(w::WindowsInput::ReloadOnConnect { key: key(), id: id64(STREAM) });
+    assert_eq!(requests(&twin.step(Input::Online(true))), 1, "the return of the network reloads the fresh window of a reload-on-connect reader");
+}

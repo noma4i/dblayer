@@ -40,6 +40,8 @@ struct PinStore;
 struct PinState {
     revision: Arc<AtomicU64>,
     batches: Log<StoreBatch>,
+    /// The Store holds a mark that the saved window of the key owes a reread.
+    marked: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl StateOwner for PinStore {
@@ -51,9 +53,16 @@ impl StateOwner for PinStore {
     fn step(pin: &mut Self::State, input: Self::Input, _now: crate::runtime::Time) -> Effects<Self> {
         match input {
             StoreInput::Pin { request_id, .. } => vec![RuntimeEffect::Send(Outbound::new(Address::<Windows>::new(WINDOWS), w::WindowsInput::Pinned { request_id, base_revision: pin.revision.load(Ordering::SeqCst) }))],
+            StoreInput::ReadAfter { read_id, .. } => vec![RuntimeEffect::Send(Outbound::new(Address::<Windows>::new(WINDOWS), w::WindowsInput::ReadReady { read_id }))],
             StoreInput::Commit(batch) => {
+                let marks = matches!(batch.ops.as_slice(), [StoreOp::MarkStale { .. }]);
+                let id = batch.id;
                 pin.batches.lock().unwrap_or_else(PoisonError::into_inner).push(batch);
-                Vec::new()
+                if !marks {
+                    return Vec::new();
+                }
+                pin.marked.store(true, Ordering::SeqCst);
+                vec![RuntimeEffect::Send(Outbound::new(Address::<Windows>::new(WINDOWS), w::WindowsInput::Committed(committed_at(id, i64::try_from(pin.revision.load(Ordering::SeqCst)).unwrap_or(0), &[]))))]
             }
             _ => Vec::new(),
         }
@@ -69,16 +78,31 @@ fn add_windows(det: &mut DetScheduler, log: &Spied, state: w::WindowsState, runn
     det.add::<Spy<Windows>>("windows", SpyState::new(state, log), runner)
 }
 
+type RestedMap = Arc<std::sync::Mutex<std::collections::BTreeMap<WindowKey, (w::SavedWindow, crate::owners::contract::WindowState)>>>;
+
+fn rested_sink(map: &RestedMap) -> w::Rested {
+    let map = map.clone();
+    Arc::new(move |key, rested| {
+        let mut map = map.lock().unwrap_or_else(PoisonError::into_inner);
+        match rested {
+            Some(rested) => map.insert(key.clone(), rested),
+            None => map.remove(key),
+        };
+    })
+}
+
 type HeldReads = Arc<std::sync::Mutex<Vec<(WindowKey, u64)>>>;
 
 /// The read pool of the tests: the saved window of every key is none, or the read waits in `held` until the test answers it.
 struct Reads {
     held: HeldReads,
     hold: Arc<std::sync::atomic::AtomicBool>,
+    rested: RestedMap,
+    marked: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Reads {
-    fn auto() -> Self { Self { held: HeldReads::default(), hold: Arc::default() } }
+    fn auto(rested: RestedMap) -> Self { Self { held: HeldReads::default(), hold: Arc::default(), rested, marked: Arc::default() } }
 }
 
 impl EffectRunner<Spy<Windows>> for Reads {
@@ -87,7 +111,9 @@ impl EffectRunner<Spy<Windows>> for Reads {
         if self.hold.load(Ordering::SeqCst) {
             self.held.lock().unwrap_or_else(PoisonError::into_inner).push((key, read_id));
         } else {
-            back.reply(stamp, w::WindowsInput::WindowRead { key, read_id, result: Ok(None) });
+            let marked = self.marked.load(Ordering::SeqCst);
+            let saved = self.rested.lock().unwrap_or_else(PoisonError::into_inner).get(&key).map(|(saved, _)| w::SavedWindow { stale: saved.stale || marked, ..saved.clone() });
+            back.reply(stamp, w::WindowsInput::WindowRead { key, read_id, result: Ok(saved) });
         }
     }
 }
@@ -141,6 +167,9 @@ fn cursor_text(cursor: u32) -> String { format!("c{cursor}") }
 struct Twin {
     det: DetScheduler,
     addr: Address<Spy<Windows>>,
+    rested: RestedMap,
+    /// The Store holds a mark for the saved window: a `Stale` of the Feed or a mark batch of the owner set it, a landing batch clears it.
+    marked: Arc<std::sync::atomic::AtomicBool>,
     log: Spied,
     /// The request in flight: its id and attempt, as the owner sent them last.
     flight: Option<(u64, u32)>,
@@ -198,11 +227,15 @@ impl Twin {
         let log = new_log();
         let pin = PinState::default();
         let (pin_revision, stored) = (pin.revision.clone(), pin.batches.clone());
-        let reads = Reads::auto();
+        let rested = RestedMap::default();
+        let state = state.with_rested(rested_sink(&rested));
+        let mut reads = Reads::auto(rested.clone());
+        let marked = pin.marked.clone();
+        reads.marked = marked.clone();
         let (held, hold) = (reads.held.clone(), reads.hold.clone());
         let addr = add_windows(&mut det, &log, state, reads, pin);
         det.start_epoch(EPOCH);
-        Self { det, addr, log, flight: None, batch: None, revision: 10, pin_revision, stored, online_seq: 0, now: NOW, held, hold, commit: None, given: std::sync::atomic::AtomicUsize::new(0), outcomes: Vec::new(), last_outcomes: Vec::new() }
+        Self { det, addr, rested, marked, log, flight: None, batch: None, revision: 10, pin_revision, stored, online_seq: 0, now: NOW, held, hold, commit: None, given: std::sync::atomic::AtomicUsize::new(0), outcomes: Vec::new(), last_outcomes: Vec::new() }
     }
 
     /// The batches of the Window owner the Store received since the last call.
@@ -217,7 +250,12 @@ impl Twin {
 
     fn state(&self) -> &w::WindowsState { inner(&self.det, self.addr) }
 
-    fn stage(&self) -> Option<WindowStage> { self.state().stage(&key()) }
+    fn stage(&self) -> Option<WindowStage> { self.state().stage(&key()).or_else(|| self.rested.lock().unwrap_or_else(PoisonError::into_inner).contains_key(&key()).then_some(WindowStage::Idle)) }
+
+    /// The Feed marks the saved window of a key a `Stale` names in the Store at once.
+    fn mark_rested_stale(&self, in_keys: bool) {
+        if in_keys { self.marked.store(true, Ordering::SeqCst); }
+    }
 
     fn run(&mut self) { self.det.run_until_quiet(10_000).expect("the owner is quiet"); }
 
@@ -248,6 +286,7 @@ impl Twin {
             Input::InterestMinus { id } => self.post_call(w::WindowsInput::InterestMinus { key: k, id: id64(*id) }),
             Input::Load { id, goal, force } => self.post_call(w::WindowsInput::Load { key: k, id: id64(*id), goal: goal_of(*goal), force: *force, store_revision: 0 }),
             Input::Response { request, attempt, cursor, rows } => {
+                self.marked.store(false, Ordering::SeqCst);
                 let page = AnswerPage::new(1, if *rows { vec!["r1".into()] } else { Vec::new() }, cursor.map(cursor_text));
                 self.post(w::WindowsInput::Response { request: *request, attempt: *attempt, page });
             }
@@ -255,6 +294,7 @@ impl Twin {
                 self.post(w::WindowsInput::Failure { request: *request, attempt: *attempt, error: RequestError { class: class_of(*failure), failure: crate::ffi::DbError::Network { detail: "e".into() } } });
             }
             Input::MarkerAnswer { request, attempt, marker } => {
+                self.marked.store(false, Ordering::SeqCst);
                 let page = AnswerPage::marked(w::Marker { sequence: marker.sequence, values: [("revision".to_string(), marker.revision), ("count".to_string(), marker.count)].into() });
                 self.post(w::WindowsInput::Response { request: *request, attempt: *attempt, page });
             }
@@ -277,9 +317,13 @@ impl Twin {
             }
             Input::Stale { in_keys } => {
                 let keys = if *in_keys { StaleKeys::all() } else { StaleKeys::Set(BTreeSet::new()) };
+                self.mark_rested_stale(*in_keys);
                 self.post(w::WindowsInput::Stale { model: "Moment".into(), keys, cause: w::StaleCause::Change { revision: None } });
             }
-            Input::StaleGap => self.post(w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::all(), cause: w::StaleCause::Gap { online_seq: self.online_seq } }),
+            Input::StaleGap => {
+                self.mark_rested_stale(true);
+                self.post(w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::all(), cause: w::StaleCause::Gap { online_seq: self.online_seq } });
+            }
             Input::Foreground { seq } => self.post(w::WindowsInput::Foreground { seq: *seq, online_seq: 0 }),
             Input::SourceChanged { revision } => self.post(w::WindowsInput::StoreCommitted { models: vec!["Moment".into()], revision: *revision }),
             Input::Online(on) => {
@@ -314,7 +358,7 @@ impl Twin {
             }
         }
         let emitted = take(&self.log);
-        if let Some(batch) = sent_batches(&emitted, &self.stored).into_iter().rev().find(|batch| batch.author == BatchAuthor::Window) { self.commit = Some(batch); }
+        if let Some(batch) = sent_batches(&emitted, &self.stored).into_iter().rev().find(|batch| batch.author == BatchAuthor::Window && !marks_only(batch)) { self.commit = Some(batch); }
         let (got, outcomes) = self.split(emitted);
         for effect in &got {
             match effect {
@@ -348,7 +392,7 @@ impl Twin {
                 Emitted::Run(WindowsEffect::ReadWindow { .. }) => modelled.push(Effect::ReadWindow),
                 Emitted::Send { to: STORE, input } if input.starts_with("Commit(") => {
                     let batch = batches.next().expect("a batch for every Commit");
-                    if batch.author == BatchAuthor::Window { modelled.push(Effect::Commit { request: batch.id, replace_all: batch.ops.iter().any(|op| matches!(op, StoreOp::Window { replace_all: true, .. })) }); }
+                    if batch.author == BatchAuthor::Window && !marks_only(&batch) { modelled.push(Effect::Commit { request: batch.id, replace_all: batch.ops.iter().any(|op| matches!(op, StoreOp::Window { replace_all: true, .. })) }); }
                 }
                 Emitted::Send { to: DELIVERIES, .. } if modelled.last() == Some(&Effect::WindowState) => {}
                 Emitted::Send { to: DELIVERIES, .. } => modelled.push(Effect::WindowState),
@@ -359,7 +403,7 @@ impl Twin {
         (modelled, outcomes)
     }
 
-    fn load_state(&self) -> crate::owners::contract::WindowState { self.state().load_state(&key()).expect("the window exists") }
+    fn load_state(&self) -> crate::owners::contract::WindowState { self.state().load_state(&key()).or_else(|| self.rested.lock().unwrap_or_else(PoisonError::into_inner).get(&key()).map(|(_, state)| state.clone())).expect("the window exists") }
 
     fn phase(&self) -> Phase { phase_of(self.load_state().phase) }
 
@@ -391,6 +435,8 @@ impl Twin {
 
     fn watch(&mut self) -> Vec<Effect> { self.step(Input::InterestPlus { id: STREAM }) }
 }
+
+fn marks_only(batch: &StoreBatch) -> bool { matches!(batch.ops.as_slice(), [StoreOp::MarkStale { .. }]) }
 
 fn none() -> Vec<Effect> { Vec::new() }
 
