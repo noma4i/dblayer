@@ -93,7 +93,7 @@ async fn flow_message_media_upload() {
         }))).await;
         for place in [&rows, &last] {
             let media = field(&rig, "Message", place, "m1", "media").unwrap();
-            assert!(format!("{media:?}").contains(&format!("value: {shown_progress}")), "url {url:?} progress {progress}: shows {media:?}");
+            assert!(matches!(&media, Cell::Keyed { entries } if entries.iter().any(|entry| entry.value == Cell::Int { value: shown_progress })), "url {url:?} progress {progress}: shows {media:?}");
             assert_eq!(field(&rig, "Message", place, "m1", "localPreviewUrl"), Some(text("file:///clip.jpg")), "an event wiped the local preview");
         }
     }

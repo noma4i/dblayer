@@ -12,8 +12,8 @@ fn boundary_failure_orders() {
         (TransportError::Network("offline".into()), "Network"),
     ];
     for (error, kind) in cases {
-        let shown = format!("{:?}", DbError::from(error.clone()));
-        assert_eq!(shown.split(|letter: char| !letter.is_alphanumeric()).next(), Some(kind), "{error:?} reached the caller as {shown}");
+        let reached = DbError::from(error.clone());
+        assert_eq!(super::cases::error_kind(&reached), kind, "{error:?} reached the caller as {reached:?}");
     }
 }
 
@@ -48,39 +48,29 @@ async fn outcome_whose_answer_is_lost(database: &Database, receipt: WireOperatio
     super::rig_tests::bound(call).await
 }
 
-/// K7.09 (P-BND-04, D-195): the outcome of a write whose owner lost the answer is `Internal` when the epoch of the caller ended meanwhile, not `Interrupted`.
+/// K7.09, K7.10 (P-BND-04, D-195): the outcome of a write or of a transfer whose owner lost the answer is `Internal` when the epoch of the caller ended meanwhile, not `Interrupted`.
 #[tokio::test(flavor = "multi_thread")]
-async fn the_outcome_of_a_write_with_a_lost_answer_is_internal() {
-    use super::rig_tests::bound;
-    use super::upload_stand::{plain, Stand, CREATE_MOMENT};
-    let stand = Stand::new();
-    let database = stand.open(None, &[CREATE_MOMENT]).await;
-    database.set_online(false).await.unwrap();
-    let receipt = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, database.session_epoch()))).await.unwrap();
-
-    let answer = outcome_whose_answer_is_lost(&database, receipt).await;
-
-    assert!(matches!(answer, Err(DbError::Internal { .. })), "{answer:?}");
-    database.close_now();
-}
-
-/// K7.10 (P-BND-04, D-195): the outcome of a transfer whose owner lost the answer is `Internal` when the epoch of the caller ended meanwhile, not `Interrupted`.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_outcome_of_an_upload_with_a_lost_answer_is_internal() {
+async fn the_outcome_of_a_write_or_an_upload_with_a_lost_answer_is_internal() {
     use super::rig_tests::bound;
     use super::upload_stand::{plain, request, Stand, CREATE_MOMENT};
-    let stand = Stand::new();
-    let database = stand.open(None, &[CREATE_MOMENT]).await;
-    database.set_online(false).await.unwrap();
-    let epoch = database.session_epoch();
-    let directory = tempfile::tempdir().unwrap();
-    let source = directory.path().join("intro.mp4");
-    std::fs::write(&source, b"video").unwrap();
-    let local = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, epoch))).await.unwrap().optimistic_value.unwrap();
-    let receipt = bound(database.upload(epoch, "Moment".into(), local.id, "upload_clip".into(), request(&source))).await.unwrap();
+    for upload in [false, true] {
+        let stand = Stand::new();
+        let database = stand.open(None, &[CREATE_MOMENT]).await;
+        database.set_online(false).await.unwrap();
+        let epoch = database.session_epoch();
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("intro.mp4");
+        std::fs::write(&source, b"video").unwrap();
+        let local = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, epoch))).await.unwrap();
+        let receipt = if upload {
+            bound(database.upload(epoch, "Moment".into(), local.optimistic_value.unwrap().id, "upload_clip".into(), request(&source))).await.unwrap()
+        } else {
+            local
+        };
 
-    let answer = outcome_whose_answer_is_lost(&database, receipt).await;
+        let answer = outcome_whose_answer_is_lost(&database, receipt).await;
 
-    assert!(matches!(answer, Err(DbError::Internal { .. })), "{answer:?}");
-    database.close_now();
+        assert!(matches!(answer, Err(DbError::Internal { .. })), "upload {upload}: {answer:?}");
+        database.close_now();
+    }
 }

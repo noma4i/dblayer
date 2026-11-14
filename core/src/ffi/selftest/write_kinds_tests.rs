@@ -28,7 +28,7 @@ fn invalid_names(result: &Result<WireRow, DbError>, field: &str) -> String {
     match result {
         Err(DbError::Invalid { detail }) if detail.contains(field) => "Invalid".into(),
         Err(DbError::Invalid { detail }) => format!("Invalid without the field name: {detail}"),
-        Err(other) => format!("{other:?}"),
+        Err(other) => super::cases::error_kind(other).to_string(),
         Ok(_) => "accepted".into(),
     }
 }
@@ -88,11 +88,10 @@ async fn every_write_path_stores_and_refuses_each_field_kind() {
         let observed = match created { Ok(Some(row)) => named(&read(row.id).await.ok().flatten().unwrap_or(row_placeholder()), &order, field).to_string(), other => format!("not created: {other:?}") };
         matrix.cell(&format!("create.{field}"), "null on a nullable", "null", "null", &observed);
     }
-    if let Ok(Some(row)) = create(json!({"title": "t"})).await.map(|receipt| receipt.optimistic_value) {
-        let stored = read(row.id).await.ok().flatten().unwrap_or(row_placeholder());
-        for field in order.iter().filter(|name| *name != "title") {
-            matrix.cell(&format!("create.{field}"), "omitted", "field absent", &defaults(field).to_string(), &named(&stored, &order, field).to_string());
-        }
+    let omitted = create(json!({"title": "t"})).await.expect("a row without optional fields is created").optimistic_value.expect("the create returns its row");
+    let stored = read(omitted.id).await.ok().flatten().unwrap_or(row_placeholder());
+    for field in order.iter().filter(|name| *name != "title") {
+        matrix.cell(&format!("create.{field}"), "omitted", "field absent", &defaults(field).to_string(), &named(&stored, &order, field).to_string());
     }
     // unknown enum text from the app is accepted and kept on create and update (M54)
     let created = create(json!({"title": "t", "mood": "weird"})).await.map(|receipt| receipt.optimistic_value);
@@ -103,39 +102,38 @@ async fn every_write_path_stores_and_refuses_each_field_kind() {
     matrix.cell("create.photo", "file", "\"x\"", "Invalid", &invalid_names(&result, "photo"));
 
     // path update: valid value per field on an existing row
-    if let Ok(Some(base)) = create(json!({"title": "t"})).await.map(|receipt| receipt.optimistic_value) {
-        for (field, value, expected, bad) in &valid {
-            let result = bound(database.update(epoch, "Kind".into(), base.id.clone(), json!({*field: value.clone()}).to_string(), "{}".into())).await;
-            let observed = match result { Ok(_) => read(base.id.clone()).await.ok().flatten().map(|row| named(&row, &order, field).to_string()).unwrap_or_default(), Err(error) => format!("{error:?}") };
-            matrix.cell(&format!("update.{field}"), "valid", &value.to_string(), &expected.to_string(), &observed);
-            if let Some(bad) = bad {
-                let result = bound(database.update(epoch, "Kind".into(), base.id.clone(), json!({*field: bad.clone()}).to_string(), "{}".into())).await.map(|_| unreachable_row());
-                matrix.cell(&format!("update.{field}"), "invalid", &bad.to_string(), "Invalid", &invalid_names(&result, field));
-            }
+    let base = create(json!({"title": "t"})).await.expect("the base row is created").optimistic_value.expect("the create returns its row");
+    for (field, value, expected, bad) in &valid {
+        let result = bound(database.update(epoch, "Kind".into(), base.id.clone(), json!({*field: value.clone()}).to_string(), "{}".into())).await;
+        let observed = match result { Ok(_) => read(base.id.clone()).await.ok().flatten().map(|row| named(&row, &order, field).to_string()).unwrap_or_default(), Err(error) => super::cases::error_kind(&error).to_string() };
+        matrix.cell(&format!("update.{field}"), "valid", &value.to_string(), &expected.to_string(), &observed);
+        if let Some(bad) = bad {
+            let result = bound(database.update(epoch, "Kind".into(), base.id.clone(), json!({*field: bad.clone()}).to_string(), "{}".into())).await.map(|_| unreachable_row());
+            matrix.cell(&format!("update.{field}"), "invalid", &bad.to_string(), "Invalid", &invalid_names(&result, field));
         }
-        let result = bound(database.update(epoch, "Kind".into(), base.id.clone(), json!({"mood": "weird"}).to_string(), "{}".into())).await;
-        let observed = match result { Ok(_) => read(base.id.clone()).await.ok().flatten().map(|row| named(&row, &order, "mood").to_string()).unwrap_or_default(), Err(error) => format!("{error:?}") };
-        matrix.cell("update.mood", "unknown enum case", "\"weird\"", "\"weird\"", &observed);
-        // set_local: the local key and the local field
-        for (path, value, expected) in [("note", json!("local"), json!("local")), ("box.stamp", json!("s"), json!(["L", "s", [2, ["v"]]]))] {
-            let result = bound(database.set_local(epoch, "Kind".into(), base.id.clone(), path.into(), value.to_string())).await;
-            let observed = match result { Ok(()) => read(base.id.clone()).await.ok().flatten().map(|row| named(&row, &order, path.split('.').next().unwrap_or(path)).to_string()).unwrap_or_default(), Err(error) => format!("{error:?}") };
-            matrix.cell(&format!("set_local.{path}"), "valid", &value.to_string(), &expected.to_string(), &observed);
-        }
-        let result = bound(database.set_local(epoch, "Kind".into(), base.id.clone(), "title".into(), "\"x\"".into())).await;
-        matrix.cell("set_local.title", "a server field", "\"x\"", "Invalid", match &result { Err(DbError::Invalid { detail }) if detail.contains("title") => "Invalid", Err(_) => "other error", Ok(()) => "accepted" });
-        // attach: the file field
-        let source = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(source.path(), [1, 2]).unwrap();
-        let result = bound(database.attach_file(epoch, "Kind".into(), base.id.clone(), "photo".into(), source.path().to_string_lossy().into(), "a.png".into(), "image/png".into())).await;
-        matrix.cell("attach.photo", "file", "2 bytes", "stored", if result.is_ok() { "stored" } else { "refused" });
-        // set_ephemeral
-        let result = bound(database.set_ephemeral(epoch, "Kind".into(), base.id.clone(), json!({"typing": true}).to_string())).await;
-        let observed = match result { Ok(()) => read(base.id.clone()).await.ok().flatten().map(|row| named(&row, &order, "typing").to_string()).unwrap_or_default(), Err(error) => format!("{error:?}") };
-        matrix.cell("set_ephemeral.typing", "valid", "true", "true", &observed);
-        let result = bound(database.set_ephemeral(epoch, "Kind".into(), base.id.clone(), json!({"typing": "yes"}).to_string())).await.map(|()| unreachable_row());
-        matrix.cell("set_ephemeral.typing", "invalid", "\"yes\"", "Invalid", &invalid_names(&result, "typing"));
     }
+    let result = bound(database.update(epoch, "Kind".into(), base.id.clone(), json!({"mood": "weird"}).to_string(), "{}".into())).await;
+    let observed = match result { Ok(_) => read(base.id.clone()).await.ok().flatten().map(|row| named(&row, &order, "mood").to_string()).unwrap_or_default(), Err(error) => super::cases::error_kind(&error).to_string() };
+    matrix.cell("update.mood", "unknown enum case", "\"weird\"", "\"weird\"", &observed);
+    // set_local: the local key and the local field
+    for (path, value, expected) in [("note", json!("local"), json!("local")), ("box.stamp", json!("s"), json!(["L", "s", [2, ["v"]]]))] {
+        let result = bound(database.set_local(epoch, "Kind".into(), base.id.clone(), path.into(), value.to_string())).await;
+        let observed = match result { Ok(()) => read(base.id.clone()).await.ok().flatten().map(|row| named(&row, &order, path.split('.').next().unwrap_or(path)).to_string()).unwrap_or_default(), Err(error) => super::cases::error_kind(&error).to_string() };
+        matrix.cell(&format!("set_local.{path}"), "valid", &value.to_string(), &expected.to_string(), &observed);
+    }
+    let result = bound(database.set_local(epoch, "Kind".into(), base.id.clone(), "title".into(), "\"x\"".into())).await;
+    matrix.cell("set_local.title", "a server field", "\"x\"", "Invalid", match &result { Err(DbError::Invalid { detail }) if detail.contains("title") => "Invalid", Err(_) => "other error", Ok(()) => "accepted" });
+    // attach: the file field
+    let source = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(source.path(), [1, 2]).unwrap();
+    let result = bound(database.attach_file(epoch, "Kind".into(), base.id.clone(), "photo".into(), source.path().to_string_lossy().into(), "a.png".into(), "image/png".into())).await;
+    matrix.cell("attach.photo", "file", "2 bytes", "stored", if result.is_ok() { "stored" } else { "refused" });
+    // set_ephemeral
+    let result = bound(database.set_ephemeral(epoch, "Kind".into(), base.id.clone(), json!({"typing": true}).to_string())).await;
+    let observed = match result { Ok(()) => read(base.id.clone()).await.ok().flatten().map(|row| named(&row, &order, "typing").to_string()).unwrap_or_default(), Err(error) => super::cases::error_kind(&error).to_string() };
+    matrix.cell("set_ephemeral.typing", "valid", "true", "true", &observed);
+    let result = bound(database.set_ephemeral(epoch, "Kind".into(), base.id.clone(), json!({"typing": "yes"}).to_string())).await.map(|()| unreachable_row());
+    matrix.cell("set_ephemeral.typing", "invalid", "\"yes\"", "Invalid", &invalid_names(&result, "typing"));
     matrix.finish();
 }
 

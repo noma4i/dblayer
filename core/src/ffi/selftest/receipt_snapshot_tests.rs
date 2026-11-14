@@ -38,8 +38,8 @@ async fn a_noop_beside_a_concurrent_write_never_mixes_the_row_and_the_revision()
     );
     let (noop, changed) = (noop.unwrap(), changed.unwrap());
 
-    let shown = format!("{:?}", noop.optimistic_value.as_ref().unwrap().cells);
-    let expected = if shown.contains("other") { changed.revision } else { made.revision };
-    assert_eq!(noop.revision, expected, "the row {shown} belongs to the revision of its snapshot");
+    let shown = noop.optimistic_value.as_ref().unwrap().cells.clone();
+    let expected = if shown.contains(&crate::ffi::wire::Cell::Text { value: "other".into() }) { changed.revision } else { made.revision };
+    assert_eq!(noop.revision, expected, "the row {shown:?} belongs to the revision of its snapshot");
     assert_eq!(noop.optimistic_value.as_ref().map(|row| row.revision), Some(noop.revision));
 }

@@ -597,23 +597,6 @@ async fn debt_database(path: Option<String>, held: Arc<crate::ffi::tests::sessio
     (database, transport, shown, window, token)
 }
 
-/// feed_node_event_rereads_a_row_shown_by_a_list (D-393): the event of a row the list shows reads the row through `node` once and never reads the list; the event of a row nobody shows asks nothing.
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_node_event_rereads_a_row_shown_by_a_list() {
-    let world = World::new("server", "A", true);
-    let (database, transport, shown, _window, token) = debt_database(None, Arc::default(), &world).await;
-    assert_eq!(shown.len(), 1);
-    let (lists, nodes) = (world.count("ChatList"), world.count("ChatNode"));
-    world.answer_with("ChatNode", json!({"data":{"node":debt_chat("c1", "after")}}));
-    node_event(&transport, &token, "c1");
-    crate::test_wait::settled(&database, "the shown row is read through node", || shows(&shown, "after")).await;
-    assert_eq!((world.count("ChatList"), world.count("ChatNode")), (lists, nodes + 1), "one node read, no list read");
-    node_event(&transport, &token, "c9");
-    crate::test_wait::settled(&database, "the event of a row outside the list is done", || true).await;
-    assert_eq!(world.count("ChatNode"), nodes + 1, "a row nobody shows asks nothing");
-    bound(database.close_database()).await.unwrap();
-}
-
 /// feed_node_event_for_an_unshown_row_is_paid_by_the_first_reader (D-393): the debt waits in the file for the first reader of the row, a null answer and a refused network end it as the rule says.
 #[tokio::test(flavor = "multi_thread")]
 async fn feed_node_event_for_an_unshown_row_is_paid_by_the_first_reader() {
@@ -647,20 +630,6 @@ async fn feed_node_event_for_an_unshown_row_is_paid_by_the_first_reader() {
     bound(database.close_database()).await.unwrap();
 }
 
-/// The answer null of node ends the debt: no request follows.
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_node_event_null_answer_ends_the_debt() {
-    let world = World::new("server", "A", true);
-    let (database, transport, shown, _window, token) = debt_database(None, Arc::default(), &world).await;
-    let nodes = world.count("ChatNode");
-    world.answer_with("ChatNode", json!({"data":{"node":null}}));
-    node_event(&transport, &token, "c1");
-    crate::test_wait::settled(&database, "the shown row is read once", || world.count("ChatNode") == nodes + 1).await;
-    crate::test_wait::settled(&database, "the answer is done", || true).await;
-    assert_eq!((world.count("ChatNode"), shown.len()), (nodes + 1, 1), "the null answer ends the debt, nothing repeats");
-    bound(database.close_database()).await.unwrap();
-}
-
 /// feed_prop_node_event_rereads_the_shown_row (P-FEED-42): for every order of the event and the reader, the shown row is read at most events + 1 times, the list never.
 #[tokio::test(flavor = "multi_thread")]
 async fn feed_prop_node_event_rereads_the_shown_row() {
@@ -686,6 +655,9 @@ async fn feed_prop_node_event_rereads_the_shown_row() {
         let (least, most) = if events == 1 { (1, 1) } else { (1, events + 1) };
         assert!((least..=most).contains(&asked), "events {events} reader_first {reader_first}: {asked} node requests, expected {least} to {most}");
         assert_eq!(world.count("ChatList"), lists, "events {events} reader_first {reader_first}: the list is never read");
+        node_event(&transport, &token, "c9");
+        crate::test_wait::settled(&database, "the event of a row outside the list is done", || true).await;
+        assert_eq!(world.count("ChatNode") - nodes, asked, "events {events} reader_first {reader_first}: a row nobody shows asks nothing");
         bound(database.close_database()).await.unwrap();
         drop(late_window);
     }

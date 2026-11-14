@@ -31,7 +31,7 @@ async fn xfer_discard_of_a_failed_prepared_multipart_leaves_nothing() {
     drained(&database).await;
     let files: Vec<_> = std::fs::read_dir(files_of(&live).join("transfers")).map_or_else(|_| Vec::new(), |found| found.map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect());
     assert_eq!(stand.script.count("AbortMultipart"), 1, "{:?}", stand.script.names());
-    assert!(stand.script.variables("AbortMultipart")[0].to_string().contains("upload"), "{:?}", stand.script.variables("AbortMultipart"));
+    assert_eq!(stand.script.variables("AbortMultipart")[0]["uploadId"], "upload");
     assert!(files.is_empty(), "the directory of the base keeps {files:?}");
     assert!(upload_of(&database, &id).is_none(), "the discarded upload still shows");
     let before = stand.script.names();

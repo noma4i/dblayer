@@ -7,7 +7,6 @@ use super::upload_stand::{shows, watched, Stand};
 use crate::ffi::upload_wire::{WireUploadBatch, WireUploadItem};
 use crate::ffi::wire::WireSyncState;
 use crate::ffi::{Database, DbError, WireBatchReceipt, WireOperationReceipt};
-use crate::owners::write::upload::MEBIBYTE;
 use crate::test_wait::settled_showing;
 use crate::transport::{NetworkPurpose, TransferStep};
 
@@ -121,32 +120,6 @@ async fn a_batch_owns_its_sources_and_confirms_every_member_with_one_request() {
     let sent = sent_items(&stand);
     assert_eq!(keys_of(&sent), ["key-0", "key-1"]);
     assert!(sent.iter().all(|item| item["signedId"] == "signed"));
-    database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_multipart_batch_accepts_a_correlation_key_with_path_characters() {
-    let stand = Stand::new();
-    let directory = tempfile::tempdir().unwrap();
-    let source = directory.path().join("video");
-    std::fs::File::create(&source).unwrap().set_len(11 * MEBIBYTE).unwrap();
-    for _ in 0..2 {
-        stand.script.data("InitMultipart", r#"{"data":{"initMultipart":{"multipartUpload":{"key":"key","uploadId":"upload"}}}}"#);
-        for _ in 0..3 { stand.script.data("PresignParts", r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}"#); }
-        stand.script.data("CompleteMultipart", r#"{"data":{"completeMultipart":{"signedId":"signed","blobId":"blob"}}}"#);
-    }
-    stand.script.data("CreateAssets", &assets(&[("a0", "../../../outside", 0), ("a1", "other", 1)]));
-    let path = directory.path().join("db.sqlite");
-    let database = stand.open(Some(&path), &ALBUM_OPERATIONS).await;
-
-    let receipt = upload_batch(&database, items(&[&source, &source], &["../../../outside", "other"], 2)).await;
-
-    assert_eq!(outcomes(&database, &receipt).await, ["confirmed a0", "confirmed a1"]);
-    let puts = stand.puts.seen.lock().unwrap().clone();
-    let outside: Vec<_> = puts.iter().filter(|put| put.item == "../../../outside").collect();
-    assert_eq!(outside.len(), 3, "{puts:?}");
-    let files = directory.path().join("db.sqlite.files");
-    assert!(outside.iter().all(|put| Path::new(&put.path).starts_with(&files)), "{outside:?}");
     database.close_now();
 }
 

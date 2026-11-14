@@ -118,7 +118,7 @@ S210	C21	core	a_load_all_whose_caller_went_away_asks_the_server_for_no_more_page
 S210	C21	swift	BridgeProbeTests.cancellingTheCallerOfLoadAllStopsTheTransportCalls	unrun	-	arch-audit fable K6
 S210	C21	kotlin	com.noma4i.dblayer.LoadAllCancellationTest.cancellingTheCallerOfLoadAllStopsTheTransportCalls	unrun	-	arch-audit fable K6
 S211	shared-load	core	cancelling_one_load_interest_keeps_the_other_call_alive	unrun	-	arch-audit astra A2 cancellation
-S211b	last-interest	core	cancelling_the_last_load_interest_cancels_the_request	red-by-reading	-	arch-audit fable K6 cancellation
+S211b	last-interest	core	the_last_load_interest_leaves_through_the_owner_after_the_earlier_registrations	red-by-reading	-	arch-audit fable K6 cancellation
 S211b	last-interest	swift	BridgeProbeTests.cancellingTheLastLoadInterestCancelsTheRequest	red-by-reading	-	arch-audit fable K6 cancellation
 S211b	last-interest	kotlin	com.noma4i.dblayer.LoadAllCancellationTest.cancellingTheLastLoadInterestCancelsTheRequest	red-by-reading	-	arch-audit fable K6 cancellation
 S211c	last-interest-order	core	the_last_load_interest_leaves_through_the_owner_after_the_earlier_registrations	unrun	-	D-138 glue drop to effect

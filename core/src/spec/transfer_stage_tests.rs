@@ -99,7 +99,10 @@ fn xfer_stage_commit_twice() {
         ("transfer without held", commit_input(&mut twin, "Moment:r9:upload"), Fault::Invalid),
         ("no transfer", commit_input(&mut twin, "Moment:none:upload"), Fault::NotFound),
     ];
-    for (name, (reply, out), fault) in outs { assert_eq!(Twin::fault(&out, reply), Some(fault), "{name}"); }
+    for (name, (reply, out), fault) in outs {
+        assert_eq!(Twin::fault(&out, reply), Some(fault), "{name}");
+        assert_eq!((out.writes(), out.submit_ops().len()), (0, 0), "{name}: a refused commit writes nothing and submits no mutation");
+    }
     let out = twin.post(TransferInput::Commit { epoch: EPOCH + 1, key: KEY.into(), request: request(), reply: stale });
     assert_eq!(Twin::fault(&out, stale), Some(Fault::NoSession));
     assert!(twin.state().stage_of(plain).is_some());
@@ -268,6 +271,7 @@ fn xfer_removal_waits_for_the_commit_batch() {
             assert!(twin.state().stage_of(id).is_none_or(|stage| stage == TransferStage::Done), "{case} cancel {cancel}");
             assert_eq!(outs.iter().map(|out| out.removed().len()).sum::<usize>(), 1, "{case} cancel {cancel}: one batch removes the row");
             assert_eq!(outs.iter().map(|out| out.orphans_written().len()).sum::<usize>(), 1, "{case} cancel {cancel}: 1 debt of the multipart");
+            assert!(outs.iter().all(|out| out.submit_ops().is_empty()), "{case} cancel {cancel}: the final mutation is never submitted");
             if case != "rejected" { assert!(matches!(replies_of(&outs, commit).as_slice(), [TransferAnswer::Receipt(_)]), "{case}: the commit is answered once"); }
         }
     }

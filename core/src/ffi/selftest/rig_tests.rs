@@ -75,7 +75,6 @@ pub(super) struct Entry {
     pub(super) sequence: Option<i64>,
     pub(super) request_id: Option<String>,
     pub(super) body: String,
-    pub(super) marks_before: usize,
 }
 
 struct State {
@@ -88,7 +87,6 @@ struct State {
     calls: BTreeMap<String, usize>,
     violations: Vec<String>,
     log: Vec<Entry>,
-    marks: Vec<String>,
     script: Vec<(String, Fault)>,
     messages: Vec<(String, Value)>,
     group_members: BTreeMap<String, Vec<String>>,
@@ -110,7 +108,7 @@ impl Default for State {
     fn default() -> Self {
         let mut contract = Contract::adopting();
         contract.cache_everything();
-        State { contract, account: String::new(), credential: String::new(), signed: false, profile_empty: false, forbidden: false, calls: BTreeMap::new(), violations: Vec::new(), log: Vec::new(), marks: Vec::new(), script: Vec::new(), messages: Vec::new(), group_members: BTreeMap::new(), profile: Map::new(), blocked: Vec::new(), canned: BTreeMap::new() }
+        State { contract, account: String::new(), credential: String::new(), signed: false, profile_empty: false, forbidden: false, calls: BTreeMap::new(), violations: Vec::new(), log: Vec::new(), script: Vec::new(), messages: Vec::new(), group_members: BTreeMap::new(), profile: Map::new(), blocked: Vec::new(), canned: BTreeMap::new() }
     }
 }
 
@@ -132,18 +130,6 @@ impl World {
     pub(super) fn violations(&self) -> Vec<String> { self.state.lock().unwrap().violations.clone() }
     pub(super) fn count(&self, operation: &str) -> usize { self.state.lock().unwrap().calls.get(operation).copied().unwrap_or(0) }
     pub(super) fn log(&self) -> Vec<Entry> { self.state.lock().unwrap().log.clone() }
-    /// Notes a step of the test: `journal` prints the steps and the requests of the server in the order they happened.
-    pub(super) fn mark(&self, step: &str) { self.state.lock().unwrap().marks.push(step.into()); }
-    pub(super) fn journal(&self) -> String {
-        let state = self.state.lock().unwrap();
-        let mut lines = Vec::new();
-        for (index, step) in state.marks.iter().enumerate() {
-            lines.extend(state.log.iter().filter(|entry| entry.marks_before == index).map(|entry| format!("request {} {}", entry.operation, entry.body)));
-            lines.push(format!("step {step}"));
-        }
-        lines.extend(state.log.iter().filter(|entry| entry.marks_before >= state.marks.len()).map(|entry| format!("request {} {}", entry.operation, entry.body)));
-        lines.join("\n")
-    }
     pub(super) fn hits(&self) -> usize { self.state.lock().unwrap().log.len() }
     /// A message of the thread `c1` that the server already holds for this account.
     pub(super) fn seed_message(&self, account: &str, id: &str, text: &str, at: i64) {
@@ -183,8 +169,7 @@ impl World {
             return None;
         }
         let account = state.account.clone();
-        let marks_before = state.marks.len();
-        state.log.push(Entry { operation: operation.into(), account: account.clone(), label: self.label.clone(), sequence, request_id, body: body.to_string(), marks_before });
+        state.log.push(Entry { operation: operation.into(), account: account.clone(), label: self.label.clone(), sequence, request_id, body: body.to_string() });
         let position = state.script.iter().position(|(wanted, _)| wanted == operation || wanted == "*");
         let fault = position.map(|index| state.script.remove(index).1);
         let commits = matches!(fault, None | Some(Fault::Hold(_)));
@@ -349,8 +334,7 @@ impl FakeHttp for World {
             Admission::Stored(stored) => {
                 let mut state = self.state.lock().unwrap();
                 let account = state.account.clone();
-                let marks_before = state.marks.len();
-                state.log.push(Entry { operation: operation.clone(), account, label: self.label.clone(), sequence, request_id: Some(contract_request.request_id.clone()), body: request["body"].to_string(), marks_before });
+                state.log.push(Entry { operation: operation.clone(), account, label: self.label.clone(), sequence, request_id: Some(contract_request.request_id.clone()), body: request["body"].to_string() });
                 return Ok(EncryptedReply { status: 200, body: seal_response(&request, sequence, stored) });
             }
             Admission::TwoBodies => panic!("the pair {} went with two bodies", contract_request.request_id),

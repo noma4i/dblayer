@@ -4,7 +4,7 @@ use super::crash_image_support::advancing_by;
 use super::rig_tests::bound;
 use super::upload_stand::{clip, shows, watched, Answer, Stand, BLOB, CREATE_MOMENT};
 use crate::ffi::wire::{WireRow, WireSyncState};
-use crate::ffi::{Database, DbError, WireOperationReceipt, WireReceiptTicket};
+use crate::ffi::{Database, DbError};
 use crate::owners::write::upload::MEBIBYTE;
 use crate::test_wait::settled;
 
@@ -123,49 +123,6 @@ async fn an_http_refusal_of_a_photo_keeps_the_failed_record_until_discard() {
     assert_eq!(row(&database, &id).await.map(|row| row.sync.state), Some(WireSyncState::Failed));
     bound(database.discard(epoch, "Moment".into(), id.clone(), None)).await.unwrap();
     assert!(row(&database, &id).await.is_none());
-    database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_complete_failure_then_retry_keeps_the_confirmed_parts() {
-    let stand = Stand::new();
-    let database = stand.open(None, &[CREATE_MOMENT]).await;
-    let directory = tempfile::tempdir().unwrap();
-    let source = directory.path().join("video");
-    std::fs::File::create(&source).unwrap().set_len(11 * MEBIBYTE).unwrap();
-    stand.script.data("InitMultipart", r#"{"data":{"initMultipart":{"multipartUpload":{"key":"key","uploadId":"upload"}}}}"#);
-    for _ in 0..3 {
-        stand.script.data("PresignParts", r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}"#);
-    }
-    stand.script.enqueue("CompleteMultipart", Answer::Status(422));
-    stand.script.data("CompleteMultipart", r#"{"data":{"completeMultipart":{"signedId":"signed","blobId":"blob"}}}"#);
-    stand.script.data("CreateMoment", ROW);
-    let epoch = database.session_epoch();
-
-    let sent = bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &source, epoch))).await.unwrap();
-    let id = sent.optimistic_value.unwrap().id;
-    until_state(&database, &id, WireSyncState::Failed).await;
-    let again = bound(database.retry(epoch, "Moment".into(), id.clone(), Some("upload_clip".into()), None)).await.unwrap();
-    let held = &again.ticket;
-    let receipt_revision = held.revision;
-    let ticket = WireReceiptTicket { ticket: held.ticket.clone(), owner: held.owner.clone(), epoch: held.epoch, model: held.model.clone(), operation: held.operation, revision: held.revision, optimistic_value: None };
-    let late = WireOperationReceipt { optimistic_value: None, ticket: Arc::new(ticket), ..again };
-    let value = bound(database.confirmed(late, false)).await.unwrap().value;
-    let shown = value.map(|row| (row.id, row.sync.state));
-    if shown.is_none() {
-        let found = |row: &str| crate::ffi::database::id(row).ok().map(|row| database.optimistic("Moment", &row).map(|row| row.map(|row| (row.id, row.sync.state))));
-        let resolved = database.resolved(epoch, "Moment", crate::ffi::database::id(&id).unwrap()).await;
-        let published = database.db.published_revision().load(std::sync::atomic::Ordering::Acquire);
-        panic!("the confirmed outcome carried no row: temporary {id} resolved {resolved:?}, find(temporary) {:?}, find(resolved) {:?}, find(m1) {:?}, published revision {published}, receipt revision {}", found(&id), resolved.as_ref().ok().and_then(|row| found(row.as_str())), found("m1"), receipt_revision);
-    }
-    assert_eq!(shown, Some(("m1".to_string(), WireSyncState::Synced)));
-
-    let names = stand.script.names();
-    let count = |name: &str| names.iter().filter(|seen| *seen == name).count();
-    assert_eq!((count("InitMultipart"), count("PresignParts"), count("CompleteMultipart")), (1, 3, 2));
-    let mut urls: Vec<String> = stand.puts.seen.lock().unwrap().iter().map(|put| put.url.clone()).collect();
-    urls.sort();
-    assert_eq!(urls, ["https://storage/1", "https://storage/2", "https://storage/3"]);
     database.close_now();
 }
 

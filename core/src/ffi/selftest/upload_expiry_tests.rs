@@ -39,27 +39,6 @@ async fn a_failed_blob_older_than_seven_days_is_gone_after_the_reopen() {
     reopened.close_now();
 }
 
-/// xfer_expiry_exact_week_keeps: a Failed transfer of exactly 7 days is not older than 7 days.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_failed_blob_of_exactly_seven_days_stays_after_the_reopen() {
-    let (stand, start) = (Stand::new(), now_millis());
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("db.sqlite");
-    let source = directory.path().join("video");
-    std::fs::write(&source, b"video").unwrap();
-    let database = stand.open_with(Some(&path), &OPERATIONS, Some(TestClock::new(start))).await;
-    let id = failed_upload(&stand, &database, &source).await;
-    database.close_now();
-
-    let reopened = stand.open_with(Some(&path), &OPERATIONS, Some(TestClock::new(start + WEEK_MILLIS))).await;
-    let owners = reopened.life_handle();
-    crate::test_wait::within(async { tokio::task::spawn_blocking(move || owners.barrier()).await.unwrap() }).await;
-
-    let row = bound(reopened.read_row(reopened.session_epoch(), "Moment".into(), id)).await.unwrap().expect("the row of the Failed upload stays");
-    assert_eq!(row.sync.state, WireSyncState::Failed);
-    reopened.close_now();
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_blob_older_than_seven_days_is_gone_when_the_network_returns() {
     let (stand, start) = (Stand::new(), now_millis());

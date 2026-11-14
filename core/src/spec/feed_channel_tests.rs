@@ -8,9 +8,9 @@ use crate::test_wait::orders_of;
 use crate::owners::contract::{Online};
 use crate::owners::read::deliveries::Deliveries;
 use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, FramedEvent, Outgoing, ScopedChannel};
-use crate::owners::read::windows::{StaleKeys, Windows};
+use crate::owners::read::windows::{StaleCause, StaleKeys, Windows, WindowsInput};
 use crate::owners::store::StoreWriter;
-use crate::spec::support::{new_log, CapturedStore, number_after, take, text_after, Discard, Emitted, Log, Sink, Spy, SpyState};
+use crate::spec::support::{new_log, Captured, CapturedStore, number_after, take, Discard, Emitted, Log, Sink, Spy, SpyState};
 use crate::runtime::{Address, DetScheduler, EpochStamp};
 use crate::spec::support::committed_at;
 
@@ -36,6 +36,7 @@ struct Rig {
     batches: Vec<u64>,
     subscribes: Vec<Outgoing>,
     store_batches: Log<crate::owners::store::StoreBatch>,
+    windows: Log<WindowsInput>,
 }
 
 impl Rig {
@@ -44,12 +45,13 @@ impl Rig {
         let log = new_log();
         let store_batches = new_log();
         det.add::<CapturedStore>("store", store_batches.clone(), Discard);
-        det.add::<Sink<Windows>>("windows", new_log(), Discard);
+        let windows = new_log();
+        det.add::<Captured<Windows>>("windows", windows.clone(), Discard);
         det.add::<Sink<Deliveries>>("deliveries", new_log(), Discard);
         let peers = FeedPeers { store: Address::<StoreWriter>::new(STORE), windows: Address::<Windows>::new(WINDOWS), deliveries: Address::<Deliveries>::new(DELIVERIES) };
         let addr = det.add::<Spy<Feed>>("feed", SpyState::new(f::FeedState::new(EPOCH, peers, BTreeMap::new(), channels()), &log), Discard);
         det.start_epoch(EPOCH);
-        let mut rig = Self { det, addr, log, batches: Vec::new(), subscribes: Vec::new(), store_batches };
+        let mut rig = Self { det, addr, log, batches: Vec::new(), subscribes: Vec::new(), store_batches, windows };
         rig.post(FeedInput::Online { online: Online(true), online_seq: 1 });
         rig
     }
@@ -59,6 +61,7 @@ impl Rig {
     /// Posts one input and shows what the owner gave out, one word per effect.
     fn post(&mut self, input: FeedInput) -> Vec<String> {
         take(&self.log);
+        take(&self.windows);
         self.det.post(self.addr, EpochStamp::Epoch(EPOCH), input);
         self.det.run_until_quiet(10_000).expect("the owner is quiet");
         let emitted = take(&self.log);
@@ -77,13 +80,17 @@ impl Rig {
                     self.batches.push(number_after(&input, "id: ").expect("the batch id"));
                     words.push("commit".to_string());
                 }
-                Emitted::Send { to: WINDOWS, input } if input.starts_with("Stale {") => words.push(format!("stale:{}{}", text_after(&input, "model: ").expect("the model"), number_after(&input, "online_seq: ").map_or(String::new(), |seq| format!(":gap{seq}")))),
                 Emitted::Send { to: DELIVERIES, input } => {
                     let stream = number_after(&input, "stream: ").expect("the stream");
                     let kind = input.split([' ', '{']).next().unwrap_or("");
                     words.push(format!("{}:{stream}", kind.to_lowercase()));
                 }
                 _ => {}
+            }
+        }
+        for input in take(&self.windows) {
+            if let WindowsInput::Stale { model, cause, .. } = input {
+                words.push(format!("stale:{model}{}", if let StaleCause::Gap { online_seq } = cause { format!(":gap{online_seq}") } else { String::new() }));
             }
         }
         words

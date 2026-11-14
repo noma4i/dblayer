@@ -34,10 +34,15 @@ async fn a_refused_complete_survives_reopen_without_abort_and_retry_completes() 
     bound(crate::ffi::settled(&reopened)).await.unwrap();
     assert_eq!(stand.script.count("AbortMultipart"), 0, "the reopened database does not abort an upload whose parts are all confirmed");
 
-    bound(reopened.retry(reopened.session_epoch(), "Moment".into(), id, Some("upload_clip".into()), None)).await.unwrap();
+    let again = bound(reopened.retry(reopened.session_epoch(), "Moment".into(), id, Some("upload_clip".into()), None)).await.unwrap();
+    let landed = bound(reopened.confirmed(again, false)).await.unwrap().value.map(|row| (row.id, row.sync.state));
+    assert_eq!(landed, Some(("m1".to_string(), WireSyncState::Synced)));
     settled(&reopened, "the retry reached complete and create", || stand.script.count("CompleteMultipart") == 2 && stand.script.count("CreateMoment") == 1).await;
     let names = stand.script.names();
     let count = |name: &str| names.iter().filter(|seen| *seen == name).count();
     assert_eq!((count("InitMultipart"), count("PresignParts"), count("AbortMultipart"), stand.puts.seen.lock().unwrap().len()), (1, 3, 0, 3), "retry sends neither init, presign nor a part again: {names:?}");
+    let mut urls: Vec<String> = stand.puts.seen.lock().unwrap().iter().map(|put| put.url.clone()).collect();
+    urls.sort();
+    assert_eq!(urls, ["https://storage/1", "https://storage/2", "https://storage/3"]);
     reopened.close_now();
 }

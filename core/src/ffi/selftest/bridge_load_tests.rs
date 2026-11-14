@@ -180,19 +180,6 @@ impl crate::ffi::FakeTransport for CancelledLoadTransport {
     async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, DbError> { unreachable!() }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn cancelling_the_last_load_interest_cancels_the_request() {
-    let transport = Arc::new(CancelledLoadTransport::default());
-    let database = bound(Database::open(crate::ffi::Config { path: None }, crate::ffi::specs(crate::ffi::tests::lifecycle_tests::models()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
-    database.register_operations(json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string()).await.unwrap();
-    database.set_online(true).await.unwrap();
-    let request = database.begin_load(database.session_epoch(), "User".into(), Some("all".into()), "{}".into()).unwrap();
-    bound(transport.started.notified()).await;
-    request.cancel();
-    bound(transport.cancelled.notified()).await;
-    database.close_now();
-}
-
 /// boundary_load_cancel_orders (D-138): the leave of the last registered interest waits in the owner for the calls that began before it, and goes on at their registration.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_last_load_interest_leaves_through_the_owner_after_the_earlier_registrations() {

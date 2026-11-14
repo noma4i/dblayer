@@ -27,7 +27,7 @@ async fn init_held(stand: &Stand, path: &std::path::Path, directory: &std::path:
 /// The abort of the multipart that the server created for a removed transfer goes once, with the id of that multipart, and no debt stays in the base.
 fn aborted_once(stand: &Stand) {
     assert_eq!(stand.script.count("AbortMultipart"), 1);
-    assert!(stand.script.variables("AbortMultipart")[0].to_string().contains("upload"), "{:?}", stand.script.variables("AbortMultipart"));
+    assert_eq!(stand.script.variables("AbortMultipart")[0]["uploadId"], "upload");
 }
 
 /// xfer_released_init_answer_owes_abort (D-388): a discard or a cancel while `Init` is in flight, the answer comes after the removal.

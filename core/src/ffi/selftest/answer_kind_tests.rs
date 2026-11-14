@@ -64,7 +64,7 @@ fn tag(error: &DbError) -> String {
         DbError::Session { code, .. } => format!("Session({code:?})"),
         DbError::Graphql { extensions, .. } => format!("Graphql({})", extensions.as_ref().and_then(|extensions| extensions.code.clone()).unwrap_or_default()),
         DbError::Http { status, .. } => format!("Http({status})"),
-        other => format!("{other:?}").split(|character: char| !character.is_alphanumeric()).next().unwrap_or("").to_string(),
+        other => super::cases::error_kind(other).into(),
     }
 }
 

@@ -13,8 +13,13 @@ async fn local() -> Arc<Database> {
 #[tokio::test]
 async fn a_database_without_a_transport_hands_out_an_online_sink_that_ignores_the_signal() {
     let database = local().await;
+    let epoch = database.session_epoch();
+    let id = database.create(epoch, "Note".into(), r#"{"text":"kept"}"#.into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;
     database.online_sink().unwrap().set_online(false);
     database.set_online(true).await.unwrap();
+    crate::ffi::settled(&database).await.unwrap();
+    let row = database.read_row(epoch, "Note".into(), id).await.unwrap().unwrap();
+    assert_eq!(row.cells, [crate::ffi::wire::Cell::Text { value: "kept".into() }]);
 }
 
 #[tokio::test]

@@ -27,7 +27,7 @@ fn err_tag(error: &DbError) -> String {
             }
         }
         DbError::Session { code, .. } => format!("Session({code:?})"),
-        other => format!("{other:?}").split(|character: char| !character.is_alphanumeric()).next().unwrap_or("").to_string(),
+        other => super::cases::error_kind(other).into(),
     }
 }
 

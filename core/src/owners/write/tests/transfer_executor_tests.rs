@@ -313,12 +313,16 @@ fn xfer_confirmed_delete_failure_keeps_rejection() {
     assert_eq!(w.stage(KEY), Some(TransferStage::Failed));
     let copy = w.files.path(&w.copy(KEY)).unwrap();
     let receipt = lock(&w.answers).iter().find_map(|(reply, answer)| match (reply, answer) { (1, TransferAnswer::Receipt(receipt)) => Some(receipt.clone()), _ => None }).unwrap();
+    w.post(TransferInput::Outcome { receipt: receipt.clone(), reply: 3, discard_on_failure: false });
     let directory = copy.parent().unwrap();
     let permissions = std::fs::metadata(directory).unwrap().permissions();
     std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o500)).unwrap();
     w.post(TransferInput::Outcome { receipt, reply: 2, discard_on_failure: true });
     std::fs::set_permissions(directory, permissions).unwrap();
     assert!(lock(&w.answers).iter().any(|(reply, answer)| *reply == 2 && matches!(answer, TransferAnswer::Outcome(OutboxOutcome::Rejected { error }, None) if error.contains("400"))));
+    let kept = lock(&w.answers).iter().find_map(|(reply, answer)| match answer { TransferAnswer::Outcome(OutboxOutcome::Failed { error }, _) if *reply == 3 => Some(error.clone()), _ => None });
+    let dropped = lock(&w.answers).iter().find_map(|(reply, answer)| match answer { TransferAnswer::Outcome(OutboxOutcome::Rejected { error }, None) if *reply == 2 => Some(error.clone()), _ => None });
+    assert!(kept.is_some() && kept == dropped, "the read that keeps the failure and the refused delete give the same failure: {kept:?} {dropped:?}");
     assert!(copy.exists());
     let reopened = crate::store::Store::open_models(Some(&w.dir.path().join("db.sqlite")), Vec::new(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     assert!(!copy.exists());
@@ -333,6 +337,7 @@ fn exec_xfer_key_path_chars() {
     w.accept(key, path, 1);
     let (directory, copy) = (w.files.path("").expect("directory"), w.files.path(&w.copy(key)).expect("directory"));
     assert!(copy.starts_with(&directory) && copy.exists() && !copy.to_string_lossy().contains(".."), "the copy lies in the directory of the files: {copy:?}");
+    assert!(w.asked().iter().any(|asked| asked.0 == "Step") && w.asked().iter().filter(|asked| asked.0 == "Step").all(|asked| std::path::Path::new(&asked.3).starts_with(&directory)), "every step reads the copy inside the directory of the files: {:?}", w.asked());
 }
 
 #[test]

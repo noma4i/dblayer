@@ -446,58 +446,51 @@ fn xfer_failed_online() {
 }
 
 #[test]
-fn xfer_expired() {
-    let mut row = stored(2, KEY, 2);
-    row.restore_failed = Some("prior".into());
-    row.created_at = Time(0);
-    row.failed_at = Some(Time(2 * DAY));
-    let (mut restored, _) = Twin::opened(vec![row], Default::default());
-    restored.det.tick(Time(9 * DAY + 1));
-    let expired = restored.post(TransferInput::Tick { kind: TransferTick::Expire });
-    assert_eq!((restored.stage(2), expired.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
-    let mut twin = Twin::new();
-    let id = twin.failed(KEY);
-    twin.det.tick(Time(8 * DAY));
-    let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
-    assert_eq!((twin.stage(id), out.removed(), out.all_replies()), (TransferStage::Removing, vec![KEY.to_string()], 0));
-    twin.commit();
-    let (reply, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(reply), vec![failed_outcome(&super::transfer_harness::refusal())], "the outcome of the failed cycle is immutable");
-}
-
-#[test]
 fn xfer_a_failed_transfer_expires_one_week_after_its_failure_not_before() {
-    {
-        let mut row = stored(2, KEY, 2);
-        row.restore_failed = Some("prior".into());
-        row.created_at = Time(0);
-        row.failed_at = Some(Time(2 * DAY));
-        let (mut restored, _) = Twin::opened(vec![row], Default::default());
-        restored.det.tick(Time(9 * DAY));
-        let kept = restored.post(TransferInput::Tick { kind: TransferTick::Expire });
-        assert!(Twin::quiet(&kept));
-        assert_eq!(restored.stage(2), TransferStage::Failed);
-        let mut twin = Twin::new();
-        let id = twin.failed(KEY);
-        twin.det.tick(Time(7 * DAY));
+    #[derive(Clone, Copy)]
+    enum Kind { Restored(Option<u64>), Failed(u64) }
+    let cases = [
+        (Kind::Restored(Some(2 * DAY)), 9 * DAY, false),
+        (Kind::Restored(Some(2 * DAY)), 9 * DAY + 1, true),
+        (Kind::Failed(0), 7 * DAY, false),
+        (Kind::Failed(0), 7 * DAY + 1, true),
+        (Kind::Failed(0), 8 * DAY, true),
+        (Kind::Failed(6 * DAY), 8 * DAY, false),
+        (Kind::Failed(6 * DAY), 13 * DAY + 1, true),
+        (Kind::Restored(None), 8 * DAY, false),
+    ];
+    for (index, (kind, now, expired)) in cases.into_iter().enumerate() {
+        let (mut twin, id) = match kind {
+            Kind::Restored(failed_at) => {
+                let mut row = stored(2, KEY, 2);
+                row.restore_failed = Some("prior".into());
+                row.created_at = Time(0);
+                row.failed_at = failed_at.map(Time);
+                (Twin::opened(vec![row], Default::default()).0, 2)
+            }
+            Kind::Failed(0) => { let mut twin = Twin::new(); let id = twin.failed(KEY); (twin, id) }
+            Kind::Failed(at) => {
+                let mut twin = Twin::new();
+                let id = twin.uploading(KEY, 2);
+                twin.det.tick(Time(at));
+                twin.step_error(id, false);
+                twin.commit();
+                (twin, id)
+            }
+        };
+        twin.det.tick(Time(now));
         let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
-        assert!(Twin::quiet(&out), "{out:?}");
-        assert_eq!(twin.stage(id), TransferStage::Failed);
-        twin.det.tick(Time(7 * DAY + 1));
-        let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
-        assert_eq!((twin.stage(id), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]), "one millisecond over the week expires");
-    }
-    {
-        let mut row = stored(1, KEY, 2);
-        row.restore_failed = Some("prior".into());
-        row.failed_at = None;
-        row.created_at = Time(0);
-        let (mut twin, _) = Twin::opened(vec![row], Default::default());
-        assert_eq!(twin.stage(1), TransferStage::Failed);
-        twin.det.tick(Time(8 * DAY));
-        let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
-        assert!(Twin::quiet(&out), "a Failed row that never recorded a failure time does not expire from created_at: {out:?}");
-        assert_eq!(twin.stage(1), TransferStage::Failed);
+        if expired {
+            assert_eq!((twin.stage(id), out.removed(), out.all_replies()), (TransferStage::Removing, vec![KEY.to_string()], 0), "case {index}: expires");
+        } else {
+            assert!(Twin::quiet(&out), "case {index}: {out:?}");
+            assert_eq!(twin.stage(id), TransferStage::Failed, "case {index}: kept");
+        }
+        if matches!(kind, Kind::Failed(0)) && now == 8 * DAY {
+            twin.commit();
+            let (reply, out) = twin.outcome(id, 1);
+            assert_eq!(out.replies(reply), vec![failed_outcome(&super::transfer_harness::refusal())], "the outcome of the failed cycle is immutable");
+        }
     }
 }
 
@@ -687,21 +680,6 @@ fn xfer_done() {
         assert_eq!(Twin::fault(&out, reply), Some(Fault::NotFound), "{name}");
     }
     assert_eq!(twin.stage(id), TransferStage::Done);
-}
-
-#[test]
-fn xfer_expiry_counts_from_failed_at() {
-    let mut twin = Twin::new();
-    let id = twin.uploading(KEY, 2);
-    twin.det.tick(Time(6 * DAY));
-    twin.step_error(id, false);
-    twin.commit();
-    twin.det.tick(Time(8 * DAY));
-    let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
-    assert!(Twin::quiet(&out) && twin.stage(id) == TransferStage::Failed, "two days after the failure the transfer is kept: {out:?}");
-    twin.det.tick(Time(13 * DAY + 1));
-    let out = twin.post(TransferInput::Tick { kind: TransferTick::Expire });
-    assert_eq!((twin.stage(id), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]), "a week and a millisecond after the failure it expires");
 }
 
 #[test]

@@ -104,6 +104,7 @@ fn store_owed_cleared_by_node_landing() {
     owe(&db, 1, "c1");
     land_node(&db, 2, "c1", Vec::new());
     assert!(!owed(&db, "c1"), "a null answer of the node pays the debt");
+    assert!(db.find("Chat", &crate::identity::RowId::new("c1").unwrap()).unwrap().is_some(), "the shown row stays after the null answer");
 }
 
 /// store_read_window_node_owed_is_stale: the saved node window of an owed row reads as stale, and the read of the view names the row.

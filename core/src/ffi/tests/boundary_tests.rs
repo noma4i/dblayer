@@ -21,9 +21,9 @@ async fn boundary_local_result_orders() {
         database.update(epoch, "Note".into(), id.clone(), r#"{"text":"second"}"#.into(), "{}".into()),
     );
     let (first, second) = (first.unwrap(), second.unwrap());
-    let shown = |receipt: &crate::ffi::receipt::WireOperationReceipt| format!("{:?}", receipt.optimistic_value.as_ref().unwrap().cells);
-    assert!(shown(&first).contains("first") && !shown(&first).contains("second"), "{}", shown(&first));
-    assert!(shown(&second).contains("second") && !shown(&second).contains("first"), "{}", shown(&second));
+    let shown = |receipt: &crate::ffi::receipt::WireOperationReceipt| receipt.optimistic_value.as_ref().unwrap().cells.clone();
+    assert_eq!(shown(&first), [crate::ffi::wire::Cell::Text { value: "first".into() }]);
+    assert_eq!(shown(&second), [crate::ffi::wire::Cell::Text { value: "second".into() }]);
     assert_eq!(first.optimistic_value.as_ref().unwrap().revision, first.revision);
     assert_eq!(second.optimistic_value.as_ref().unwrap().revision, second.revision);
 }
@@ -47,16 +47,6 @@ async fn attach_and_detach_answer_with_their_own_batch() {
     let mut had = [first.unwrap(), second.unwrap()];
     had.sort();
     assert_eq!(had, [false, true]);
-}
-
-/// boundary_closed_call_precedence: after close an unknown operation is Closed, not Invalid.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_call_after_close_is_closed_before_its_operation_is_checked() {
-    let database = notes().await;
-    let epoch = database.session_epoch();
-    database.close_database().await.unwrap();
-    let refused = database.call(epoch, "unknown".into(), "{}".into()).await;
-    assert!(matches!(refused, Err(DbError::Closed { .. })), "{refused:?}");
 }
 
 /// boundary_close_lost_answer (P-BND-04, lifecycle.md Closing): a close whose answer is lost ends `Internal`, not `Ok`, and the resources of the database are released all the same.

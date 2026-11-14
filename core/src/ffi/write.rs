@@ -123,11 +123,6 @@ impl Database {
     }
 
 
-    #[cfg(test)]
-    pub(super) fn optimistic(&self, model: &str, row: &crate::identity::RowId) -> Result<Option<super::wire::WireRow>, DbError> {
-        crate::blocking::blocking_unit(|| self.db.find(model, row))?.map(|found| self.wire(model).map(|wire| wire.row(&found))).transpose()
-    }
-
     pub(super) fn wire_of_row(&self, model: &str, row: &crate::store::Row) -> Result<super::wire::WireRow, DbError> { self.wire(model).map(|wire| wire.row(row)) }
 
     /// The path and the body of the request of a mutation: the registered document, the variables of the call.

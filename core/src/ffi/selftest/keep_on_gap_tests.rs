@@ -8,7 +8,7 @@ use crate::ffi::tape::Rows;
 use crate::ffi::{Database, ReadRequest, ReadValue};
 use crate::test_wait::{settled, signalled};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Break {
     Cable,
     Network,
@@ -26,7 +26,7 @@ fn requests(world: &World, list: &str) -> usize {
 
 fn ids(rows: &Rows) -> Vec<String> { rows.0.lock().unwrap().iter().map(|row| row.id.clone()).collect() }
 
-fn shows(rows: &Rows, text: &str) -> bool { rows.0.lock().unwrap().iter().any(|row| format!("{row:?}").contains(text)) }
+fn shows(rows: &Rows, text: &str) -> bool { rows.0.lock().unwrap().iter().any(|row| row.cells.contains(&crate::ffi::Cell::Text { value: text.into() })) }
 
 async fn open_at(path: Option<String>, held: Arc<crate::ffi::tests::session_guards_tests::WatchedHeld>, world: &Arc<World>) -> (Arc<Database>, Arc<FeedTransport>) {
     let listen = json!({"subscription":"RecordEvents", "root":"recordEvents.item", "apply":{"effect":"upsert"}});
@@ -113,7 +113,7 @@ async fn gap_keeps_the_window_of_a_scope_that_declares_it() {
         (Break::Network, 2, 1, rows(&["c3", "c1"]), rows(&["c1", "c2"]), None),
         (Break::Restart, 2, 1, rows(&["c3", "c1"]), rows(&["c1", "c2"]), None),
     ];
-    assert_eq!(format!("{table:?}"), format!("{wanted:?}"), "(break, requests of the window without the declaration, requests of the window with it, their rows, the event shown by both)");
+    assert_eq!(table, wanted, "(break, requests of the window without the declaration, requests of the window with it, their rows, the event shown by both)");
 }
 
 /// net_background_closes_the_cable (D-444): after a stay in the background, a watched window reads once on the return, with or without `refresh_on_foreground`.
