@@ -683,7 +683,7 @@ async fn feed_node_event_rereads_a_row_counted_by_a_window() {
     let (lists, nodes) = (world.count("ChatList"), world.count("ChatNode"));
     world.answer_with("ChatNode", json!({"data":{"node":debt_chat("c1", "after")}}));
     node_event(&transport, &token, "c1");
-    crate::test_wait::settled(&database, "the counted row is read through node", || world.count("ChatNode") == nodes + 1).await;
+    crate::test_wait::settled_showing(&database, "the counted row is read through node", || format!(": requests {:?}, counter {:?}, {}", world.log().iter().map(|entry| entry.operation.clone()).collect::<Vec<_>>(), count.1.lock().unwrap().iter().map(|seen| (seen.revision, seen.size, seen.phase)).collect::<Vec<_>>(), transport.cable.counters()), || world.count("ChatNode") == nodes + 1).await;
     crate::test_wait::settled(&database, "quiet", || true).await;
     assert_eq!((world.count("ChatList"), world.count("ChatNode")), (lists, nodes + 1));
     bound(database.close_database()).await.unwrap();
