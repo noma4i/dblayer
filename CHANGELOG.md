@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 6.37.0 - 2026-11-14
 
 ### Changed
 
@@ -10,7 +10,7 @@
 
 - Hold an operation on a temporary row until its create or upload lands.
 - Refuse an operation on a temporary row whose upload was cancelled, discarded or expired.
-- Open a database written by a newer version with the saved session and an empty cache.
+- Open a database of a newer version with the saved session and an empty cache.
 
 ### Removed
 
