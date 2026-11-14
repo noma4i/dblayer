@@ -179,7 +179,7 @@ pub(crate) fn read_json_text(value: &Value) -> Option<Value> {
 }
 
 pub fn read_array<T>(value: &Value, element: impl Fn(&Value) -> Option<T>) -> Option<Vec<T>> {
-    value.as_array().map(|items| items.iter().filter_map(element).collect())
+    value.as_array()?.iter().map(element).collect()
 }
 
 pub fn read_scalar(value: &Value, kind: ScalarKind) -> Option<Value> {

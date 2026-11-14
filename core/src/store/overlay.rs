@@ -57,10 +57,12 @@ impl OverlaySnapshot {
     }
 
     /// Drops the values of the rows `present` rejects once more than `limit` rows hold values: a row that never arrives keeps no memory.
-    pub fn prune_missing(&mut self, limit: usize, present: impl Fn(&RowKey) -> bool) {
-        if self.values.len() <= limit { return; }
-        let missing: Vec<RowKey> = self.values.keys().filter(|row| !present(row)).cloned().collect();
+    pub fn prune_missing<E>(&mut self, limit: usize, present: impl Fn(&RowKey) -> Result<bool, E>) -> Result<(), E> {
+        if self.values.len() <= limit { return Ok(()); }
+        let mut missing = Vec::new();
+        for row in self.values.keys() { if !present(row)? { missing.push(row.clone()); } }
         for row in missing { self.values.remove(&row); }
+        Ok(())
     }
 
     pub fn clear_models(&mut self) {

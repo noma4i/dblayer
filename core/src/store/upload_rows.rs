@@ -162,15 +162,20 @@ impl Store {
         let seq: u64 = unsigned(raw.seq, "seq")?;
         let transfer_id: u64 = unsigned(raw.transfer_id, "transfer_id")?;
         let file_present = if copying { true } else if awaiting_source { false } else { self.file_present(transfer_id, place)? };
+        let fields = raw.fields.as_deref().map(|text| serde_json::from_str::<serde_json::Value>(text).ok().and_then(|value| value.as_object().cloned()).ok_or("fields")).transpose();
+        let batch = raw.batch.map(|group| u64::try_from(group).map_err(|_| "batch")).transpose();
+        let failed_at = raw.failed_at.map(|at| u64::try_from(at).map_err(|_| "failed_at")).transpose();
+        let blob_created_at = raw.blob_created_at.map(|at| u64::try_from(at).map_err(|_| "blob_created_at")).transpose();
+        let unreadable = fields.as_ref().err().or(batch.as_ref().err()).or(failed_at.as_ref().err()).or(blob_created_at.as_ref().err()).map(|column| format!("sync_upload.{column} is unreadable"));
         Ok(StoredTransfer {
             transfer_id,
             key,
             seq,
             source: raw.source.map(|path| Ok::<_, CoreError>(Source { path, parts: unsigned(raw.total, "total")? })).transpose()?,
             awaiting_source,
-            batch: raw.batch.and_then(|group| u64::try_from(group).ok()).filter(|group| *group > 0),
+            batch: batch.ok().flatten().filter(|group| *group > 0),
             upload_id: raw.upload_id,
-            fields: raw.fields.and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok()).and_then(|value| value.as_object().cloned()).unwrap_or_default(),
+            fields: fields.ok().flatten().unwrap_or_default(),
             confirmed_parts: unsigned(raw.sent, "sent")?,
             floor: unsigned(raw.progress, "progress")?,
             weight: raw.weight.map(|weight| unsigned(weight, "weight")).transpose()?,
@@ -183,8 +188,8 @@ impl Store {
             failed: raw.failed,
             aborted: raw.aborted,
             staged: raw.staged,
-            failed_at: raw.failed_at.and_then(|at| u64::try_from(at).ok()).map(Time),
-            blob_created_at: raw.blob_created_at.and_then(|at| u64::try_from(at).ok()).map(Time),
+            failed_at: failed_at.ok().flatten().map(Time),
+            blob_created_at: blob_created_at.ok().flatten().map(Time),
             op_id: raw.op_id.map(|op| unsigned(op, "op_id")).transpose()?,
             copying,
             pending_step: None,
@@ -212,7 +217,7 @@ impl Store {
             max_bytes: raw.max_bytes,
             held: raw.held,
             steps: raw.steps_path.zip(raw.steps_body).map(|(path, body)| Steps { path, body }),
-            restore_failed: None,
+            restore_failed: unreadable,
             restore_element: None,
         })
     }
@@ -240,13 +245,14 @@ impl Store {
                 rows
             })
             .map_err(|error| CoreError::Internal(error.to_string()))?;
-        Ok(found
+        found
             .into_iter()
-            .filter_map(|(id, fields)| {
-                let fields = fields.and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok()).and_then(|value| value.as_object().cloned())?;
-                Some((crate::identity::RowId::new(&id).ok()?, fields))
+            .map(|(id, fields)| {
+                let unreadable = |column: &str| CoreError::Internal(format!("sync_upload.{column} of the element {id} is unreadable"));
+                let fields = match &fields { Some(text) => serde_json::from_str::<serde_json::Value>(text).ok().and_then(|value| value.as_object().cloned()).ok_or_else(|| unreadable("fields"))?, None => Default::default() };
+                Ok((crate::identity::RowId::new(&id).map_err(|_| unreadable("row_id"))?, fields))
             })
-            .collect())
+            .collect()
     }
 
 }

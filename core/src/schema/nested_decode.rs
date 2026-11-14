@@ -22,6 +22,7 @@ impl FieldSpec {
             FieldKind::Enum { .. } => read_enum(value).map(Value::String).ok_or_else(wrong),
             FieldKind::Object => Ok(Value::Object(self.decode_members(value.as_object().ok_or_else(wrong)?)?)),
             FieldKind::Array => value.as_array().ok_or_else(wrong)?.iter().map(|item| Ok(Value::Object(self.decode_members(item.as_object().ok_or_else(wrong)?)?))).collect::<Result<Vec<_>, String>>().map(Value::Array),
+            FieldKind::UnionArray => value.as_array().ok_or_else(wrong)?.iter().all(|item| item.get(crate::schema::TYPENAME).is_some_and(Value::is_string)).then(|| value.clone()).ok_or_else(wrong),
             _ => self.decode_stored(value).ok_or_else(wrong),
         }
     }
@@ -31,7 +32,7 @@ impl FieldSpec {
     }
 
     /// Whether the member holds nested members that `decode_nested` checks.
-    pub fn is_nested(&self) -> bool { matches!(self.kind, FieldKind::Object | FieldKind::Array) }
+    pub fn is_nested(&self) -> bool { matches!(self.kind, FieldKind::Object | FieldKind::Array | FieldKind::List { .. } | FieldKind::UnionArray) }
 }
 
 /// The JSON type a scalar takes from the server: a text is no number and no bool, an id is a text or an integer of 64 bits.

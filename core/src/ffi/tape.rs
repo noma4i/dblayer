@@ -262,7 +262,7 @@ impl Database {
     pub(crate) fn watch_query(&self, query_json: &str, reader: Arc<dyn Reader>) -> Arc<Watched> { self.watch(ReadRequest::List { query: crate::ffi::QuerySpec::json(query_json) }, reader) }
 
     /// The data of the account goes and its epoch ends, as at a sign-out.
-    pub(crate) async fn reset_data(&self) { let _ = self.await_life(self.life.session_reset()).await; }
+    pub(crate) async fn reset_data(&self) -> Result<(), DbError> { self.await_life(self.life.session_reset()).await.map(drop) }
 
     /// The cache of these models goes; the epoch stays.
 

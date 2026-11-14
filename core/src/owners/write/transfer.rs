@@ -1052,6 +1052,7 @@ impl TransferState {
                 self.commit_ops(live.into_iter().map(|(upload_id, _)| StoreOp::RemoveOrphan { upload_id }).collect(), fx);
                 self.orphans.extend(orphans);
                 self.orphan_flight.extend(held_orphan.filter(|upload_id| self.orphans.contains_key(upload_id)));
+                self.next_group = uploads.iter().filter_map(|row| row.batch).max().map_or(self.next_group, |group| self.next_group.max(group + 1));
                 self.restore_groups(batches);
                 self.restored(now, uploads, outcomes, fx)
             }

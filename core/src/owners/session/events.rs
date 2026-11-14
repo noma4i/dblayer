@@ -1,8 +1,7 @@
 use super::*;
 
-fn carries_temp_id(body: &str) -> bool {
-    if !body.contains(crate::identity::TEMP_ID_PREFIX) { return false; }
-    let Ok(mut body) = serde_json::from_str::<serde_json::Value>(body) else { return false };
+fn body_refused(body: &str) -> bool {
+    let Ok(mut body) = serde_json::from_str::<serde_json::Value>(body) else { return true };
     let mut found = false;
     crate::identity::walk_temp_ids(&mut body, &mut |_| found = true);
     found
@@ -116,12 +115,12 @@ impl SessionState {
             }
         }
         match &input {
-            SessionInput::SessionCall { reply: id, body, .. } if carries_temp_id(body) => {
+            SessionInput::SessionCall { reply: id, body, .. } if body_refused(body) => {
                 self.phase = phase;
                 reply(fx, *id, Err(SessionError::Invalid));
                 return;
             }
-            SessionInput::Mutate { author, req_id, epoch, body, .. } if *epoch == self.epoch && carries_temp_id(body) => {
+            SessionInput::Mutate { author, req_id, epoch, body, .. } if *epoch == self.epoch && body_refused(body) => {
                 self.phase = phase;
                 author_error(fx, *author, *req_id, ErrorClass::Permanent, SessionError::Invalid);
                 return;

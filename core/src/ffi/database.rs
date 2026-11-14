@@ -566,7 +566,7 @@ fn upload_steps_of(models: &[ModelSpec]) -> Result<Option<UploadOperations>, DbE
 impl Database {
     fn read_wire_row(&self, model: &str, row_id: &crate::identity::RowId) -> Result<Option<WireRow>, DbError> {
         let wire = self.wire(model)?;
-        Ok(self.db.peek_row(model, row_id).map(|row| wire.row(&row)))
+        Ok(self.db.peek_row(model, row_id)?.map(|row| wire.row(&row)))
     }
 }
 

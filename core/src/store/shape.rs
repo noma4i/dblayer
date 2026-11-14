@@ -25,7 +25,7 @@ impl Store {
             let Some(value) = row.get(field).filter(|value| !value.is_null()) else { continue };
             match normalize_with(member, &info.layout, value, read, true) {
                 Some(value) => { row.insert(field.clone(), value); }
-                None => { row.remove(field); }
+                None => return Err(StoreError::Invalid(format!("{field} has a value of another type"))),
             }
         }
         Ok(())
@@ -100,7 +100,7 @@ fn normalize_with(member: &Member, layout: &Layout, value: &Value, read: ReadVal
         }
         Member::UnionArray { table, .. } => {
             let union = union_of(layout, *table)?;
-            value.as_array().map(|items| Value::Array(items.iter().filter_map(|item| normalize_with(union, layout, item, read, parse_text)).collect()))
+            value.as_array()?.iter().map(|item| normalize_with(union, layout, item, read, parse_text)).collect::<Option<Vec<_>>>().map(Value::Array)
         }
         Member::List { table, .. } => match &layout.tables[*table].shape {
             TableShape::Values(leaf) => read_array(value, |item| normalize_nested_leaf(leaf, item)).map(Value::Array),

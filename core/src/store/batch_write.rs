@@ -96,7 +96,7 @@ impl Store {
         transaction.execute_batch(&format!(include_str!("sql/batch_write/write_batch_prepared_create_table_batch_released_temps.sql"), flag = crate::identity::permanent_row_flag("OLD.row_id")))?;
         let base_revision = Reader::new(&transaction, &inner.models).revision_seq()?;
         let revision = base_revision.checked_add(1).ok_or_else(|| StoreError::Constraint("revision overflow".into()))?;
-        let closing: Vec<i64> = batch.ops.iter().filter_map(|op| match op { crate::owners::store::StoreOp::RemoveIntent { op_id } => i64::try_from(*op_id).ok(), _ => None }).collect();
+        let closing: Vec<i64> = batch.ops.iter().filter_map(|op| match op { crate::owners::store::StoreOp::RemoveIntent { op_id } => Some(i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))), _ => None }).collect::<Result<_, _>>()?;
         let changes_before = transaction.total_changes();
         let mut originals = BTreeMap::new();
         let mut results = Vec::new();
@@ -210,7 +210,7 @@ impl Store {
             snapshot.remove_row(&super::overlay::RowKey { model: change.row.model.to_string(), row_id: change.row.id.to_string() });
         }
         combined.rows.extend(super::overlay_write::reset(&mut snapshot, &inner.models, &resets)?);
-        snapshot.prune_missing(OVERLAY_ROW_LIMIT, |row| Reader::new(&transaction, &inner.models).stored_row(&row.model, &row.row_id).ok().flatten().is_some());
+        snapshot.prune_missing(OVERLAY_ROW_LIMIT, |row| Ok::<_, StoreError>(Reader::new(&transaction, &inner.models).stored_row(&row.model, &row.row_id)?.is_some()))?;
         let position = snapshot.position;
         combined.position = position;
         if !changes_state { combined.revision = None; }

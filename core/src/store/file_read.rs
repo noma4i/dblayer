@@ -47,7 +47,7 @@ impl Store {
     }
 
     /// The row from the pool of the readers, or `None` when it does not exist.
-    pub fn peek_row(&self, model: &str, id: &RowId) -> Option<super::Row> {
-        self.find(model, id).ok().flatten()
+    pub fn peek_row(&self, model: &str, id: &RowId) -> Result<Option<super::Row>, super::CoreError> {
+        self.find(model, id)
     }
 }

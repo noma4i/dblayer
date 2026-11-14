@@ -12,6 +12,8 @@
 - Keep the revision of an upload status from going back.
 - Apply upload calls made while the database opens in the order they were made.
 - Leave the revision and subscribers untouched when a write changes no stored data.
+- Refuse a server row whose list holds a value of another type instead of storing it shorter.
+- Report an upload whose saved data cannot be read as failed to restore instead of sending it empty.
 
 ## 6.37.0 - 2026-11-14
 

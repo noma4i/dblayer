@@ -324,7 +324,9 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 let (exchange, back, credentials) = (self.exchange.clone(), back.clone(), self.secret.slot());
                 let logout = pending.class == OperationClass::Logout;
                 let has_document = pending.document.is_none();
-                let body: Value = serde_json::from_str(&pending.body).unwrap_or(Value::Null);
+                let Ok(body) = serde_json::from_str::<Value>(&pending.body) else {
+                    return back.reply(control, SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, status: 0, too_large: None, security: None, body: None });
+                };
                 let purpose = if pending.purpose == 0 { NetworkPurpose::Standard } else { NetworkPurpose::Transfer };
                 let sequence = (pending.class != OperationClass::Sessionless).then_some(i64::try_from(pending.sequence).unwrap_or(i64::MAX));
                 let watch = back.watch(crate::owners::session::http_id(attempt_id));

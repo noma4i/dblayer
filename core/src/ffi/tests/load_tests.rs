@@ -96,7 +96,7 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
     let (db, transport, _) = open_rig(Some(clock), Some(hold.clone()), None).await;
     let load = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
     within(transport.started.notified()).await;
-    db.reset_data().await;
+    db.reset_data().await.unwrap();
     let ended = within(load).await.unwrap();
     assert!(matches!(ended, Err(DbError::NoSession { .. })), "the explicit load waited for its request after the reset (D-263): {ended:?}");
     within(crate::ffi::settled(&db)).await.unwrap();

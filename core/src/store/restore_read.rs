@@ -119,7 +119,7 @@ fn transfer_asking_again<'a>(rows: &'a [crate::owners::write::transfer::StoredTr
 
 impl Store {
     pub(crate) fn read_restore(&self) -> Result<Restore, CoreError> {
-        let (entries, origins, cycles, causes, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, (aliases, ended_temps, answers_by_id), transfer_id_floor, orphan_transfer_ops, removed_rows, failed_uploads) = self.read_models(&[], |reader| {
+        let (entries, mut origins, cycles, causes, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, (aliases, ended_temps, answers_by_id), transfer_id_floor, orphan_transfer_ops, removed_rows, failed_uploads) = self.read_models(&[], |reader| {
             let connection = reader.connection();
             let failed_uploads = super::restore::read_failed(connection)?;
             let transfer_id_floor: Option<i64> = connection.query_row(include_str!("sql/restore_read/transfer_id_floor.sql"), [crate::store::ddl::TRANSFER_ID_KEY], |row| row.get(0))?;
@@ -141,6 +141,13 @@ impl Store {
             let orphan_answers = connection.prepare(include_str!("sql/restore_read/read_restore_select_encrypted_answer.sql")).and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             Ok((read_outbox(reader)?, origins, cycles, causes, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers, (aliases, ended_temps, answers_by_id), transfer_id_floor, orphan_transfer_ops, removed_rows, failed_uploads))
         })?;
+        let unreadable_rules = batches.iter().filter(|(_, text, _)| crate::owners::write::transfer::Joint::from_text(text).is_none()).map(|(id, _, _)| u64::try_from(*id).map_err(|_| CoreError::Internal("invalid batch id".into()))).collect::<Result<Vec<_>, _>>()?;
+        origins.invalid_groups.extend(unreadable_rules.iter().copied());
+        let broken: Vec<i64> = origins.valid.iter().filter(|(_, origin)| matches!(origin, OpSource::TransferGroup { batch_id, .. } if unreadable_rules.contains(batch_id))).map(|(seq, _)| *seq).collect();
+        for seq in broken {
+            if let Some(OpSource::TransferGroup { members, .. }) = origins.valid.remove(&seq) { origins.invalid_transfers.extend(members.iter().map(|member| member.transfer_id)); }
+            origins.invalid_ops.insert(seq);
+        }
         let owned: Vec<i64> = uploads.iter().filter_map(UploadRaw::owned_op).collect();
         let reserved = uploads.iter().filter_map(UploadRaw::reserved_op).chain(batches.iter().filter_map(|(_, _, op)| *op)).max().and_then(|op| u64::try_from(op).ok());
         let operation_ids: std::collections::BTreeSet<i64> = entries.iter().map(|entry| entry.operation.id.0).chain(effects_only.iter().copied()).collect();
@@ -215,12 +222,13 @@ impl Store {
                 if row.failed_at.is_none() { row.failed_at = failure_times.get(&(row.transfer_id, row.cycle_id.max(1))).copied(); }
             }
         }
-        let batches = batches.into_iter().filter_map(|(id, text, op_id)| {
-            let id = u64::try_from(id).ok()?;
+        let batches: std::collections::BTreeMap<_, _> = batches.into_iter().map(|(id, text, op_id)| {
+            let id = u64::try_from(id).map_err(|_| CoreError::Internal("invalid batch id".into()))?;
+            let op_id = op_id.map(|op| u64::try_from(op).map_err(|_| CoreError::Internal("invalid batch operation id".into()))).transpose()?;
             let intent_members = origins.valid.values().find_map(|origin| match origin { OpSource::TransferGroup { batch_id, members } if *batch_id == id => Some(members.iter().map(|member| member.transfer_id).collect()), _ => None }).unwrap_or_default();
-            Some((id, crate::owners::write::transfer::StoredGroup { joint: crate::owners::write::transfer::Joint::from_text(&text)?, op_id: op_id.and_then(|op| u64::try_from(op).ok()), intent_members }))
-        }).collect();
-        let mut orphan_answers: Vec<u64> = orphan_answers.into_iter().filter_map(|id| u64::try_from(id).ok()).collect();
+            Ok(crate::owners::write::transfer::Joint::from_text(&text).map(|joint| (id, crate::owners::write::transfer::StoredGroup { joint, op_id, intent_members })))
+        }).collect::<Result<Vec<_>, CoreError>>()?.into_iter().flatten().collect();
+        let mut orphan_answers: Vec<u64> = orphan_answers.into_iter().map(|id| u64::try_from(id).map_err(|_| CoreError::Internal("invalid saved answer id".into()))).collect::<Result<_, _>>()?;
         let transfer_pending_orphan = match (&pending, &transfers) {
             (Some(held), Ok(rows)) => held.owner.as_ref().is_some_and(|owner| matches!(owner, crate::transport::RequestOwner::Transfer { .. }) && transfer_asking_again(rows, owner).is_none()),
             _ => false,

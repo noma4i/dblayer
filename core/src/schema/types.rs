@@ -110,7 +110,11 @@ impl FieldSpec {
             return None;
         }
         if typed && self.decode_written(value).is_none() {
-            return Some(ValueFault::Invalid(path.to_string()));
+            let element = match (&self.kind, value.as_array()) {
+                (FieldKind::List { element }, Some(items)) => items.iter().position(|item| crate::value::read_scalar(item, *element).is_none()),
+                _ => None,
+            };
+            return Some(ValueFault::Invalid(element.map_or_else(|| path.to_string(), |index| format!("{path}[{index}]"))));
         }
         match &self.kind {
             FieldKind::Object if !self.fields.is_empty() => value.as_object().and_then(|object| members_fault(&[&self.fields], object, path, typed, declared)),
