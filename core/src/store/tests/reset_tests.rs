@@ -124,3 +124,14 @@ fn xfer_orphan_debt_survives_the_retire_of_the_operations() {
     let kept: i64 = inner.connection.query_row("SELECT COUNT(*) FROM upload_orphan", [], |row| row.get(0)).unwrap();
     assert_eq!(kept, 1, "the abort debt of a multipart upload survives the end of the session (owner decision)");
 }
+
+/// P-STORE-07 (backlog 237): the end of an account erases the fate of its temporary ids, so a temporary id of the old account never reads as a server row of the next one.
+#[test]
+fn erasing_the_account_forgets_the_real_ids_of_its_temporary_rows() {
+    let db = booted();
+    let temp = id("temp-00000000-0000-0000-0000-6c616e646564");
+    exec(&db, "INSERT INTO row_alias (model, temp, real) VALUES ('messages', 'temp-00000000-0000-0000-0000-6c616e646564', 'm7')");
+    assert_eq!(db.resolve("messages", &temp).unwrap(), id("m7"), "the landed temporary id reads as its server row in its account");
+    db.erase_account(db.generation().next(), false).unwrap();
+    assert_eq!(db.resolve("messages", &temp).unwrap(), temp, "after the end of the account the temporary id is its own");
+}
