@@ -17,7 +17,7 @@ async fn a_changed_by_event_makes_the_next_load_of_a_fresh_window_ask_again() {
     load().await.unwrap();
     load().await.unwrap();
     assert_eq!(world.count("ChatList"), 1, "the fresh window asks nothing");
-    transport.subscribed().await;
+    transport.subscribed(&database).await;
     let token = transport.token.lock().unwrap().clone().unwrap();
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"CHAT","action":"UPDATED","recordId":"c1"}]}}})));
     assert!(matches!(bound(events.pull_next()).await, Some(ReadValue::Event { .. })));
