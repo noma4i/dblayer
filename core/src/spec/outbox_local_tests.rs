@@ -11,16 +11,6 @@ const WRITE: u64 = 60;
 
 fn write(kind: LocalWriteKind) -> OutboxInput { OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: kind, row: "w".into(), values: "{}".into(), reply: WRITE } }
 
-fn answers(effects: &[OutboxEffect], reply: u64) -> Vec<OutboxAnswer> {
-    effects.iter().filter_map(|effect| match effect { OutboxEffect::Reply { reply: found, answer } if *found == reply => Some(answer.clone()), _ => None }).collect()
-}
-
-fn drained(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Drained)).count() }
-
-fn kinds(effects: &[OutboxEffect]) -> Vec<CommitKind> {
-    effects.iter().filter_map(|effect| match effect { OutboxEffect::Store { kind, .. } => Some(*kind), _ => None }).collect()
-}
-
 fn commit_first(twin: &mut Twin) -> Vec<OutboxEffect> {
     twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }))
 }
@@ -80,13 +70,13 @@ fn out_prop_marks_durable() {
     twin.committed(id);
     twin.post(OutboxInput::TransportError { op_id: id, temporary: true });
     let attempt = twin.post(OutboxInput::RetryDue { op_id: id, cycle_id: 1 });
-    assert_eq!(super::outbox_harness::sends_of(&attempt), 0, "no Mutate before the attempt is written");
+    assert_eq!(sends(&attempt), 0, "no Mutate before the attempt is written");
     let refused = twin.rejected(id, super::outbox_harness::RReason::Storage);
-    assert_eq!(super::outbox_harness::sends_of(&refused), 0, "a refused write of the attempt starts no request");
+    assert_eq!(sends(&refused), 0, "a refused write of the attempt starts no request");
     let again = twin.post(OutboxInput::RetryDue { op_id: id, cycle_id: 1 });
-    assert_eq!(super::outbox_harness::sends_of(&again), 0);
+    assert_eq!(sends(&again), 0);
     let sent = twin.committed(id);
-    assert_eq!(super::outbox_harness::sends_of(&sent), 1);
+    assert_eq!(sends(&sent), 1);
 }
 
 /// P-OUT-16: a discard gives one answer and, for a transfer, one outcome after the rollback.

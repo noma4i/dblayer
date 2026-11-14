@@ -40,11 +40,7 @@ fn out_sending_exhausted_keep() {
                 OutboxInput::Answered { req_id: twin.state().ops[&id].request_id, outcome: crate::owners::session::AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Network, error: crate::owners::session::SessionError::ResponseTooLarge { limit }, pending_retained: true } }
             } else { OutboxInput::Dropped { op_id: id } };
             let effects = twin.post(input);
-            assert!(has_op!(twin, StoreOp::MarkError { op_id, error: Some(_) } if *op_id == id), "{:?}", twin.store_ops);
-            let expected = twin.state().ops[&id].error.as_ref().unwrap();
-            if cause.is_some() { assert_eq!(serde_json::from_str::<serde_json::Value>(expected).unwrap()["kind"], "response_too_large:64"); }
-            else { assert_eq!(expected, "Exhausted"); }
-            assert!(has_op!(twin, StoreOp::MarkError { op_id, error: Some(error) } if *op_id == id && error == expected), "{:?}", twin.store_ops);
+            assert_exhausted_mark(&twin, id, cause.is_some());
             let expected_kinds = if cause.is_some() { vec![CommitKind::Land, CommitKind::ErrorMark] } else { vec![CommitKind::ErrorMark] };
             assert_eq!((twin.stage(id), kinds(&effects), sends(&effects)), (Some(St::MarkingFailed), expected_kinds, 0), "{policy:?} cause={cause:?}: the 40th attempt fails under any on_failure");
         }
@@ -75,11 +71,12 @@ fn out_landing_committed() {
     let follower = submit_op(&mut twin, model_op("r", Policy::Rollback, false), 30);
     twin.committed(follower);
     assert_eq!(twin.stage(follower), Some(St::Queued), "the next operation of the row waits behind the sending one");
-    twin.waiter(id);
+    let waited = twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, EPOCH), reply: WAITER, discard_on_failure: false });
+    assert_eq!((twin.stage(id), waited.len()), (Some(St::Sending), 0));
     twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     let effects = twin.committed(id);
     assert_eq!((twin.stage(id), twin.stage(follower), sends(&effects)), (Some(St::Done), Some(St::Sending), 1), "the operation is Done and the next one of the row starts");
-    assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. }))), "{effects:?}");
+    assert!(matches!(answers(&effects, WAITER).as_slice(), [OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. })]), "{effects:?}");
 }
 
 #[test]

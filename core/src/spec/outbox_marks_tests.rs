@@ -18,7 +18,7 @@ fn out_marking_failed_invalid() {
 #[test]
 fn out_failed_retry_restore_failed() {
     let mut twin = Twin::bare();
-    twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())], complete: false });
+    declare(&mut twin);
     let stored = crate::owners::write::outbox::StoredOp { answered: None, op_id: 7, op: model_op("r", Policy::Rollback, false), created_at: 0, error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: Some("layout".into()), restore_element: None, removed_rows: Vec::new() };
     twin.post(OutboxInput::Restored { ops: vec![stored], pending_lost: false });
     twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
@@ -67,16 +67,6 @@ fn out_outcome_old_cycle() {
     twin.committed(id);
     let effects = twin.post(OutboxInput::Outcome { receipt: old, reply: 804 , discard_on_failure: false});
     assert!(matches!(answers(&effects, 804).as_slice(), [OutboxAnswer::Outcome(OutboxOutcome::Failed { .. })]), "the outcome of the earlier cycle is immutable: {effects:?}");
-}
-
-#[test]
-fn out_submitting_committed_revision() {
-    let mut twin = Twin::new();
-    let id = twin.submit("r", Policy::Rollback, false);
-    twin.revision = 40;
-    let effects = twin.committed(id);
-    let receipt = effects.iter().find_map(|effect| match effect { OutboxEffect::Reply { answer: OutboxAnswer::Receipt(receipt), .. } => Some(receipt.clone()), _ => None }).expect("the receipt");
-    assert_eq!(receipt.revision, 41, "the revision of the batch of the Submit, not of a later row write");
 }
 
 #[test]

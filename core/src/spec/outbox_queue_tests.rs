@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use super::outbox_cells_tests::{answers, kinds, sends, submit_op, tick};
+use super::outbox_cells_tests::{submit_op, tick};
 use super::outbox_harness::*;
 use crate::owners::contract::Online;
 use crate::owners::store::StoreOp;
@@ -69,7 +69,7 @@ fn out_queued_expired() {
 
     for (attempts, expect_rollback) in [(1, true), (2, false)] {
         let mut twin = Twin::bare();
-        twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())], complete: false });
+        declare(&mut twin);
         let op = NewOp { expires_after: Some(Duration::from_secs(10)), ..model_op("r", Policy::Rollback, false) };
         twin.det.tick(Time(11_000));
         let restored = twin.post(OutboxInput::Restored { ops: vec![StoredOp { answered: None, op_id: 1, op, created_at: 0, error_mark: false, pending: None, attempts, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() }], pending_lost: false });
@@ -193,7 +193,7 @@ fn out_expiry_clock_at_select() {
 #[test]
 fn out_waits_for_the_first_online_value() {
     let mut twin = Twin::unannounced();
-    twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())], complete: false });
+    declare(&mut twin);
     twin.post(OutboxInput::Restored { ops: Vec::new(), pending_lost: false });
     twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
     let id = twin.submit("r", Policy::Rollback, false);

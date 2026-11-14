@@ -51,7 +51,7 @@ fn out_discard_without_pending_owner() {
 #[test]
 fn out_discard_pending_owner_crash() {
     let mut twin = Twin::bare();
-    twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())], complete: false });
+    declare(&mut twin);
     twin.post(OutboxInput::Online(Online(false)));
     let restored = StoredOp { answered: None, op_id: 7, op: model_op("r", Policy::Rollback, false), created_at: 0, error_mark: false, pending: Some((41, 42)), attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() };
     twin.post(OutboxInput::Restored { ops: vec![restored], pending_lost: false });

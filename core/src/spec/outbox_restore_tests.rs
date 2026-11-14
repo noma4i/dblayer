@@ -8,10 +8,6 @@ use crate::owners::store::StoreOp;
 use crate::owners::write::outbox::{CommitKind, Fault, OutboxAnswer, OutboxInput, OutboxOutcome, Phase, Receipt, StoredOp};
 use crate::runtime::Cause;
 
-pub(super) fn stored(op_id: u64, row: &str) -> StoredOp {
-    StoredOp { answered: None, op_id, op: model_op(row, Policy::Rollback, false), created_at: 0, error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() }
-}
-
 #[test]
 fn out_restore_discards_only_orphaned_transfer_intents() {
     use crate::owners::write::outbox::OpSource;
@@ -31,8 +27,6 @@ fn out_restore_discards_only_orphaned_transfer_intents() {
     assert!(has_op!(twin, StoreOp::RetireTransferOutcome { .. }) && has_op!(twin, StoreOp::TransferOutcome { outcome: OutboxOutcome::Discarded, .. }), "{:?}", twin.store_ops);
 }
 
-pub(super) fn declare(twin: &mut Twin) { twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())], complete: false }); }
-
 pub(super) fn restore(twin: &mut Twin, ops: Vec<StoredOp>) -> Vec<OutboxEffect> {
     twin.post(OutboxInput::Restored { ops, pending_lost: false }).into_iter().filter(|effect| !matches!(effect, OutboxEffect::RestoreClassified { .. })).collect()
 }
@@ -42,18 +36,6 @@ pub(super) fn ready(twin: &mut Twin) -> Vec<OutboxEffect> { twin.post(OutboxInpu
 fn classified(effects: &[OutboxEffect]) -> Vec<u64> {
     effects.iter().filter_map(|effect| match effect { OutboxEffect::RestoreClassified { epoch } => Some(*epoch), _ => None }).collect()
 }
-
-fn kinds(effects: &[OutboxEffect]) -> Vec<CommitKind> {
-    effects.iter().filter_map(|effect| match effect { OutboxEffect::Store { kind, .. } => Some(*kind), _ => None }).collect()
-}
-
-fn sends(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Send { .. })).count() }
-
-fn answers(effects: &[OutboxEffect], reply: u64) -> Vec<OutboxAnswer> {
-    effects.iter().filter_map(|effect| match effect { OutboxEffect::Reply { reply: found, answer } if *found == reply => Some(answer.clone()), _ => None }).collect()
-}
-
-fn drained(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Drained)).count() }
 
 fn submit(twin: &mut Twin, reply: u64) -> Vec<OutboxEffect> { twin.post(OutboxInput::Submit { epoch: EPOCH, op: model_op("r", Policy::Rollback, false), reply }) }
 
@@ -95,22 +77,28 @@ fn out_restoring_online() {
 }
 
 #[test]
-fn out_restoring_epoch_ended() {
-    let mut twin = Twin::bare();
-    submit(&mut twin, 40);
-    for input in call_inputs() {
-        twin.post(input);
+fn out_restoring_ended() {
+    for closing in [false, true] {
+        let (end, cause) = if closing { (Cause::Close, crate::ffi::EndCause::Closed) } else { (Cause::SessionReset, crate::ffi::EndCause::SessionEnded) };
+        let mut twin = Twin::bare();
+        submit(&mut twin, 40);
+        for input in call_inputs() {
+            twin.post(input);
+        }
+        take_fx(&twin.log, None);
+        if closing { twin.det.close(); } else { twin.det.end_epoch(EPOCH, end); }
+        twin.run();
+        let ended = take_fx(&twin.log, state_of(&twin.det));
+        for reply in [40, 41, 42] {
+            assert_eq!(answers(&ended, reply), vec![OutboxAnswer::Err(Fault::Ended(cause.clone()))], "closing={closing} reply {reply}");
+        }
+        assert_eq!(answers(&ended, 43), vec![OutboxAnswer::Outcome(OutboxOutcome::Ended(cause))], "closing={closing}");
+        if closing { assert_eq!(drained(&ended), 1); }
+        else {
+            let late = twin.post(OutboxInput::Restored { ops: vec![stored(7, "r")], pending_lost: false });
+            assert!(late.is_empty(), "a late Restored of the ended epoch is a foreign input and tells nobody: {late:?}");
+        }
     }
-    take_fx(&twin.log, None);
-    twin.det.end_epoch(EPOCH, Cause::SessionReset);
-    twin.run();
-    let ended = take_fx(&twin.log, state_of(&twin.det));
-    for reply in [40, 41, 42] {
-        assert_eq!(answers(&ended, reply), vec![OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))], "reply {reply}");
-    }
-    assert_eq!(answers(&ended, 43), vec![OutboxAnswer::Outcome(OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded))]);
-    let late = twin.post(OutboxInput::Restored { ops: vec![stored(7, "r")], pending_lost: false });
-    assert!(late.is_empty(), "a late Restored of the ended epoch is a foreign input and tells nobody: {late:?}");
 }
 
 #[test]
@@ -147,25 +135,7 @@ fn out_restored() {
 }
 
 #[test]
-fn out_restoring_closing() {
-    let mut twin = Twin::bare();
-    submit(&mut twin, 40);
-    for input in call_inputs() {
-        twin.post(input);
-    }
-    take_fx(&twin.log, None);
-    twin.det.close();
-    twin.run();
-    let closed = take_fx(&twin.log, state_of(&twin.det));
-    assert_eq!(answers(&closed, 40), vec![OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))]);
-    assert_eq!(answers(&closed, 43), vec![OutboxAnswer::Outcome(OutboxOutcome::Ended(crate::ffi::EndCause::Closed))]);
-    assert_eq!(drained(&closed), 1);
-}
-
-#[test]
 fn out_restore_ready_other() {
-    let mut twin = Twin::new();
-    assert!(ready(&mut twin).is_empty());
     let mut classified = Twin::bare();
     declare(&mut classified);
     restore(&mut classified, vec![stored(7, "r")]);
@@ -179,7 +149,7 @@ fn out_register_rechecks_waiting() {
     restore(&mut twin, vec![stored(7, "r")]);
     assert_eq!(twin.stage(7), Some(St::WaitingDeclaration));
     ready(&mut twin);
-    let effects = twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())], complete: false });
+    let effects = declare(&mut twin);
     assert_eq!((twin.stage(7), kinds(&effects)), (Some(St::Sending), vec![]));
     assert_eq!(sends(&effects), 1);
 }
@@ -286,10 +256,7 @@ fn out_open_restores_exhausted() {
     declare(&mut twin);
     let effects = restore(&mut twin, vec![StoredOp { attempts: 40, cause, ..stored(7, "r") }]);
     assert_eq!((twin.stage(7), kinds(&effects), sends(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark], 0));
-    let expected = twin.state().ops[&7].error.as_ref().unwrap();
-    if cause.is_some() { assert_eq!(serde_json::from_str::<serde_json::Value>(expected).unwrap()["kind"], "response_too_large:64"); }
-    else { assert_eq!(expected, "Exhausted"); }
-    assert!(has_op!(twin, StoreOp::MarkError { op_id: 7, error: Some(error) } if error == expected), "{:?}", twin.store_ops);
+    assert_exhausted_mark(&twin, 7, cause.is_some());
     }
 }
 

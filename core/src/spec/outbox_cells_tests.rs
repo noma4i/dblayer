@@ -9,17 +9,7 @@ use crate::owners::write::outbox::{CommitKind, Fault, NewOp, OpId, OutboxAnswer,
 
 pub(super) const RETRY_REPLY: u64 = 802;
 
-pub(super) fn kinds(effects: &[OutboxEffect]) -> Vec<CommitKind> {
-    effects.iter().filter_map(|effect| match effect { OutboxEffect::Store { kind, .. } => Some(*kind), _ => None }).collect()
-}
-
-pub(super) fn sends(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Send { .. })).count() }
-
 pub(super) fn timers(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Schedule)).count() }
-
-pub(super) fn answers(effects: &[OutboxEffect], reply: u64) -> Vec<OutboxAnswer> {
-    effects.iter().filter_map(|effect| match effect { OutboxEffect::Reply { reply: found, answer } if *found == reply => Some(answer.clone()), _ => None }).collect()
-}
 
 pub(super) fn transfer_outcomes(effects: &[OutboxEffect]) -> Vec<OutboxOutcome> {
     effects.iter().filter_map(|effect| match effect { OutboxEffect::TransferOutcome { outcome, .. } => Some(outcome.clone()), _ => None }).collect()
@@ -207,17 +197,6 @@ fn out_landing_retry() {
 }
 
 #[test]
-fn out_outcome_wait() {
-    let mut twin = Twin::new();
-    let id = sending(&mut twin, Policy::Rollback, false);
-    let effects = twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, EPOCH), reply: WAITER , discard_on_failure: false});
-    assert_eq!((twin.stage(id), effects.len()), (Some(St::Sending), 0));
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    let effects = twin.committed(id);
-    assert!(matches!(answers(&effects, WAITER).as_slice(), [OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. })]));
-}
-
-#[test]
 fn out_outcome_stale() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
@@ -310,7 +289,7 @@ fn out_queued_send() {
 }
 
 #[test]
-fn out_queued_discard() {
+fn out_rollback_discard() {
     let mut twin = Twin::new();
     twin.post(OutboxInput::Online(Online(false)));
     let id = twin.submit("r", Policy::Rollback, false);
@@ -318,15 +297,6 @@ fn out_queued_discard() {
     let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY });
     assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::RollingBack(RWhy::Discarded)), vec![CommitKind::Rollback], 1));
     assert!(has_op!(twin, StoreOp::RollBack { .. }) && has_op!(twin, StoreOp::RemoveIntent { .. }), "{:?}", twin.store_ops);
-}
-
-#[test]
-fn out_rollback_discard() {
-    let mut twin = Twin::new();
-    twin.post(OutboxInput::Online(Online(false)));
-    let id = twin.submit("r", Policy::Rollback, false);
-    twin.committed(id);
-    twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY });
     let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: 803 });
     assert_eq!((twin.stage(id), effects.len()), (Some(St::RollingBack(RWhy::Discarded)), 0));
     let effects = twin.committed(id);
@@ -394,11 +364,7 @@ fn out_queued_exhausted() {
     assert_eq!((queued.stage(pending), queued.state().ops[&pending].attempts), (Some(St::Queued), 40));
     let resumed = queued.post(OutboxInput::Online(Online(true)));
     assert_eq!((queued.stage(pending), kinds(&resumed), sends(&resumed)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark], 0));
-    assert!(has_op!(queued, StoreOp::MarkError { op_id, error: Some(_) } if *op_id == pending), "{:?}", queued.store_ops);
-    let expected = queued.state().ops[&pending].error.as_ref().unwrap();
-    if cause.is_some() { assert_eq!(serde_json::from_str::<serde_json::Value>(expected).unwrap()["kind"], "response_too_large:64"); }
-    else { assert_eq!(expected, "Exhausted"); }
-    assert!(has_op!(queued, StoreOp::MarkError { op_id, error: Some(error) } if *op_id == pending && error == expected), "{:?}", queued.store_ops);
+    assert_exhausted_mark(&queued, pending, cause.is_some());
     }
     let mut twin = Twin::new();
     let id = exhausted(&mut twin, Policy::Rollback);
@@ -702,11 +668,10 @@ fn out_batch_refused_without_a_session_ends_the_operation_for_the_waiter_and_tra
 #[test]
 fn out_discard_of_an_operation_in_flight_is_refused() {
     let discard = || OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY };
-    for stage in [St::Submitting, St::PersistingAttempt, St::Landing, St::Sending, St::MarkingFailed, St::MarkingRetry] {
+    for stage in [St::Landing, St::Sending] {
         let mut twin = if stage == St::Sending { let mut twin = Twin::new(); sending(&mut twin, Policy::Rollback, false); twin } else { in_batch_stage(stage, false).0 };
         let effects = twin.post(discard());
-        let expected = if matches!(stage, St::Landing | St::Sending) { (vec![OutboxAnswer::Err(Fault::InFlight)], 1) } else { (Vec::new(), 0) };
-        assert_eq!((answers(&effects, DISCARD_REPLY), effects.len()), expected, "{stage:?}");
+        assert_eq!((answers(&effects, DISCARD_REPLY), effects.len()), (vec![OutboxAnswer::Err(Fault::InFlight)], 1), "{stage:?}");
     }
     for stage in [St::RollingBack(RWhy::Rejected), St::MarkingFailed, St::MarkingRetry] {
         let mut twin = in_batch_stage(stage, false).0;

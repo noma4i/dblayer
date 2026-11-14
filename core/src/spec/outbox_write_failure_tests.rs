@@ -3,7 +3,7 @@
 use super::outbox_cells_tests::*;
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, RWhy, St};
-use super::outbox_restore_tests::{declare, ready, restore, stored};
+use super::outbox_restore_tests::{ready, restore};
 use crate::owners::contract::{Online, RejectReason};
 use crate::owners::session::StoredAnswer;
 use crate::owners::store::StoreOp;

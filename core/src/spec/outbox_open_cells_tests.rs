@@ -1,17 +1,11 @@
 //! Owner-level tests of the `outbox` machine: the opening classes that classify a restored intent and defer its network to `RestoreReady`. Names are the `Test` column.
 
-use super::outbox_cells_tests::{kinds, persisting, sends, transfer_outcomes};
+use super::outbox_cells_tests::{persisting, transfer_outcomes};
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, St};
 use crate::owners::contract::Online;
 use crate::owners::store::StoreOp;
 use crate::owners::write::outbox::{CommitKind, NewOp, OutboxInput, OutboxOutcome, StoredOp};
-
-fn stored(op_id: u64, row: &str) -> StoredOp {
-    StoredOp { answered: None, op_id, op: model_op(row, Policy::Rollback, false), created_at: 0, error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() }
-}
-
-fn declare(twin: &mut Twin) { twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())], complete: false }); }
 
 fn restore(twin: &mut Twin, ops: Vec<StoredOp>) -> Vec<OutboxEffect> {
     twin.post(OutboxInput::Restored { ops, pending_lost: false }).into_iter().filter(|effect| !matches!(effect, OutboxEffect::RestoreClassified { .. })).collect()

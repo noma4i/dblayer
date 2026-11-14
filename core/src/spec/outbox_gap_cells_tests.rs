@@ -1,4 +1,4 @@
-use super::outbox_cells_tests::{kinds, tick};
+use super::outbox_cells_tests::tick;
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, St};
 use super::rig::{bounded, within, Kind, Rig, Server};

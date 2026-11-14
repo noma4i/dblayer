@@ -188,15 +188,15 @@ fn out_group_rollback_outcome() {
     use crate::owners::contract::Committed;
     use crate::owners::write::outbox::{OpSource, TransferMember};
     let mut twin = Twin::new();
-    let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into(), op_id: None }, TransferMember { transfer_id: 12, cycle_id: 1, row_id: "b".into(), op_id: None }];
+    let members = vec![TransferMember { transfer_id: 11, cycle_id: 2, row_id: "a".into(), op_id: None }, TransferMember { transfer_id: 12, cycle_id: 4, row_id: "b".into(), op_id: None }];
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", Policy::Rollback, false) };
     raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     let (sends, _) = raw(&mut twin, OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
     let store = &sends.iter().find(|(to, _)| *to == STORE_AT).unwrap().1;
-    assert!(store.contains("RollBack") && store.contains("RemoveIntent") && store.contains("transfer_id: 11, cycle_id: 1, outcome: Rejected") && store.contains("transfer_id: 12, cycle_id: 1, outcome: Rejected"), "{store}");
+    assert!(store.contains("RollBack") && store.contains("RemoveIntent") && store.contains("transfer_id: 11, cycle_id: 2, outcome: Rejected") && store.contains("transfer_id: 12, cycle_id: 4, outcome: Rejected"), "{store}");
     let (sends, _) = raw(&mut twin, OutboxInput::Committed(Committed { batch: 1, revision: 20, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
     let events: Vec<_> = sends.iter().filter(|(to, _)| *to == TRANSFER_AT).collect();
-    assert!(matches!(events.as_slice(), [(_, input)] if input.contains("(11, 1, Rejected") && input.contains("(12, 1, Rejected")), "{events:?}");
+    assert!(matches!(events.as_slice(), [(_, input)] if input.contains("(11, 2, Rejected") && input.contains("(12, 4, Rejected")), "{events:?}");
 }
 
 /// A TransferGroup on the root row `a` and the member `member`: its intent is written by Transfer under the reserved `op_id`.
@@ -204,7 +204,7 @@ fn group_on_rows(twin: &mut Twin, member: &str, policy: Policy) -> OpId {
     use crate::owners::write::outbox::{OpSource, TransferMember};
     let (sends, _) = raw(twin, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Group(9) });
     let op_id = reserved(&sends).first().and_then(|text| crate::spec::support::number_after(text, "Ok(")).expect("the reserved op_id");
-    let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into(), op_id: None }, TransferMember { transfer_id: 12, cycle_id: 1, row_id: member.into(), op_id: None }];
+    let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into(), op_id: None }, TransferMember { transfer_id: 12, cycle_id: 4, row_id: member.into(), op_id: None }];
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", policy, false) };
     twin.post(OutboxInput::SubmitReserved { epoch: EPOCH, op_id, op, created_at: 0 });
     op_id
@@ -244,7 +244,7 @@ fn out_selector_group_member_orders_the_row() {
     assert_eq!(twin.stage(group), Some(St::Failed));
     let member = twin.submit("b", Policy::Rollback, false);
     let effects = twin.committed(member);
-    assert_eq!((twin.stage(member), sends_of(&effects)), (Some(St::Queued), 0), "an operation of the member row b waits behind the failed group: {effects:?}");
+    assert_eq!((twin.stage(member), sends(&effects)), (Some(St::Queued), 0), "an operation of the member row b waits behind the failed group: {effects:?}");
 }
 
 #[test]
@@ -274,7 +274,7 @@ fn out_group_member_removed_keeps_group() {
     assert!(!twin.session_text.contains("Cancel"), "the request of the group goes on: {}", twin.session_text);
     let membership = StoreOp::IntentOrigin { op_id: group, origin: IntentOrigin::TransferGroup { batch_id: 9, transfer_ids: vec![11] } };
     assert_eq!(
-        (twin.stores.len(), twin.store_ops.contains(&membership), twin.store_ops.contains(&StoreOp::RemoveUploadByTransferId { transfer_id: 12 }), has_op!(twin, StoreOp::TransferOutcome { transfer_id: 12, cycle_id: 1, outcome: OutboxOutcome::Discarded }), has_op!(twin, StoreOp::TransferOutcome { transfer_id: 11, .. }), twin.session_text.contains("Cancel"), twin.session_text.contains("Release"), twin.stage(group)),
+        (twin.stores.len(), twin.store_ops.contains(&membership), twin.store_ops.contains(&StoreOp::RemoveUploadByTransferId { transfer_id: 12 }), has_op!(twin, StoreOp::TransferOutcome { transfer_id: 12, cycle_id: 4, outcome: OutboxOutcome::Discarded }), has_op!(twin, StoreOp::TransferOutcome { transfer_id: 11, .. }), twin.session_text.contains("Cancel"), twin.session_text.contains("Release"), twin.stage(group)),
         (1, true, true, true, false, false, false, Some(St::Sending)),
         "one batch rewrites membership to [11], drops member 12 and its upload, the shared pair is untouched: {:?}", twin.store_ops);
     let batch = twin.stores[0].0;
@@ -360,7 +360,7 @@ fn out_group_member_removal_rejected() {
     let first = twin.stores[0].0;
     let (sends, _) = raw(&mut twin, OutboxInput::Rejected(Rejected { batch: first, reason: RejectReason::NoSession }));
     let transfer: Vec<_> = sends.iter().filter(|(to, _)| *to == TRANSFER_AT).map(|(_, text)| text.clone()).collect();
-    assert!(transfer.iter().any(|text| text.contains("(11, 1, Ended(SessionEnded))") && text.contains("(12, 1, Ended(SessionEnded))")) && twin.stage(group) == Some(St::Done), "NoSession ends the group SessionEnded to every member: {transfer:?}");
+    assert!(transfer.iter().any(|text| text.contains("(11, 1, Ended(SessionEnded))") && text.contains("(12, 4, Ended(SessionEnded))")) && twin.stage(group) == Some(St::Done), "NoSession ends the group SessionEnded to every member: {transfer:?}");
 
     let mut twin = Twin::new();
     let group = group_on_rows(&mut twin, "b", Policy::Rollback);
@@ -369,7 +369,7 @@ fn out_group_member_removal_rejected() {
     let first = twin.stores[0].0;
     let (sends, _) = raw(&mut twin, OutboxInput::Rejected(Rejected { batch: first, reason: RejectReason::Closed }));
     let transfer: Vec<_> = sends.iter().filter(|(to, _)| *to == TRANSFER_AT).map(|(_, text)| text.clone()).collect();
-    assert!(transfer.iter().any(|text| text.contains("(11, 1, Ended(Closed))") && text.contains("(12, 1, Ended(Closed))")) && twin.stage(group) == Some(St::Done), "Closed ends the group Closed to every member: {transfer:?}");
+    assert!(transfer.iter().any(|text| text.contains("(11, 1, Ended(Closed))") && text.contains("(12, 4, Ended(Closed))")) && twin.stage(group) == Some(St::Done), "Closed ends the group Closed to every member: {transfer:?}");
 }
 
 #[test]
@@ -418,19 +418,9 @@ fn out_group_outcome_each_member() {
     };
 
     let mut twin = Twin::new();
-    group(&mut twin, Policy::Rollback);
-    twin.post(OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
-    assert!(has_op!(twin, StoreOp::TransferOutcome { transfer_id: 11, cycle_id: 2, outcome: OutboxOutcome::Rejected { .. } }) && has_op!(twin, StoreOp::TransferOutcome { transfer_id: 12, cycle_id: 4, outcome: OutboxOutcome::Rejected { .. } }), "Rejected reaches each member with its cycle_id: {:?}", twin.store_ops);
-
-    let mut twin = Twin::new();
     group(&mut twin, Policy::Keep);
     twin.post(OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
     assert!(has_op!(twin, StoreOp::TransferOutcome { transfer_id: 11, cycle_id: 2, outcome: OutboxOutcome::Failed { .. } }) && has_op!(twin, StoreOp::TransferOutcome { transfer_id: 12, cycle_id: 4, outcome: OutboxOutcome::Failed { .. } }), "Failed reaches each member with its cycle_id: {:?}", twin.store_ops);
-
-    let mut twin = Twin::new();
-    group(&mut twin, Policy::Rollback);
-    twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
-    assert!(has_op!(twin, StoreOp::TransferOutcome { transfer_id: 12, cycle_id: 4, outcome: OutboxOutcome::Discarded }), "RowRemoved discards the member with its cycle_id: {:?}", twin.store_ops);
 
     let mut twin = Twin::new();
     group(&mut twin, Policy::Rollback);
@@ -496,20 +486,11 @@ fn out_retry_transfer_not_failed() {
 
 #[test]
 fn out_landing_swaps_all() {
-    for group in [false, true] {
-        let mut twin = Twin::new();
-        let id = if group {
-            let id = group_on_rows(&mut twin, "b", Policy::Rollback);
-            group_sending(&mut twin, id);
-            id
-        } else {
-            let id = twin.submit("a", Policy::Rollback, false);
-            twin.committed(id);
-            id
-        };
-        twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: vec![("a".into(), "real_a".into()), ("b".into(), "real_b".into())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-        assert_eq!(twin.stores.len(), 1, "all swaps must land in one batch");
-        let batch = &twin.stores[0].1;
-        assert!(batch.contains("temp: \"a\", real: \"real_a\"") && batch.contains("temp: \"b\", real: \"real_b\""), "group={group}: {batch}");
-    }
+    let mut twin = Twin::new();
+    let id = twin.submit("a", Policy::Rollback, false);
+    twin.committed(id);
+    twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: vec![("a".into(), "real_a".into()), ("b".into(), "real_b".into())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    assert_eq!(twin.stores.len(), 1, "all swaps must land in one batch");
+    let batch = &twin.stores[0].1;
+    assert!(batch.contains("temp: \"a\", real: \"real_a\"") && batch.contains("temp: \"b\", real: \"real_b\""), "{batch}");
 }

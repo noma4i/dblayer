@@ -16,7 +16,7 @@ pub(super) enum RWhy { Rejected, Discarded }
 pub(super) enum St { None, WaitingDeclaration, Submitting, Queued, PersistingAttempt, Sending, Landing, RollingBack(RWhy), MarkingFailed, MarkingRetry, Failed, Done }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RReason { NoSession, Storage }
+pub(super) enum RReason { Storage }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Policy { Rollback, Keep }
@@ -37,7 +37,7 @@ impl Ctx {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum In { Committed, EpochEnded(End), Closing }
+pub(super) enum In { EpochEnded(End), Closing }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Out { Confirmed, Rejected, Failed, Discarded, Ended(End) }
@@ -155,7 +155,6 @@ pub(super) const WAITER: ReplyId = 900;
 
 pub(super) fn reject(reason: RReason) -> RejectReason {
     match reason {
-        RReason::NoSession => RejectReason::NoSession,
         RReason::Storage => RejectReason::Storage("disk".into()),
     }
 }
@@ -440,9 +439,8 @@ pub(super) fn reach(state: St, ctx: &Ctx) -> (Twin, OpId) {
 
 
 
-pub(super) fn input_of(twin: &mut Twin, id: OpId, _ctx: &Ctx, input: In) -> Vec<OutboxEffect> {
+pub(super) fn input_of(twin: &mut Twin, _id: OpId, _ctx: &Ctx, input: In) -> Vec<OutboxEffect> {
     match input {
-        In::Committed => twin.committed(id),
         In::EpochEnded(end) => {
             take_fx(&twin.log, state_of(&twin.det));
             twin.det.end_epoch(EPOCH, match end { End::SessionEnded => Cause::SessionReset, End::Closed => Cause::Close });
@@ -465,17 +463,40 @@ pub(super) fn offline() -> Ctx { Ctx { online: false, ..Ctx::ready() } }
 
 
 
-pub(super) fn keep() -> Ctx { Ctx { policy: Policy::Keep, ..Ctx::ready() } }
 
 
 
 
 
 
-pub(super) fn sends_of(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Send { .. })).count() }
+pub(super) fn sends(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Send { .. })).count() }
+
+pub(super) fn kinds(effects: &[OutboxEffect]) -> Vec<CommitKind> {
+    effects.iter().filter_map(|effect| match effect { OutboxEffect::Store { kind, .. } => Some(*kind), _ => None }).collect()
+}
+
+pub(super) fn answers(effects: &[OutboxEffect], reply: u64) -> Vec<OutboxAnswer> {
+    effects.iter().filter_map(|effect| match effect { OutboxEffect::Reply { reply: found, answer } if *found == reply => Some(answer.clone()), _ => None }).collect()
+}
+
+pub(super) fn drained(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Drained)).count() }
+
+pub(super) fn stored(op_id: u64, row: &str) -> StoredOp {
+    StoredOp { answered: None, op_id, op: model_op(row, Policy::Rollback, false), created_at: 0, error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() }
+}
+
+pub(super) fn declare(twin: &mut Twin) -> Vec<OutboxEffect> { twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())], complete: false }) }
 
 /// Whether a Store op of the last post matches the pattern.
 macro_rules! has_op {
     ($twin:expr, $($pattern:tt)+) => { $twin.store_ops.iter().any(|op| matches!(op, $($pattern)+)) };
 }
 pub(super) use has_op;
+
+/// The Exhausted mark of the operation `id` in the last post: the saved error is `Exhausted`, or the `response_too_large` kind of the cause.
+pub(super) fn assert_exhausted_mark(twin: &Twin, id: OpId, response_too_large: bool) {
+    let expected = twin.state().ops[&id].error.as_ref().unwrap();
+    if response_too_large { assert_eq!(serde_json::from_str::<serde_json::Value>(expected).unwrap()["kind"], "response_too_large:64"); }
+    else { assert_eq!(expected, "Exhausted"); }
+    assert!(has_op!(twin, StoreOp::MarkError { op_id, error: Some(error) } if *op_id == id && error == expected), "{:?}", twin.store_ops);
+}

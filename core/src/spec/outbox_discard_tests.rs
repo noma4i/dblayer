@@ -10,31 +10,21 @@ const API: u64 = 61;
 
 fn dropped() -> Twin {
     let mut twin = Twin::bare();
-    twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())], complete: false });
+    declare(&mut twin);
     let stored = StoredOp { answered: None, op_id: 7, op: model_op("r", Policy::Rollback, false), created_at: 0, error_mark: false, pending: None, attempts: 1, cycle_id: 1, cause: None, restore_failed: Some("layout".into()), restore_element: Some(("op".into(), "k1".into())), removed_rows: Vec::new() };
     twin.post(OutboxInput::Restored { ops: vec![stored], pending_lost: false });
     twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
     twin
 }
 
-fn answers(effects: &[OutboxEffect], reply: u64) -> Vec<OutboxAnswer> {
-    effects.iter().filter_map(|effect| match effect { OutboxEffect::Reply { reply: found, answer } if *found == reply => Some(answer.clone()), _ => None }).collect()
-}
-
-#[test]
-fn out_failed_discard_restore_failed() {
-    let mut twin = dropped();
-    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD });
-    assert_eq!(twin.stage(7), Some(St::RollingBack(super::outbox_harness::RWhy::Discarded)));
-    assert!(answers(&effects, DISCARD).is_empty(), "nothing is answered before the commit");
-    assert!(twin.store_ops.contains(&StoreOp::DiscardRestoreFailed { table: "op".into(), key: "k1".into() }) && has_op!(twin, StoreOp::RemoveIntent { .. }), "{:?}", twin.store_ops);
-    assert!(!has_op!(twin, StoreOp::RollBack { .. }), "the dropped intent has no optimistic effects to take back: {:?}", twin.store_ops);
-}
-
 #[test]
 fn out_discard_restore_failed_committed() {
     let mut twin = dropped();
-    twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD });
+    let discarded = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD });
+    assert_eq!(twin.stage(7), Some(St::RollingBack(super::outbox_harness::RWhy::Discarded)));
+    assert!(answers(&discarded, DISCARD).is_empty(), "nothing is answered before the commit");
+    assert!(twin.store_ops.contains(&StoreOp::DiscardRestoreFailed { table: "op".into(), key: "k1".into() }) && has_op!(twin, StoreOp::RemoveIntent { .. }), "{:?}", twin.store_ops);
+    assert!(!has_op!(twin, StoreOp::RollBack { .. }), "the dropped intent has no optimistic effects to take back: {:?}", twin.store_ops);
     let effects = twin.committed(7);
     assert_eq!(twin.stage(7), Some(St::Done));
     assert_eq!(answers(&effects, DISCARD), vec![OutboxAnswer::Ok]);

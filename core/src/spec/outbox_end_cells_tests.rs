@@ -6,8 +6,6 @@ use super::outbox_harness::{In, RWhy, St};
 use crate::ffi::EndCause;
 use crate::owners::write::outbox::OutboxOutcome;
 
-fn drained(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Drained)).count() }
-
 fn cancels(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::CancelRequest)).count() }
 
 #[test]

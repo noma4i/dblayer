@@ -2,8 +2,8 @@
 
 
 use std::collections::BTreeMap;
-use super::outbox_harness::{In, Out, Policy, RReason, St};
-use crate::owners::contract::{Committed, Online, ReplyId};
+use super::outbox_harness::{In, Out, Policy, St};
+use crate::owners::contract::{Committed, Online};
 
 
 use crate::spec::support::{Emitted, Log};
@@ -12,37 +12,26 @@ use crate::owners::write::outbox::{self as o, CommitKind, Fault, LocalWriteKind,
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
 use super::outbox_harness::*;
 
-fn replies_of(effects: &[OutboxEffect], reply: ReplyId) -> Vec<OutboxAnswer> {
-    effects.iter().filter_map(|effect| match effect {
-        OutboxEffect::Reply { reply: id, answer } if *id == reply => Some(answer.clone()),
-        _ => None,
-    }).collect()
-}
-
 /// The `Waits` table: every call gets one answer on every terminal row.
 #[test]
 fn out_wait_submit() {
-    let (mut twin, id) = reach(St::Submitting, &ready());
+    let (mut twin, _) = reach(St::Submitting, &ready());
     let ended = { take_fx(&twin.log, state_of(&twin.det)); twin.det.end_epoch(EPOCH, Cause::SessionReset); twin.run(); take_fx(&twin.log, state_of(&twin.det)) };
-    assert_eq!(replies_of(&ended, SUBMIT_REPLY), [OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))]);
-    let (mut twin, id3) = reach(St::Submitting, &ready());
-    let rejected = twin.rejected(id3, RReason::NoSession);
-    assert_eq!(replies_of(&rejected, SUBMIT_REPLY), [OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))]);
+    assert_eq!(answers(&ended, SUBMIT_REPLY), [OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))]);
     let (mut twin, _) = reach(St::Submitting, &ready());
     take_fx(&twin.log, state_of(&twin.det));
     twin.det.close();
     twin.run();
-    assert_eq!(replies_of(&take_fx(&twin.log, state_of(&twin.det)), SUBMIT_REPLY), [OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))]);
-    let _ = id;
+    assert_eq!(answers(&take_fx(&twin.log, state_of(&twin.det)), SUBMIT_REPLY), [OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))]);
 }
 
 #[test]
 fn out_wait_outcome() {
-    for (state, input, want) in [(St::Landing, In::Committed, Out::Confirmed), (St::Sending, In::EpochEnded(End::SessionEnded), Out::Ended(End::SessionEnded)), (St::Queued, In::Closing, Out::Ended(End::Closed))] {
+    for (state, input, want) in [(St::Sending, In::EpochEnded(End::SessionEnded), Out::Ended(End::SessionEnded)), (St::Queued, In::Closing, Out::Ended(End::Closed))] {
         let ctx = if state == St::Queued { offline() } else { ready() };
         let (mut twin, id) = reach(state, &ctx);
         let effects = input_of(&mut twin, id, &ctx, input);
-        let answers = replies_of(&effects, WAITER);
+        let answers = answers(&effects, WAITER);
         assert_eq!(answers.len(), 1, "{state:?}: one answer");
         assert!(matches!(&answers[0], OutboxAnswer::Outcome(outcome) if out_of(outcome) == want), "{answers:?}");
     }
@@ -50,51 +39,41 @@ fn out_wait_outcome() {
 
 #[test]
 fn out_wait_retry() {
-    let (mut twin, id) = reach(St::Failed, &keep());
-    let before = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 61 });
-    assert!(replies_of(&before, 61).is_empty(), "the receipt waits for the batch of the new cycle");
-    let ok = twin.committed(id);
-    assert!(matches!(replies_of(&ok, 61).as_slice(), [OutboxAnswer::Receipt(_)]));
     let (mut twin, _) = reach(St::Submitting, &ready());
     let pending = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 64 });
-    assert!(replies_of(&pending, 64).is_empty());
+    assert!(answers(&pending, 64).is_empty());
     take_fx(&twin.log, state_of(&twin.det));
     twin.det.end_epoch(EPOCH, Cause::SessionReset);
     twin.run();
-    assert_eq!(replies_of(&take_fx(&twin.log, state_of(&twin.det)), 64), [OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))]);
+    assert_eq!(answers(&take_fx(&twin.log, state_of(&twin.det)), 64), [OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))]);
 }
 
 #[test]
 fn out_wait_discard() {
-    let (mut twin, id) = reach(St::Queued, &offline());
-    let queued = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 71 });
-    assert!(replies_of(&queued, 71).is_empty(), "no answer before Committed");
-    let committed = twin.committed(id);
-    assert_eq!(replies_of(&committed, 71), [OutboxAnswer::Ok]);
     let (mut twin, _) = reach(St::Queued, &offline());
     twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 74 });
     take_fx(&twin.log, state_of(&twin.det));
     twin.det.end_epoch(EPOCH, Cause::SessionReset);
     twin.run();
-    assert_eq!(replies_of(&take_fx(&twin.log, state_of(&twin.det)), 74), [OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))]);
+    assert_eq!(answers(&take_fx(&twin.log, state_of(&twin.det)), 74), [OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::SessionEnded))]);
 }
 
 #[test]
 fn out_wait_local_write() {
     let mut twin = Twin::new();
     let effects = twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: 81 });
-    assert!(replies_of(&effects, 81).is_empty());
+    assert!(answers(&effects, 81).is_empty());
     let committed = twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
-    assert_eq!(replies_of(&committed, 81), [OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
+    assert_eq!(answers(&committed, 81), [OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
     let mut twin = Twin::new();
     twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: 82 });
     take_fx(&twin.log, state_of(&twin.det));
     twin.det.close();
     twin.run();
     let closing = take_fx(&twin.log, state_of(&twin.det));
-    assert!(replies_of(&closing, 82).is_empty() && !closing.iter().any(|effect| matches!(effect, OutboxEffect::Drained)), "the write waits for the Store: {closing:?}");
+    assert!(answers(&closing, 82).is_empty() && !closing.iter().any(|effect| matches!(effect, OutboxEffect::Drained)), "the write waits for the Store: {closing:?}");
     let committed = twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
-    assert_eq!(replies_of(&committed, 82), [OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
+    assert_eq!(answers(&committed, 82), [OutboxAnswer::Written { revision: 11, shown: None, files_removed: 0 }]);
     assert_eq!(committed.iter().filter(|effect| matches!(effect, OutboxEffect::Drained)).count(), 1, "Drained after the last answer");
 }
 
@@ -262,9 +241,9 @@ fn out_prop_dropped_resent() {
 fn boundary_selector_orders() {
     let (mut twin, _) = reach(St::Sending, &ready());
     let other = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("destroy".into()), reply: 91 });
-    assert_eq!(replies_of(&other, 91), [OutboxAnswer::Err(Fault::NotFound)]);
+    assert_eq!(answers(&other, 91), [OutboxAnswer::Err(Fault::NotFound)]);
     let other = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("destroy".into()), reply: 92 });
-    assert_eq!(replies_of(&other, 92), [OutboxAnswer::Err(Fault::NotFound)]);
+    assert_eq!(answers(&other, 92), [OutboxAnswer::Err(Fault::NotFound)]);
     let own = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: 93 });
-    assert!(matches!(replies_of(&own, 93).as_slice(), [OutboxAnswer::Receipt(_)]));
+    assert!(matches!(answers(&own, 93).as_slice(), [OutboxAnswer::Receipt(_)]));
 }

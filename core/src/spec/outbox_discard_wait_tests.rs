@@ -1,6 +1,6 @@
 //! Owner-level tests of the `outbox` machine: `Discard` in the stages of the internal steps (D-392).
 
-use super::outbox_cells_tests::{answers, marking_failed, marking_retry, persisting};
+use super::outbox_cells_tests::{marking_failed, marking_retry, persisting};
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, St};
 use crate::owners::contract::Online;
@@ -26,7 +26,7 @@ fn out_discard_waits_for_the_stage() {
         for _ in 0..4 {
             if matches!(twin.stage(id), Some(St::Submitting | St::PersistingAttempt | St::MarkingFailed | St::MarkingRetry | St::RollingBack(_))) { effects.extend(twin.committed(id)); } else { break; }
         }
-        let expected = if sends_of(&effects) > 0 { OutboxAnswer::Err(Fault::InFlight) } else { OutboxAnswer::Ok };
+        let expected = if sends(&effects) > 0 { OutboxAnswer::Err(Fault::InFlight) } else { OutboxAnswer::Ok };
         assert_eq!(answers(&effects, DISCARD_REPLY), vec![expected], "{stage:?}");
     }
 }
@@ -46,8 +46,8 @@ fn out_prop_discard_at_any_point() {
         for _ in 0..4 {
             if matches!(twin.stage(id), Some(St::Submitting | St::PersistingAttempt | St::RollingBack(_))) { effects.extend(twin.committed(id)); } else { break; }
         }
-        let expected = if sends_of(&effects) > 0 { OutboxAnswer::Err(Fault::InFlight) } else { OutboxAnswer::Ok };
+        let expected = if sends(&effects) > 0 { OutboxAnswer::Err(Fault::InFlight) } else { OutboxAnswer::Ok };
         assert_eq!(answers(&effects, DISCARD_REPLY), vec![expected], "point {point}");
-        assert_eq!(point < 2, sends_of(&effects) == 0, "point {point}: the request leaves with the commit of the attempt");
+        assert_eq!(point < 2, sends(&effects) == 0, "point {point}: the request leaves with the commit of the attempt");
     }
 }
