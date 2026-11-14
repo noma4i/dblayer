@@ -17,6 +17,7 @@ mod removed_by_tests;
 mod answer_kind_tests;
 mod idle_work_tests;
 mod calls_tests;
+mod task_panic_tests;
 mod effect_rows_tests;
 mod encrypted_cable_tests;
 mod harness_tests;

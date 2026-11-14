@@ -66,7 +66,7 @@ impl ManualSpawn {
 }
 
 impl Tasks for ManualSpawn {
-    fn start(&self, task: Task) -> Running {
+    fn start(&self, _watch: super::wire::FailureWatch<super::transfer::Transfers>, task: Task) -> Running {
         let mut pool = lock(&self.0);
         let id = pool.next;
         pool.next += 1;
@@ -78,7 +78,7 @@ impl Tasks for ManualSpawn {
         })
     }
 
-    fn start_blocking(&self, job: Box<dyn FnOnce() + Send>) -> Running {
+    fn start_blocking(&self, _watch: super::wire::FailureWatch<super::transfer::Transfers>, job: Box<dyn FnOnce() + Send>) -> Running {
         let mut pool = lock(&self.0);
         if std::mem::take(&mut pool.reject_blocking) {
             drop(pool);
