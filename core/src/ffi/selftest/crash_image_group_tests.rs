@@ -44,7 +44,7 @@ async fn a_file_cut_at_any_commit_of_a_group_upload_reopens_with_the_group_finis
             for blob_index in 0..3 { fresh.script.data("CreateBlob", &blob(blob_index)); }
             fresh.script.data("CreateAssets", ASSETS);
             let reopened = fresh.open_with(Some(&image), &OPERATIONS, Some(clock.clone())).await;
-            drained(&reopened).await;
+            super::crash_image_support::advancing(&clock, drained(&reopened)).await;
             let whole = landed(&reopened);
             assert!(whole == 0 || whole == 3, "cut {index}: the batch lands whole or not at all: {whole}");
             assert!(whole == 3 || saved == 0 || unaccepted, "cut {index}: a saved batch is finished");

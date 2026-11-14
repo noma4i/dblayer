@@ -75,9 +75,10 @@ static ROUTERS: std::sync::Mutex<Vec<std::sync::Weak<Router>>> = std::sync::Mute
 #[cfg(test)]
 pub fn barrier_report() -> String {
     let routers: Vec<_> = ROUTERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter_map(std::sync::Weak::upgrade).collect();
-    let busy: Vec<String> = routers.iter().filter_map(|router| {
+    let reports: Vec<(bool, String)> = routers.iter().map(|router| {
         let count = *lock(&router.inflight.count);
         let held: Vec<String> = lock(&router.gates).iter().filter_map(std::sync::Weak::upgrade).filter(|gate| gate.state.load(Ordering::SeqCst) == HELD).map(|gate| format!("{} {}ms", gate.place, gate.since.elapsed().as_millis())).collect();
+        let mut working = count > 0 || !held.is_empty();
         let owners: Vec<String> = router.owners.iter().enumerate().map(|(index, name)| {
             let active = lock(&router.active[index]).iter().map(|(input, since)| format!("{input} {}ms", since.elapsed().as_millis())).collect::<Vec<_>>().join(", ");
             let queued = router.boxes[index].inspect(|items| items.iter().map(|item| format!("{} {}ms", item.label, item.since.elapsed().as_millis())).collect::<Vec<_>>());
@@ -88,12 +89,15 @@ pub fn barrier_report() -> String {
                 Some((left, backoff)) => format!("{} waits, next {left}ms {}", waits.len(), if *backoff { "Backoff" } else { "Schedule" }),
                 None => "0 waits".to_string(),
             };
+            working |= !queued.is_empty() || !active.is_empty() || !waits.is_empty() || state.contains("waiting_pull=true");
             if router.stopped[index].load(Ordering::SeqCst) { return format!("{name}: stopped, queued {} [{}], state [{state}]", queued.len(), queued.join(", ")); }
             format!("{name}: queued {} [{}], active [{active}], timers [{timers}], state [{state}]", queued.len(), queued.join(", "))
         }).collect();
-        Some(format!("in flight {count}, counted tasks held at [{}], owners [{}]", held.join(", "), owners.join("; ")))
+        (working, format!("in flight {count}, counted tasks held at [{}], owners [{}]", held.join(", "), owners.join("; ")))
     }).collect();
-    let census = format!("runtimes {}, waits {}", routers.len(), crate::test_wait::waiting_count());
+    let with_work: Vec<String> = reports.iter().filter(|(working, _)| *working).map(|(_, report)| report.clone()).collect();
+    let busy = if with_work.is_empty() { reports.into_iter().map(|(_, report)| report).collect() } else { with_work };
+    let census = format!("runtimes {}, shown {}, waits {}", routers.len(), busy.len(), crate::test_wait::waiting_count());
     if busy.is_empty() { format!("the barrier of every runtime is idle; {census}") } else { format!("{}; {census}", busy.join("; ")) }
 }
 
