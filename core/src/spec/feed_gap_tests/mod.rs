@@ -11,8 +11,8 @@ use crate::owners::contract::{BatchId, Committed, ConnectionId, EpochEnded, Epoc
 use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
 use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, Frame, FramedEvent, Outgoing, Protocol, ProtocolReason};
 use crate::owners::read::windows::{StaleKeys, WindowKey, Windows};
-use crate::owners::store::StoreWriter;
-use crate::spec::support::{new_log, number_after, snapshot, take, text_after, Discard, Emitted, Log, NoEffect, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
+use crate::owners::store::{StoreBatch, StoreOp, StoreWriter};
+use crate::spec::support::{new_log, CapturedStore, number_after, snapshot, take, text_after, Discard, Emitted, Log, NoEffect, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
 use crate::runtime::{explore, Address, Back, Cause as Ended, DetScheduler, Effects, EffectRunner, Epoch, EpochStamp, Limits, StateOwner, Time};
 
 const EPOCH: u64 = 1;
@@ -60,8 +60,8 @@ fn framed(model: &str, payload: &str, reread: &Reread, refused: bool) -> FramedE
     FramedEvent { model: model.into(), payload: payload.into(), reread, refused }
 }
 
-fn add_feed(det: &mut DetScheduler, log: &Spied, state: f::FeedState, runner: impl EffectRunner<Spy<Feed>>) -> Address<Spy<Feed>> {
-    det.add::<Sink<StoreWriter>>("store", new_log(), Discard);
+fn add_feed(det: &mut DetScheduler, log: &Spied, stored: &Log<StoreBatch>, state: f::FeedState, runner: impl EffectRunner<Spy<Feed>>) -> Address<Spy<Feed>> {
+    det.add::<CapturedStore>("store", stored.clone(), Discard);
     det.add::<Sink<Windows>>("windows", new_log(), Discard);
     det.add::<Sink<Deliveries>>("deliveries", new_log(), Discard);
     det.add::<Spy<Feed>>("feed", SpyState::new(state, log), runner)
@@ -72,6 +72,7 @@ struct Twin {
     det: DetScheduler,
     addr: Address<Spy<Feed>>,
     log: Spied,
+    stored: Log<StoreBatch>,
     debounce_ms: u64,
     batches: VecDeque<BatchId>,
     used: Vec<BatchId>,
@@ -97,10 +98,11 @@ impl Twin {
     fn with(online: Option<bool>, debounce: bool) -> Self {
         let mut det = DetScheduler::new(11);
         let log = new_log();
+        let stored = new_log();
         let ms = if debounce { DEBOUNCE_MS } else { 0 };
-        let addr = add_feed(&mut det, &log, f::FeedState::new(EPOCH, peers(), debounces(ms), channels()), Discard);
+        let addr = add_feed(&mut det, &log, &stored, f::FeedState::new(EPOCH, peers(), debounces(ms), channels()), Discard);
         det.start_epoch(EPOCH);
-        let mut twin = Self { det, addr, log, debounce_ms: ms, batches: VecDeque::new(), used: Vec::new(), sealed: Vec::new(), snapshots: 0, reread: Reread::None, history: Vec::new(), shown: Vec::new(), seen: Vec::new() };
+        let mut twin = Self { det, addr, log, stored, debounce_ms: ms, batches: VecDeque::new(), used: Vec::new(), sealed: Vec::new(), snapshots: 0, reread: Reread::None, history: Vec::new(), shown: Vec::new(), seen: Vec::new() };
         if let Some(on) = online {
             twin.post(FeedInput::Online { online: Online(on), online_seq: u64::from(on) });
         }
@@ -249,6 +251,13 @@ impl Twin {
         self.shown.extend(seen.clone());
         self.seen = seen;
         got
+    }
+
+    /// Feeds one input and returns the effects with the batches the Store received in that step.
+    fn step_stored(&mut self, input: Input) -> (Vec<Effect>, Vec<StoreBatch>) {
+        take(&self.stored);
+        let effects = self.step(input);
+        (effects, take(&self.stored))
     }
 
     /// Shows the owner effects as the row tests write them: `Stale` per model, `Joined` and `ModelReady` per stream, the events as what a stream sees.

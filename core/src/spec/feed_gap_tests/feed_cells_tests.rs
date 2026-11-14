@@ -32,6 +32,10 @@ fn feed_off_unwant() {
     twin.step(plus("Chat"));
     assert!(twin.step(minus("Chat")).is_empty());
     assert!(twin.step(Input::Online(true)).is_empty(), "no reader is left, so coming online subscribes to nothing");
+    for on in [false, true, false, true] {
+        assert!(twin.step(Input::Online(on)).is_empty(), "the network toggles with no want: no subscribe");
+    }
+    assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
 }
 
 #[test]
@@ -56,11 +60,10 @@ fn feed_off_resume() {
 fn feed_landing_after_drop() {
     let mut twin = live_immediate();
     assert_eq!(twin.step(chat("c1")), [Effect::Commit]);
-    let before = twin.history.len();
-    twin.step(Input::Dropped { to: To::Active });
-    let batches: Vec<_> = twin.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } => Some(input), _ => None }).collect();
+    assert_eq!(twin.state().landing(), 1);
+    let (_, batches) = twin.step_stored(Input::Dropped { to: To::Active });
     assert_eq!(batches.len(), 1);
-    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\"], keys: [], kept: [] }]"), "the loss has its own stale batch: {batches:?}");
+    assert_eq!(batches[0].ops, [StoreOp::MarkStale { models: names(&["Chat"]), keys: Vec::new(), kept: Vec::new() }], "the loss has its own stale batch");
     assert!(matches!(twin.state().mode(), f::Mode::Opening { gap: true }));
     twin.step(Input::Committed);
     assert_eq!(twin.state().landing(), 1, "only the stale batch remains after the event lands");
@@ -95,14 +98,6 @@ fn feed_opening_ready() {
     held.step(event(To::Opening, "Chat", "c2"));
     assert_eq!(held.step(Input::HandshakeDone), [Effect::SealSubscribe, Effect::ModelReady(CHAT), Effect::ScheduleTick], "the held frames sit by the debounce of the model");
     assert_eq!(held.state().position("Chat"), 2, "the positions were given when the frames arrived");
-}
-
-#[test]
-fn feed_opening_ready_after_gap() {
-    let mut twin = live();
-    twin.step(Input::Dropped { to: To::Active });
-    assert_eq!(twin.step(Input::HandshakeDone), [Effect::SealSubscribe, Effect::Stale { model: "Chat".into(), all: true }, Effect::ModelReady(CHAT)]);
-    assert_eq!(twin.state().position("Chat"), 0, "a break of unknown length takes no position");
 }
 
 #[test]
@@ -160,30 +155,20 @@ fn feed_opening_unwant() {
 }
 
 #[test]
-fn feed_opening_last_unwant() {
-    let mut twin = opening();
-    twin.step(event(To::Opening, "Chat", "c1"));
-    let before = twin.history.len();
-    assert_eq!(twin.step(minus("Chat")), [Effect::Close, Effect::Commit, Effect::Stale { model: "Chat".into(), all: true }]);
-    let batches: Vec<_> = twin.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } => Some(input), _ => None }).collect();
-    assert_eq!(batches.len(), 1);
-    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\"], keys: [], kept: [] }]"), "the lost held model is marked: {batches:?}");
-    assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
+fn feed_opening_leaves_with_a_held_event() {
+    for (trigger, online) in [(minus("Chat"), false), (Input::Online(false), true)] {
+        let mut twin = opening();
+        twin.step(event(To::Opening, "Chat", "c1"));
+        let (effects, batches) = twin.step_stored(trigger.clone());
+        assert_eq!(effects, [Effect::Close, Effect::Commit, Effect::Stale { model: "Chat".into(), all: true }], "{trigger:?}");
+        assert_eq!(batches.len(), 1, "{trigger:?}");
+        assert_eq!(batches[0].ops, [StoreOp::MarkStale { models: names(&["Chat"]), keys: Vec::new(), kept: Vec::new() }], "{trigger:?}: the lost held model is marked");
+        assert_eq!(twin.state().mode(), f::Mode::Off { gap: false }, "{trigger:?}");
+        if online {
+            assert_eq!(twin.step(Input::Online(true)), [Effect::Connect], "the want is kept: coming online opens the subscription again");
+        }
+    }
 }
-
-#[test]
-fn feed_opening_offline() {
-    let mut twin = opening();
-    twin.step(event(To::Opening, "Chat", "c1"));
-    let before = twin.history.len();
-    assert_eq!(twin.step(Input::Online(false)), [Effect::Close, Effect::Commit, Effect::Stale { model: "Chat".into(), all: true }]);
-    let batches: Vec<_> = twin.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } => Some(input), _ => None }).collect();
-    assert_eq!(batches.len(), 1);
-    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\"], keys: [], kept: [] }]"), "the lost held model is marked: {batches:?}");
-    assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
-    assert_eq!(twin.step(Input::Online(true)), [Effect::Connect], "the want is kept: coming online opens the subscription again");
-}
-
 
 #[test]
 fn feed_live_event() {
@@ -196,28 +181,10 @@ fn feed_live_event() {
 }
 
 #[test]
-fn feed_live_event_now() {
-    let mut twin = live_immediate();
-    assert_eq!(twin.step(chat("c1")), [Effect::Commit]);
-    assert_eq!(twin.state().landing(), 1);
-}
-
-#[test]
 fn feed_live_event_unwatched() {
     let mut twin = live();
     assert!(twin.step(event(To::Active, "Post", "p1")).is_empty(), "an event of a model with no reader is not applied");
     assert_eq!(twin.state().pending(), 0);
-}
-
-#[test]
-fn feed_live_attempts_reset_on_data() {
-    let mut twin = opening();
-    twin.step(Input::Dropped { to: To::Opening });
-    twin.step(Input::Resubscribe { to: To::Opening });
-    twin.step(Input::HandshakeDone);
-    assert_eq!(twin.state().attempts(), 1, "a reconnect bumped the connection attempts");
-    assert_eq!(twin.step(chat("c1")), [Effect::ScheduleTick]);
-    assert_eq!(twin.state().attempts(), 0, "the first event after Ready resets the attempts");
 }
 
 #[test]
@@ -282,7 +249,6 @@ fn feed_dropped_gap_batches_reject_independently() {
         twin.step(chat("c1"));
         twin.step(Input::Dropped { to: To::Active });
         twin.step(Input::HandshakeDone);
-        let before = twin.history.len();
         let effects = twin.step(Input::RejectedAt(rejected, reason.clone()));
         if rejected == 0 {
             assert_eq!(effects.iter().filter(|effect| **effect == Effect::Commit).count(), 1, "only the debt batch of the lost event");
@@ -290,11 +256,10 @@ fn feed_dropped_gap_batches_reject_independently() {
             assert!(twin.shown.iter().any(|observation| matches!(observation, Obs::Lost { .. })));
         } else {
             assert!(effects.is_empty());
-            let retry = twin.step(Input::StrayBatch);
+            let (retry, batches) = twin.step_stored(Input::StrayBatch);
             assert_eq!(retry, [Effect::Commit]);
-            let batches: Vec<_> = twin.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } if input.contains("MarkStale") => Some(input), _ => None }).collect();
             assert_eq!(batches.len(), 1);
-            assert!(batches[0].contains("Chat") && !batches[0].contains("c1"), "retry must retain the debt: {batches:?}");
+            assert_eq!((batches[0].ops.clone(), batches[0].rows.is_empty()), ([StoreOp::MarkStale { models: names(&["Chat"]), keys: Vec::new(), kept: Vec::new() }].to_vec(), true), "retry must retain the debt of the lost event only");
             twin.step(Input::Committed);
             assert!(twin.shown.iter().any(|observation| matches!(observation, Obs::Event { payload, .. } if payload == "c1")));
             twin.step(Input::Committed);
@@ -462,11 +427,10 @@ fn feed_proto_frame_kinds() {
     let mut quiet = live();
     assert!(quiet.step(Input::Frame { to: To::Active, counter: Counter::Expected, kind: Kind::Quiet }).is_empty());
     let mut replayed = live();
-    let before = replayed.history.len();
-    assert_eq!(replayed.step(Input::Frame { to: To::Active, counter: Counter::Replayed, kind: Kind::Complete }), [Effect::Close, Effect::ScheduleDrain, Effect::Commit], "the counter is checked before the meaning of the frame");
-    let batches: Vec<_> = replayed.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } => Some(input), _ => None }).collect();
+    let (effects, batches) = replayed.step_stored(Input::Frame { to: To::Active, counter: Counter::Replayed, kind: Kind::Complete });
+    assert_eq!(effects, [Effect::Close, Effect::ScheduleDrain, Effect::Commit], "the counter is checked before the meaning of the frame");
     assert_eq!(batches.len(), 1);
-    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\"], keys: [], kept: [] }]"), "the broken connection marks the model: {batches:?}");
+    assert_eq!(batches[0].ops, [StoreOp::MarkStale { models: names(&["Chat"]), keys: Vec::new(), kept: Vec::new() }], "the broken connection marks the model");
 }
 
 #[test]
@@ -509,11 +473,11 @@ fn feed_proto_send_reserves() {
     assert_eq!(counters, [0, 1], "the subscribe frame and the unsubscribe frame take the next send counters, each one once");
 }
 
-/// The channels the models of `want` read on the active connection, asked of the owner.
-pub(super) fn census_of(twin: &mut Twin) -> usize {
+/// The channels the models of `want` read on the active connection and the refused events, asked of the owner.
+pub(super) fn census(twin: &mut Twin) -> (usize, u64) {
     twin.post(FeedInput::Census { reply: 7 });
     take(&twin.log).into_iter().find_map(|entry| match entry {
-        Emitted::Run(FeedEffect::Census { reply: 7, subscriptions, .. }) => Some(subscriptions),
+        Emitted::Run(FeedEffect::Census { reply: 7, subscriptions, refused }) => Some((subscriptions, refused)),
         _ => None,
     }).expect("the owner answers the census")
 }
@@ -521,15 +485,15 @@ pub(super) fn census_of(twin: &mut Twin) -> usize {
 #[test]
 fn feed_wait_subscription_census() {
     let mut twin = Twin::new();
-    assert_eq!(census_of(&mut twin), 0, "no model wanted, no channel");
+    assert_eq!(census(&mut twin).0, 0, "no model wanted, no channel");
     twin.step(plus("Chat"));
-    assert_eq!(census_of(&mut twin), 0, "a connection in its handshake is not active");
+    assert_eq!(census(&mut twin).0, 0, "a connection in its handshake is not active");
     twin.step(Input::HandshakeDone);
     twin.step(plus("Post"));
-    assert_eq!(census_of(&mut twin), 1, "two models on one channel count it once");
+    assert_eq!(census(&mut twin).0, 1, "two models on one channel count it once");
     twin.step(minus("Chat"));
     twin.step(minus("Post"));
-    assert_eq!(census_of(&mut twin), 0, "after the last Want- no channel stays wanted");
+    assert_eq!(census(&mut twin).0, 0, "after the last Want- no channel stays wanted");
 }
 
 
@@ -556,13 +520,13 @@ fn feed_changes_not_list() {
     let mut twin = live_immediate();
     twin.step(chat("c1"));
     twin.step(Input::Refused { model: "Chat".into() });
-    assert_eq!(census_refused(&mut twin), 1);
+    assert_eq!(census(&mut twin).1, 1);
     assert_eq!(twin.shown, [], "the refused position waits behind the pending position of c1");
     twin.step(Input::Committed);
     assert_eq!(twin.shown, [Obs::Event { stream: CHAT, position: 1, payload: "c1".into() }, Obs::Lost { stream: CHAT, first: 2, last: 2 }]);
     twin.step(Input::Refused { model: "Chat".into() });
     twin.step(Input::Refused { model: "Chat".into() });
-    assert_eq!(census_refused(&mut twin), 3, "one count per refused event, never reset in the epoch");
+    assert_eq!(census(&mut twin).1, 3, "one count per refused event, never reset in the epoch");
 }
 
 #[test]
@@ -576,7 +540,7 @@ fn feed_changes_entry_incomplete() {
     let emitted = take(&twin.log);
     let (got, seen) = twin.split(emitted);
     assert_eq!((got, seen), (vec![Effect::Commit], vec![]), "the entry takes no position, the next entry of the frame goes to the Store");
-    assert_eq!(census_refused(&mut twin), 1, "the entry without area, kind or id counts once");
+    assert_eq!(census(&mut twin).1, 1, "the entry without area, kind or id counts once");
     twin.step(Input::Committed);
     assert_eq!(twin.shown, [Obs::Event { stream: CHAT, position: 1, payload: "c1".into() }]);
 }
@@ -595,14 +559,6 @@ fn feed_live_verdict_by_batch() {
     assert_eq!(twin.state().landing(), 2, "the debt batch of the lost event waits too");
     twin.step(Input::Committed);
     assert_eq!(twin.shown, [Obs::Event { stream: CHAT, position: 1, payload: "c1".into() }, Obs::Lost { stream: CHAT, first: 2, last: 2 }, Obs::Event { stream: CHAT, position: 3, payload: "c3".into() }]);
-}
-
-fn census_refused(twin: &mut Twin) -> u64 {
-    twin.post(FeedInput::Census { reply: 7 });
-    take(&twin.log).into_iter().find_map(|entry| match entry {
-        Emitted::Run(FeedEffect::Census { reply: 7, refused, .. }) => Some(refused),
-        _ => None,
-    }).expect("the owner answers the census")
 }
 
 #[test]

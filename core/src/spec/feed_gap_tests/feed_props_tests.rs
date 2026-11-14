@@ -7,14 +7,13 @@ fn feed_prop_gap_visible() {
     let mut twin = live();
     twin.step(plus("Post"));
     let before = (twin.state().position("Chat"), twin.state().position("Post"));
-    let before_drop = twin.history.len();
-    assert_eq!(twin.step(Input::Dropped { to: To::Active }), [Effect::Commit, Effect::Connect]);
-    let batches: Vec<_> = twin.history[before_drop..].iter().filter_map(|entry| match entry { Emitted::Send { to: STORE, input } => Some(input), _ => None }).collect();
+    let (dropped, batches) = twin.step_stored(Input::Dropped { to: To::Active });
+    assert_eq!(dropped, [Effect::Commit, Effect::Connect]);
     assert_eq!(batches.len(), 1);
-    assert!(batches[0].contains("ops: [MarkStale { models: [\"Chat\", \"Post\"], keys: [], kept: [] }]"), "the loss marks both models in one batch: {batches:?}");
-    let effects_before = twin.history.len();
-    assert_eq!(twin.step(Input::HandshakeDone), [Effect::SealSubscribe, Effect::Stale { model: "Chat".into(), all: true }, Effect::Stale { model: "Post".into(), all: true }, Effect::ModelReady(CHAT), Effect::ModelReady(POST)]);
-    assert!(!twin.history[effects_before..].iter().any(|entry| matches!(entry, Emitted::Send { to: STORE, .. })), "confirmation must not write the same debt twice");
+    assert_eq!(batches[0].ops, [StoreOp::MarkStale { models: names(&["Chat", "Post"]), keys: Vec::new(), kept: Vec::new() }], "the loss marks both models in one batch");
+    let (ready, confirmed) = twin.step_stored(Input::HandshakeDone);
+    assert_eq!(ready, [Effect::SealSubscribe, Effect::Stale { model: "Chat".into(), all: true }, Effect::Stale { model: "Post".into(), all: true }, Effect::ModelReady(CHAT), Effect::ModelReady(POST)]);
+    assert!(confirmed.is_empty(), "confirmation must not write the same debt twice");
     assert_eq!((twin.state().position("Chat"), twin.state().position("Post")), before, "no position for a break of unknown length");
     let after_break: Vec<&Obs> = twin.shown.iter().filter(|obs| !matches!(obs, Obs::Gap { .. })).collect();
     assert!(after_break.is_empty(), "the break shows no Lost: {after_break:?}");
@@ -32,6 +31,7 @@ fn feed_prop_no_tight_reconnect() {
         assert_eq!(twin.step(Input::Resubscribe { to: To::Opening }), [Effect::Connect], "a Connect goes only when the scheduled resubscribe fires");
     }
     twin.step(Input::HandshakeDone);
+    assert_eq!(twin.state().attempts(), 3, "a reconnect keeps the attempts until data comes");
     let dropped = twin.step(Input::Dropped { to: To::Active });
     assert!(dropped.contains(&Effect::ScheduleResubscribe) && !dropped.contains(&Effect::Connect), "a live connection that drops before any data reconnects by Backoff: {dropped:?}");
     assert_eq!(twin.state().attempts(), 4, "the drop before data bumps the attempts");
@@ -57,16 +57,6 @@ fn feed_prop_idle() {
     assert!(take(&twin.log).is_empty(), "a live feed without frames asks nothing");
     let mut off = Twin::new();
     assert!(off.step(Input::Tick).is_empty());
-}
-
-/// P-FEED-07: no `Want+` means no `Subscribe`, however often the network comes back.
-#[test]
-fn feed_prop_subscribe_needs_want() {
-    let mut twin = Twin::with(Some(false), true);
-    for on in [true, false, true, false, true] {
-        assert!(twin.step(Input::Online(on)).is_empty());
-    }
-    assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
 }
 
 /// P-FEED-08: every `Want+` of a stream gets one `Joined`, before the first `ModelEvent`, and `ModelReady` comes before it.

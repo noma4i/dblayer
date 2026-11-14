@@ -221,6 +221,26 @@ impl<O: StateOwner> StateOwner for Sink<O> {
     fn closing() -> O::Input { O::closing() }
 }
 
+/// The Store of the owner tests that keeps the batches as typed values.
+pub(crate) struct CapturedStore;
+
+impl StateOwner for CapturedStore {
+    const EPOCHED: bool = false;
+
+    type State = Log<StoreBatch>;
+    type Input = StoreInput;
+    type Effect = NoEffect;
+
+    fn step(state: &mut Self::State, input: Self::Input, _now: crate::runtime::Time) -> Effects<Self> {
+        if let StoreInput::Commit(batch) = input { state.lock().unwrap_or_else(PoisonError::into_inner).push(batch); }
+        Vec::new()
+    }
+
+    fn epoch_ended(_: u64, _: Cause) -> Self::Input { StoreInput::Idle }
+
+    fn closing() -> Self::Input { StoreInput::Idle }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Landing {
     pub batch: BatchId,

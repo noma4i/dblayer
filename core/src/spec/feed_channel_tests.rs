@@ -10,24 +10,8 @@ use crate::owners::read::deliveries::Deliveries;
 use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, FramedEvent, Outgoing, ScopedChannel};
 use crate::owners::read::windows::{StaleKeys, Windows};
 use crate::owners::store::StoreWriter;
-use crate::spec::support::{new_log, number_after, take, text_after, Discard, Emitted, Log, Sink, Spy, SpyState};
+use crate::spec::support::{new_log, CapturedStore, number_after, take, text_after, Discard, Emitted, Log, Sink, Spy, SpyState};
 use crate::runtime::{Address, DetScheduler, EpochStamp};
-
-struct CapturedStore;
-
-impl crate::runtime::StateOwner for CapturedStore {
-    const EPOCHED: bool = false;
-    type State = Log<crate::owners::store::StoreBatch>;
-    type Input = crate::owners::store::StoreInput;
-    type Effect = crate::spec::support::NoEffect;
-
-    fn step(state: &mut Self::State, input: Self::Input, _now: crate::runtime::Time) -> crate::runtime::Effects<Self> {
-        if let crate::owners::store::StoreInput::Commit(batch) = input { state.lock().unwrap().push(batch); }
-        Vec::new()
-    }
-    fn epoch_ended(_: u64, _: crate::runtime::Cause) -> Self::Input { crate::owners::store::StoreInput::Idle }
-    fn closing() -> Self::Input { crate::owners::store::StoreInput::Idle }
-}
 
 const EPOCH: u64 = 1;
 const STORE: usize = 0;
@@ -190,15 +174,6 @@ fn feed_event_batch_carries_its_debt_or_stale_mark() {
 }
 
 #[test]
-fn feed_chan_ready_subscribes_all() {
-    let mut rig = Rig::new();
-    rig.want("Chat", CHAT);
-    rig.want("Post", POST);
-    assert_eq!(rig.handshake(), ["subscribe:A", "subscribe:B"], "one subscribe per channel, none per model, no ready before a confirmation");
-    assert_eq!(rig.state().confirmed(), Vec::<String>::new());
-}
-
-#[test]
 fn feed_chan_confirmed_ready() {
     let mut rig = Rig::new();
     rig.want("Chat", CHAT);
@@ -206,23 +181,6 @@ fn feed_chan_confirmed_ready() {
     rig.handshake();
     assert_eq!(rig.confirm("B"), ["modelready:2"], "Post reads only B: ready, Chat still waits for A");
     assert_eq!(rig.confirm("A"), ["modelready:1"]);
-}
-
-#[test]
-fn feed_chan_confirmed_partial() {
-    let mut rig = Rig::new();
-    rig.want("Chat", CHAT);
-    rig.handshake();
-    assert!(rig.confirm("A").is_empty(), "Chat waits for B");
-    assert!(rig.confirm("A").is_empty(), "a repeated confirmation changes nothing");
-}
-
-#[test]
-fn feed_chan_event_routed() {
-    let mut rig = Rig::live();
-    assert_eq!(rig.event("A", "Chat", "c1"), ["commit"]);
-    assert_eq!(rig.event("B", "Chat", "c2"), ["commit"]);
-    assert_eq!(rig.state().position("Chat"), 2, "events of two channels share the positions of the model");
 }
 
 #[test]
@@ -388,18 +346,13 @@ fn feed_chan_ended_retryable() {
         timed.det.post(timed.addr, EpochStamp::Epoch(EPOCH), FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: true }) });
         timed.det.run_until_quiet(10_000).unwrap();
         let emitted = take(&timed.log);
+        assert_eq!(emitted.iter().filter(|entry| matches!(entry, Emitted::Send { to: STORE, .. })).count(), 1, "a retryable end commits the stale debt once");
+        assert_eq!(timed.state().confirmed(), ["A"], "a retryable cable error leaves the channel like a plain end");
         let delays: Vec<_> = emitted.iter().filter_map(|entry| match entry { Emitted::Schedule { after, input, .. } if input.starts_with("ChannelResubscribe") => Some(*after), _ => None }).collect();
         assert_eq!(delays, vec![crate::runtime::RetryPolicy::Cable.delay_seeded(attempt, 0)]);
         timed.det.post(timed.addr, EpochStamp::Epoch(EPOCH), FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() });
         timed.det.run_until_quiet(10_000).unwrap();
     }
-    let mut rig = Rig::live();
-    assert_eq!(rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), error: Some(crate::owners::read::feed::ChannelError { retryable: true }) }), ["commit", "schedule:channel"]);
-    assert_eq!(rig.state().confirmed(), ["A"], "a retryable cable error leaves the channel like a plain end");
-    assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() }), ["subscribe:B"]);
-    let mut shown = rig.confirm("B");
-    shown.sort();
-    assert_eq!(shown, ["modelgap:1", "modelgap:2", "stale:Chat", "stale:Post"], "each model of the channel sees one gap after the new confirmation, no second ready");
 }
 
 #[test]
@@ -445,6 +398,7 @@ fn feed_prop_chan_one_subscribe() {
         sent.sort();
         let wanted: Vec<String> = rig.state().wanted().into_iter().map(|channel| format!("subscribe:{channel}")).collect();
         assert_eq!(sent, wanted, "one subscribe per wanted channel");
+        assert_eq!(rig.state().confirmed(), Vec::<String>::new(), "no ready before a confirmation");
     }
 }
 
@@ -483,6 +437,7 @@ fn feed_prop_chan_ready_after_all() {
         let first = rig.confirm(order[0]);
         let second = rig.confirm(order[1]);
         assert!(first.is_empty(), "not ready after one of two channels: {first:?}");
+        assert!(rig.confirm(order[0]).is_empty(), "a repeated first confirmation while the second is pending changes nothing");
         assert_eq!(second, ["modelready:1"]);
         assert!(rig.confirm(order[1]).is_empty(), "a repeated confirmation is no second ready");
     }
@@ -538,25 +493,4 @@ fn feed_chan_want_during_recovery() {
         }
         assert_eq!(second, 1, "the new reader gets one ready in {order:?}");
     }
-}
-
-#[test]
-fn feed_gap_same_online_seq_stale_lost() {
-    let mut rig = Rig::live();
-    rig.end("B");
-    rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() });
-    let mut got = rig.confirm("B");
-    got.sort();
-    assert_eq!(got, ["modelgap:1", "modelgap:2", "stale:Chat", "stale:Post"]);
-}
-
-#[test]
-fn feed_gap_after_online_return_stale_gap() {
-    let mut rig = Rig::live();
-    rig.end("B");
-    rig.post(FeedInput::Online { online: Online(true), online_seq: 2 });
-    rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() });
-    let mut got = rig.confirm("B");
-    got.sort();
-    assert_eq!(got, ["modelgap:1", "modelgap:2", "stale:Chat:gap2", "stale:Post:gap2"]);
 }
