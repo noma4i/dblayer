@@ -413,9 +413,10 @@ impl Life {
         });
         let read_outcome: super::write::outbox_executor::ReadOutcome = {
             let (db, executor, wiring, counted) = (ports.db.clone(), ports.executor.clone(), wiring.clone(), builder.handle());
-            Arc::new(move |owner, id, cycle_id, reply| {
+            Arc::new(move |owner, id, cycle_id, reply, watch| {
                 let (db, wiring) = (db.clone(), wiring.clone());
                 drop(crate::task::spawn_blocking_on(&executor, Some(counted.launch()), move || {
+                    let _watch = watch;
                     let found = db.read_outcome(owner, id, cycle_id);
                     let fault = |fault| match owner {
                         OutcomeOwner::Operation => LifeReply::Outbox(OutboxAnswer::Err(fault)),

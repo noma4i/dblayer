@@ -71,29 +71,31 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     });
     let state = WindowsState::new(0, None, WindowsPeers { store, deliveries: deliveries_at }).with_preload(preload).with_operations_awaited().with_sources(preload_sources(&db)).with_lifetimes(lifetimes(db.clone())).with_max_pages(max_pages(db.clone())).with_members_complete(members_complete(db.clone())).with_media(has_media(db.clone())).with_local_order(has_local_order(db.clone())).with_foreground(refreshes_on_foreground(db.clone()));
     let windows_wiring = wiring.clone();
-    let (derive_db, derive_executor, derive_handle) = (db.clone(), ports.executor.clone(), handle.clone());
+    let (derive_db, derive_executor, derive_handle, derive_wiring) = (db.clone(), ports.executor.clone(), handle.clone(), wiring.clone());
     let read_db = db.clone();
     let windows_io = WindowIo::new(
         codec,
         (admit, wiring.gate.clone()),
         ports.executor.clone(),
-        Box::new(move |stamp, effect| match effect {
+        Box::new(move |_stamp, effect| match effect {
             WindowsEffect::Window { effect: WindowEffect::Outcome { id, outcome }, .. } if id & CALL != 0 => {
                 windows_wiring.outcomes.settle(OutcomeId::from_raw(id & !CALL), LifeReply::Window(Box::new(outcome)));
-            }
-            WindowsEffect::Window { effect: WindowEffect::DerivePreload { .. }, .. } => {
-                let (db, handle, wiring) = (derive_db.clone(), derive_handle.clone(), windows_wiring.clone());
-                let launch = derive_handle.launch();
-                crate::task::spawn_blocking_on(&derive_executor, Some(launch), move || { match preload_keys(&db, true) {
-                    Ok(keys) => handle.post(windows_at, stamp, WindowsInput::PreloadKeys { keys }),
-                    Err(error) => wiring.fault(format!("the derived preload is invalid: {error}")),
-                } });
             }
             WindowsEffect::SnapshotRequest { epoch } => windows_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Windows, epoch }),
             WindowsEffect::Drained(done) => drained(&windows_wiring, done),
             WindowsEffect::Window { .. } | WindowsEffect::ReadWindow { .. } => {}
         }),
-    );
+    ).deriving(Box::new(move |stamp, watch| {
+        let (db, handle, wiring) = (derive_db.clone(), derive_handle.clone(), derive_wiring.clone());
+        let launch = derive_handle.launch();
+        crate::task::spawn_blocking_on(&derive_executor, Some(launch), move || {
+            let _watch = watch;
+            match preload_keys(&db, true) {
+                Ok(keys) => handle.post(windows_at, stamp, WindowsInput::PreloadKeys { keys }),
+                Err(error) => wiring.fault(format!("the derived preload is invalid: {error}")),
+            }
+        });
+    }));
     builder.install(windows_at, "windows", state, {
         let io = windows_io.reading(Arc::new(move |key| match key.kind() {
             crate::owners::read::windows::WindowKind::Relation { relation, params } => read_db.window_saved(&key.model, &relation, &params).map_err(|error| error.to_string()),

@@ -165,8 +165,9 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             }
             StoreEffect::ClearSecret { io_id } => {
                 let (secret, wiring, back) = (self.secret.clone(), wiring.clone(), back.clone());
-                let launch = wiring.handle.launch();
+                let (launch, watch) = (wiring.handle.launch(), back.watch(io_id));
                 drop(crate::task::spawn_blocking_on(&self.executor, Some(launch), move || {
+                    let _watch = watch;
                     let cleared = match &secret {
                         Some(secret) => secret.erase(),
                         None => Ok(()),

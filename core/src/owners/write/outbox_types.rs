@@ -32,6 +32,10 @@ pub struct OutboxPeers {
 }
 
 pub type OpId = u64;
+/// The id of the task that decodes the answer of an operation: the operation in the low bits.
+pub const DECODE_TASK: crate::runtime::EffectId = 1 << 62;
+/// The id of the task that reads an outcome for the reply in the low bits.
+pub const OUTCOME_READ_TASK: crate::runtime::EffectId = 1 << 61;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectKind {
@@ -152,6 +156,8 @@ pub enum Fault {
     Invalid,
     Copy(String),
     Rejected(RejectReason),
+    /// A task of the owner panicked: the call ends with `Runtime`.
+    Runtime(String),
 }
 
 impl Fault {
@@ -228,6 +234,8 @@ pub enum OutboxInput {
     /// The answer could not be landed: `detail` is the text the row and the outcome show.
     Refused { op_id: OpId, temporary: bool, detail: String },
     Dropped { op_id: OpId },
+    /// The task that reads the outcome of `reply` from the Store panicked.
+    OutcomeReadFailed { reply: ReplyId },
     Retry { model: String, row_id: String, action: Option<String>, reply: ReplyId },
     RetryTransfer { model: String, row_id: String, reply: ReplyId, uploads: Vec<crate::owners::store::UploadRow> },
     Discard { model: String, row_id: String, action: Option<String>, reply: ReplyId },

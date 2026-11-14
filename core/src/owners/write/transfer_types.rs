@@ -52,6 +52,8 @@ pub enum TaskKind {
     Prepare,
     Step,
     Complete,
+    /// The read of an outcome: the transfer id bits hold the reply that waits for it.
+    OutcomeRead,
 }
 
 /// The id of the task of an effect with no answer to wait for (clear, discard, abort of a debt, delete of files): its panic closes the database and nothing else.
@@ -68,6 +70,7 @@ pub(super) fn task_of(id: EffectId) -> Option<(TaskKind, TransferId)> {
         3 => TaskKind::Prepare,
         4 => TaskKind::Step,
         5 => TaskKind::Complete,
+        6 => TaskKind::OutcomeRead,
         _ => return None,
     };
     Some((kind, id & ((1 << TASK_ID_BITS) - 1)))

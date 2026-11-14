@@ -163,6 +163,8 @@ pub use crate::store::SavedWindow;
 
 pub(super) const REQUEST_TASK: EffectId = 1 << 62;
 pub(super) const READ_TASK: EffectId = 1 << 61;
+/// The id of the task that derives the preload keys: nothing waits for it, its panic closes the database.
+pub const DERIVE_TASK: EffectId = 1 << 60;
 
 pub fn request_task(request: RequestId, attempt: u32) -> EffectId { REQUEST_TASK | (request << 20) | u64::from(attempt) }
 

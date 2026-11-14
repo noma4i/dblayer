@@ -721,6 +721,7 @@ impl StateOwner for Windows {
                 let error = RequestError { class: ErrorClass::Permanent, failure: crate::ffi::DbError::Runtime { detail: "the request task failed".into() } };
                 return Self::step(state, WindowsInput::Failure { request, attempt, error }, turn);
             }
+            WindowsInput::TaskFailed { id } if id == DERIVE_TASK => return out,
             WindowsInput::TaskFailed { id } => {
                 let read_id = id & !READ_TASK;
                 let Some(key) = state.windows.iter().find(|(_, window)| window.reading(read_id)).map(|(key, _)| key.clone()) else { return out };

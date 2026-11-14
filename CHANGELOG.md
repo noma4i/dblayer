@@ -10,6 +10,7 @@
 ### Fixed
 
 - End a call or transfer with a runtime error when its task panics instead of waiting.
+- End a session reset, a receipt read or an answer decode when its task panics instead of waiting.
 - Confirm a mutation whose answer rows do not decode instead of failing it.
 - End a refresh with a runtime error when reading the saved window fails by a panic.
 - Refuse a server row whose field value does not decode instead of dropping the field.

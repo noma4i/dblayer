@@ -896,6 +896,7 @@ impl OutboxState {
             OutboxInput::Response { op_id, rows, swaps, stale, result, missing, errors } => self.on_response(now, op_id, super::outbox_flow::Answered { rows, swaps, stale, result, missing, missing_destroy: false, unreadable: false }, errors, fx),
             OutboxInput::MissingDestroy { op_id, stale } => self.on_response(now, op_id, super::outbox_flow::Answered { rows: Vec::new(), swaps: Vec::new(), stale, result: None, missing: Vec::new(), missing_destroy: true, unreadable: false }, None, fx),
             OutboxInput::Unreadable { op_id, stale } => self.on_response(now, op_id, super::outbox_flow::Answered { rows: Vec::new(), swaps: Vec::new(), stale, result: None, missing: Vec::new(), missing_destroy: false, unreadable: true }, None, fx),
+            OutboxInput::OutcomeReadFailed { reply } => Self::reply(fx, reply, OutboxAnswer::Err(Fault::Runtime("the outcome read failed".into()))),
             OutboxInput::TransportError { op_id, temporary } => self.transport_failed(now, op_id, temporary, None, fx),
             OutboxInput::Dropped { op_id } => self.transport_failed(now, op_id, true, None, fx),
             OutboxInput::Answered { req_id, outcome } => self.answered(now, req_id, outcome, fx),
@@ -1020,6 +1021,10 @@ impl StateOwner for Outbox {
     fn epoch_started(epoch: Epoch) -> Option<OutboxInput> { Some(OutboxInput::ActivateEpoch(epoch)) }
 
     fn epoch_ended(epoch: Epoch, cause: Cause) -> OutboxInput { OutboxInput::EpochEnded(EpochEnded { epoch, cause }) }
+
+    fn executor_failed(_executor: &str, pending: Vec<crate::runtime::EffectId>) -> Vec<OutboxInput> {
+        pending.into_iter().map(|id| if id & OUTCOME_READ_TASK != 0 { OutboxInput::OutcomeReadFailed { reply: id & !OUTCOME_READ_TASK } } else { OutboxInput::Unreadable { op_id: id & !DECODE_TASK, stale: Vec::new() } }).collect()
+    }
 
     fn closing() -> OutboxInput { OutboxInput::Closing }
 }

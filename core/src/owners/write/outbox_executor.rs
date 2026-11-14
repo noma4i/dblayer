@@ -16,8 +16,8 @@ pub enum OutboxSignal {
 }
 
 pub type MarkStale = Arc<dyn Fn(Vec<(String, String)>, i64) + Send + Sync>;
-/// Reads the record of a receipt outside the actor and settles the reply with the answer of the owner (`owner`, `id`, `cycle_id`, `reply`).
-pub type ReadOutcome = Arc<dyn Fn(crate::owners::store::OutcomeOwner, u64, u64, ReplyId) + Send + Sync>;
+/// Reads the record of a receipt outside the actor and settles the reply with the answer of the owner (`owner`, `id`, `cycle_id`, `reply`). The task holds the last argument, the watch of its effect, to its end.
+pub type ReadOutcome = Arc<dyn Fn(crate::owners::store::OutcomeOwner, u64, u64, ReplyId, Box<dyn Send>) + Send + Sync>;
 pub type DecodeAnswer = Arc<dyn Fn(&DecodeJob) -> Decoded + Send + Sync>;
 
 pub struct OutboxExecutor {
@@ -43,7 +43,7 @@ impl EffectRunner<Outbox> for OutboxExecutor {
             OutboxEffect::SnapshotRequest { epoch } => (self.signal)(OutboxSignal::SnapshotRequest(epoch)),
             OutboxEffect::RestoreClassified { epoch } => (self.signal)(OutboxSignal::RestoreClassified(epoch)),
             OutboxEffect::ReadOutcome { reply, op_id, cycle_id } => match &self.read_outcome {
-                Some(read) => read(crate::owners::store::OutcomeOwner::Operation, op_id, cycle_id, reply),
+                Some(read) => read(crate::owners::store::OutcomeOwner::Operation, op_id, cycle_id, reply, Box::new(back.watch(super::outbox_types::OUTCOME_READ_TASK | reply))),
                 None => (self.settle)(reply, OutboxAnswer::Err(super::outbox::Fault::NotFound)),
             },
             OutboxEffect::Stale { families, revision } => {
@@ -53,9 +53,10 @@ impl EffectRunner<Outbox> for OutboxExecutor {
                 let Some((handle, decode)) = self.decode.clone() else {
                     return back.reply(stamp, OutboxInput::Refused { op_id: job.op_id, temporary: false, detail: "the answer cannot be read".into() });
                 };
-                let back = back.clone();
+                let (back, watch) = (back.clone(), back.watch(super::outbox_types::DECODE_TASK | job.op_id));
                 let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
                 drop(crate::task::spawn_blocking_on(&handle, launch, move || {
+                    let _watch = watch;
                     let input = match decode(&job) {
                         Decoded::MissingDestroy { stale } => OutboxInput::MissingDestroy { op_id: job.op_id, stale },
                         Decoded::Land { rows, swaps, stale, result, missing } => OutboxInput::Response { op_id: job.op_id, rows, swaps, stale, result, missing, errors: None },

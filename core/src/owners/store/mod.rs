@@ -117,6 +117,10 @@ impl StateOwner for StoreWriter {
     fn epoch_ended(epoch: Epoch, cause: Cause) -> StoreInput { StoreInput::EpochEnded(EpochEnded { epoch, cause }) }
 
     fn closing() -> StoreInput { StoreInput::Idle }
+
+    fn executor_failed(_executor: &str, pending: Vec<crate::runtime::EffectId>) -> Vec<StoreInput> {
+        pending.into_iter().map(|io_id| StoreInput::Erased { io_id, result: Err("the erase task failed".into()) }).collect()
+    }
 }
 
 impl StoreState {

@@ -33,6 +33,7 @@ pub(super) fn refused(fault: Fault, what: &str) -> DbError {
         Fault::Ended(cause) => super::cause_error(&cause),
         Fault::RestoreFailed => DbError::Invalid { detail: format!("{what}: the stored operation cannot be read, discard it") },
         Fault::StateLost => DbError::Session { code: crate::transport::SessionCode::StateLost, detail: "the pending request of the session was lost".into() },
+        Fault::Runtime(detail) => DbError::Runtime { detail },
         Fault::Internal => DbError::Internal { detail: format!("{what}: internal error") },
         Fault::Invalid => DbError::Invalid { detail: format!("{what}: the owner refused the call") },
         Fault::Copy(detail) => DbError::Copy { detail },

@@ -34,6 +34,9 @@ type Open = HashMap<(RequestId, u32), CancelToken>;
 
 pub type WindowReader = Arc<dyn Fn(&WindowKey) -> Result<Option<SavedWindow>, String> + Send + Sync>;
 
+/// Runs the derive of the preload keys of a Store commit.
+pub type Derive = Box<dyn FnMut(EpochStamp, crate::runtime::FailureWatch<Windows>) + Send>;
+
 pub struct WindowIo {
     codec: Arc<dyn WindowCodec>,
     admit: Admit,
@@ -43,18 +46,25 @@ pub struct WindowIo {
     open: Open,
     reader: Option<WindowReader>,
     rest: Rest<WindowsEffect>,
+    derive: Option<Derive>,
     #[cfg(test)]
     flights: Option<super::ports::RequestsOnTheWay>,
 }
 
 impl WindowIo {
     pub fn new(codec: Arc<dyn WindowCodec>, (admit, gate): (Admit, Arc<crate::runtime::EpochGate>), handle: Handle, rest: Rest<WindowsEffect>) -> Self {
-        Self { codec, admit, gate, handle, counted: None, open: Open::default(), reader: None, rest, #[cfg(test)] flights: None }
+        Self { codec, admit, gate, handle, counted: None, open: Open::default(), reader: None, rest, derive: None, #[cfg(test)] flights: None }
     }
 
     #[cfg(test)]
     pub fn flights_in(mut self, flights: super::ports::RequestsOnTheWay) -> Self {
         self.flights = Some(flights);
+        self
+    }
+
+    /// Starts the derive of the preload keys: the task holds the watch to its end.
+    pub fn deriving(mut self, derive: Derive) -> Self {
+        self.derive = Some(derive);
         self
     }
 
@@ -130,6 +140,9 @@ impl EffectRunner<Windows> for WindowIo {
             WindowsEffect::Window { effect: WindowEffect::Cancel { request, attempt }, .. } => self.cancel(request, attempt),
             WindowsEffect::ReadWindow { key, read_id } => {
                 if let Some((key, read_id)) = self.read(stamp, (key, read_id), back) { (self.rest)(stamp, WindowsEffect::ReadWindow { key, read_id }); }
+            }
+            WindowsEffect::Window { effect: WindowEffect::DerivePreload { .. }, .. } if self.derive.is_some() => {
+                if let Some(derive) = self.derive.as_mut() { derive(stamp, back.watch(super::windows::DERIVE_TASK)); }
             }
             other => (self.rest)(stamp, other),
         }
