@@ -22,7 +22,7 @@ pub(super) struct OverlaySnapshot {
     pub virtual_transfers: HashMap<String, VirtualTransfer>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(super) struct VirtualTransfer {
     pub transfer_id: u64,
     pub op_id: Option<u64>,

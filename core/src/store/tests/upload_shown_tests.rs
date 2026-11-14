@@ -78,3 +78,40 @@ fn the_outcome_of_a_cycle_is_shown_before_the_transfer_writes_its_row() {
         assert_eq!(announced, (true, true), "{outcome:?}: the row and the queue of the upload are announced");
     }
 }
+
+/// R12, P-DATA-106 (D-460): a batch whose SQL changes nothing moves no revision and announces nothing: a stale mark of a model without windows, a family mark without windows.
+#[test]
+fn a_batch_that_changes_nothing_moves_no_revision_and_announces_nothing() {
+    let db = Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    crate::store::fixtures::put(&db, "moments", serde_json::json!({"id": "m1", "userId": null}));
+    let notices = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = notices.clone();
+    db.on_commit(move |notice| sink.lock().unwrap().push(notice)).unwrap();
+    let cases = [
+        ("a stale mark of a model without windows", vec![StoreOp::MarkStale { models: vec!["moments".into()], keys: Vec::new(), kept: Vec::new() }]),
+        ("a family mark without windows", vec![StoreOp::StaleFamilies { families: vec![("moments".into(), "feed".into())] }]),
+    ];
+    for (name, ops) in cases {
+        let before = db.published_revision().load(std::sync::atomic::Ordering::SeqCst);
+        let batch = StoreBatch { author: BatchAuthor::Feed, id: 9, stamp: crate::runtime::EpochStamp::Epoch(1), rows: Vec::new(), intents: 0, credential: None, ops };
+        let written = db.write_batch(&batch, db.files(), None).unwrap();
+        assert_eq!((i64::try_from(written.revision).unwrap(), db.published_revision().load(std::sync::atomic::Ordering::SeqCst)), (before, before), "{name}: no revision moves");
+    }
+    assert_eq!(notices.lock().unwrap().len(), 0, "a batch that changed nothing wakes nobody");
+}
+
+/// D-460, P-DATA-106: a transfer shown without its row (a restored failed transfer) changes what the queue reads, so its batch moves the revision; the same show again changes nothing; `Gone` takes it away.
+#[test]
+fn a_shown_transfer_without_a_row_is_read_at_its_revision() {
+    let db = Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let show = |shown: Shown| StoreBatch { author: BatchAuthor::Transfer, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::UploadShown { key: KEY.into(), batch: 0, error: if let Shown::Failed { error } = &shown { Some(error.clone()) } else { None }, shown, sent: 0, total: 0, attempts: 0, virtual_transfer: Some((2, Some(5))) }] };
+    let failed = || Shown::Failed { error: "RestoreFailed".into() };
+    let queued = |floor: u64| db.read_queue(i64::try_from(floor).unwrap(), (0, 0), &crate::store::fixtures::operations_view()).unwrap().2.into_iter().map(|transfer| (transfer.transfer_id, transfer.restore_error)).collect::<Vec<_>>();
+    let before = db.published_revision().load(std::sync::atomic::Ordering::SeqCst);
+    let shown = db.write_batch(&show(failed()), db.files(), None).unwrap();
+    assert_eq!((i64::try_from(shown.revision).unwrap(), queued(shown.revision)), (before + 1, vec![(2, Some("RestoreFailed".to_string()))]), "the shown transfer is read at the revision of its batch");
+    let again = db.write_batch(&show(failed()), db.files(), None).unwrap();
+    assert_eq!(again.revision, shown.revision, "the same show changes nothing");
+    let gone = db.write_batch(&show(Shown::Gone), db.files(), None).unwrap();
+    assert_eq!((gone.revision, queued(gone.revision)), (shown.revision + 1, Vec::new()), "Gone takes the transfer away at a new revision");
+}

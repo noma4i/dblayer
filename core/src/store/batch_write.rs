@@ -12,6 +12,7 @@ const OVERLAY_ROW_LIMIT: usize = 1024;
 /// What the transaction of a batch leaves for the steps after it.
 struct WrittenBatch<'a> {
     committed: super::Committed<'a>,
+    base_revision: i64,
     observed: Vec<String>,
     refused: Vec<usize>,
     live_files: std::collections::HashSet<String>,
@@ -45,7 +46,8 @@ pub(crate) struct BatchWritten {
     /// The `(model, temp, real)` replacements of the batch: the Outbox addresses the open operations of the row to `real`.
     pub swaps: Vec<(String, String, String)>,
     pub resets: Vec<crate::owners::store::EphemeralReset>,
-    pub notice: crate::owners::contract::CommittedBroadcast,
+    /// The notice of the batch: `None` when the batch has no revision and nobody is told.
+    pub notice: Option<crate::owners::contract::CommittedBroadcast>,
     /// The row of each `Show` of the batch, in the order of the ops.
     pub shown: Vec<Option<super::Row>>,
     /// The files the batch deleted: a detach of an attached file deletes one.
@@ -64,7 +66,7 @@ impl Store {
                 }
                 Err(error)
             }
-            Ok(WrittenBatch { committed: result, observed, refused, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, resets), candidates, pointer_rows, shown, ended_temps, swaps }) => {
+            Ok(WrittenBatch { committed: result, base_revision, observed, refused, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, resets), candidates, pointer_rows, shown, ended_temps, swaps }) => {
                 let mut store = self.lock();
                 store.counters.outbox_candidates += candidates;
                 store.counters.pointer_rows_read += pointer_rows;
@@ -78,8 +80,8 @@ impl Store {
                 for id in discarded {
                     if let Err(error) = files.discard(std::slice::from_ref(&id)) { faults.push(format!("remove file {id}: {error}")); }
                 }
-                let revision = result.result().revision.ok_or_else(|| StoreError::Invalid("a committed batch has no revision".into()))?;
-                let notice = crate::owners::contract::CommittedBroadcast::of_commit(result.result());
+                let revision = result.result().revision.unwrap_or(base_revision);
+                let notice = result.result().revision.map(|_| crate::owners::contract::CommittedBroadcast::of_commit(result.result()));
                 result.publish();
                 Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, observed, refused, faults, expiring, removed_memory, stale_parents, removed_operations, removed_rows, ended_temps, swaps, resets, notice, shown, files_removed })
             }
@@ -95,6 +97,7 @@ impl Store {
         let base_revision = Reader::new(&transaction, &inner.models).revision_seq()?;
         let revision = base_revision.checked_add(1).ok_or_else(|| StoreError::Constraint("revision overflow".into()))?;
         let closing: Vec<i64> = batch.ops.iter().filter_map(|op| match op { crate::owners::store::StoreOp::RemoveIntent { op_id } => i64::try_from(*op_id).ok(), _ => None }).collect();
+        let changes_before = transaction.total_changes();
         let mut originals = BTreeMap::new();
         let mut results = Vec::new();
         let mut writer = RowWrite { connection: &transaction, models: &inner.models, generation: inner.generation, revision, now, originals: &mut originals, closing: closing.clone(), candidates: 0, current: Default::default(), feed_fields: Default::default(), feed_tombstones: Default::default(), feed_hidden: None, carried: Default::default(), event: None };
@@ -111,7 +114,6 @@ impl Store {
             }
             (Vec::new(), Vec::new())
         };
-        let mut writes_database = results.iter().any(|result| !result.is_noop());
         let mut resets = Vec::new();
         let mut rolled_back = std::collections::BTreeSet::new();
         let mut virtual_transfers = Vec::new();
@@ -133,13 +135,11 @@ impl Store {
             if matches!(op, crate::owners::store::StoreOp::Show { .. }) { continue; }
             if let crate::owners::store::StoreOp::OweReread { model, id, relation } = op {
                 match super::reread_owed::owe(&mut writer, model, id, relation)? {
-                    Some(super::reread_owed::Owed::New(result)) => { results.push(result); writes_database = true; }
-                    Some(super::reread_owed::Owed::Raised) => writes_database = true,
-                    None => {}
+                    Some(super::reread_owed::Owed::New(result)) => results.push(result),
+                    Some(super::reread_owed::Owed::Raised) | None => {}
                 }
                 continue;
             }
-            writes_database |= !matches!(op, crate::owners::store::StoreOp::Rows { .. } | crate::owners::store::StoreOp::LocalRows { .. } | crate::owners::store::StoreOp::RemoveRows { .. } | crate::owners::store::StoreOp::RemoveServerRows { .. } | crate::owners::store::StoreOp::ExpireRow { .. });
             if let crate::owners::store::StoreOp::Swap { model, temp, real } = op {
                 results.push(super::swap::apply(&mut writer, model, temp, real, &closing)?);
                 continue;
@@ -155,7 +155,20 @@ impl Store {
         let (derived, pointer_rows, named_gone) = super::follow_pointer::settle_parents(&Reader::new(&transaction, &inner.models), &inner.models, &results, |plan| writer.apply(&plan))?;
         results.extend(derived);
         if let Some(touched) = super::touch_ancestors::touch_ancestors(&mut writer)? { results.push(touched); }
-        writes_database |= results.iter().any(|result| !result.is_noop());
+        let current = self.overlays.get(base_revision).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
+        let mut shown_transfers = current.virtual_transfers.clone();
+        let mut virtual_changed = false;
+        for (key, shown, transfer_id, op_id) in &virtual_transfers {
+            match shown {
+                crate::owners::write::transfer::Shown::Failed { error } => {
+                    let next = super::overlay::VirtualTransfer { transfer_id: *transfer_id, op_id: *op_id, error: error.clone() };
+                    virtual_changed |= shown_transfers.insert(key.clone(), next.clone()).is_none_or(|previous| previous != next);
+                }
+                crate::owners::write::transfer::Shown::Gone => virtual_changed |= shown_transfers.remove(key).is_some(),
+                _ => {}
+            }
+        }
+        let writes_database = transaction.total_changes() > changes_before || results.iter().any(|result| !result.is_noop()) || virtual_changed;
         let candidates = writer.candidates;
         let mut live_files = std::collections::HashSet::new();
         for file in files {
@@ -188,15 +201,9 @@ impl Store {
             let (crate::owners::store::StoreOp::Intent { effects: crate::owners::store::IntentEffects { shown: Some((model, row_id)), .. }, .. } | crate::owners::store::StoreOp::Planned { effects: crate::owners::store::IntentEffects { shown: Some((model, row_id)), .. } } | crate::owners::store::StoreOp::Show { model, row_id }) = op else { continue };
             shown.push(self.load(&Reader::new(&transaction, &inner.models), model, std::slice::from_ref(row_id)).map_err(|error| StoreError::Constraint(error.to_string()))?.remove(row_id.as_str()));
         }
-        let current = self.overlays.get(base_revision).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
-        let mut snapshot = if writes_database || !overlay.is_empty() || !resets.is_empty() { self.overlays.next(base_revision, writes_database).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))? } else { current.as_ref().clone() };
-        for (key, shown, transfer_id, op_id) in virtual_transfers {
-            match shown {
-                crate::owners::write::transfer::Shown::Failed { error } => { snapshot.virtual_transfers.insert(key, super::overlay::VirtualTransfer { transfer_id, op_id, error }); }
-                crate::owners::write::transfer::Shown::Gone => { snapshot.virtual_transfers.remove(&key); }
-                _ => {}
-            }
-        }
+        let changes_state = writes_database || !overlay.is_empty() || !resets.is_empty();
+        let mut snapshot = if changes_state { self.overlays.next(base_revision, writes_database).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))? } else { current.as_ref().clone() };
+        snapshot.virtual_transfers = shown_transfers;
         let (changes, arms) = super::overlay_write::apply(&mut snapshot, &inner.models, overlay, u64::try_from(inner.now_ms()).unwrap_or(0))?;
         combined.rows.extend(changes);
         for change in combined.rows.iter().filter(|change| change.kind == crate::store::RowChangeKind::Destroyed) {
@@ -206,6 +213,7 @@ impl Store {
         snapshot.prune_missing(OVERLAY_ROW_LIMIT, |row| Reader::new(&transaction, &inner.models).stored_row(&row.model, &row.row_id).ok().flatten().is_some());
         let position = snapshot.position;
         combined.position = position;
+        if !changes_state { combined.revision = None; }
         let journal = self.context.changed.prepare_commit(&combined);
         if writes_database {
             super::tombstones::prune_tombstones(&transaction, now, &TombstoneRetention::DEFAULT, min_pin_revision)?;
@@ -216,6 +224,6 @@ impl Store {
             if position != current.position { self.overlays.publish(snapshot); }
         }
         if let Some(journal) = journal { journal.finish(); }
-        Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), observed, refused, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, arms), candidates, pointer_rows, shown, ended_temps, swaps })
+        Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), base_revision, observed, refused, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, arms), candidates, pointer_rows, shown, ended_temps, swaps })
     }
 }

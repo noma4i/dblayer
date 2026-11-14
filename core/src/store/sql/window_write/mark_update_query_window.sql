@@ -1,1 +1,1 @@
-UPDATE query_window SET stale_since = NULL, landed_at = COALESCE(?1, landed_at) WHERE key = ?2
+UPDATE query_window SET stale_since = NULL, landed_at = COALESCE(?1, landed_at) WHERE key = ?2 AND (stale_since IS NOT NULL OR (?1 IS NOT NULL AND landed_at IS NOT ?1))

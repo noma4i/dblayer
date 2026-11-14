@@ -157,6 +157,7 @@ pub(in super::super) fn begin_operation(connection: &Connection, record: &Operat
 
 pub(crate) fn save_pending(connection: &Connection, model: &str, row_id: &str, path: &str, value: &Value) -> Result<(), StoreError> {
     let owner = texts(&[model, row_id, path]);
+    if read_trees(connection, "local_pending", &["model", "row_id", "path"], "model = ?1 AND row_id = ?2 AND path = ?3", &owner)?.iter().any(|(_, stored)| stored == value) { return Ok(()); }
     delete_trees(connection, "local_pending", "model = ?1 AND row_id = ?2 AND path = ?3", &owner)?;
     Ok(write_tree(connection, "local_pending", &["model", "row_id", "path"], &owner, value)?)
 }

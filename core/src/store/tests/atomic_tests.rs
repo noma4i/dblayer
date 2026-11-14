@@ -113,7 +113,7 @@ fn store_prop_overlay_snapshot() {
     let ephemeral = event(serde_json::json!({"op":"ephemeral","id":"m1","values":{"typing":true}}));
     let first = database.write_batch(&ephemeral, database.files(), None).unwrap();
     assert_eq!(first.revision, before as u64);
-    assert!(first.notice.position > 0);
+    assert!(first.notice.as_ref().is_some_and(|notice| notice.position > 0));
     database.read(&["moments"], |reader| {
         let row = reader.point("moments", "m1")?.unwrap();
         assert_eq!((reader.revision_seq()?, row.get("typing")), (before, Some(&serde_json::json!(true))));
@@ -121,7 +121,7 @@ fn store_prop_overlay_snapshot() {
     }).unwrap();
     let mixed = event(serde_json::json!({"op":"upsert","id":"m1","row":{"id":"m1","text":"two"},"set":{"typing":false}}));
     let second = database.write_batch(&mixed, database.files(), None).unwrap();
-    assert_eq!((second.revision, second.notice.position), (before as u64 + 1, 0));
+    assert_eq!((second.revision, second.notice.as_ref().map(|notice| notice.position)), (before as u64 + 1, Some(0)));
     database.read(&["moments"], |reader| {
         let row = reader.point("moments", "m1")?.unwrap();
         assert_eq!((reader.revision_seq()?, row.get("text"), row.get("typing")), (before + 1, Some(&serde_json::json!("two")), Some(&serde_json::json!(false))));

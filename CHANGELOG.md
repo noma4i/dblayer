@@ -11,6 +11,7 @@
 - Reload a window that changed while its last allowed page was loading.
 - Keep the revision of an upload status from going back.
 - Apply upload calls made while the database opens in the order they were made.
+- Leave the revision and subscribers untouched when a write changes no stored data.
 
 ## 6.37.0 - 2026-11-14
 

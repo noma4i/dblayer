@@ -311,7 +311,7 @@ pub struct WriteDone {
     pub ended_temps: Vec<(String, String)>,
     pub swaps: Vec<(String, String, String)>,
     pub resets: Vec<EphemeralReset>,
-    pub notice: crate::owners::contract::CommittedBroadcast,
+    pub notice: Option<crate::owners::contract::CommittedBroadcast>,
     pub shown: Vec<Option<crate::store::Row>>,
     pub files_removed: usize,
     /// The events of a Feed batch refused alone (P-DATA-99), by their place in the batch.

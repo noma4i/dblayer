@@ -69,7 +69,7 @@ fn store_owe_reread_written() {
     let before = db.revision_seq().unwrap();
     let written = owe(&db, 1, "c1");
     assert!(owed(&db, "c1"));
-    assert!(written.notice.rows.as_ref().is_some_and(|rows| rows.iter().any(|(_, id)| id == "c1")), "the row is announced: {:?}", written.notice.rows);
+    assert!(written.notice.as_ref().and_then(|notice| notice.rows.as_ref()).is_some_and(|rows| rows.iter().any(|(_, id)| id == "c1")), "the row is announced: {:?}", written.notice);
     assert_eq!(written.revision, u64::try_from(before + 1).unwrap());
     let missing = owe(&db, 2, "c9");
     assert!(!owed(&db, "c9"));
@@ -82,7 +82,7 @@ fn store_owe_reread_announces_once() {
     let db = open();
     owe(&db, 1, "c1");
     let again = owe(&db, 2, "c1");
-    assert!(again.notice.rows.as_ref().is_none_or(|rows| rows.is_empty()), "no row is announced: {:?}", again.notice.rows);
+    assert!(again.notice.as_ref().and_then(|notice| notice.rows.as_ref()).is_none_or(|rows| rows.is_empty()), "no row is announced: {:?}", again.notice);
 }
 
 /// store_owed_cleared_by_server_row: every server source of the row pays the debt.

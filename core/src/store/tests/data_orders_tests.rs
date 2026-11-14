@@ -116,7 +116,7 @@ fn data_orders_ephemeral_write_row_and_clock() {
                     let before = db.revision_seq().unwrap();
                     let batch = set_typing(&db, "m9", true);
                     assert_eq!(db.revision_seq().unwrap(), before, "{order:?}: a write is no database revision");
-                    positions.push((batch.revision, batch.notice.position));
+                    positions.push((batch.revision, batch.notice.as_ref().expect("a write of the overlay is announced").position));
                     written = Some(batch);
                 }
                 Clock => {
@@ -124,7 +124,7 @@ fn data_orders_ephemeral_write_row_and_clock() {
                     let before = db.revision_seq().unwrap();
                     let batch = db.write_batch(&reset_batch(&reset), db.files(), None).unwrap();
                     assert_eq!(db.revision_seq().unwrap(), before, "{order:?}: a reset is no database revision");
-                    positions.push((batch.revision, batch.notice.position));
+                    positions.push((batch.revision, batch.notice.as_ref().expect("a write of the overlay is announced").position));
                     clocked = true;
                 }
             }
