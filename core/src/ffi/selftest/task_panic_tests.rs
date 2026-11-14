@@ -31,6 +31,34 @@ async fn a_call_whose_transport_panics_ends_with_runtime_and_closes_the_database
     settled(&database.life, "the database did not close after the panic of the call task", || database.life.published().closed).await;
 }
 
+#[derive(Default)]
+struct PanickingClear {
+    held: crate::ffi::tests::session_guards_tests::WatchedHeld,
+    armed: std::sync::atomic::AtomicBool,
+}
+
+impl crate::ffi::CredentialStore for PanickingClear {
+    fn get(&self) -> Result<Option<String>, DbError> { self.held.get() }
+    fn set(&self, credential: String) -> Result<(), DbError> { self.held.set(credential) }
+    fn clear(&self) -> Result<(), DbError> {
+        assert!(!self.armed.load(std::sync::atomic::Ordering::SeqCst), "the credential store failed");
+        self.held.clear()
+    }
+}
+
+/// Task panic of Store (D-472, P-RT-12): the erase of the secret panics, the reset of the session ends by the row of a failed erase and the database closes.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_reset_whose_credential_clear_panics_ends_and_closes_the_database() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Arc::new(PanickingClear::default());
+    let mut stand = Stand::new();
+    stand.store = Some(store.clone());
+    let database = stand.open(Some(&directory.path().join("db.sqlite")), &[CREATE_MOMENT]).await;
+    store.armed.store(true, std::sync::atomic::Ordering::SeqCst);
+    let _ = bound(database.session_reset()).await;
+    settled(&database.life, "the database did not close after the panic of the erase task", || database.life.published().closed).await;
+}
+
 struct PanickingProbe;
 
 #[async_trait]
