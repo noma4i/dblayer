@@ -21,34 +21,37 @@ interface CablePeer {
 }
 
 class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : ScriptedTransport {
-    private class Missed(val owner: MockTransport, val message: String)
+    private class Missed(val message: String)
 
     private companion object {
-        val missed = ConcurrentLinkedQueue<Missed>()
+        val missedQueues = ConcurrentLinkedQueue<ConcurrentLinkedQueue<Missed>>()
         val testThreads: MutableSet<Thread> = ConcurrentHashMap.newKeySet()
 
         init {
             Runtime.getRuntime().addShutdownHook(Thread {
-                if (missed.isNotEmpty()) {
-                    System.err.println(missed.joinToString("\n") { it.message })
+                val unreported = missedQueues.flatten()
+                if (unreported.isNotEmpty()) {
+                    System.err.println(unreported.joinToString("\n") { it.message })
                     Runtime.getRuntime().halt(1)
                 }
             })
         }
+    }
 
-        fun failTestThread() {
-            if (Thread.currentThread() !in testThreads) return
-            val batch = generateSequence { missed.poll() }.toList()
-            if (batch.isNotEmpty()) throw AssertionError(batch.joinToString("\n") { it.message })
-        }
+    private val missed = ConcurrentLinkedQueue<Missed>()
+
+    private fun failTestThread() {
+        if (Thread.currentThread() !in testThreads) return
+        val batch = generateSequence { missed.poll() }.toList()
+        if (batch.isNotEmpty()) throw AssertionError(batch.joinToString("\n") { it.message })
     }
 
     private val createdAt = Throwable().stackTrace.firstOrNull { it.className != MockTransport::class.java.name }
     val unscripted = CopyOnWriteArrayList<TransportRequest>()
 
     init {
-        failTestThread()
         testThreads.add(Thread.currentThread())
+        missedQueues.add(missed)
     }
 
     private val cableSinks = ConcurrentHashMap<String, CableEvents>()
@@ -58,7 +61,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
     /** The cable of the session: events a test pushes with `emit` for an operation without a plain subscription go through it, and the cable calls of the session go to it. */
     @Volatile var cable: CablePeer? = null
         set(value) {
-            value?.onSubscribe = { request -> recorded.add(request); TestPulse.pulse() }
+            value?.onSubscribe = { request -> record(request); TestPulse.pulse() }
             field = value
         }
 
@@ -91,6 +94,12 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
     private val replies = ConcurrentHashMap<String, Reply>()
     private val tokens = java.util.concurrent.atomic.AtomicLong()
     private val recorded = CopyOnWriteArrayList<TransportRequest>()
+    val recordedAt = CopyOnWriteArrayList<Long>()
+
+    private fun record(request: TransportRequest) {
+        recordedAt.add(System.nanoTime())
+        recorded.add(request)
+    }
     private val responders = ConcurrentHashMap<String, (TransportRequest) -> String?>()
 
     private class PutScript(val etag: String?, val failure: DbException?)
@@ -164,7 +173,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
         Unanswered.NetworkError -> throw DbException.Network("no PUT queued for $url")
         Unanswered.Strict -> {
             val detail = "MockTransport has no PUT queued for $url"
-            missed.add(Missed(this, "$detail (mock created at $createdAt)"))
+            missed.add(Missed("$detail (mock created at $createdAt)"))
             TestPulse.pulse()
             throw DbException.Invalid(detail)
         }
@@ -182,7 +191,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
 
     /** The reply the server gave a request: a body or a refusal of the server, not a failure of the transport. The server contract decides: a repeat of a pair gets the reply of the first send, a second body under one pair and a request nobody scripted are refused. */
     private suspend fun answer(request: TransportRequest): String {
-        recorded.add(request)
+        record(request)
         TestPulse.pulse()
         val scope = request.author.toString()
         val wire = wireOf(request)
@@ -210,7 +219,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
         unanswered == Unanswered.NetworkError && given == null -> throw DbException.Network("no reply queued for ${request.operationName}")
         else -> {
             val detail = given ?: "MockTransport has no reply queued for ${request.operationName} variables=${request.variablesJson}"
-            missed.add(Missed(this, "$detail (mock created at $createdAt)"))
+            missed.add(Missed("$detail (mock created at $createdAt)"))
             unscripted.add(request)
             TestPulse.pulse()
             throw DbException.Invalid(detail)

@@ -17,6 +17,20 @@ pub(super) struct FeedTransport {
     pub(super) clock: Arc<crate::ffi::TestClock>,
 }
 
+impl FeedTransport {
+    #[track_caller]
+    pub(super) fn subscribed(&self) -> impl std::future::Future<Output = ()> {
+        let (opened, cable) = (self.opened.clone(), self.cable.clone());
+        let waiting = tokio::spawn(bound(async move { opened.notified().await }));
+        async move {
+            if let Err(failure) = waiting.await {
+                let message = failure.try_into_panic().ok().and_then(|payload| payload.downcast_ref::<String>().cloned()).unwrap_or_default();
+                panic!("{message}; {}", cable.counters());
+            }
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl crate::ffi::FakeTransport for FeedTransport {
     fn cable(&self) -> Option<&crate::transport::encrypted::cable::tests::peer_tests::CablePeer> { Some(&self.cable) }
@@ -426,7 +440,7 @@ async fn feed_prop_changed_by_reader_wants() {
     let rows = Arc::new(crate::ffi::tape::Rows::default());
     let stream = database.watch_query(r#"{"model":"Chat","relation":"list","params":{"list":"PRIMARY"}}"#, rows.clone());
     bound(stream.wait_for_initial_load()).await.unwrap();
-    bound(transport.opened.notified()).await;
+    transport.subscribed().await;
     let token = transport.token.lock().unwrap().clone().unwrap();
     let before = world.count("ChatList");
     world.answer_with("ChatList", json!({"data":{"chats":[{"__typename":"Chat","id":"c1","title":"after","revision":2,"lists":["PRIMARY"]}]}}));
@@ -495,7 +509,7 @@ async fn data_insert_on_node_reread() {
     let window = database.watch_query(r#"{"model":"Chat","relation":"list","params":{"list":"PRIMARY"}}"#, list.clone());
     world.answer_with("ChatList", json!({"data":{"chats":[]}}));
     bound(window.wait_for_initial_load()).await.unwrap();
-    bound(transport.opened.notified()).await;
+    transport.subscribed().await;
     let token = transport.token.lock().unwrap().clone().unwrap();
     let mut nodes = Vec::new();
     for id in ["c2", "c1"] {
@@ -525,7 +539,7 @@ async fn data_insert_on_node_reread_of_a_row_in_debt() {
     let window = database.watch_query(r#"{"model":"Chat","relation":"list","params":{"list":"PRIMARY"}}"#, list.clone());
     world.answer_with("ChatList", json!({"data":{"chats":[]}}));
     bound(window.wait_for_initial_load()).await.unwrap();
-    bound(transport.opened.notified()).await;
+    transport.subscribed().await;
     let token = transport.token.lock().unwrap().clone().unwrap();
     let node = |id: &str| json!({"model":"Chat","relation":"node","params":{crate::schema::NODE_PARAM: id}}).to_string();
     world.answer_with("ChatNode", chat("c1"));
@@ -565,7 +579,7 @@ async fn debt_database(path: Option<String>, held: Arc<crate::ffi::tests::sessio
     world.answer_with("ChatList", json!({"data":{"chats":[]}}));
     let other = database.watch_query(OTHER_LIST, Arc::new(crate::ffi::tape::Rows::default()));
     bound(other.wait_for_initial_load()).await.unwrap();
-    bound(transport.opened.notified()).await;
+    transport.subscribed().await;
     let token = transport.token.lock().unwrap().clone().unwrap();
     (database, transport, shown, window, token)
 }

@@ -83,6 +83,12 @@ impl CablePeer {
     /// The texts the client sent so far.
     pub(crate) fn received(&self) -> usize { self.received.load(Ordering::SeqCst) }
 
+    /// The sockets, the texts received and the subscribe frames per socket, for the message of a red wait.
+    pub(crate) fn counters(&self) -> String {
+        let subscribes: Vec<String> = (0..self.connects()).map(|token| format!("{token}:{}", self.subscribes(&token.to_string()).len())).collect();
+        format!("cable peer: connects={}, received={}, subscribes per socket [{}]", self.connects(), self.received(), subscribes.join(", "))
+    }
+
     fn observe(&self, event: PeerEvent) {
         if let Some(observer) = &self.observer { observer(event); }
     }

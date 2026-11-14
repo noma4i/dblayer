@@ -81,12 +81,16 @@ class ForegroundEventsTest {
         val registration = os.registration
 
         DBlayer.close()
+        val closedAt = System.nanoTime()
         val before = transport.calls.size
         val atClose = transport.calls.map { it.operationName }
         owner.lifecycle.currentState = Lifecycle.State.STARTED
         os.runMain()
         sink.enterForeground(registration)
-        assertEquals("calls at the close: $atClose, calls now: ${transport.calls.map { "${it.operationName} ${it.variablesJson}" }}", before, transport.calls.size)
+        val calls = transport.calls
+        val callTimes = transport.recordedAt.map { "${(it - closedAt) / 1_000_000} ms" }
+        val sends = (transport.cable as? EncryptedCablePeer)?.sendsBegan?.map { "${(it - closedAt) / 1_000_000} ms" }
+        assertEquals("calls at the close: $atClose, calls now: ${calls.map { "${it.operationName} ${it.variablesJson}" }}, call times against the return of close: $callTimes, Link.send began: $sends", before, calls.size)
     }
 
     @Test

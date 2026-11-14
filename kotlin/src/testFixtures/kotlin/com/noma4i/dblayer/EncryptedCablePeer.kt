@@ -39,6 +39,7 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer, Scripted
     @Volatile var lastEvent: String = "none"
         private set
     val closed = Channel<String>(Channel.UNLIMITED)
+    val sendsBegan = java.util.concurrent.CopyOnWriteArrayList<Long>()
     private val connections = ConcurrentHashMap<String, Connection>()
     @Volatile var lastOpened: String? = null
     private val json = Json
@@ -51,6 +52,7 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer, Scripted
 
     private class Link(private val peer: EncryptedCablePeer, private val token: String) : PlatformSocket {
         override fun send(text: String): Boolean {
+            peer.sendsBegan.add(System.nanoTime())
             peer.receive(token, text)
             return true
         }
