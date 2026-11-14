@@ -60,6 +60,8 @@ trait ErasedSlot {
     fn push_control(&mut self, control: Control);
     fn set_now(&mut self, now: Time);
     fn as_any(&self) -> &dyn Any;
+    #[cfg(test)]
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 enum Arrival<O: StateOwner> {
@@ -117,6 +119,9 @@ impl<O: StateOwner> ErasedSlot for Slot<O> {
     fn set_now(&mut self, now: Time) { self.cell.set_now(now); }
 
     fn as_any(&self) -> &dyn Any { self }
+
+    #[cfg(test)]
+    fn as_any_mut(&mut self) -> &mut dyn Any { self }
 }
 
 type FailureTarget = Box<dyn Fn(&str) -> Vec<(usize, Box<dyn Message>)>>;
@@ -304,6 +309,22 @@ impl DetScheduler {
             steps += self.trace.len() - before;
         }
         Ok(steps)
+    }
+
+    /// Hands the typed input of every admitted step of the owner at `address` to `tap`, before the step runs.
+    #[cfg(test)]
+    pub fn tap_inputs<O: StateOwner>(&mut self, address: Address<O>, tap: impl FnMut(&O::Input) + Send + 'static) {
+        let slot = self.slots[address.index].as_any_mut().downcast_mut::<Slot<O>>();
+        assert!(slot.is_some(), "the address names an owner of this type");
+        if let Some(slot) = slot { slot.cell.taps.inputs.push(Box::new(tap)); }
+    }
+
+    /// Hands the typed effects of every step of the owner at `address` to `tap`, in the order of the step.
+    #[cfg(test)]
+    pub fn tap_effects<O: StateOwner>(&mut self, address: Address<O>, tap: impl FnMut(&[super::owner::Effect<O>]) + Send + 'static) {
+        let slot = self.slots[address.index].as_any_mut().downcast_mut::<Slot<O>>();
+        assert!(slot.is_some(), "the address names an owner of this type");
+        if let Some(slot) = slot { slot.cell.taps.effects.push(Box::new(tap)); }
     }
 
     pub fn trace(&self) -> &[TraceEntry] { &self.trace }

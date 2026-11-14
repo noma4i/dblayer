@@ -63,6 +63,13 @@ impl StateOwner for WindowStore {
     fn closing() -> StoreInput { StoreInput::Idle }
 }
 
+#[derive(Debug, PartialEq)]
+enum Given {
+    Request,
+    Cancel,
+    RetryBackoff(u64),
+}
+
 struct Rig {
     det: DetScheduler,
     windows: Address<Windows>,
@@ -71,6 +78,7 @@ struct Rig {
     flights: super::ports::RequestsOnTheWay,
     batches: Batches,
     rest: Arc<Mutex<Vec<WindowsEffect>>>,
+    steps: Arc<Mutex<Vec<Given>>>,
     _runtime: tokio::runtime::Runtime,
 }
 
@@ -93,8 +101,21 @@ fn rig_with(mock: MockTransport, transport: Arc<dyn Upstream>, reader: Option<Wi
     let deliveries = det.add::<Sink<Deliveries>>("deliveries", Default::default(), crate::spec::support::Discard);
     let peers = w::WindowsPeers { store: Address::<StoreWriter>::new(store.index()), deliveries: Address::<Deliveries>::new(deliveries.index()) };
     let windows = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, Some(true), peers).with_local_request_ids(), io);
+    let steps: Arc<Mutex<Vec<Given>>> = Arc::default();
+    let given = steps.clone();
+    det.tap_effects::<Windows>(windows, move |effects| {
+        let mut given = given.lock().unwrap();
+        for effect in effects {
+            match effect {
+                Effect::Run(WindowsEffect::Window { effect: WindowEffect::Request { .. }, .. }) => given.push(Given::Request),
+                Effect::Run(WindowsEffect::Window { effect: WindowEffect::Cancel { .. }, .. }) => given.push(Given::Cancel),
+                Effect::Backoff { input: WindowsInput::RetryDue { request }, .. } => given.push(Given::RetryBackoff(*request)),
+                _ => {}
+            }
+        }
+    });
     det.start_epoch(EPOCH);
-    Rig { det, windows, mock, gate, flights, batches, rest, _runtime: runtime }
+    Rig { det, windows, mock, gate, flights, batches, rest, steps, _runtime: runtime }
 }
 
 impl Rig {
@@ -124,17 +145,17 @@ fn win_io_request_lands() {
 
 #[test]
 fn win_io_error_classes() {
-    type Holds = fn(&[WindowsEffect], &DetScheduler) -> bool;
+    type Holds = fn(&[WindowsEffect], &[Given]) -> bool;
     let cases: [(TransportError, Holds); 2] = [
-        (TransportError::Network("down".into()), |_, det| det.trace().iter().any(|entry| entry.effects.contains("Backoff") && entry.effects.contains("RetryDue { request: 1 }"))),
+        (TransportError::Network("down".into()), |_, steps| steps.contains(&Given::RetryBackoff(1))),
         (TransportError::Decode("broken".into()), |seen, _| seen.iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { outcome: WindowOutcome::Failed { .. }, .. }, .. }))),
     ];
     for (error, holds) in cases {
         let mut rig = rig();
         rig.mock.enqueue("Page", Reply::fail(error.clone()));
         rig.watch(1);
-        let rest = rig.rest.clone();
-        pump(&mut rig.det, |det| holds(&rest.lock().unwrap(), det));
+        let (rest, steps) = (rig.rest.clone(), rig.steps.clone());
+        pump(&mut rig.det, |_| holds(&rest.lock().unwrap(), &steps.lock().unwrap()));
         assert!(rig.batches.all().is_empty(), "{error:?} lands no page");
     }
 }
@@ -144,9 +165,10 @@ fn win_io_cancel_no_answer() {
     let mut rig = rig();
     rig.mock.enqueue("Page", Reply::data(json!({ "rows": ["r1"], "cursor": null })).after(Duration::MAX));
     rig.watch(1);
-    pump(&mut rig.det, |det| det.trace().iter().any(|entry| entry.effects.contains("Request")));
+    let steps = rig.steps.clone();
+    pump(&mut rig.det, |_| steps.lock().unwrap().contains(&Given::Request));
     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::InterestMinus { key: key(), id: 1 });
-    pump(&mut rig.det, |det| det.trace().iter().any(|entry| entry.effects.contains("Cancel")));
+    pump(&mut rig.det, |_| steps.lock().unwrap().contains(&Given::Cancel));
     let flights = rig.flights.clone();
     pump(&mut rig.det, |_| flights.load(std::sync::atomic::Ordering::SeqCst) == 0);
     assert_eq!(saw_input(&rig.det, "Response"), 0, "a cancelled request gives no answer");

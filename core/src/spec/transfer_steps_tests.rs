@@ -6,7 +6,7 @@ use crate::owners::store::UploadKind;
 use crate::owners::write::outbox::OutboxOutcome;
 use crate::owners::write::upload::UploadConfig;
 use crate::owners::write::transfer::{NextStep, Shown, TransferAnswer, TransferEffect, TransferId, TransferInput, TransferStage, TransferTick};
-use crate::runtime::Time;
+use crate::runtime::{Address, Time};
 use crate::transport::NetworkPurpose;
 
 const KEY: &str = "Moment:r1:upload";
@@ -278,8 +278,7 @@ fn xfer_put_timeout() {
     let attempt = twin.attempt(id);
     assert!(twin.commit().schedules.is_empty(), "the attempt commit arms no timeout: the step may still wait for the Session slot");
     let armed = twin.put_started(id, attempt);
-    let expected = TransferInput::Tick { kind: TransferTick::PutTimeout { transfer_id: id, attempt_id: attempt } };
-    assert_eq!(armed.schedules, vec![(UploadConfig::default().put_timeout, format!("{expected:?}"))], "the PUT sent arms one timeout of its attempt");
+    assert!(matches!(armed.schedules.as_slice(), [(after, TransferInput::Tick { kind: TransferTick::PutTimeout { transfer_id, attempt_id } })] if *after == UploadConfig::default().put_timeout && *transfer_id == id && *attempt_id == attempt), "the PUT sent arms one timeout of its attempt: {:?}", armed.schedules);
     let out = twin.put_timeout(id, attempt);
     assert_eq!((twin.stage(id), twin.t(id).attempts, twin.t(id).waiting_retry, out.timers, out.cancel_steps()), (TransferStage::Uploading, 1, true, 1, 1));
     assert_ne!(twin.attempt(id), attempt, "the retry is a new physical attempt");
@@ -314,10 +313,14 @@ fn xfer_put_timeout_cancelled() {
     };
     let deadline = Time(u64::try_from(UploadConfig::default().put_timeout.as_millis()).unwrap() + 1);
     let fired = |twin: &mut Twin| {
-        let before = twin.det.trace().len();
+        let fired = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = fired.clone();
+        twin.det.tap_inputs::<crate::spec::support::Spy<crate::owners::write::transfer::Transfers>>(Address::new(TRANSFER_AT), move |input| {
+            if matches!(input, TransferInput::Tick { kind: TransferTick::PutTimeout { .. } }) { count.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
+        });
         twin.det.tick(deadline);
         twin.det.run_until_quiet(10_000).unwrap();
-        twin.det.trace()[before..].iter().filter(|entry| entry.input.contains("PutTimeout")).count()
+        fired.load(std::sync::atomic::Ordering::SeqCst)
     };
     let (mut control, _) = in_flight();
     assert_eq!(fired(&mut control), 1, "an armed timeout fires once at its deadline");

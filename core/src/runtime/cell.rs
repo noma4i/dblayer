@@ -45,8 +45,16 @@ struct PendingStep<O: StateOwner> {
     failures: Vec<EffectId>,
 }
 
+#[cfg(test)]
+pub(crate) struct Taps<O: StateOwner> {
+    pub inputs: Vec<Box<dyn FnMut(&O::Input) + Send>>,
+    pub effects: Vec<Box<dyn FnMut(&[Effect<O>]) + Send>>,
+}
+
 pub(crate) struct Cell<O: StateOwner> {
     pub state: O::State,
+    #[cfg(test)]
+    pub taps: Taps<O>,
     queue: VecDeque<Item<O>>,
     pending: Option<PendingStep<O>>,
     epoch: Option<Epoch>,
@@ -63,7 +71,7 @@ pub(crate) struct Cell<O: StateOwner> {
 
 impl<O: StateOwner> Cell<O> {
     pub fn new(state: O::State) -> Self {
-        Self { state, queue: VecDeque::new(), pending: None, epoch: None, last_epoch: None, schedule: BTreeMap::new(), keys: HashMap::new(), sequence: 0, dropped: 0, now: Time(0), executor_dead: false, jitter: Box::new(super::process_seed), retry_owner: None }
+        Self { state, #[cfg(test)] taps: Taps { inputs: Vec::new(), effects: Vec::new() }, queue: VecDeque::new(), pending: None, epoch: None, last_epoch: None, schedule: BTreeMap::new(), keys: HashMap::new(), sequence: 0, dropped: 0, now: Time(0), executor_dead: false, jitter: Box::new(super::process_seed), retry_owner: None }
     }
 
     pub fn set_retry_owner(&mut self, name: &str) {
@@ -155,6 +163,8 @@ impl<O: StateOwner> Cell<O> {
             }
         };
         let input_label = label(trace, &input);
+        #[cfg(test)]
+        self.taps.inputs.iter_mut().for_each(|tap| tap(&input));
         let mut failed = false;
         let mut failures: Vec<EffectId> = Vec::new();
         let effects = match catch_unwind(AssertUnwindSafe(|| O::step(&mut self.state, input, self.now))) {
@@ -167,6 +177,8 @@ impl<O: StateOwner> Cell<O> {
             }
         };
         let effects_label = label(trace, &effects);
+        #[cfg(test)]
+        self.taps.effects.iter_mut().for_each(|tap| tap(&effects));
         let out = self.owner_stamp();
         self.pending = Some(PendingStep { effects: effects.into(), stamp: out, ended, failed, failures });
         let failed = if self.pending.as_ref().is_some_and(|pending| pending.effects.is_empty()) { self.finish_step(name, runner) } else { false };
