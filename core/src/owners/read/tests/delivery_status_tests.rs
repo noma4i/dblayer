@@ -45,12 +45,12 @@ fn a_blob_stream_shows_the_transfer_with_the_copy_url_and_the_processing_of_its_
     let asked = reads(Deliveries::step(&mut state, DeliveryInput::TransferStatus { stream: STREAM, revision: 3, blob: d::BlobStatus::of(&Shown::Queued { progress: 0 }) }, crate::runtime::Time(0)));
     assert_eq!(asked.len(), 1);
     assert!(statuses(&state).is_empty(), "no value before the row was read");
-    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 4, position: 0, relevant: Some((4, 0)), data: d::ReadData::Upload { wait_reason: None, local_url: None, processing: None } }, crate::runtime::Time(0));
+    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 4, position: 0, relevant: Some((4, 0)), touching: Vec::new(), data: d::ReadData::Upload { wait_reason: None, local_url: None, processing: None } }, crate::runtime::Time(0));
     assert_eq!(statuses(&state), [(4, d::BlobStatus::of(&Shown::Queued { progress: 0 }))], "the value carries the revision of the row read that completed it");
 
     let asked = reads(Deliveries::step(&mut state, commit(&["r1"]), crate::runtime::Time(0)));
     assert_eq!(asked.len(), 1);
-    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 5, position: 0, relevant: Some((5, 0)), data: d::ReadData::Upload { wait_reason: None, local_url: Some("file:copy".into()), processing: None } }, crate::runtime::Time(0));
+    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 5, position: 0, relevant: Some((5, 0)), touching: Vec::new(), data: d::ReadData::Upload { wait_reason: None, local_url: Some("file:copy".into()), processing: None } }, crate::runtime::Time(0));
     let shown = statuses(&state);
     assert_eq!(shown.len(), 1, "the journal keeps the latest status only");
     assert_eq!((shown[0].0, shown[0].1.local_url.as_deref(), shown[0].1.state.as_str()), (5, Some("file:copy"), "queued"), "a re-read row gives the value its commit revision");

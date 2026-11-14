@@ -86,11 +86,15 @@ pub enum ReadMode {
     Changes { from_revision: i64, from_position: u64, limit: usize },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The commits between the version the stream holds and the snapshot that touch its view, oldest first, with the rows each wrote.
+pub type Touching = Vec<((i64, u64), crate::owners::contract::ChangedRows)>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReadVersion {
     pub revision: i64,
     pub position: u64,
     pub relevant: Option<(i64, u64)>,
+    pub touching: Touching,
 }
 
 type UploadRowRead = Result<(Option<crate::owners::write::upload::WaitReason>, Option<String>, Option<crate::ffi::WireProcessing>), String>;
@@ -295,7 +299,7 @@ pub enum DeliveryInput {
     /// `deferred` is set for a stream of rows on temporary ids that has no server id yet: its window opens at the swap.
     Open { stream: StreamId, view: View, epoch: Epoch, identity: bool, valid: bool, revision: i64, deferred: Option<Deferred> },
     Committed(Committed),
-    ReadDone { stream: StreamId, read_id: u64, revision: i64, position: u64, relevant: Option<(i64, u64)>, data: ReadData },
+    ReadDone { stream: StreamId, read_id: u64, revision: i64, position: u64, relevant: Option<(i64, u64)>, touching: Touching, data: ReadData },
     ReadFailed { stream: StreamId, read_id: u64, revision: i64, error: String },
     TaskFailed { id: EffectId },
     WindowState { stream: StreamId, state: WindowState },
@@ -427,6 +431,13 @@ fn shown_hash(row: &WireRow) -> u64 {
 
 fn same_shown(left: &[StreamRow], right: &[StreamRow]) -> bool {
     left.len() == right.len() && left.iter().zip(right).all(|(left, right)| left.id == right.id && left.stamp == right.stamp && left.row == right.row)
+}
+
+fn changed_ids<'a>(before: &'a [StreamRow], now: &'a [StreamRow]) -> BTreeSet<&'a str> {
+    let held: BTreeMap<&str, &StreamRow> = before.iter().map(|row| (row.id.as_str(), row)).collect();
+    let kept: BTreeSet<&str> = now.iter().map(|row| row.id.as_str()).collect();
+    let moved = now.iter().filter(|row| held.get(row.id.as_str()) != Some(row)).map(|row| row.id.as_str());
+    moved.chain(held.keys().filter(|id| !kept.contains(*id)).copied()).collect()
 }
 
 fn entry(row: &StreamRow) -> Result<Entry, String> {
@@ -630,7 +641,7 @@ impl StateOwner for Deliveries {
                 state.streams.insert(stream, machine);
                 state.index(stream);
             }
-            DeliveryInput::ReadDone { stream, read_id, revision, position, relevant, data } => on(state, stream, &mut out, |machine, fx| machine.read_done(read_id, ReadVersion { revision, position, relevant }, data, fx)),
+            DeliveryInput::ReadDone { stream, read_id, revision, position, relevant, touching, data } => on(state, stream, &mut out, |machine, fx| machine.read_done(read_id, ReadVersion { revision, position, relevant, touching }, data, fx)),
             DeliveryInput::TaskFailed { id } => {
                 let ((stream, read_id), revision) = (task_read(id), state.revision);
                 on(state, stream, &mut out, |machine, fx| machine.read_failed(read_id, revision, "the read task failed".into(), fx));

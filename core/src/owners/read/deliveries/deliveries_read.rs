@@ -254,6 +254,15 @@ impl Delivery {
         fx.push(self.new_read(self.read_revision));
     }
 
+    fn relevant_of(&self, version: &ReadVersion, data: &Whole) -> Option<(i64, u64)> {
+        let Whole::Rows { rows, total, .. } = data else { return version.relevant };
+        let table = crate::store::ddl::table_name(&self.view.model);
+        let changed: Vec<(String, String)> = changed_ids(&self.rows, rows).into_iter().map(|id| (table.clone(), id.to_string())).collect();
+        if changed.is_empty() || *total != self.total { return version.relevant; }
+        let latest_writer = |row: &(String, String)| version.touching.iter().rev().find(|(_, written)| written.as_ref().is_none_or(|written| written.contains(row))).map(|(at, _)| *at);
+        changed.iter().map(latest_writer).collect::<Option<Vec<_>>>().and_then(|written| written.into_iter().max()).or(version.relevant)
+    }
+
     pub(super) fn settle_read(&mut self, read_id: u64, version: ReadVersion, data: Whole, fx: &mut Vec<Emit>) {
         if let Some(view) = self.swapped_view(&data) {
             self.rebind(view, fx);
@@ -273,7 +282,7 @@ impl Delivery {
         let value = if self.stage == DeliveryStage::Opening {
             (revision, version.position)
         } else if changed {
-            version.relevant.filter(|relevant| *relevant >= (self.revision, self.value_position)).unwrap_or((revision, version.position))
+            self.relevant_of(&version, &data).filter(|relevant| *relevant >= (self.revision, self.value_position)).unwrap_or((revision, version.position))
         } else {
             (self.revision, self.value_position)
         };

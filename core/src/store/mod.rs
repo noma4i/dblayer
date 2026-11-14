@@ -244,6 +244,8 @@ pub struct Store {
     #[cfg(test)]
     pub(crate) panic_reads: std::sync::atomic::AtomicU8,
     #[cfg(test)]
+    pub(crate) view_gate: Mutex<Option<Arc<crate::test_wait::Flag>>>,
+    #[cfg(test)]
     pub(crate) after_network_check: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     #[cfg(test)]
     pub(crate) after_commit: Mutex<Option<CommitCallback>>,
@@ -283,6 +285,8 @@ impl Store {
             require_unlocked_responses: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             panic_reads: std::sync::atomic::AtomicU8::new(0),
+            #[cfg(test)]
+            view_gate: Mutex::new(None),
             #[cfg(test)]
             after_network_check: Mutex::new(None),
             #[cfg(test)]

@@ -48,7 +48,7 @@ fn rows_script(rev: &[(i64, &[&str])]) -> Vec<d::DeliveryInput> {
             script.push(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
         }
         let rows = list.iter().map(|id| d::StreamRow::new(id, 0)).collect();
-        script.push(d::DeliveryInput::ReadDone { stream: STREAM, read_id: index as u64 + 1, revision: *revision, position: 0, relevant: Some((*revision, 0)), data: d::ReadData::Rows { rows, replaced: Vec::new(), total: None } });
+        script.push(d::DeliveryInput::ReadDone { stream: STREAM, read_id: index as u64 + 1, revision: *revision, position: 0, relevant: Some((*revision, 0)), touching: Vec::new(), data: d::ReadData::Rows { rows, replaced: Vec::new(), total: None } });
     }
     script
 }
@@ -417,7 +417,7 @@ fn dlv_prop_delta_order() {
         lists.insert(revision, list.clone());
         let read_id = inner(&det, addr).read_id(STREAM);
         let rows: Vec<d::StreamRow> = list.iter().map(|id| d::StreamRow::new(id, if next(5) == 0 { revision } else { 0 })).collect();
-        det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, position: 0, relevant: Some((revision, 0)), data: d::ReadData::Rows { rows, replaced, total: None } });
+        det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, position: 0, relevant: Some((revision, 0)), touching: Vec::new(), data: d::ReadData::Rows { rows, replaced, total: None } });
         det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
         if next(2) == 0 {
             det.post(addr, EpochStamp::Control, d::DeliveryInput::Pull { stream: STREAM, outcome: answers.register(EPOCH).id(), reader: 1 });

@@ -19,7 +19,7 @@ fn temporary_entity(fetch: Fetch) -> (Twin, Arc<AtomicBool>) {
 }
 
 fn rows(twin: &mut Twin, revision: i64, rows: Vec<d::StreamRow>, replaced: Vec<(String, String)>) {
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision, position: 0, relevant: Some((revision, 0)), data: d::ReadData::Rows { rows, replaced, total: None } });
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision, position: 0, relevant: Some((revision, 0)), touching: Vec::new(), data: d::ReadData::Rows { rows, replaced, total: None } });
 }
 
 fn commit(twin: &mut Twin, revision: i64) {
@@ -45,7 +45,7 @@ fn dlv_deferred_index_other_model() {
     take(&twin.log);
     rows(&mut twin, 0, vec![d::StreamRow::new("temp-00000000-0000-0000-0000-310000000000", 0)], vec![]);
     let read_id = twin.state().read_id(STREAM + 1);
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM + 1, read_id, revision: 0, position: 0, relevant: Some((0, 0)), data: d::ReadData::Rows { rows: vec![d::StreamRow::new("temp-00000000-0000-0000-0000-310000000000", 0)], replaced: vec![], total: None } });
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM + 1, read_id, revision: 0, position: 0, relevant: Some((0, 0)), touching: Vec::new(), data: d::ReadData::Rows { rows: vec![d::StreamRow::new("temp-00000000-0000-0000-0000-310000000000", 0)], replaced: vec![], total: None } });
     take(&twin.log);
     first_ready.store(true, Ordering::SeqCst);
     second_ready.store(true, Ordering::SeqCst);

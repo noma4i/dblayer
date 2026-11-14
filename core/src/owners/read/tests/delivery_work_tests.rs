@@ -75,7 +75,7 @@ impl Work {
 
     fn answer(&self, read: PendingRead) -> DeliveryInput {
         let (version, data) = self.snapshots.read(&read.view, read.revision, read.after, read.mode).unwrap();
-        DeliveryInput::ReadDone { stream: read.stream, read_id: read.read_id, revision: version.revision, position: version.position, relevant: version.relevant, data }
+        DeliveryInput::ReadDone { stream: read.stream, read_id: read.read_id, revision: version.revision, position: version.position, relevant: version.relevant, touching: version.touching, data }
     }
 
     fn put(&self, index: usize, id: &str, text: &str) { put(&self.db, &model(index), json!({"id": id, "text": text})); }

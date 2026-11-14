@@ -15,7 +15,7 @@ fn commit(twin: &mut Twin, revision: i64, table: &str) {
 
 fn read_done(twin: &mut Twin, revision: i64, items: Vec<OperationInfo>) {
     let read_id = twin.read_id();
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, position: 0, relevant: Some((revision, 0)), data: d::ReadData::Operations(items) });
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, position: 0, relevant: Some((revision, 0)), touching: Vec::new(), data: d::ReadData::Operations(items) });
 }
 
 fn opened() -> Twin {

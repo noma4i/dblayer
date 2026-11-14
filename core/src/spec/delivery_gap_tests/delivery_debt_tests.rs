@@ -13,7 +13,7 @@ fn read(twin: &mut Twin, revision: i64, owing: &[&str]) -> Vec<String> {
     take(&twin.log);
     let rows = ["r1", "r2"].iter().map(|id| d::StreamRow::new(id, 1)).collect();
     let debts = owing.iter().map(|id| ("Moment".to_string(), id.to_string(), "node".to_string())).collect();
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision, position: 0, relevant: Some((revision, 0)), data: d::ReadData::Owed(Box::new(d::ReadData::Rows { rows, replaced: Vec::new(), total: None }), debts) });
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision, position: 0, relevant: Some((revision, 0)), touching: Vec::new(), data: d::ReadData::Owed(Box::new(d::ReadData::Rows { rows, replaced: Vec::new(), total: None }), debts) });
     take(&twin.log).into_iter().filter_map(|entry| match entry { Emitted::Send { to: WINDOWS, input } => Some(input), _ => None }).collect()
 }
 
@@ -70,7 +70,7 @@ fn dlv_owed_row_interest_count_and_local_table() {
     count.post(d::DeliveryInput::Open { stream: STREAM, view: counted, epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: None });
     count.step(Input::WindowState(Ws::loaded_at(1)));
     take(&count.log);
-    count.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: count.read_id(), revision: 1, position: 0, relevant: Some((1, 0)), data: d::ReadData::Owed(Box::new(d::ReadData::Count(2)), ids(&["r1"])) });
+    count.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: count.read_id(), revision: 1, position: 0, relevant: Some((1, 0)), touching: Vec::new(), data: d::ReadData::Owed(Box::new(d::ReadData::Count(2)), ids(&["r1"])) });
     let sends: Vec<String> = take(&count.log).into_iter().filter_map(|entry| match entry { Emitted::Send { to: WINDOWS, input } => Some(input), _ => None }).collect();
     assert_eq!(sends.iter().filter(|send| send.starts_with("InterestPlus") && send.contains("r1")).count(), 1, "{sends:?}");
     let mut local = Twin::new();
@@ -79,7 +79,7 @@ fn dlv_owed_row_interest_count_and_local_table() {
     table.remote = false;
     local.post(d::DeliveryInput::Open { stream: STREAM, view: table, epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: None });
     take(&local.log);
-    local.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: local.read_id(), revision: 1, position: 0, relevant: Some((1, 0)), data: d::ReadData::Owed(Box::new(d::ReadData::Rows { rows: vec![d::StreamRow::new("r1", 1)], replaced: Vec::new(), total: None }), ids(&["r9"])) });
+    local.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: local.read_id(), revision: 1, position: 0, relevant: Some((1, 0)), touching: Vec::new(), data: d::ReadData::Owed(Box::new(d::ReadData::Rows { rows: vec![d::StreamRow::new("r1", 1)], replaced: Vec::new(), total: None }), ids(&["r9"])) });
     let sends: Vec<String> = take(&local.log).into_iter().filter_map(|entry| match entry { Emitted::Send { to: WINDOWS, input } => Some(input), _ => None }).collect();
     assert_eq!(sends.iter().filter(|send| send.starts_with("InterestPlus") && send.contains("r9")).count(), 1, "{sends:?}");
 }

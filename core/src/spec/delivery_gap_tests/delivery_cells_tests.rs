@@ -288,6 +288,25 @@ fn dlv_prop_value_revision_relevant_commit() {
     }
 }
 
+/// P-DLV-17, D-453: the value carries the revision of the latest commit that wrote each changed row, never earlier than a commit that changed part of it: a row changed only through a dependency gives the latest commit touching the view.
+#[test]
+fn dlv_value_revision_covers_every_changed_row() {
+    let written = |ids: &[&str]| Some(ids.iter().map(|id| ("row_Moment".to_string(), id.to_string())).collect::<std::collections::BTreeSet<_>>());
+    let shown = |twin: &mut Twin, now: Vec<d::StreamRow>, total: Option<u64>, touching: crate::owners::read::deliveries::Touching| {
+        twin.step(Input::Committed { revision: 5, touches: true });
+        let read_id = twin.read_id();
+        twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 9, position: 0, relevant: Some((8, 0)), touching, data: d::ReadData::Rows { rows: now, replaced: Vec::new(), total } });
+        twin.read_all().iter().map(|value| match value { Val::Delta { revision, .. } | Val::Snapshot { revision, .. } => *revision, other => panic!("{other:?}") }).collect::<Vec<_>>()
+    };
+    let mut dependency = live_rows();
+    let now = vec![d::StreamRow::new("r1", 7), d::StreamRow::new("r2", 6)];
+    assert_eq!(shown(&mut dependency, now.clone(), None, vec![((6, 0), written(&["r2"])), ((8, 0), written(&["x"]))]), [8], "r1 changed through a dependency at 8, the value is not labelled with the commit of r2");
+    let mut both = live_rows();
+    assert_eq!(shown(&mut both, now.clone(), None, vec![((6, 0), written(&["r2"])), ((7, 0), written(&["r1"])), ((8, 0), written(&["x"]))]), [7], "every changed row is written: the latest of their commits");
+    let mut counted = live_rows();
+    assert_eq!(shown(&mut counted, now, Some(5), vec![((6, 0), written(&["r1", "r2"])), ((8, 0), written(&["x"]))]), [8], "the total changed with a later commit: the value is not labelled with the commit of the shown rows");
+}
+
 #[test]
 fn dlv_prop_commit_during_read_is_delivered() {
     fn commit(twin: &mut Twin, revision: i64) -> Vec<Effect> {
@@ -295,7 +314,7 @@ fn dlv_prop_commit_during_read_is_delivered() {
         Twin::modelled(take(&twin.log))
     }
     fn complete(twin: &mut Twin, read_id: u64, revision: i64, values: &[&str]) {
-        twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, position: 0, relevant: Some((revision, 0)), data: d::ReadData::Rows { rows: rows_of(&rows(values)), replaced: Vec::new(), total: None } });
+        twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, position: 0, relevant: Some((revision, 0)), touching: Vec::new(), data: d::ReadData::Rows { rows: rows_of(&rows(values)), replaced: Vec::new(), total: None } });
         take(&twin.log);
     }
     fn pull(twin: &mut Twin) -> Val {
@@ -333,7 +352,7 @@ fn dlv_changed_read_without_current_relevant_version_keeps_the_stream() {
     for relevant in [None, Some((0, 0))] {
         let mut twin = live_rows();
         twin.step(Input::Committed { revision: 2, touches: true });
-        twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision: 2, position: 0, relevant, data: d::ReadData::Rows { rows: rows_of(&rows(&["r1", "r2"])), replaced: Vec::new(), total: None } });
+        twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision: 2, position: 0, relevant, touching: Vec::new(), data: d::ReadData::Rows { rows: rows_of(&rows(&["r1", "r2"])), replaced: Vec::new(), total: None } });
         let journal = twin.state().journal(STREAM);
         assert!(!journal.iter().any(|value| matches!(value, d::Value::Ended(_))), "{relevant:?}: the stream stays open: {journal:?}");
         let labelled = match journal.last() {

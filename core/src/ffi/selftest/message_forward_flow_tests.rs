@@ -83,3 +83,28 @@ async fn flow_message_forward() {
     settled(&rig, "the event bubble stands in the thread", || ids(&thread).len() == 2 && forwarded_by_me(&rig, &thread, "f2")).await;
     rig.database.close_now();
 }
+
+/// P-DLV-17, D-453: a place whose reader pulls after the later commits of the forward shows the value at the revision of the commit that wrote its changed rows, the receipt revision.
+#[tokio::test(flavor = "multi_thread")]
+async fn forward_pointer_keeps_the_receipt_revision_when_the_reader_pulls_late() {
+    let rig = rig_with_source().await;
+    let thread = watch(&rig, TARGET_THREAD, 0).await;
+    let chats = watch(&rig, CHATS, 2).await;
+
+    let release = Arc::new(crate::test_wait::Flag::default());
+    *rig.database.db.view_gate.lock().unwrap() = Some(release.clone());
+
+    let refused = rig.world.hold_then("MessageForward", Fault::Refuse { code: "FORBIDDEN", confirmed: true });
+    let receipt = forward(&rig).await;
+    refused.entered().await;
+    assert_eq!(crate::ffi::tests::queue_view_tests::queued(&rig.database).iter().map(|operation| operation.attempts).collect::<Vec<_>>(), [1], "the attempt of the forward is not committed when the server has the request");
+    release.set();
+
+    settled(&rig, "the copy stands in the thread", || thread.len() == 1).await;
+    let copy = ids(&thread).remove(0);
+    settled(&rig, "the target chat points at the copy", || field(&rig, "Chat", &chats, "c2", "lastMessageId") == Some(text(&copy))).await;
+    let seen = |rows: &Rows| rows.last().map(|seen| seen.revision);
+    assert_eq!((seen(&thread), seen(&chats)), (Some(receipt.revision), Some(receipt.revision)), "the pointer and the copy changed in the receipt commit");
+    refused.release();
+    rig.database.close_now();
+}

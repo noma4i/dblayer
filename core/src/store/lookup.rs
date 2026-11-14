@@ -56,8 +56,10 @@ impl Store {
         let revision = reader.revision_seq()?;
         let position = reader.position();
         let relevant = self.context.changed.relevant(view, from, (revision, position));
-        Ok(crate::owners::read::deliveries::ReadVersion { revision, position, relevant })
+        Ok(crate::owners::read::deliveries::ReadVersion { revision, position, relevant, touching: Vec::new() })
     }
+
+    pub(crate) fn touching(&self, view: &crate::owners::read::deliveries::View, from: (i64, u64), upto: (i64, u64)) -> crate::owners::read::deliveries::Touching { self.context.changed.touching(view, from, upto) }
     pub(crate) fn load(&self, reader: &Reader<'_>, model: &str, ids: &[String]) -> Result<HashMap<String, Row>, CoreError> {
         self.load_with_sync(reader, model, ids).map(|(rows, _)| rows)
     }
@@ -257,6 +259,8 @@ impl Store {
     pub(crate) fn read_view(&self, query: &Query, count: bool, floor: i64, after: i64, window: Option<&crate::owners::read::windows::WindowKey>, held: Option<HeldVersion>, view: &crate::owners::read::deliveries::View, from: (i64, u64)) -> Result<ViewSnapshot, CoreError> {
         #[cfg(test)]
         assert!(self.panic_reads.load(std::sync::atomic::Ordering::SeqCst) & super::PANIC_VIEW_READ == 0, "the snapshot read failed");
+        #[cfg(test)]
+        if let Some(gate) = self.view_gate.lock().unwrap_or_else(|error| error.into_inner()).clone() { gate.wait_blocking("the view read waits for its gate"); }
         let model = query.model.as_str();
         self.read_models(&[model], |reader| {
             let version = self.view_version(reader, view, from)?;

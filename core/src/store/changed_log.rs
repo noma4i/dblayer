@@ -5,7 +5,7 @@ use crate::lock::lock as held;
 
 use super::CommitResult;
 use crate::owners::contract::CommittedBroadcast;
-use crate::owners::read::deliveries::{touches, View};
+use crate::owners::read::deliveries::{touches, Touching, View};
 
 const MAX_LOGGED_ROWS: usize = 8192;
 
@@ -111,18 +111,29 @@ impl ChangedLog {
         Some(changed)
     }
 
-    pub(crate) fn relevant(&self, view: &View, from: (i64, u64), upto: (i64, u64)) -> Option<(i64, u64)> {
+    fn scan(&self, view: &View, from: (i64, u64), upto: (i64, u64), mut touching: impl FnMut(&Entry)) -> bool {
         let log = held(&self.0);
         let logged = log.pending.as_ref().map_or(log.logged_through, |entry| log.logged_through.max(entry.at.0));
         let mut covered = upto.0 <= logged && from.0 >= log.start_revision && from >= log.dropped_through;
-        let mut latest = None;
         for entry in log.items.iter().chain(log.pending.iter()).filter(|entry| entry.at > from && entry.at <= upto) {
             match &entry.notice {
-                Some(notice) if touches(view, &notice.models, &notice.tables, &notice.rows) => latest = Some(entry.at),
+                Some(notice) if touches(view, &notice.models, &notice.tables, &notice.rows) => touching(entry),
                 None => covered = false,
                 _ => {}
             }
         }
+        covered
+    }
+
+    pub(crate) fn relevant(&self, view: &View, from: (i64, u64), upto: (i64, u64)) -> Option<(i64, u64)> {
+        let mut latest = None;
+        let covered = self.scan(view, from, upto, |entry| latest = Some(entry.at));
         latest.or_else(|| (!covered).then_some(upto))
+    }
+
+    pub(crate) fn touching(&self, view: &View, from: (i64, u64), upto: (i64, u64)) -> Touching {
+        let mut entries = Vec::new();
+        let covered = self.scan(view, from, upto, |entry| entries.push((entry.at, entry.notice.as_ref().and_then(|notice| notice.rows.clone()))));
+        if covered { entries } else { Vec::new() }
     }
 }

@@ -213,11 +213,11 @@ impl Twin {
                 let changed = rows.iter().cloned().collect::<std::collections::BTreeSet<_>>();
                 self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables, rows: (!*reset).then_some(changed), models: if *reset { Models::All } else { Default::default() }, stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
             }
-            Input::ReadDone { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, position: 0, relevant: Some((*revision, 0)), data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: self.total } }),
-            Input::ReadRelevant { revision, position, relevant, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, position: *position, relevant: *relevant, data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: self.total } }),
-            Input::ReadOverflow { revision } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, position: 0, relevant: Some((*revision, 0)), data: d::ReadData::Overflow }),
-            Input::CountDone { revision, count } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, position: 0, relevant: Some((*revision, 0)), data: d::ReadData::Count(*count) }),
-            Input::ReadStale { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id() + 100, revision: *revision, position: 0, relevant: Some((*revision, 0)), data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: None } }),
+            Input::ReadDone { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, position: 0, relevant: Some((*revision, 0)), touching: Vec::new(), data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: self.total } }),
+            Input::ReadRelevant { revision, position, relevant, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, position: *position, relevant: *relevant, touching: Vec::new(), data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: self.total } }),
+            Input::ReadOverflow { revision } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, position: 0, relevant: Some((*revision, 0)), touching: Vec::new(), data: d::ReadData::Overflow }),
+            Input::CountDone { revision, count } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, position: 0, relevant: Some((*revision, 0)), touching: Vec::new(), data: d::ReadData::Count(*count) }),
+            Input::ReadStale { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id() + 100, revision: *revision, position: 0, relevant: Some((*revision, 0)), touching: Vec::new(), data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: None } }),
             Input::ReadFailed { revision } => self.post(d::DeliveryInput::ReadFailed { stream, read_id: self.read_id(), revision: *revision, error: "e".into() }),
             Input::ReadFailedStale => self.post(d::DeliveryInput::ReadFailed { stream, read_id: self.read_id() + 100, revision: 2, error: "e".into() }),
             Input::WindowState(state) => self.post(d::DeliveryInput::WindowState { stream, state: window_state(state) }),
@@ -262,7 +262,7 @@ impl Twin {
             });
             if asked.is_empty() { break; }
             for read_id in asked {
-                self.post(d::DeliveryInput::ReadDone { stream, read_id, revision: 0, position: 0, relevant: Some((0, 0)), data: d::ReadData::Upload { wait_reason: None, local_url: None, processing: None } });
+                self.post(d::DeliveryInput::ReadDone { stream, read_id, revision: 0, position: 0, relevant: Some((0, 0)), touching: Vec::new(), data: d::ReadData::Upload { wait_reason: None, local_url: None, processing: None } });
             }
             entries.extend(take(&self.log));
         }
@@ -389,7 +389,7 @@ fn dlv_opening_status() {
     let read_id = full.read_id();
     let local_url = Some("file:///copy".to_string());
     let processing = Some(crate::ffi::WireProcessing { progress: Some(0.5) });
-    full.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 11, position: 0, relevant: Some((11, 0)), data: d::ReadData::Upload { wait_reason: None, local_url: local_url.clone(), processing: processing.clone() } });
+    full.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 11, position: 0, relevant: Some((11, 0)), touching: Vec::new(), data: d::ReadData::Upload { wait_reason: None, local_url: local_url.clone(), processing: processing.clone() } });
     assert!(matches!(full.state().journal(STREAM).as_slice(), [d::Value::Status { revision: 11, blob }] if blob.local_url == local_url && blob.processing == processing && blob.progress == 42));
     let mut blob = open_as(Kind::Blob);
     assert!(blob.step(Input::Transfer { state: "uploading".into(), revision: 11 }).is_empty());

@@ -18,19 +18,19 @@ fn dlv_count_temp_swap() {
     twin.post(d::DeliveryInput::Open { stream: STREAM, view: temporary, epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: Some(deferred) });
     let first = Twin::modelled(take(&twin.log));
     assert!(!first.contains(&Effect::InterestPlus), "the temporary id must not open a window");
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision: 0, position: 0, relevant: Some((0, 0)), data: d::ReadData::Count(0) });
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision: 0, position: 0, relevant: Some((0, 0)), touching: Vec::new(), data: d::ReadData::Count(0) });
     take(&twin.log);
     resolved.store(true, Ordering::SeqCst);
     twin.post(d::DeliveryInput::Committed(Committed { batch: 1, revision: 1, tables: vec!["moments".into()], rows: None, models: Models::default(), stale_parents: Vec::new(), position: 1, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
     let read_id = twin.read_id();
     take(&twin.log);
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 1, position: 0, relevant: Some((1, 0)), data: d::ReadData::Count(0) });
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 1, position: 0, relevant: Some((1, 0)), touching: Vec::new(), data: d::ReadData::Count(0) });
     let effects = take(&twin.log);
     let interests = effects.iter().filter(|effect| matches!(effect, Emitted::Send { to: WINDOWS, input } if input.starts_with("InterestPlus") && input.contains("server-parent-window"))).count();
     assert_eq!(interests, 1, "the swap opens the real count window exactly once: {effects:?}");
     assert!(effects.iter().any(|effect| matches!(effect, Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Read { view, .. }, .. }) if view.subject == "server-parent")));
     twin.post(d::DeliveryInput::WindowState { stream: STREAM, state: WindowState::idle() });
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision: 2, position: 0, relevant: Some((2, 0)), data: d::ReadData::Count(7) });
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision: 2, position: 0, relevant: Some((2, 0)), touching: Vec::new(), data: d::ReadData::Count(7) });
     assert!(twin.state().journal(STREAM).iter().any(|value| matches!(value, d::Value::Count { count: 7, .. })));
 }
 
@@ -76,9 +76,9 @@ fn dlv_live_resync() {
     let old_id = twin.read_id();
     assert_eq!(resync(&mut twin), [Effect::Read(2)]);
     let id = twin.read_id();
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: old_id, revision: 2, position: 0, relevant: Some((2, 0)), data: d::ReadData::Rows { rows: rows_of(&rows(&["r2"])), replaced: vec![], total: None } });
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: old_id, revision: 2, position: 0, relevant: Some((2, 0)), touching: Vec::new(), data: d::ReadData::Rows { rows: rows_of(&rows(&["r2"])), replaced: vec![], total: None } });
     assert!(twin.state().journal(STREAM).is_empty());
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: id, revision: 2, position: 0, relevant: Some((2, 0)), data: d::ReadData::Rows { rows: rows_of(&rows(&["r2"])), replaced: vec![], total: None } });
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: id, revision: 2, position: 0, relevant: Some((2, 0)), touching: Vec::new(), data: d::ReadData::Rows { rows: rows_of(&rows(&["r2"])), replaced: vec![], total: None } });
     assert!(matches!(twin.state().journal(STREAM).as_slice(), [d::Value::Snapshot { revision: 2, .. }]));
 }
 
@@ -89,7 +89,7 @@ fn dlv_live_resync_after_read_delta() {
     assert!(matches!(twin.read_all().as_slice(), [Val::Delta { base: 1, revision: 2, .. }]));
     assert_eq!(resync(&mut twin), [Effect::Read(2)]);
     let id = twin.read_id();
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: id, revision: 2, position: 0, relevant: Some((2, 0)), data: d::ReadData::Rows { rows: rows_of(&rows(&["r2"])), replaced: vec![], total: None } });
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: id, revision: 2, position: 0, relevant: Some((2, 0)), touching: Vec::new(), data: d::ReadData::Rows { rows: rows_of(&rows(&["r2"])), replaced: vec![], total: None } });
     assert!(matches!(twin.state().journal(STREAM).as_slice(), [d::Value::Snapshot { revision: 2, .. }]), "the read Delta is followed by a Snapshot of the current revision");
 }
 
@@ -100,7 +100,7 @@ fn dlv_live_read_recovered() {
         twin.step(Input::ReadFailed { revision: 2 });
         twin.read_all();
         let id = twin.read_id();
-        twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: id, revision, position: 0, relevant: Some((revision, 0)), data: d::ReadData::Rows { rows: rows_of(&rows(&["r1"])), replaced: vec![], total: None } });
+        twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: id, revision, position: 0, relevant: Some((revision, 0)), touching: Vec::new(), data: d::ReadData::Rows { rows: rows_of(&rows(&["r1"])), replaced: vec![], total: None } });
         assert!(matches!(twin.state().journal(STREAM).first(), Some(d::Value::State { state, .. }) if state.error.is_none()));
     }
     let mut twin = open_as(Kind::Count);
@@ -110,7 +110,7 @@ fn dlv_live_read_recovered() {
     twin.step(Input::ReadFailed { revision: 2 });
     twin.read_all();
     let read_id = twin.read_id();
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 1, position: 0, relevant: Some((1, 0)), data: d::ReadData::Count(3) });
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 1, position: 0, relevant: Some((1, 0)), touching: Vec::new(), data: d::ReadData::Count(3) });
     assert!(matches!(twin.state().journal(STREAM).first(), Some(d::Value::State { state, .. }) if state.error.is_none()));
 }
 

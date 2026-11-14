@@ -86,6 +86,7 @@ impl Snapshots for DbSnapshots {
                 ReadData::Changes { keys, rows: rows.into_iter().map(|(id, stamp, row)| StreamRow { id, stamp, row: Some(wire.row(&row)) }).collect(), replaced: replaced(), total }
             }
         };
-        Ok((ReadVersion { revision, position, relevant }, match owed { Some(ids) => ReadData::Owed(Box::new(data), ids), None => data }))
+        let touching = if matches!(data, ReadData::Rows { .. } | ReadData::Changes { .. }) { self.db.touching(view, from, (revision, position)) } else { Vec::new() };
+        Ok((ReadVersion { revision, position, relevant, touching }, match owed { Some(ids) => ReadData::Owed(Box::new(data), ids), None => data }))
     }
 }
