@@ -82,15 +82,6 @@ fn win_power_saving_defers_only_preload_windows() {
 
 
 #[test]
-fn win_busy_offline_refused() {
-    for mut twin in [loading_watched(), landing()] {
-        let stage = twin.stage();
-        assert_eq!(twin.step(Input::OfflineRefused), none(), "a window that loads or lands is not changed");
-        assert_eq!(twin.stage(), stage);
-    }
-}
-
-#[test]
 fn win_prop_preload_power_saving() {
     let mut twin = Twin::new();
     twin.step(Input::PowerSaving(true));

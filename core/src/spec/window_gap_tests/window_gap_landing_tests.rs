@@ -220,7 +220,7 @@ fn win_wait_nodes() {
 // Properties. An executor stub answers requests and commits in the same scheduler, the explorer orders everything it sends.
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Seen {
+pub(super) enum Observed {
     Requested(u64),
     Cancelled(u64),
     Landed { request: u64, revision: i64 },
@@ -228,7 +228,7 @@ pub(super) enum Seen {
 }
 
 pub(super) struct Executor {
-    pub(super) log: Log<Seen>,
+    pub(super) log: Log<Observed>,
 }
 
 impl EffectRunner<Spy<Windows>> for Executor {
@@ -241,23 +241,23 @@ impl EffectRunner<Spy<Windows>> for Executor {
         let mut log = self.log.lock().unwrap_or_else(PoisonError::into_inner);
         match effect {
             WindowEffect::Request { request, attempt, page, .. } => {
-                log.push(Seen::Requested(request));
+                log.push(Observed::Requested(request));
                 back.reply(stamp, w::WindowsInput::Response { request, attempt, page: AnswerPage::new(page, vec!["r1".into()], None) });
             }
-            WindowEffect::Cancel { request, .. } => log.push(Seen::Cancelled(request)),
-            WindowEffect::Outcome { id, outcome } => log.push(Seen::Outcome(u32::try_from(id).expect("a test id"), outcome)),
+            WindowEffect::Cancel { request, .. } => log.push(Observed::Cancelled(request)),
+            WindowEffect::Outcome { id, outcome } => log.push(Observed::Outcome(u32::try_from(id).expect("a test id"), outcome)),
             WindowEffect::DerivePreload { .. } => {}
         }
     }
 }
 
-pub(super) type Shared = Rc<Log<Seen>>;
+pub(super) type Shared = Rc<Log<Observed>>;
 
 thread_local! {
     static SEEN: RefCell<Option<Shared>> = const { RefCell::new(None) };
 }
 
-pub(super) fn seen() -> Log<Seen> { (*SEEN.with(|slot| slot.borrow().clone()).expect("a rig was built")).clone() }
+pub(super) fn seen() -> Log<Observed> { (*SEEN.with(|slot| slot.borrow().clone()).expect("a rig was built")).clone() }
 
 pub(super) struct WindowStore;
 
@@ -291,7 +291,7 @@ pub(super) fn explore_rig() -> DetScheduler {
         to: windows_slot,
         revision: 0,
         committed: w::WindowsInput::Committed,
-        note: Box::new(move |landing| noted.lock().unwrap_or_else(PoisonError::into_inner).push(Seen::Landed { request: landing.batch, revision: landing.revision })),
+        note: Box::new(move |landing| noted.lock().unwrap_or_else(PoisonError::into_inner).push(Observed::Landed { request: landing.batch, revision: landing.revision })),
     }, Silent);
     det.add::<Sink<Deliveries>>("deliveries", new_log(), Discard);
     let windows = det.add::<Spy<Windows>>("windows", SpyState::new(w::WindowsState::new(EPOCH, Some(true), peers()), &new_log()), Executor { log: log.clone() });
@@ -310,21 +310,21 @@ pub(super) fn explore_rig() -> DetScheduler {
 
 pub(super) const LIMITS: Limits = Limits { depth: 4, max_traces: 30_000 };
 
-pub(super) fn open_requests(events: &[Seen]) -> usize {
+pub(super) fn open_requests(events: &[Observed]) -> usize {
     let mut open: BTreeSet<u64> = BTreeSet::new();
     let mut worst = 0;
     for event in events {
         match event {
-            Seen::Requested(request) => {
+            Observed::Requested(request) => {
                 open.insert(*request);
             }
-            Seen::Cancelled(request) => {
+            Observed::Cancelled(request) => {
                 open.remove(request);
             }
-            Seen::Landed { request, .. } => {
+            Observed::Landed { request, .. } => {
                 open.remove(request);
             }
-            Seen::Outcome(..) => {}
+            Observed::Outcome(..) => {}
         }
         worst = worst.max(open.len());
     }

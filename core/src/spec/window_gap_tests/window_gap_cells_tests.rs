@@ -289,6 +289,13 @@ fn win_idle_online_reload_by_interest() {
         let mut twin = failed_watched();
         assert_eq!(twin.step(Input::Online(true)), [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 1 }]);
         assert_eq!(twin.stage(), Some(WindowStage::Loading));
+        assert!(twin.step(Input::Online(true)).is_empty(), "a second signal does not read again");
+        let mut stale = fresh_watched();
+        stale.step(Input::Online(false));
+        stale.step(Input::Stale { in_keys: true });
+        assert_eq!(stale.step(Input::Online(true)), [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 1 }], "a stale window reads without an earlier network error");
+        let mut waiting_call = waiting();
+        assert_eq!(requests(&waiting_call.step(Input::Online(true))), 1, "a waiting call reads once");
     }
     {
         let mut twin = fresh_watched();
@@ -317,7 +324,7 @@ fn win_idle_online_reload_by_interest() {
 
 
 
-/// An offline refusal tells the streams of a window about the error and starts nothing; a key without a machine ignores it.
+/// An offline refusal tells the streams of a window about the error and starts nothing; a window that loads or lands is not changed; a key without a machine ignores it.
 #[test]
 fn win_offline_refused_tells_the_streams() {
     {
@@ -327,6 +334,11 @@ fn win_offline_refused_tells_the_streams() {
         let (effects, outcomes) = twin.split(take(&twin.log));
         assert_eq!((effects, outcomes.is_empty()), (vec![Effect::WindowState], true), "the window tells its streams about the error and starts no request");
         assert_eq!(twin.stage(), Some(WindowStage::Idle));
+    }
+    for mut twin in [loading_watched(), landing()] {
+        let stage = twin.stage();
+        assert_eq!(twin.step(Input::OfflineRefused), none(), "a window that loads or lands is not changed");
+        assert_eq!(twin.stage(), stage);
     }
     {
         let mut twin = Twin::new();

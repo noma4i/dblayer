@@ -262,6 +262,9 @@ fn win_orders_cancel_before_landing() {
         }
         let cancelled = at(&order, Ev::Leave1) < at(&order, Ev::Call2) && at(&order, Ev::Leave1) < at(&order, Ev::Respond);
         assert_eq!((seen.cancels, seen.requests), (usize::from(cancelled), 1 + usize::from(cancelled)), "{order:?}: the cancel belongs to the last leaver before the acceptance");
+        if cancelled {
+            assert!(twin.step(Input::Response { request: 1, attempt: 1, cursor: None, rows: true }).is_empty(), "{order:?}: no Commit for the cancelled request");
+        }
         let landed_first: Vec<Result3> = if at(&order, Ev::Land) < at(&order, Ev::Leave1) { vec![Result3::Loaded] } else { Vec::new() };
         assert_eq!(outcomes_of(&twin, 1), landed_first, "{order:?}: the leaver gets an outcome only from a landing that ended before it left");
         settle(&mut twin, &mut seen);

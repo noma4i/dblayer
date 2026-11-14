@@ -5,10 +5,6 @@ use super::*;
 
 // Orders of the inputs of a window (P-WIN-*), second part: freshness, opening, power saving, media, epoch, keys, reconnect.
 
-fn sent_batches(emitted: &[Emitted<WindowsEffect>]) -> Vec<String> {
-    emitted.iter().filter_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then(|| input.clone()) } else { None }).collect()
-}
-
 fn requests_of(emitted: Vec<Emitted<WindowsEffect>>) -> Vec<(WindowKey, u64, u32, u32, Option<String>)> {
     runs(emitted).into_iter().filter_map(|effect| if let WindowsEffect::Window { key, effect: WindowEffect::Request { request, attempt, page, cursor, .. } } = effect { Some((key, request, attempt, page, cursor)) } else { None }).collect()
 }
@@ -197,9 +193,10 @@ fn media_full_chain() -> Twin {
 fn win_prop_generation() {
     let all: Vec<_> = orders(&[Ev::Reset, Ev::Online, Ev::Call1, Ev::Respond], &[(Ev::Reset, Ev::Online), (Ev::Reset, Ev::Call1)]);
     assert_eq!(all.len(), 8);
-    for order in all {
-        let mut twin = loading();
+    for (order, start) in all.into_iter().flat_map(|order| [loading as fn() -> Twin, fresh as fn() -> Twin].map(|start| (order.clone(), start))) {
+        let mut twin = start();
         take(&twin.log);
+        twin.window_batches();
         let (mut batches, mut fresh_request) = (Vec::new(), None);
         for event in order.iter().copied() {
             match event {
@@ -214,7 +211,7 @@ fn win_prop_generation() {
                 _ => twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["old".into()], None) }),
             }
             let emitted = take(&twin.log);
-            batches.extend(sent_batches(&emitted).into_iter().filter(|batch| batch.contains(&format!("stamp: Epoch({})", EPOCH + 1))));
+            batches.extend(twin.window_batches().into_iter().filter(|batch| batch.stamp == EpochStamp::Epoch(EPOCH + 1)));
             if let Some((_, request, attempt, ..)) = requests_of(emitted).into_iter().find(|found| found.1 != 1) {
                 fresh_request = Some((request, attempt));
             }
@@ -222,13 +219,13 @@ fn win_prop_generation() {
         let (request, attempt) = fresh_request.expect("the new epoch asked for its first page");
         twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH + 1), w::WindowsInput::Response { request, attempt, page: AnswerPage::new(1, vec!["new".into()], None) });
         twin.run();
-        batches.extend(sent_batches(&take(&twin.log)).into_iter().filter(|batch| batch.contains(&format!("stamp: Epoch({})", EPOCH + 1))));
+        batches.extend(twin.window_batches().into_iter().filter(|batch| batch.stamp == EpochStamp::Epoch(EPOCH + 1)));
         twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH + 1), w::WindowsInput::Committed(Committed { batch: request, revision: 30, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
         twin.run();
         let done = runs(take(&twin.log));
         let loaded = done.iter().filter(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 9, outcome: WindowOutcome::Loaded { revision: 30, .. } }, .. })).count();
         assert_eq!((batches.len(), loaded), (1, 1), "{order:?}: one batch on the new generation and the own Loaded of the call");
-        assert!(!batches[0].contains("old"), "{order:?}: the old answer landed: {}", batches[0]);
+        assert!(batches[0].ops.iter().any(|op| matches!(op, StoreOp::Window { key, .. } if key == "feed")), "{order:?}: the batch of the new generation is the page of the window");
     }
 }
 

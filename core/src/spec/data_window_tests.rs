@@ -235,37 +235,6 @@ async fn matching_threshold_updates_loaded_windows_through_database() {
     for minimum in [5, 10] { assert!(ids_params(&rig, "selected", json!({"minimum":minimum})).await.is_empty()); }
 }
 
-#[test]
-fn created_window_membership_uses_the_committed_window() {
-    use crate::owners::contract::BatchAuthor;
-    use crate::owners::read::windows::WindowKey;
-    use crate::owners::store::{StoreBatch, StoreOp};
-    use crate::store::Store;
-
-    let mut models: Vec<crate::schema::ModelSpec> = serde_json::from_str(&moment_models(OnFailure::Rollback)).unwrap();
-    models[0].relations.push(relation("created", true, false));
-    let db = Store::open_models(None, models, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-    let planned = db.plan_create("Moment", json!({"text":"created"}).as_object().unwrap().clone(), Default::default()).unwrap();
-    let key = WindowKey::relation("Moment", "created", &Default::default());
-    let commit = |author, ops| {
-        let batch = StoreBatch { author, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1), rows: Vec::new(), intents: 0, credential: None, ops };
-        db.write_batch(&batch, db.files(), None).unwrap();
-    };
-    commit(BatchAuthor::Window, vec![StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0,
-        key: key.name, model: key.model, page: 1, replace_all: false, cursor: None,
-        roots: Vec::new(), related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap(),
-    }]);
-    let row_id = planned.row_id.to_string();
-    commit(BatchAuthor::Outbox, vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1,
-        op_id: 1, model: "Moment".into(), row_id: row_id.clone(), action: "create".into(),
-        payload: "{}".into(), effects: planned.effects, origin: crate::owners::store::IntentOrigin::Api,
-    }]);
-    let query = db.remote_relation_query("Moment", "created", &Default::default()).unwrap().unwrap();
-    let rows = db.query(&query).unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].get("id"), Some(&json!(row_id)));
-}
-
 /// A committed row enters a loaded window by its row rules (thresholds, from page, outbox, local and feed sources) and by its membership, and leaves it when its fields stop matching.
 #[test]
 fn data_row_rules_and_membership_decide_the_window() {
@@ -362,7 +331,7 @@ mod by_source {
         batch: Cell<u64>,
     }
 
-    fn params_of(name: &str) -> serde_json::Map<String, Value> {
+    pub(super) fn params_of(name: &str) -> serde_json::Map<String, Value> {
         if name == "cols" || name == "thread" { json!({"groupId":"g"}).as_object().unwrap().clone() } else { Default::default() }
     }
 
@@ -421,12 +390,12 @@ mod by_source {
             row["id"].as_str().unwrap().to_string()
         }
 
-        pub(super) fn matrix_write(&self, source: &str, id: &str, group: &str) -> String {
+        pub(super) fn write_row(&self, source: &str, id: &str, group: &str) -> String {
             self.write(source, json!({"id":id, "text":"t", "groupId":group}))
         }
     }
 
-    pub(super) fn matrix_bench() -> Bench {
+    pub(super) fn window_bench() -> Bench {
         let mut node = relation("node", false, false);
         node.joins_node = true;
         let mut cols = relation("cols", false, false);
@@ -446,43 +415,65 @@ mod by_source {
     pub(super) fn column_ids(bench: &Bench) -> Vec<(String, Vec<String>)> {
         COLUMNS.into_iter().map(|name| (name.to_string(), bench.ids(name, &params_of(name)))).collect()
     }
+}
 
-    /// P-DATA-100 cells: the declared `insert_on` of the window against the source of the batch.
-    pub(super) fn entering(source: &str, cached: bool) -> [bool; 6] {
-        match source {
-            "event" | "response" => [false, true, false, false, cached, true],
-            "create" => [false, false, true, false, true, true],
-            _ => [false, false, false, false, cached, cached],
+fn seed() -> Vec<String> { vec!["s1".to_string()] }
+
+fn head(id: &str) -> Vec<String> { vec![id.to_string(), "s1".to_string()] }
+
+/// P-DATA-100: a row that arrives by an event or a response enters the windows that join events at the head, once; a known row also enters the group window that does not join events; a member keeps its place and a window not loaded is not made.
+#[test]
+fn data_event_rows_enter_the_windows_that_join_events() {
+    use by_source::*;
+    for source in ["event", "response"] {
+        for cached in [false, true] {
+            let bench = window_bench();
+            if cached { bench.write_row("local", "n1", "x"); }
+            let id = bench.write_row(source, "n1", "g");
+            let ids = |name: &str| bench.ids(name, &params_of(name));
+            assert_eq!([ids("event"), ids("thread")], [head(&id), head(&id)], "{source} cached {cached}: the windows that join events");
+            assert_eq!([ids("plain"), ids("created"), ids("node")], [seed(), seed(), seed()], "{source} cached {cached}: the windows that do not");
+            assert_eq!(ids("cols"), if cached { head(&id) } else { seed() }, "{source} cached {cached}: the group window takes only a known row");
+            let entered = column_ids(&bench);
+            bench.write_row(source, "n1", "g");
+            bench.write_row(source, "s1", "g");
+            assert_eq!(column_ids(&bench), entered, "{source} cached {cached}: a repeated row enters once and a member keeps its place");
+            assert!(bench.ids("unloaded", &Default::default()).is_empty(), "{source}: a window that is not loaded was made");
         }
     }
 }
 
-/// P-DATA-100 (P-DATA-84, P-DATA-85, P-DATA-92, M24): the window declaration and the source of the batch decide the entry of a row into a loaded window, at the head, once; a member keeps its place; a window not loaded is not made.
+/// P-DATA-100: a created row enters the windows that join created rows and the group windows at the head, and no other window.
 #[test]
-fn data_membership_by_source_matrix() {
+fn data_created_rows_enter_the_created_and_group_windows() {
     use by_source::*;
-    let mut red = Vec::new();
-    for source in ["page", "event", "response", "create", "local"] {
+    let bench = window_bench();
+    let id = bench.write_row("create", "n1", "g");
+    let ids = |name: &str| bench.ids(name, &params_of(name));
+    assert_eq!([ids("created"), ids("cols"), ids("thread")], [head(&id), head(&id), head(&id)]);
+    assert_eq!([ids("plain"), ids("event"), ids("node")], [seed(), seed(), seed()]);
+    assert!(bench.ids("unloaded", &Default::default()).is_empty(), "a window that is not loaded was made");
+}
+
+/// P-DATA-100: a row that arrives by a page or a local write enters no window as a new row; a known row enters the group windows only, once, and a member keeps its place.
+#[test]
+fn data_page_and_local_rows_enter_the_group_windows_when_known() {
+    use by_source::*;
+    for source in ["page", "local"] {
         for cached in [false, true] {
-            if cached && source == "create" { continue; }
-            let bench = matrix_bench();
-            if cached { bench.matrix_write("local", "n1", "x"); }
-            let id = bench.matrix_write(source, "n1", "g");
-            let expected = entering(source, cached);
-            for (index, (name, ids)) in column_ids(&bench).into_iter().enumerate() {
-                let want: Vec<String> = if expected[index] { vec![id.clone(), "s1".into()] } else { vec!["s1".into()] };
-                if ids != want { red.push(format!("source {source}, cached {cached}, window {name}: {ids:?}, spec {want:?}")); }
-            }
-            if !bench.ids("unloaded", &Default::default()).is_empty() { red.push(format!("source {source}: a window that is not loaded was made")); }
-            if source == "create" { continue; }
+            let bench = window_bench();
+            if cached { bench.write_row("local", "n1", "x"); }
+            let id = bench.write_row(source, "n1", "g");
+            let ids = |name: &str| bench.ids(name, &params_of(name));
+            let group = if cached { head(&id) } else { seed() };
+            assert_eq!([ids("cols"), ids("thread")], [group.clone(), group], "{source} cached {cached}: the group windows");
+            assert_eq!([ids("plain"), ids("event"), ids("created"), ids("node")], [seed(), seed(), seed(), seed()], "{source} cached {cached}: the other windows");
             let entered = column_ids(&bench);
-            bench.matrix_write(source, "n1", "g");
-            if column_ids(&bench) != entered { red.push(format!("source {source}, cached {cached}: the same row again moved: {:?}", column_ids(&bench))); }
-            bench.matrix_write(source, "s1", "g");
-            if column_ids(&bench) != entered { red.push(format!("source {source}, cached {cached}: a member lost its place: {:?}", column_ids(&bench))); }
+            bench.write_row(source, "n1", "g");
+            bench.write_row(source, "s1", "g");
+            assert_eq!(column_ids(&bench), entered, "{source} cached {cached}: a repeated row enters once and a member keeps its place");
         }
     }
-    assert!(red.is_empty(), "cells against P-DATA-100:\n{}", red.join("\n"));
 }
 
 /// P-DATA-84: an event `upsert` for a window with `insert_on: :server` puts the row at the head when the row passes `matches` or the `membership` of the window, once for a repeated event; a member keeps its place.

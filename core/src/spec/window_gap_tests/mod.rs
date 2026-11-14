@@ -15,7 +15,8 @@ use crate::owners::contract::{Committed, EpochStarted, ErrorClass, Online, Rejec
 use crate::owners::contract::WindowPhase as OwnerPhase;
 use crate::spec::support::{new_log, number_after, snapshot, take, Discard, Emitted, Log, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
 use crate::owners::read::deliveries::Deliveries;
-use crate::owners::store::{StoreInput, StoreWriter};
+use crate::owners::contract::BatchAuthor;
+use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter};
 use crate::owners::read::windows::{self as w, AnswerPage, StaleKeys, WindowEffect, WindowKey, WindowKind, WindowOutcome, WindowStage, Windows, WindowsEffect, WindowsPeers};
 use crate::runtime::{explore, Address, Back, Cause as Ended, DetScheduler, Effect as RuntimeEffect, EffectRunner, Effects, EpochStamp, Limits, Outbound, StateOwner, Time};
 
@@ -34,15 +35,25 @@ fn peers() -> WindowsPeers { WindowsPeers { store: Address::<StoreWriter>::new(S
 /// Adds the Store and the Deliveries as sinks, then the Windows watched by `log`.
 struct PinStore;
 
+#[derive(Clone, Default)]
+struct PinState {
+    revision: Arc<AtomicU64>,
+    batches: Log<StoreBatch>,
+}
+
 impl StateOwner for PinStore {
     const EPOCHED: bool = false;
-    type State = Arc<AtomicU64>;
+    type State = PinState;
     type Input = StoreInput;
     type Effect = crate::spec::support::NoEffect;
 
-    fn step(revision: &mut Self::State, input: Self::Input, _now: crate::runtime::Time) -> Effects<Self> {
+    fn step(pin: &mut Self::State, input: Self::Input, _now: crate::runtime::Time) -> Effects<Self> {
         match input {
-            StoreInput::Pin { request_id, .. } => vec![RuntimeEffect::Send(Outbound::new(Address::<Windows>::new(WINDOWS), w::WindowsInput::Pinned { request_id, base_revision: revision.load(Ordering::SeqCst) }))],
+            StoreInput::Pin { request_id, .. } => vec![RuntimeEffect::Send(Outbound::new(Address::<Windows>::new(WINDOWS), w::WindowsInput::Pinned { request_id, base_revision: pin.revision.load(Ordering::SeqCst) }))],
+            StoreInput::Commit(batch) => {
+                pin.batches.lock().unwrap_or_else(PoisonError::into_inner).push(batch);
+                Vec::new()
+            }
             _ => Vec::new(),
         }
     }
@@ -51,8 +62,8 @@ impl StateOwner for PinStore {
     fn closing() -> Self::Input { StoreInput::Idle }
 }
 
-fn add_windows(det: &mut DetScheduler, log: &Spied, state: w::WindowsState, runner: impl EffectRunner<Spy<Windows>>, revision: Arc<AtomicU64>) -> Address<Spy<Windows>> {
-    det.add::<PinStore>("store", revision, Silent);
+fn add_windows(det: &mut DetScheduler, log: &Spied, state: w::WindowsState, runner: impl EffectRunner<Spy<Windows>>, pin: PinState) -> Address<Spy<Windows>> {
+    det.add::<PinStore>("store", pin, Silent);
     det.add::<Sink<Deliveries>>("deliveries", new_log(), Discard);
     det.add::<Spy<Windows>>("windows", SpyState::new(state, log), runner)
 }
@@ -136,6 +147,7 @@ struct Twin {
     batch: Option<u64>,
     revision: i64,
     pin_revision: Arc<AtomicU64>,
+    stored: Log<StoreBatch>,
     online_seq: u64,
     /// The time of the next step: it only grows, the owner never sees the clock go back.
     now: i64,
@@ -181,13 +193,17 @@ impl Twin {
     fn launch(state: w::WindowsState) -> Self {
         let mut det = DetScheduler::new(3);
         let log = new_log();
-        let pin_revision = Arc::new(AtomicU64::new(0));
+        let pin = PinState::default();
+        let (pin_revision, stored) = (pin.revision.clone(), pin.batches.clone());
         let reads = Reads::auto();
         let (held, hold) = (reads.held.clone(), reads.hold.clone());
-        let addr = add_windows(&mut det, &log, state, reads, pin_revision.clone());
+        let addr = add_windows(&mut det, &log, state, reads, pin);
         det.start_epoch(EPOCH);
-        Self { det, addr, log, flight: None, batch: None, revision: 10, pin_revision, online_seq: 0, now: NOW, held, hold, commit: String::new(), outcomes: Vec::new(), last_outcomes: Vec::new() }
+        Self { det, addr, log, flight: None, batch: None, revision: 10, pin_revision, stored, online_seq: 0, now: NOW, held, hold, commit: String::new(), outcomes: Vec::new(), last_outcomes: Vec::new() }
     }
+
+    /// The batches of the Window owner the Store received since the last call.
+    fn window_batches(&self) -> Vec<StoreBatch> { take(&self.stored).into_iter().filter(|batch| matches!(batch.author, BatchAuthor::Window)).collect() }
 
     fn state(&self) -> &w::WindowsState { inner(&self.det, self.addr) }
 

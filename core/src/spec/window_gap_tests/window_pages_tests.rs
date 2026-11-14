@@ -84,28 +84,6 @@ fn win_reload_on_connect_flag() {
     assert_eq!(twin.stage(), Some(WindowStage::Idle), "the flag ended with the Interest- of its id");
 }
 
-#[test]
-fn win_prop_first_load_after_reset() {
-    let mut twin = fresh();
-    twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH + 1, identity: Some(1), generation: 3 }));
-    twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
-    take(&twin.log);
-    twin.post_call(w::WindowsInput::Load { key: key(), id: 9, goal: w::Goal::First, force: false, store_revision: 0 });
-    twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None) });
-    take(&twin.log);
-    twin.post(w::WindowsInput::Committed(Committed { batch: 2, revision: 30, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
-    let done = runs(take(&twin.log));
-    assert!(done.iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 9, outcome: WindowOutcome::Loaded { revision: 30, .. } }, .. })), "the call gets its own Loaded: {done:?}");
-}
-
-#[test]
-fn win_prop_direction_key() {
-    use crate::schema::PageDirection;
-    let forward = crate::store::window_key("Moment:feed", PageDirection::Forward);
-    let backward = crate::store::window_key("Moment:feed", PageDirection::Backward);
-    assert_ne!(forward, backward, "the window of a stored key is told by its direction: the cursor and the membership of one never reach the other");
-}
-
 /// D-457, P-WIN-08 (window.md: the page limit counts `reread_due` like the end of the pages): a `Stale` during the load of the last allowed page gives one more load of the first page after the landing.
 #[test]
 fn win_page_limit_landing_keeps_the_reread() {
