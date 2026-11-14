@@ -555,6 +555,38 @@ fn xfer_calls_held_cancel_wins() {
     );
 }
 
+/// D-458, P-BR-10: a call that comes while the owner is classified and older calls still wait for RestoreReady waits behind them, so the calls of the key apply in the order they began.
+#[test]
+fn xfer_call_in_classified_waits_behind_held_calls() {
+    let mut twin = Twin::bare(1);
+    twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false });
+    let first = twin.reply();
+    twin.post(TransferInput::Cancel { key: KEY.into(), reply: first });
+    twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
+    let second = twin.reply();
+    let early = twin.post(TransferInput::Cancel { key: KEY.into(), reply: second });
+    assert!(Twin::quiet(&early), "the later call does not overtake the held one: {early:?}");
+    twin.online(true);
+    let out = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    assert_eq!((twin.stage(1), out.removed(), Twin::fault(&out, first)), (TransferStage::Removing, vec![KEY.to_string()], None), "the held call applies first at RestoreReady: {out:?}");
+}
+
+/// D-458, P-BR-10: a cancel and then an accept of the same key, both held in Restoring, apply in that order: the accept waits behind the cancel for RestoreReady instead of meeting the restored transfer first.
+#[test]
+fn xfer_held_cancel_then_accept_keep_their_order() {
+    let mut twin = Twin::bare(1);
+    twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false });
+    let cancel = twin.reply();
+    twin.post(TransferInput::Cancel { key: KEY.into(), reply: cancel });
+    let accept = twin.reply();
+    twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 1)), reply: accept });
+    let restored = twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
+    assert!(restored.outbox.is_empty() && restored.replies(accept).is_empty(), "the accept waits behind the held cancel: {restored:?}");
+    twin.online(true);
+    let out = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    assert_eq!((twin.stage(1), out.removed(), Twin::fault(&out, cancel)), (TransferStage::Removing, vec![KEY.to_string()], None), "the cancel applies to the restored transfer first: {out:?}");
+}
+
 #[test]
 fn xfer_open_failed() {
     let mut found = partly(1, KEY);

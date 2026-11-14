@@ -1061,8 +1061,7 @@ impl TransferState {
                 run(fx, TransferEffect::RestoreClassified { epoch: self.epoch });
                 self.replay_held(now, fx);
             }
-            held @ (TransferInput::Accept { .. } | TransferInput::AcceptBatch { .. }) if Self::in_epoch(&held, self.epoch) => self.held.push(held),
-            held @ (TransferInput::Cancel { .. } | TransferInput::SupplySource { .. } | TransferInput::Commit { .. } | TransferInput::StagedDimensions { .. } | TransferInput::SourceFailed { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. } | TransferInput::MutationOutcome { .. } | TransferInput::MutationOutcomes { .. }) => self.held.push(held),
+            held if Self::is_call(&held, self.epoch) => self.held.push(held),
             TransferInput::EpochStarted(started) => {
                 self.epoch = started.epoch;
                 run(fx, TransferEffect::Started { epoch: started.epoch });
@@ -1089,10 +1088,24 @@ impl TransferState {
 
     fn in_epoch(input: &TransferInput, epoch: Epoch) -> bool { matches!(input, TransferInput::Accept { epoch: found, .. } | TransferInput::AcceptBatch { epoch: found, .. } if *found == epoch) }
 
+    fn is_call(input: &TransferInput, epoch: Epoch) -> bool {
+        match input {
+            TransferInput::Accept { .. } | TransferInput::AcceptBatch { .. } => Self::in_epoch(input, epoch),
+            _ => matches!(input, TransferInput::Cancel { .. } | TransferInput::SupplySource { .. } | TransferInput::Commit { .. } | TransferInput::StagedDimensions { .. } | TransferInput::SourceFailed { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. } | TransferInput::MutationOutcome { .. } | TransferInput::MutationOutcomes { .. }),
+        }
+    }
+
+    fn route(&mut self, now: Time, input: TransferInput, fx: &mut Fx) {
+        self.handled += 1;
+        if self.phase == Phase::Restoring { self.restoring(now, input, fx); }
+        else if self.phase == Phase::Classified && !self.held.is_empty() && Self::is_call(&input, self.epoch) { self.held.push(input); }
+        else { self.handle(now, input, fx); }
+    }
+
     /// `Restored`: the accepts replay, the other calls on the keys of the base wait for `RestoreReady`.
     pub(super) fn replay_held_accepts(&mut self, now: Time, fx: &mut Fx) {
-        let (accepts, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.held).into_iter().partition(|input| matches!(input, TransferInput::Accept { .. } | TransferInput::AcceptBatch { .. }));
-        self.held = rest;
+        let first_other = self.held.iter().position(|input| !matches!(input, TransferInput::Accept { .. } | TransferInput::AcceptBatch { .. })).unwrap_or(self.held.len());
+        let accepts: Vec<_> = self.held.drain(..first_other).collect();
         for input in accepts { self.handle(now, input, fx); }
     }
 
@@ -1159,21 +1172,11 @@ impl StateOwner for Transfers {
         #[cfg(test)]
         if let TransferInput::WhenQuiet { reply } = input {
             state.quiet_waiters.push(reply);
-        } else if state.phase == Phase::Restoring {
-            state.handled += 1;
-            state.restoring(now, input, &mut fx);
         } else {
-            state.handled += 1;
-            state.handle(now, input, &mut fx);
+            state.route(now, input, &mut fx);
         }
         #[cfg(not(test))]
-        if state.phase == Phase::Restoring {
-            state.handled += 1;
-            state.restoring(now, input, &mut fx);
-        } else {
-            state.handled += 1;
-            state.handle(now, input, &mut fx);
-        }
+        state.route(now, input, &mut fx);
         state.run_waiting_removals(now, &mut fx);
         #[cfg(test)]
         state.release_quiet(&mut fx);
