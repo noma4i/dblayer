@@ -97,6 +97,40 @@ async fn xfer_prop_cancelled_outcome_reopens_sqlite() {
     within(reopened.db.close_database()).await.unwrap();
 }
 
+/// An upload found by the id the app used when its row got a server id: the create is held, the upload waits on the temporary id, the answer swaps the id, the app cancels by the temporary id it holds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn xfer_prop_upload_found_by_temporary_id_after_swap() {
+    use crate::ffi::upload_wire::WireUploadRequest;
+    use crate::schema::OnFailure;
+    use crate::owners::write::upload::UploadFile;
+    use super::rig::{Kind, Rig, Server, within};
+
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("swapped.sqlite");
+    let path = database_path.to_str().unwrap().to_string();
+    let source = directory.path().join("upload.bin");
+    std::fs::write(&source, b"bytes").unwrap();
+    let server = Server::new();
+    server.hold(Kind::Mutate, true);
+    let rig = Rig::open_at(OnFailure::Keep, Some(path.clone()), server.clone()).await;
+    let created = rig.create("a").await;
+    let temporary = created.optimistic_value.clone().unwrap().id;
+    server.wait_held(Kind::Mutate, 1).await;
+    let request = WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap()));
+    within(rig.db.upload(rig.epoch(), "Moment".into(), temporary.clone(), "upload".into(), request)).await.unwrap();
+    server.answer(Kind::Mutate, super::rig::Reply::Ok);
+    rig.confirmed(&created).await.unwrap();
+    server.wait_held(Kind::Mutate, 1).await;
+    assert!(within(rig.db.cancel_upload(rig.epoch(), "Moment".into(), temporary, "upload".into())).await.unwrap());
+    let sqlite = rusqlite::Connection::open(&database_path).unwrap();
+    crate::test_wait::settled(&rig, "the cancelled upload is removed from the store", || sqlite.query_row("SELECT COUNT(*) FROM sync_upload", [], |row| row.get::<_, i64>(0)).unwrap_or(1) == 0).await;
+    within(rig.db.close_database()).await.unwrap();
+    drop(rig);
+    let reopened = Rig::open_at(OnFailure::Keep, Some(path), server.clone()).await;
+    assert_eq!(sqlite.query_row("SELECT COUNT(*) FROM sync_upload", [], |row| row.get::<_, i64>(0)).unwrap(), 0, "no transfer of the cancelled upload comes back after open");
+    within(reopened.db.close_database()).await.unwrap();
+}
+
 /// The owner after `Restored` of `rows` with no declaration: every row waits for it.
 fn undeclared(rows: Vec<StoredTransfer>) -> (Twin, Out) {
     let mut twin = Twin::bare(1);
