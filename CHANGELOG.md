@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Give a list value the revision of the commit that changed its rows.
+
 ## 6.37.0 - 2026-11-14
 
 ### Changed
