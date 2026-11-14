@@ -135,7 +135,7 @@ impl Store {
             let uploads = super::upload_rows::upload_rows(connection).map_err(crate::store::StoreError::from)?;
             let origins = read_origins(connection)?;
             let removed_rows = connection.prepare(include_str!("sql/restore_read/read_removed_intent_rows.sql"))?.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
-            let outcomes = connection.prepare(include_str!("sql/restore_read/read_restore_select_transfer_outcome.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<i64>>(3)?, row.get::<_, Option<String>>(4)?, row.get::<_, i64>(5)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
+            let outcomes = connection.prepare(include_str!("sql/restore_read/read_restore_select_live_transfer_outcome.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<i64>>(3)?, row.get::<_, Option<String>>(4)?, row.get::<_, Option<String>>(5)?, row.get::<_, i64>(6)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let orphans = connection.prepare(include_str!("sql/restore_read/read_restore_select_upload_orphan.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let batches = connection.prepare(include_str!("sql/restore_read/read_restore_select_sync_upload_batch.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<i64>>(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let orphan_answers = connection.prepare(include_str!("sql/restore_read/read_restore_select_encrypted_answer.sql")).and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
@@ -149,7 +149,8 @@ impl Store {
             origins.invalid_ops.insert(seq);
         }
         let owned: Vec<i64> = uploads.iter().filter_map(UploadRaw::owned_op).collect();
-        let reserved = uploads.iter().filter_map(UploadRaw::reserved_op).chain(batches.iter().filter_map(|(_, _, op)| *op)).max().and_then(|op| u64::try_from(op).ok());
+        let recorded: Option<i64> = self.read_disk(|connection| Ok(connection.query_row(include_str!("sql/restore_read/operation_id_floor.sql"), [], |row| row.get(0))?)).map_err(CoreError::from)?;
+        let reserved = uploads.iter().filter_map(UploadRaw::reserved_op).chain(batches.iter().filter_map(|(_, _, op)| *op)).chain(recorded).max().and_then(|op| u64::try_from(op).ok());
         let operation_ids: std::collections::BTreeSet<i64> = entries.iter().map(|entry| entry.operation.id.0).chain(effects_only.iter().copied()).collect();
         let entries = entries.into_iter().filter(|entry| !effects_only.contains(&entry.operation.id.0) && !owned.contains(&entry.operation.id.0)).collect();
         let mut ops = self.stored_intents(entries, pending.clone(), answers, &origins.valid, &origins.invalid_ops, (&cycles, &causes), &failed_uploads);
@@ -200,21 +201,14 @@ impl Store {
         }
         let mut transfer_outcomes = std::collections::BTreeMap::<u64, std::collections::BTreeMap<u64, crate::owners::write::outbox::OutboxOutcome>>::new();
         let mut failure_times = std::collections::BTreeMap::new();
-        for (id, cycle, kind, revision, value, terminal_at) in outcomes {
-            use crate::owners::write::outbox::OutboxOutcome;
+        for (id, cycle, kind, revision, value, row_id, terminal_at) in outcomes {
             let id = u64::try_from(id).map_err(|_| CoreError::Internal("invalid transfer outcome id".into()))?;
             let cycle = u64::try_from(cycle).map_err(|_| CoreError::Internal("invalid transfer outcome cycle".into()))?;
             if matches!(kind.as_str(), "failed" | "rejected") {
                 let terminal_at = u64::try_from(terminal_at).map_err(|_| CoreError::Internal("invalid transfer outcome time".into()))?;
                 failure_times.insert((id, cycle), crate::runtime::Time(terminal_at));
             }
-            let outcome = match (kind.as_str(), revision, value) {
-                ("confirmed", Some(revision), result) => OutboxOutcome::Confirmed { revision, result, row_id: None },
-                ("rejected", None, Some(error)) => OutboxOutcome::Rejected { error },
-                ("failed", None, Some(error)) => OutboxOutcome::Failed { error },
-                ("discarded", None, None) => OutboxOutcome::Discarded,
-                _ => return Err(CoreError::Internal("invalid transfer outcome".into())),
-            };
+            let outcome = super::upload_ops::outcome_of(&kind, revision, value, row_id).ok_or_else(|| CoreError::Internal("invalid transfer outcome".into()))?;
             transfer_outcomes.entry(id).or_default().insert(cycle, outcome);
         }
         if let Ok(rows) = &mut transfers {
@@ -304,5 +298,18 @@ impl Store {
             dropped.push(StoredOp { answered: None, op_id, op, created_at: 0, error_mark: false, pending: None, attempts: 1, cycle_id: 0, cause: None, restore_failed: Some(row.reason.clone()), restore_element: Some((row.table.clone(), row.key.clone())), removed_rows: Vec::new() });
         }
         dropped
+    }
+}
+
+impl Store {
+    /// The recorded outcome of a receipt, read from the pool of readers: `None` when no record of the cycle exists.
+    pub(crate) fn read_outcome(&self, owner: crate::owners::store::OutcomeOwner, id: u64, cycle_id: u64) -> Result<Option<crate::owners::write::outbox::OutboxOutcome>, CoreError> {
+        let (id, cycle) = (i64::try_from(id).map_err(|_| CoreError::Internal("invalid outcome id".into()))?, i64::try_from(cycle_id).map_err(|_| CoreError::Internal("invalid outcome cycle".into()))?);
+        let found = self.read_disk(|connection| {
+            let mut statement = connection.prepare_cached(include_str!("sql/restore_read/read_outcome.sql")).map_err(crate::store::StoreError::from)?;
+            let found = rusqlite::OptionalExtension::optional(statement.query_row(rusqlite::params![owner.column(), id, cycle], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, Option<String>>(2)?, row.get::<_, Option<String>>(3)?)))).map_err(crate::store::StoreError::from)?;
+            Ok(found)
+        })?;
+        found.map(|(kind, revision, value, row_id)| super::upload_ops::outcome_of(&kind, revision, value, row_id).ok_or_else(|| CoreError::Internal("invalid outcome record".into()))).transpose()
     }
 }

@@ -221,7 +221,7 @@ impl OutboxState {
                 fx.push(Effect::Run(OutboxEffect::RestoreClassified { epoch: self.epoch }));
                 self.replay_held(now, fx);
             }
-            OutboxInput::OrphanAnswers { .. } | OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::LocalWrite { .. } | OutboxInput::Expire { .. } | OutboxInput::ArmExpiry { .. } | OutboxInput::DisarmExpiry { .. } | OutboxInput::RowsGone { .. } | OutboxInput::ArmReset { .. } | OutboxInput::ResetField { .. } | OutboxInput::ExpireRow { .. } | OutboxInput::Committed(_) | OutboxInput::Rejected(_) => self.handle(now, input, fx),
+            OutboxInput::OrphanAnswers { .. } | OutboxInput::Resolve { .. } | OutboxInput::LocalWrite { .. } | OutboxInput::Expire { .. } | OutboxInput::ArmExpiry { .. } | OutboxInput::DisarmExpiry { .. } | OutboxInput::RowsGone { .. } | OutboxInput::ArmReset { .. } | OutboxInput::ResetField { .. } | OutboxInput::ExpireRow { .. } | OutboxInput::Committed(_) | OutboxInput::Rejected(_) => self.handle(now, input, fx),
             _ => {}
         }
     }

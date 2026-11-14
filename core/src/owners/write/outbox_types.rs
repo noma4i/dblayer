@@ -239,9 +239,6 @@ pub enum OutboxInput {
     /// Answers `Ok` when no operation is on its way (the platform `settled`).
     #[cfg(test)]
     WhenQuiet { reply: ReplyId },
-    /// The root row the answer of the operation landed.
-    /// The row the landing batch of `op_id` showed; `member` names the transfer of a group whose row is asked for.
-    Landed { op_id: OpId, reply: ReplyId },
     /// The id a temporary id has after its `create` landed (the same id before).
     Resolve { model: String, row: String, reply: ReplyId },
     Online(Online),
@@ -279,6 +276,8 @@ pub enum CommitKind {
     Requeue,
     LocalWrite,
     RemoveRow,
+    /// The record of the outcome of an operation that ended without a terminal batch: the operation leaves the memory when it commits.
+    Record,
 }
 
 /// What the executor does. Store batches, `Mutate`, `MutationOutcome` and timers are `Effect::Send` and `Effect::Schedule` of the owner.
@@ -291,6 +290,8 @@ pub enum OutboxEffect {
     RestoreClassified { epoch: Epoch },
     /// Read the answer of an operation outside the actor: the result is `Response` or `Refused`.
     Decode(super::answer::DecodeJob),
+    /// The receipt of an operation that left the memory: the record of the Store answers.
+    ReadOutcome { reply: ReplyId, op_id: OpId, cycle_id: u64 },
     /// The windows of these (model, relation) pairs are stale in memory: the answer of an action that refetches them landed.
     Stale { families: Vec<(String, String)>, revision: i64 },
 }
@@ -363,6 +364,8 @@ pub struct QueuedOperation {
     pub landed: Option<String>,
     /// The row the landing batch shows: the value of the confirmed outcome, fixed by that batch.
     pub shown: Option<crate::store::Row>,
+    /// A batch that holds the record of the outcome of this operation was built: the operation leaves the memory when it ends.
+    pub recorded: bool,
     pub outcome: Option<OutboxOutcome>,
     /// The error of the batch `MarkFailed` that is in flight, and the error shown on the row.
     pub error: Option<String>,

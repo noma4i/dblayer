@@ -408,6 +408,21 @@ impl Store {
         run(&Reader::with_overlay(&inner.connection, &inner.models, &snapshot))
     }
 
+    /// A read of the disk tables that are no model (operations, outcomes): a reader of the pool answers, the writer is never taken while the pool exists.
+    pub(crate) fn read_disk<T>(&self, run: impl FnOnce(&rusqlite::Connection) -> Result<T, StoreError>) -> Result<T, StoreError> {
+        let _admitted = self.reads.admit().ok_or(StoreError::Refused)?;
+        if let Some(readers) = &self.readers {
+            let connection = readers.lease();
+            if let Some(reason) = &*self.poison.lock().unwrap_or_else(|error| error.into_inner()) {
+                return Err(StoreError::Poisoned(reason.clone()));
+            }
+            return run(&connection);
+        }
+        let inner = self.lock();
+        inner.ensure_healthy()?;
+        run(&inner.connection)
+    }
+
     pub fn revision_seq(&self) -> Result<i64, StoreError> {
         self.read(&[], |reader| reader.revision_seq())
     }

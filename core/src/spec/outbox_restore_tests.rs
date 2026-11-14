@@ -25,7 +25,7 @@ fn out_restore_discards_only_orphaned_transfer_intents() {
     let effects = ready(&mut twin);
     assert_eq!(kinds(&effects), vec![CommitKind::Rollback], "{effects:?}");
     assert_eq!(twin.stage(2), Some(St::Failed));
-    assert!(has_op!(twin, StoreOp::RetireTransferOutcome { .. }) && has_op!(twin, StoreOp::TransferOutcome { outcome: OutboxOutcome::Discarded, .. }), "{:?}", twin.store_ops);
+    assert!(has_op!(twin, StoreOp::RetireTransferOutcome { .. }) && has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, outcome: OutboxOutcome::Discarded, .. }), "{:?}", twin.store_ops);
 }
 
 pub(super) fn restore(twin: &mut Twin, ops: Vec<StoredOp>) -> Vec<OutboxEffect> {

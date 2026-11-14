@@ -110,6 +110,26 @@ async fn a_server_create_returns_the_confirmed_row() {
     rig.database.close_now();
 }
 
+/// D-466: a receipt confirmed after its operation landed and left the owner is answered from the record: the row read from the Store, each time.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_receipt_of_a_landed_create_is_answered_from_the_record_after_the_owner_forgot_it() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let mut receipts = Vec::new();
+    for name in ["first", "second", "third"] {
+        let (values, args) = group(name);
+        receipts.push((name, bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap()));
+    }
+    settle(&rig).await;
+    for (_, receipt) in receipts.into_iter().rev() {
+        let row = bound(rig.database.confirmed(receipt.clone(), false)).await.unwrap().value.expect("the confirmed row");
+        let again = bound(rig.database.confirmed(receipt, false)).await.unwrap().value.expect("the same receipt answers again");
+        assert_eq!(again.id, row.id);
+    }
+    rig.database.close_now();
+}
+
 /// A reader whose last reference decides where the platform object dies.
 struct DropProbe { held: Arc<Mutex<Vec<String>>>, dropped: Arc<std::sync::atomic::AtomicUsize> }
 

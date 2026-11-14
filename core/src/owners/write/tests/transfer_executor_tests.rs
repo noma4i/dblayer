@@ -72,6 +72,7 @@ struct World {
     codec: Arc<Codec>,
     answers: Arc<Mutex<Vec<(ReplyId, TransferAnswer)>>>,
     shown: Arc<Mutex<Vec<Shown>>>,
+    reads: Arc<Mutex<Vec<(ReplyId, u64, u64)>>>,
     dir: tempfile::TempDir,
 }
 
@@ -86,12 +87,15 @@ fn world() -> World {
     let codec = Arc::new(Codec::default());
     let (answers, shown) = (Arc::new(Mutex::new(Vec::new())), Arc::new(Mutex::new(Vec::new())));
     let (to_answers, to_shown) = (answers.clone(), shown.clone());
+    let reads = Arc::new(Mutex::new(Vec::new()));
+    let to_reads = reads.clone();
     let executor = TransferExecutor::new(
         Wire { gate: open_gate(EPOCH, Arc::new(stub.clone())), tasks: Arc::new(spawn.clone()) },
         codec.clone(),
         files.clone(),
         TransferSinks {
             settle: Arc::new(move |reply, answer| lock(&to_answers).push((reply, answer))),
+            read_outcome: Arc::new(move |_, id, cycle, reply| lock(&to_reads).push((reply, id, cycle))),
             status: Arc::new(move |_stream, shown, _revision| lock(&to_shown).push(shown)),
             drained: Arc::new(|_| {}),
             signal: Arc::new(|_| {}),
@@ -104,7 +108,7 @@ fn world() -> World {
     let (outbox, _) = peer(&mut det, "outbox");
     let transfers = det.add::<Transfers>("transfers", TransferState::new(EPOCH, 2, TransferPeers { store, outbox, rounds: None }), executor);
     det.start_epoch(EPOCH);
-    let mut world = World { det, spawn, stub, transfers, files, codec, answers, shown, dir };
+    let mut world = World { det, spawn, stub, transfers, files, codec, answers, shown, reads, dir };
     world.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())], complete: false });
     world.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: Vec::new(), batches: Default::default(), held_orphan: None });
     world.post(TransferInput::RestoreReady { epoch: EPOCH });
@@ -261,7 +265,7 @@ fn exec_xfer_view_and_local_copy() {
     assert_eq!(w.stage(KEY), None);
     assert!(std::fs::read(w.files.path(&copy).unwrap()).is_err(), "the local copy is deleted after Confirmed");
     w.post(TransferInput::Outcome { receipt, reply: 2 , discard_on_failure: false});
-    assert!(lock(&w.answers).contains(&(2, TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 3, result: None, row_id: None }, None))));
+    assert_eq!(*lock(&w.reads), vec![(2, id, 1)], "a finished transfer leaves the memory: its receipt is read from the Store");
 }
 
 #[test]

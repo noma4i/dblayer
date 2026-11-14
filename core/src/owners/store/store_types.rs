@@ -1,5 +1,20 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutcomeOwner {
+    Operation,
+    Transfer,
+}
+
+impl OutcomeOwner {
+    pub(crate) fn column(self) -> &'static str {
+        match self {
+            Self::Operation => "operation",
+            Self::Transfer => "transfer",
+        }
+    }
+}
+
 /// An optimistic row of an operation: the values the caller sees before the server answers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EffectRow {
@@ -160,7 +175,8 @@ pub enum StoreOp {
     Intent { op_id: u64, model: String, row_id: String, action: String, payload: String, effects: IntentEffects, origin: IntentOrigin, attempts: u32, cycle_id: u64, created_at: u64 },
     IntentOrigin { op_id: u64, origin: IntentOrigin },
     Effects { op_id: u64, model: String, row_id: String, action: String, payload: String, effects: IntentEffects, created_at: u64 },
-    TransferOutcome { transfer_id: u64, cycle_id: u64, outcome: crate::owners::write::outbox::OutboxOutcome },
+    /// The terminal outcome of a receipt: the owner's terminal batch writes it, `model` names the table of the `Confirmed` row.
+    Outcome { owner: OutcomeOwner, id: u64, cycle_id: u64, model: String, outcome: crate::owners::write::outbox::OutboxOutcome },
     RetireTransferOutcome { transfer_id: u64, cycle_id: u64 },
     /// The durable attempt counter and the cycle of an operation: written before the `Mutate` of that attempt.
     Attempt { op_id: u64, attempts: u32, cycle_id: u64, cause: Option<crate::value::sync::FailureKind> },

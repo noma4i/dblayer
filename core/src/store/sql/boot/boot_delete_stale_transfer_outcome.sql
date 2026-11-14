@@ -1,1 +1,0 @@
-DELETE FROM transfer_outcome WHERE terminal_at < ?1

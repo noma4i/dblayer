@@ -1,1 +1,1 @@
-DELETE FROM transfer_outcome WHERE transfer_id = ?1 AND cycle_id = ?2
+DELETE FROM outcome WHERE owner = 'transfer' AND id = ?1 AND cycle_id = ?2

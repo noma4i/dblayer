@@ -139,7 +139,7 @@ impl Out {
 
     pub fn staged_cleared(&self) -> Vec<String> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::UploadStaged { key } = op { Some(key.clone()) } else { None }).collect() }
 
-    pub fn outcomes_written(&self) -> Vec<(u64, u64, OutboxOutcome)> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::TransferOutcome { transfer_id, cycle_id, outcome } = op { Some((*transfer_id, *cycle_id, outcome.clone())) } else { None }).collect() }
+    pub fn outcomes_written(&self) -> Vec<(u64, u64, OutboxOutcome)> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id, cycle_id, outcome, .. } = op { Some((*id, *cycle_id, outcome.clone())) } else { None }).collect() }
 
     pub fn removed(&self) -> Vec<String> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::RemoveUpload { key } = op { Some(key.clone()) } else { None }).collect() }
 
@@ -221,6 +221,8 @@ pub(super) struct Twin {
     pub hold_shown: bool,
     /// What the real Outbox of `with_outbox` gave out; empty when Outbox is a peer that keeps its inputs.
     outbox_fx: Log<Emitted<OutboxEffect>>,
+    /// The records of outcomes the Store double holds: the first record of an id and a cycle stays.
+    records: Vec<(u64, u64, OutboxOutcome)>,
 }
 
 impl Twin {
@@ -246,7 +248,7 @@ impl Twin {
         assert_eq!(det.add::<Spy<Transfers>>("transfer", SpyState::new(TransferState::new(EPOCH, slots, peers), &log), Discard).index(), TRANSFER_AT);
         assert_eq!(det.add::<Tap<Rounds>>("rounds", rounds.clone(), Silent).index(), ROUNDS_AT);
         det.start_epoch(EPOCH);
-        Self { det, log, store, outbox, rounds, reply: 100, unanswered: Vec::new(), ended: false, seen_ids: Default::default(), followed: Default::default(), hold_shown: false, outbox_fx }
+        Self { records: Vec::new(), det, log, store, outbox, rounds, reply: 100, unanswered: Vec::new(), ended: false, seen_ids: Default::default(), followed: Default::default(), hold_shown: false, outbox_fx }
     }
 
     /// Both owners after their restore, the network up, the operations `Message:send` and `Moment:upload` declared.
@@ -370,6 +372,11 @@ impl Twin {
         }
         for input in take(&self.store) {
             if let StoreInput::Commit(batch) = input {
+                for op in &batch.ops {
+                    if let StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id, cycle_id, outcome, .. } = op {
+                        if !self.records.iter().any(|(known, cycle, _)| (known, cycle) == (id, cycle_id)) { self.records.push((*id, *cycle_id, outcome.clone())); }
+                    }
+                }
                 if batch.ops.iter().all(|op| matches!(op, StoreOp::UploadShown { .. })) { out.shown.push(batch); continue; }
                 self.unanswered.push((batch.id, batch.stamp));
                 out.batches.push(batch);
@@ -377,14 +384,39 @@ impl Twin {
         }
         out.outbox = take(&self.outbox);
         out.rounds = take(&self.rounds);
+        for run in &mut out.runs {
+            if let Run::ReadOutcome { reply, id, cycle_id } = run {
+                let answer = match self.records.iter().find(|(known, cycle, _)| (known, cycle) == (&*id, &*cycle_id)) {
+                    Some((_, _, outcome)) => TransferAnswer::Outcome(outcome.clone(), None),
+                    None => TransferAnswer::Err(Fault::NotFound),
+                };
+                *run = Run::Reply { reply: *reply, answer };
+            }
+        }
         out
     }
 
+    /// The Outbox wrote the record of an outcome in its terminal batch before it told Transfer: the Store double holds it first.
+    fn record_outbox_outcomes(&mut self, input: &TransferInput) {
+        let told: Vec<(u64, u64, OutboxOutcome)> = match input {
+            TransferInput::MutationOutcome { transfer_id, cycle_id, outcome, .. } => vec![(*transfer_id, *cycle_id, outcome.clone())],
+            TransferInput::MutationOutcomes { members, .. } => members.clone(),
+            _ => Vec::new(),
+        };
+        for (id, cycle, outcome) in told {
+            if !matches!(outcome, OutboxOutcome::Ended(_)) && !self.records.iter().any(|(known, known_cycle, _)| (*known, *known_cycle) == (id, cycle)) { self.records.push((id, cycle, outcome)); }
+        }
+    }
+
     fn follow(&mut self, input: &TransferInput) {
+        self.record_outbox_outcomes(input);
         let keys: Vec<String> = match input {
             TransferInput::Accept { item, .. } => vec![item.key.clone()],
             TransferInput::AcceptBatch { items, .. } => items.iter().map(|item| item.key.clone()).collect(),
-            TransferInput::Restored { uploads, .. } => uploads.iter().map(|row| row.key.clone()).collect(),
+            TransferInput::Restored { uploads, outcomes, .. } => {
+                for (id, cycles) in outcomes { for (cycle, outcome) in cycles { if !self.records.iter().any(|(known, known_cycle, _)| (known, known_cycle) == (id, cycle)) { self.records.push((*id, *cycle, outcome.clone())); } } }
+                uploads.iter().map(|row| row.key.clone()).collect()
+            }
             _ => Vec::new(),
         };
         for key in keys {

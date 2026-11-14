@@ -1,0 +1,1 @@
+SELECT id, cycle_id, kind, revision, value, row_id, terminal_at FROM outcome WHERE owner = 'transfer' AND id IN (SELECT transfer_id FROM sync_upload) ORDER BY id, cycle_id

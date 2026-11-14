@@ -145,9 +145,6 @@ impl Life {
     /// The id a row has now: a temporary id of a `create` that landed gives the real one.
     pub fn resolve_row(&self, epoch: Epoch, model: String, row: String) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Resolve { model, row, reply }) }
 
-    /// The root row the answer of an operation landed.
-    pub fn landed_row(&self, epoch: Epoch, op_id: u64) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Landed { op_id, reply }) }
-
     /// Answers when no operation of the owner Outbox is on its way.
     #[cfg(test)]
     pub fn operations_quiet(&self, epoch: Epoch) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::WhenQuiet { reply }) }

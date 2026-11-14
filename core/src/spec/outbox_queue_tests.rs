@@ -99,7 +99,7 @@ fn trace(seed: u64, rows: usize) -> Vec<OpId> {
         };
         let effects = match dice.below(12) {
             0..=3 => {
-                let row = if rows == 0 { open.len() } else { dice.below(rows) };
+                let row = if rows == 0 { usize::try_from(twin.state().next_op).unwrap_or(usize::MAX) } else { dice.below(rows) };
                 twin.submit(&format!("r{row}"), Policy::Rollback, false);
                 Vec::new()
             }

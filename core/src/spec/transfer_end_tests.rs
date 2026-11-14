@@ -242,6 +242,18 @@ fn xfer_removing_committed_confirmed() {
     assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 7, result: None, row_id: None }, None)]);
 }
 
+/// D-466: a finished transfer keeps nothing in memory, its removal batch holds the record, and the receipt is answered from the record.
+#[test]
+fn xfer_finished_transfer_keeps_no_outcome_and_the_receipt_reads_the_record() {
+    let mut twin = Twin::new();
+    let id = twin.mutating(KEY);
+    twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 7, result: None, row_id: None });
+    twin.commit();
+    assert!(twin.state().transfers.is_empty(), "the finished transfer left the owner");
+    let (reply, out) = twin.outcome(id, 1);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 7, result: None, row_id: None }, None)]);
+}
+
 #[test]
 fn xfer_removing_committed_discarded() {
     let mut twin = Twin::new();
@@ -261,7 +273,6 @@ fn xfer_removing_committed_copy_failed() {
     twin.copy_failed(id);
     let out = twin.commit();
     assert_eq!((Twin::fault(&out, reply), twin.stage(id), out.deletes()), (Some(Fault::Copy("unreadable".into())), TransferStage::Done, 1), "the partial file goes");
-    assert!(!twin.state().completed.contains_key(&id), "a transfer that was never accepted has no outcome");
 }
 
 type Removal = (&'static str, fn() -> (Twin, TransferId, Option<u64>, Out), fn(&mut Twin, TransferId, Option<u64>, &Out));

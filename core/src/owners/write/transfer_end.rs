@@ -1,6 +1,5 @@
 //! Owner `Transfer`: the ends of a transfer: `cancel`, `discard`, `retry`, `Failed`, `Removing`, the expiry, the outcomes, the streams of status, the end of the epoch and the close.
 
-use std::collections::BTreeMap;
 use super::outbox::{Fault, OutboxInput, OutboxOutcome, Receipt};
 use super::outbox_types::Phase;
 use super::transfer::{reply, run, Fx, TransferState};
@@ -333,17 +332,7 @@ impl TransferState {
         }
     }
 
-    /// The rows the batch of a removal showed, one per transfer that asked for a `Show`.
-    pub(super) fn shown_rows(&self, ids: &[TransferId], shown: &[Option<crate::store::Row>]) -> BTreeMap<TransferId, crate::store::Row> {
-        let asking = ids.iter().copied().filter(|id| self.transfers.get(id).is_some_and(Self::shows_landed_row));
-        asking.zip(shown).filter_map(|(id, row)| row.clone().map(|row| (id, row))).collect()
-    }
-
-    pub(super) fn shows_landed_row(transfer: &super::transfer_types::Transfer) -> bool {
-        transfer.stage == TransferStage::Removing && matches!(transfer.removal, Some(Removal::Confirmed { row_id: Some(_), .. }))
-    }
-
-    pub(super) fn removing_committed(&mut self, now: crate::runtime::Time, ids: &[TransferId], mut rows: BTreeMap<TransferId, crate::store::Row>, fx: &mut Fx) {
+    pub(super) fn removing_committed(&mut self, now: crate::runtime::Time, ids: &[TransferId], fx: &mut Fx) {
         for &id in ids {
             let Some(removal) = self.transfers.get_mut(&id).and_then(|transfer| transfer.removal.take()) else { continue };
             self.removal_replies(id, &removal, fx);
@@ -354,10 +343,7 @@ impl TransferState {
             }
             match removal.clone() {
                 Removal::Cancel | Removal::Discarded => self.settle(id, OutboxOutcome::Discarded, fx),
-                Removal::Confirmed { revision, result, row_id } => {
-                    if let (Some(row), Some(cycle)) = (rows.remove(&id), self.transfers.get(&id).map(|transfer| transfer.cycle_id)) { self.landed_rows.insert((id, cycle), row); }
-                    self.settle(id, OutboxOutcome::Confirmed { revision, result, row_id }, fx)
-                }
+                Removal::Confirmed { revision, result, row_id } => self.settle(id, OutboxOutcome::Confirmed { revision, result, row_id }, fx),
                 Removal::CopyFailed { .. } | Removal::Storage | Removal::Invalid { .. } => run(fx, TransferEffect::DeleteFile { path: file_id(id) }),
             }
             if matches!(removal, Removal::Cancel | Removal::Discarded | Removal::Confirmed { .. }) && self.transfers.get(&id).is_some_and(|transfer| transfer.source.is_some() || transfer.restore_element.as_ref().is_some_and(|(_, holder)| holder.is_some())) {
@@ -371,11 +357,10 @@ impl TransferState {
         self.start_in_order(now, fx);
     }
 
-    /// A transfer in its terminal stage leaves the table in the step that ended it: its outcomes stay in `completed`.
+    /// A transfer in its terminal stage leaves the table in the step that ended it: its outcomes are the records of the Store.
     pub(super) fn drop_transfer(&mut self, id: TransferId, fx: &mut Fx) {
         let Some(transfer) = self.transfers.remove(&id) else { return };
         if transfer.prepare.is_some() { self.free_prepare_slot(fx); }
-        if !transfer.outcomes.is_empty() { self.completed.entry(id).or_default().extend(transfer.outcomes); }
         if let Some(group_id) = transfer.batch_id {
             if let Some(group) = self.groups.get_mut(&group_id) { group.ids.retain(|member| *member != id); }
             if self.phase != Phase::Restoring && self.groups.get(&group_id).is_some_and(|group| group.ids.is_empty()) { self.groups.remove(&group_id); }
@@ -449,10 +434,7 @@ impl TransferState {
     }
 
     pub(super) fn outcome(&mut self, receipt: Receipt, rep: ReplyId, discard_on_failure: bool, fx: &mut Fx) {
-        if let Some(outcome) = self.completed.get(&receipt.op_id).and_then(|cycles| cycles.get(&receipt.cycle_id)) {
-            return reply(fx, rep, TransferAnswer::Outcome(outcome.clone(), self.landed_rows.get(&(receipt.op_id, receipt.cycle_id)).cloned()));
-        }
-        let Some(transfer) = self.transfers.get_mut(&receipt.op_id) else { return Self::refuse(fx, rep, Fault::NotFound) };
+        let Some(transfer) = self.transfers.get_mut(&receipt.op_id) else { return run(fx, TransferEffect::ReadOutcome { reply: rep, id: receipt.op_id, cycle_id: receipt.cycle_id }) };
         if self.confirmed_discards.get(&receipt.op_id).is_some_and(|(cycle, _)| *cycle == receipt.cycle_id) {
             transfer.outcome_waiters.push((receipt.cycle_id, rep, discard_on_failure));
             return;
@@ -467,7 +449,7 @@ impl TransferState {
                     return;
                 }
             }
-            return reply(fx, rep, TransferAnswer::Outcome(found.clone(), self.landed_rows.get(&(receipt.op_id, receipt.cycle_id)).cloned()));
+            return reply(fx, rep, TransferAnswer::Outcome(found.clone(), None));
         }
         if receipt.cycle_id == transfer.cycle_id && transfer.stage != TransferStage::Done {
             transfer.outcome_waiters.push((receipt.cycle_id, rep, discard_on_failure));

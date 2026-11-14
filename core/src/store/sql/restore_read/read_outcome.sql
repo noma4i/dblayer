@@ -1,0 +1,1 @@
+SELECT kind, revision, value, row_id FROM outcome WHERE owner = ?1 AND id = ?2 AND cycle_id = ?3

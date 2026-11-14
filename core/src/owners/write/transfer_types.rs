@@ -444,6 +444,8 @@ pub enum TransferEffect {
     DeleteFile { path: String },
     ClearPrepare { transfer_id: TransferId, clear_id: AttemptId },
     Reply { reply: ReplyId, answer: TransferAnswer },
+    /// The receipt of a transfer that is no longer in memory: the record of the Store answers.
+    ReadOutcome { reply: ReplyId, id: TransferId, cycle_id: CycleId },
     /// `uploads[action]`.
     /// Deliveries `TransferStatus` for the stream `stream_id`.
     Status { stream_id: StreamId, key: Key, shown: Shown, revision: i64 },
@@ -697,10 +699,7 @@ pub struct TransferState {
     pub slots: u32,
     pub phase: Phase,
     pub transfers: BTreeMap<TransferId, Transfer>,
-    pub completed: std::collections::HashMap<TransferId, CycleOutcomes>,
     pub(super) confirmed_discards: BTreeMap<TransferId, (CycleId, String)>,
-    /// The row a confirmed cycle showed in the batch of its removal.
-    pub(super) landed_rows: std::collections::HashMap<(TransferId, u64), crate::store::Row>,
     pub(super) groups: BTreeMap<u64, Group>,
     pub(super) selecting: BTreeMap<ReplyId, (TransferId, super::outbox_types::SelectKind)>,
     pub(super) removal_pending: BTreeSet<TransferId>,
@@ -760,9 +759,7 @@ impl TransferState {
             slots,
             phase: Phase::Restoring,
             transfers: BTreeMap::new(),
-            completed: std::collections::HashMap::new(),
             confirmed_discards: BTreeMap::new(),
-            landed_rows: std::collections::HashMap::new(),
             groups: BTreeMap::new(),
             selecting: BTreeMap::new(),
             removal_pending: BTreeSet::new(),

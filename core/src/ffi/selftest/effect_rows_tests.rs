@@ -116,7 +116,8 @@ async fn boundary_receipt_orders() {
     assert!(bound(rig.database.confirmed(leaving, false)).await.is_ok());
     let second = bound(rig.database.confirmed(receipt, false)).await.unwrap();
     assert!(first.value.is_some());
-    assert_eq!(first, second);
+    assert_eq!(second.answer_json, first.answer_json);
+    assert!(second.value.is_none(), "the value is the row of the Store when the answer is given: the row left");
     rig.database.close_now();
 }
 

@@ -200,20 +200,23 @@ fn boot_prunes_expired_tombstones() {
 }
 
 #[test]
-fn boot_prunes_transfer_outcomes_older_than_seven_days() {
+fn boot_prunes_outcomes_older_than_seven_days() {
     use crate::owners::contract::BatchAuthor;
-    use crate::owners::store::StoreOp;
+    use crate::owners::store::{OutcomeOwner, StoreOp};
     use crate::owners::write::outbox::OutboxOutcome;
     let (store, clock) = booted_store();
-    let outcome = |transfer_id| StoreOp::TransferOutcome { transfer_id, cycle_id: 1, outcome: OutboxOutcome::Discarded };
-    super::data_inv_tests::write(&store, BatchAuthor::Outbox, Vec::new(), vec![outcome(1)]);
+    let outcome = |owner, id, cycle_id| StoreOp::Outcome { owner, id, cycle_id, model: "messages".into(), outcome: OutboxOutcome::Discarded };
+    super::data_inv_tests::write(&store, BatchAuthor::Outbox, Vec::new(), vec![outcome(OutcomeOwner::Operation, 1, 1), outcome(OutcomeOwner::Transfer, 1, 1)]);
     clock.advance(std::time::Duration::from_millis(6 * 86_400_000));
-    super::data_inv_tests::write(&store, BatchAuthor::Outbox, Vec::new(), vec![outcome(2), StoreOp::TransferOutcome { transfer_id: 1, cycle_id: 2, outcome: OutboxOutcome::Discarded }]);
+    super::data_inv_tests::write(&store, BatchAuthor::Outbox, Vec::new(), vec![outcome(OutcomeOwner::Operation, 2, 1), outcome(OutcomeOwner::Transfer, 1, 2)]);
     clock.advance(std::time::Duration::from_millis(86_400_001));
     store.boot(&[messages_spec(), items_spec()]).unwrap();
-    let restored = store.read_restore().unwrap().transfer_outcomes;
-    assert_eq!(restored.keys().copied().collect::<Vec<_>>(), vec![1, 2], "only the old cycle goes at open");
-    assert_eq!(restored.get(&1), Some(&[(2, OutboxOutcome::Discarded)].into()));
+    let read = |owner, id, cycle_id| store.read_outcome(owner, id, cycle_id).unwrap().is_some();
+    assert_eq!(
+        (read(OutcomeOwner::Operation, 1, 1), read(OutcomeOwner::Transfer, 1, 1), read(OutcomeOwner::Operation, 2, 1), read(OutcomeOwner::Transfer, 1, 2)),
+        (false, false, true, true),
+        "only the records older than 7 days go at open, for both owners"
+    );
 }
 
 #[test]

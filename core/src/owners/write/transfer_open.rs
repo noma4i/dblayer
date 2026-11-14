@@ -189,10 +189,7 @@ impl TransferState {
                     self.begin_failure_at(now, id, error.clone(), false, row.failed_at, fx);
                 }
             }
-            Some(OutboxOutcome::Ended(cause)) => {
-                self.completed.entry(id).or_default().insert(row.cycle_id.max(1), OutboxOutcome::Ended(cause.clone()));
-                self.drop_transfer(id, fx);
-            }
+            Some(OutboxOutcome::Ended(_)) => self.drop_transfer(id, fx),
             None => {
                 if row.has_intent {
                     if let Some(group) = row.batch.and_then(|group| self.groups.get_mut(&group)) {
@@ -221,8 +218,6 @@ impl TransferState {
     pub(super) fn restored(&mut self, now: crate::runtime::Time, mut uploads: Vec<StoredTransfer>, outcomes: TransferOutcomes, fx: &mut Fx) {
         uploads.sort_by_key(|row| row.seq);
         self.open_groups = uploads.iter().filter_map(|row| row.batch).collect();
-        let held: BTreeSet<TransferId> = uploads.iter().map(|row| row.transfer_id).collect();
-        for (id, cycles) in outcomes.iter().filter(|(id, _)| !held.contains(id)) { self.completed.insert(*id, cycles.clone()); }
         for mut row in uploads {
             if row.batch.is_some_and(|group| self.groups.get(&group).is_none_or(|entry| entry.op_id.is_none())) {
                 row.restore_failed = Some("invalid batch provenance".into());

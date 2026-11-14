@@ -234,7 +234,7 @@ fn out_prop_dropped_resent() {
     }
     assert!(sends <= 40, "{sends} Send");
     assert_ne!(twin.stage(id), Some(St::Sending), "the attempts run out");
-    assert!(twin.state().ops[&id].outcome.as_ref().is_none_or(|outcome| !matches!(outcome, o::OutboxOutcome::Ended(_))));
+    assert!(twin.state().ops.get(&id).and_then(|operation| operation.outcome.as_ref()).is_none_or(|outcome| !matches!(outcome, o::OutboxOutcome::Ended(_))));
 }
 
 /// boundary_selector_orders (TRACE-02): `Retry` and `Discard` with an action address only the operation of that action.

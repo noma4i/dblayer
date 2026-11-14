@@ -111,7 +111,7 @@ impl Store {
         }
 
         let tombstone_drops = prune_tombstones(&inner.connection, now, &TombstoneRetention::DEFAULT, None)?;
-        inner.connection.execute(include_str!("sql/boot/boot_delete_stale_transfer_outcome.sql"), [now.saturating_sub(7 * 86_400_000)])?;
+        inner.connection.execute(include_str!("sql/boot/boot_delete_stale_outcome.sql"), [now.saturating_sub(7 * 86_400_000)])?;
         let database: String = inner.connection.query_row(include_str!("sql/boot/boot_select_pragma_database_list.sql"), [], |row| row.get(0))?;
         let files: std::collections::HashSet<String> = inner.connection.prepare(include_str!("sql/boot/boot_select_file.sql"))?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
         let mut transfer_holders: std::collections::HashSet<String> = inner.connection.prepare(include_str!("sql/boot/boot_select_sync_upload.sql"))?.query_map([], |row| row.get::<_, i64>(0).map(|id| id.to_string()))?.collect::<rusqlite::Result<_>>()?;

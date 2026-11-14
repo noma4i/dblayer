@@ -435,17 +435,14 @@ impl Database {
     /// The outcome of the receipt of a transfer.
     pub(super) async fn transfer_outcome(&self, receipt: WireOperationReceipt, held: Receipt, discard_on_failure: bool) -> Result<super::WireConfirmed, DbError> {
         let waiter = self.life.upload_outcome(receipt.epoch, held.clone(), discard_on_failure);
-        let (answer, landed) = match self.await_life(waiter).await {
-            Ok(LifeReply::Transfer(TransferAnswer::Outcome(outcome, row))) => (outcome, row),
+        let answer = match self.await_life(waiter).await {
+            Ok(LifeReply::Transfer(TransferAnswer::Outcome(outcome, _))) => outcome,
             Ok(LifeReply::Transfer(TransferAnswer::Err(fault))) => return Err(super::write::fault_error(fault, "upload outcome")),
             Ok(_) => return Err(super::database::foreign_reply()),
             Err(error) => return Err(super::write::end_error(error)),
         };
         match answer {
-            OutboxOutcome::Confirmed { result, .. } => {
-                let value = landed.map(|row| self.wire_of_row(&receipt.model, &row)).transpose()?;
-                Ok(super::WireConfirmed { value, answer_json: result })
-            }
+            OutboxOutcome::Confirmed { result, row_id, .. } => Ok(super::WireConfirmed { value: self.confirmed_row(receipt.epoch, &receipt.model, row_id).await?, answer_json: result }),
             OutboxOutcome::Rejected { error } => Err(DbError::Rejected { failure: super::write::failure_of(&error), kept: false }),
             OutboxOutcome::Failed { error } => Err(DbError::Rejected { failure: super::write::failure_of(&error), kept: true }),
             OutboxOutcome::Discarded => Err(super::cause_error(&super::EndCause::Discarded)),

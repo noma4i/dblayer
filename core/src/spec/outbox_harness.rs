@@ -63,6 +63,8 @@ pub(super) enum OutboxEffect {
     Send { op_id: OpId, request_id: u64, sequence: u64 },
     CancelRequest,
     Reply { reply: ReplyId, answer: OutboxAnswer },
+    /// The owner asked the Store for the record of a receipt: `Twin` answers it from the batches the owner sent.
+    Read { reply: ReplyId, op_id: OpId, cycle_id: u64 },
     TransferOutcome { outcome: o::OutboxOutcome },
     TransferOutcomes,
     Schedule,
@@ -189,6 +191,7 @@ pub(super) fn lower(seen: Seen, state: Option<&OutboxState>) -> Option<OutboxEff
         Seen::Run(Run::Started { epoch }) => OutboxEffect::Started { epoch },
         Seen::Run(Run::SnapshotRequest { .. }) => OutboxEffect::SnapshotRequest,
         Seen::Run(Run::RestoreClassified { epoch }) => OutboxEffect::RestoreClassified { epoch },
+        Seen::Run(Run::ReadOutcome { reply, op_id, cycle_id }) => OutboxEffect::Read { reply, op_id, cycle_id },
         Seen::Run(Run::Decode(_) | Run::Stale { .. }) => return None,
         Seen::Sent(Sent::Store(batch)) => {
             let kind = kind_of(&batch.ops);
@@ -402,15 +405,37 @@ impl Twin {
         self.asked.extend(transfer_inputs(&seen).into_iter().filter(|input| matches!(input, TransferInput::SelectRow { .. })));
         self.session_sends = session_inputs(&seen);
         let effects = take_fx(&self.log, state_of(&self.det));
+        let effects = self.serve_reads(effects);
         self.note(&effects);
         effects
+    }
+
+    /// Every Store op the owner sent so far, in order.
+    pub(super) fn sent_ops(&self) -> Vec<StoreOp> { self.history().into_iter().filter_map(|seen| match seen { Seen::Sent(Sent::Store(batch)) => Some(batch.ops), _ => None }).flatten().collect() }
+
+    /// The Store double: a record of an operation is the first one written, a `Failed` one is replaced by the later outcome of its cycle.
+    fn serve_reads(&self, effects: Vec<OutboxEffect>) -> Vec<OutboxEffect> {
+        effects.into_iter().map(|effect| {
+            let OutboxEffect::Read { reply, op_id, cycle_id } = effect else { return effect };
+            let mut found: Option<o::OutboxOutcome> = None;
+            for seen in self.history() {
+                let Seen::Sent(Sent::Store(batch)) = seen else { continue };
+                for op in batch.ops {
+                    if let StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Operation, id, cycle_id: cycle, outcome, .. } = op {
+                        if (id, cycle) == (op_id, cycle_id) && found.as_ref().is_none_or(|known| matches!(known, o::OutboxOutcome::Failed { .. })) { found = Some(outcome); }
+                    }
+                }
+            }
+            OutboxEffect::Reply { reply, answer: found.map_or(OutboxAnswer::Err(o::Fault::NotFound), OutboxAnswer::Outcome) }
+        }).collect()
     }
 
     pub(super) fn history(&self) -> Vec<Seen> { history_of(&self.det) }
 
     pub(super) fn state(&self) -> &OutboxState { state_of(&self.det).expect("the owner state") }
 
-    pub(super) fn stage(&self, id: OpId) -> Option<St> { self.state().stage_of(id).map(stage_of) }
+    /// An operation that is no longer in memory is `Done` when a batch removed its intent: that terminal batch held the record of its outcome.
+    pub(super) fn stage(&self, id: OpId) -> Option<St> { self.state().stage_of(id).map(stage_of).or_else(|| self.history().iter().any(|seen| matches!(seen, Seen::Sent(Sent::Store(batch)) if batch.ops.iter().any(|op| matches!(op, StoreOp::RemoveIntent { op_id } if *op_id == id) || matches!(op, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Operation, id: written, .. } if *written == id)))).then_some(St::Done)) }
 
     pub(super) fn submit(&mut self, row: &str, policy: Policy, transfer: bool) -> OpId {
         let before = self.state().ops.keys().max().copied().unwrap_or(0);

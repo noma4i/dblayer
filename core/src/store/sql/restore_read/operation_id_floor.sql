@@ -1,0 +1,1 @@
+SELECT MAX(id) FROM outcome WHERE owner = 'operation'

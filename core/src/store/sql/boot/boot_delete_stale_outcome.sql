@@ -1,0 +1,1 @@
+DELETE FROM outcome WHERE terminal_at < ?1

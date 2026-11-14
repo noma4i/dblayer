@@ -348,7 +348,17 @@ impl Database {
         result
     }
 
-    /// The outcome of a receipt is the one the owner Outbox holds for its cycle: the value is the row its landing batch showed.
+    /// The row a confirmed receipt names, read from the Store when the answer is given: no row, or a row that is gone, gives no value.
+    pub(super) async fn confirmed_row(&self, epoch: u64, model: &str, row_id: Option<String>) -> Result<Option<super::wire::WireRow>, DbError> {
+        let Some(row_id) = row_id.filter(|id| !id.is_empty()) else { return Ok(None) };
+        let (model, id) = (model.to_string(), super::database::id(&row_id)?);
+        self.read_in_epoch(epoch, move |this| {
+            let wire = this.wire(&model)?;
+            Ok(this.db.find(&model, &id)?.map(|row| wire.row(&row)))
+        }).await
+    }
+
+    /// The outcome of a receipt is the one the owner Outbox holds for its cycle, or the record of the Store for a cycle that left the memory.
     async fn operation_outcome(&self, receipt: WireOperationReceipt, ticket: Receipt, discard_on_failure: bool) -> Result<WireConfirmed, DbError> {
         let waiter = self.life.operation_outcome(receipt.epoch, ticket.clone(), discard_on_failure);
         let answer = match self.await_life(waiter).await {
@@ -358,15 +368,7 @@ impl Database {
             Err(error) => return Err(end_error(error)),
         };
         match answer {
-            OutboxOutcome::Confirmed { result, .. } => {
-                let value = match self.await_life(self.life.landed_row(receipt.epoch, ticket.op_id)).await {
-                    Ok(LifeReply::Outbox(OutboxAnswer::Written { shown, .. })) => shown.map(|row| self.wire_of_row(&receipt.model, &row)).transpose()?,
-                    Ok(LifeReply::Outbox(OutboxAnswer::Err(fault))) => return Err(fault_error(fault, "operation outcome")),
-                    Ok(_) => return Err(super::database::foreign_reply()),
-                    Err(error) => return Err(end_error(error)),
-                };
-                Ok(WireConfirmed { value, answer_json: result })
-            }
+            OutboxOutcome::Confirmed { result, row_id, .. } => Ok(WireConfirmed { value: self.confirmed_row(receipt.epoch, &receipt.model, row_id).await?, answer_json: result }),
             OutboxOutcome::Rejected { error } => Err(DbError::Rejected { failure: failure_of(&error), kept: false }),
             OutboxOutcome::Failed { error } => Err(DbError::Rejected { failure: failure_of(&error), kept: true }),
             OutboxOutcome::Discarded => Err(super::cause_error(&super::EndCause::Discarded)),

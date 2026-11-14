@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::owners::contract::BatchAuthor;
-use crate::owners::store::{EffectRow, IntentEffects, StoreBatch, StoreOp};
+use crate::owners::store::{EffectRow, IntentEffects, OutcomeOwner, StoreBatch, StoreOp};
 use crate::store::query::{Order, Query, Where};
 use crate::owners::read::windows::WindowKey;
 use crate::store::fixtures::{all_specs, moments_spec, put, row};
@@ -134,12 +134,12 @@ fn transfer_outcome_is_written_with_intent_removal() {
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![intent(5)]);
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![
-        StoreOp::TransferOutcome { transfer_id: 3, cycle_id: 2, outcome: OutboxOutcome::Confirmed { revision: 0, result: None, row_id: None } },
+        StoreOp::Outcome { owner: OutcomeOwner::Transfer, id: 3, cycle_id: 2, model: "moments".into(), outcome: OutboxOutcome::Confirmed { revision: 0, result: None, row_id: None } },
         StoreOp::RemoveIntent { op_id: 5 },
     ]);
     let (count, revision): (i64, i64) = db.read_locked(|connection| {
         let count = connection.query_row("SELECT COUNT(*) FROM op WHERE seq = 5", [], |row| row.get(0))?;
-        let revision = connection.query_row("SELECT revision FROM transfer_outcome WHERE transfer_id = 3 AND cycle_id = 2 AND kind = 'confirmed'", [], |row| row.get(0))?;
+        let revision = connection.query_row("SELECT revision FROM outcome WHERE owner = 'transfer' AND id = 3 AND cycle_id = 2 AND kind = 'confirmed'", [], |row| row.get(0))?;
         Ok((count, revision))
     }).unwrap();
     assert_eq!(count, 0);
@@ -166,13 +166,13 @@ fn store_retry_preserves_transfer_outcome() {
     let StoreOp::Intent { op_id, model, row_id, action, payload, effects, .. } = intent(5) else { unreachable!() };
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { created_at: 0, attempts: 1, cycle_id: 1, op_id, model, row_id, action, payload, effects, origin: IntentOrigin::Transfer { transfer_id: 3 } }]);
     let first = OutboxOutcome::Failed { error: "refused".into() };
-    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::TransferOutcome { transfer_id: 3, cycle_id: 1, outcome: first.clone() }]);
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Outcome { owner: OutcomeOwner::Transfer, id: 3, cycle_id: 1, model: "moments".into(), outcome: first.clone() }]);
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::MarkError { op_id: 5, error: None }, StoreOp::Attempt { op_id: 5, attempts: 1, cycle_id: 2, cause: None }]);
     let second = OutboxOutcome::Discarded;
-    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::TransferOutcome { transfer_id: 3, cycle_id: 2, outcome: second.clone() }]);
-    assert_eq!(db.read_restore().unwrap().transfer_outcomes.get(&3), Some(&[(1, first), (2, second)].into()));
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Outcome { owner: OutcomeOwner::Transfer, id: 3, cycle_id: 2, model: "moments".into(), outcome: second.clone() }]);
+    assert_eq!(db.read_restore().unwrap().transfer_outcomes.get(&3), Some(&[(1, first.clone()), (2, second.clone())].into()), "a live transfer restores the outcomes of every cycle");
     write(&db, BatchAuthor::Transfer, Vec::new(), vec![StoreOp::RemoveUpload { key: "moments:m1:upload".into() }]);
-    assert_eq!(db.read_restore().unwrap().transfer_outcomes.get(&3), Some(&[(1, OutboxOutcome::Failed { error: "refused".into() }), (2, OutboxOutcome::Discarded)].into()), "RemoveUpload keeps the outcomes of every cycle (D-237)");
+    assert_eq!((db.read_outcome(OutcomeOwner::Transfer, 3, 1).unwrap(), db.read_outcome(OutcomeOwner::Transfer, 3, 2).unwrap()), (Some(first), Some(second)), "RemoveUpload keeps the outcomes of every cycle (D-237)");
 }
 
 #[test]
@@ -180,12 +180,12 @@ fn store_transfer_outcome_keeps_the_first_result() {
     use crate::owners::write::outbox::OutboxOutcome;
     let db = open();
     let first = OutboxOutcome::Failed { error: "refused".into() };
-    write(&db, BatchAuthor::Transfer, Vec::new(), vec![StoreOp::TransferOutcome { transfer_id: 3, cycle_id: 1, outcome: first.clone() }]);
-    let before: (String, i64) = db.lock().connection.query_row("SELECT kind, terminal_at FROM transfer_outcome WHERE transfer_id = 3 AND cycle_id = 1", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
-    write(&db, BatchAuthor::Transfer, Vec::new(), vec![StoreOp::TransferOutcome { transfer_id: 3, cycle_id: 1, outcome: OutboxOutcome::Discarded }]);
-    let after: (String, i64) = db.lock().connection.query_row("SELECT kind, terminal_at FROM transfer_outcome WHERE transfer_id = 3 AND cycle_id = 1", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    write(&db, BatchAuthor::Transfer, Vec::new(), vec![StoreOp::Outcome { owner: OutcomeOwner::Transfer, id: 3, cycle_id: 1, model: "moments".into(), outcome: first.clone() }]);
+    let before: (String, i64) = db.lock().connection.query_row("SELECT kind, terminal_at FROM outcome WHERE owner = 'transfer' AND id = 3 AND cycle_id = 1", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    write(&db, BatchAuthor::Transfer, Vec::new(), vec![StoreOp::Outcome { owner: OutcomeOwner::Transfer, id: 3, cycle_id: 1, model: "moments".into(), outcome: OutboxOutcome::Discarded }]);
+    let after: (String, i64) = db.lock().connection.query_row("SELECT kind, terminal_at FROM outcome WHERE owner = 'transfer' AND id = 3 AND cycle_id = 1", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
     assert_eq!(after, before);
-    assert_eq!(db.read_restore().unwrap().transfer_outcomes.get(&3), Some(&[(1, first)].into()));
+    assert_eq!(db.read_outcome(OutcomeOwner::Transfer, 3, 1).unwrap(), Some(first));
 }
 
 #[test]

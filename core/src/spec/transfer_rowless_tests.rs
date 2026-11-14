@@ -88,7 +88,7 @@ fn xfer_rowless_mutation_lands() {
         twin.mutation_outcome(KEY, outcome.clone());
         committed_with(&mut twin, has_row.then(|| Some(landed("u1"))).into_iter().collect());
         let (reply, out) = twin.outcome(id, 1);
-        assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(outcome, has_row.then(|| landed("u1")))]);
+        assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(outcome, None)]);
     }
 }
 
@@ -200,7 +200,7 @@ fn xfer_rowless_row_appears_removed() {
     committed_with(&mut twin, vec![Some(landed("u1"))]);
     assert_eq!((twin.stage(first), twin.stage(second)), (TransferStage::Done, TransferStage::Uploading), "the row appeared with the answer of the first transfer, the second one goes on");
     let (reply, out) = twin.outcome(first, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(confirmed, Some(landed("u1")))]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(confirmed, None)]);
     let (third, _) = mutating(&mut twin, "CurrentUser:u1:upload_photo");
     let out = twin.mutation_outcome("CurrentUser:u1:upload_photo", OutboxOutcome::Discarded);
     assert_eq!((twin.stage(third), out.removed(), twin.stage(second)), (TransferStage::Removing, vec!["CurrentUser:u1:upload_photo".to_string()], TransferStage::Uploading), "the removal of the landed row ends the transfer on it alone");

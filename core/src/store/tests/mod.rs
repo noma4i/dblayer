@@ -12,6 +12,7 @@ mod snapshot_world_tests;
 mod snapshot_prop_tests;
 mod data_cells_tests;
 mod data_inv_tests;
+mod outcome_tests;
 mod data_orders_tests;
 mod data_nested_tests;
 mod nodes_answer_tests;

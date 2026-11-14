@@ -46,6 +46,10 @@ impl OutboxState {
     }
 
     pub(super) fn operation_committed(&mut self, now: u64, op_id: OpId, kind: CommitKind, (revision, shown): (i64, Vec<Option<crate::store::Row>>), fx: &mut Effects<Outbox>) {
+        if kind == CommitKind::Record {
+            self.ops.remove(&op_id);
+            return;
+        }
         let Some(stage) = self.stage_of(op_id) else { return };
         if kind == CommitKind::Cause { return; }
         if let Some(created) = self.ops[&op_id].cancels.filter(|created| *created != op_id && kind == CommitKind::Intent && stage == Stage::RollingBack(Why::Discarded)) {
@@ -107,7 +111,6 @@ impl OutboxState {
                 }
                 let result = self.ops.get(&op_id).and_then(|operation| operation.result.clone());
                 let row_id = self.ops.get(&op_id).map(|operation| operation.landed.clone().unwrap_or_else(|| operation.op.row_id.clone()));
-                if let Some(operation) = self.ops.get_mut(&op_id) { operation.shown = shown.last().cloned().flatten(); }
                 self.finish(now, op_id, OutboxOutcome::Confirmed { revision, result, row_id }, true, fx);
             }
             (CommitKind::Rollback, Stage::RollingBack(why)) => {
@@ -248,6 +251,7 @@ impl OutboxState {
     }
 
     pub(super) fn operation_rejected(&mut self, now: u64, op_id: OpId, kind: CommitKind, reason: RejectReason, fx: &mut Effects<Outbox>) {
+        if kind == CommitKind::Record { return; }
         let Some(stage) = self.stage_of(op_id) else { return };
         if kind == CommitKind::Cause { return; }
         if !matches!(reason, RejectReason::Storage(_)) { if let Some(operation) = self.ops.get_mut(&op_id) { operation.storage_refusals = 0; } }
@@ -266,7 +270,11 @@ impl OutboxState {
                     self.finish(now, op_id, OutboxOutcome::Ended(end_cause(&reason)), false, fx);
                 }
                 RejectReason::Storage(_) => self.storage_retry(op_id, fx),
-                RejectReason::Invalid(_) if kind == CommitKind::RemoveRow => self.discard_removed(now, op_id, fx),
+                RejectReason::Invalid(_) if kind == CommitKind::RemoveRow => {
+                    if let Some(operation) = self.ops.get_mut(&op_id) { operation.recorded = false; }
+                    self.discard_removed(now, op_id, fx);
+                    self.record_outcome(op_id, &OutboxOutcome::Discarded, fx);
+                }
                 RejectReason::Invalid(_) => self.remove_row_operation(op_id, fx),
             }
             return;

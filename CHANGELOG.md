@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- Return the row as it is stored now from `confirmed`, not the row at landing.
+- Keep the outcome of a finished write on disk so its receipt still answers after a restart.
+
 ### Fixed
 
 - Give a list value the revision of the commit that changed its rows.

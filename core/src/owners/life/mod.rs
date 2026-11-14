@@ -22,13 +22,14 @@ use super::contract::{BatchAuthor, BatchId, Committed, CommittedBroadcast, Netwo
 use super::session::{AuthorId, AuthorOutcome, SessionAnswer, SessionCalls, SessionInput, SessionState};
 use super::lifecycle::{Lifecycle, LifecycleError, LifecycleInput, LifecycleState, Peer};
 use super::network::{Network, NetworkInput, NetworkState};
-use super::write::outbox::{Outbox, OutboxAnswer, OutboxInput, OutboxPeers, OutboxState};
+use super::write::outbox::{Fault, Outbox, OutboxAnswer, OutboxInput, OutboxPeers, OutboxState};
 use super::write::outbox_executor::{OutboxExecutor, OutboxSignal};
 use super::write::transfer::{TransferAnswer, TransferInput, TransferPeers, TransferState, Transfers};
 use super::write::rounds::{Rounds, RoundsInput, RoundsState};
 use super::write::rounds_executor::RoundsExecutor;
 use super::write::transfer_executor::{LifeSignal, TransferExecutor, TransferPort, TransferSinks};
-use super::store::{BootFound, StoreInput, StoreReply, StoreState, StoreWriter};
+use super::contract::RejectReason;
+use super::store::{BootFound, OutcomeOwner, StoreInput, StoreReply, StoreState, StoreWriter};
 use crate::store::Store;
 use crate::runtime::{Address, AppendLog, Epoch, EpochStamp, Handle, OutcomeId, Outcomes, PublishedCell, Runtime, RuntimeBuilder, Waiter};
 
@@ -410,6 +411,28 @@ impl Life {
             let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), (exchange.clone(), secret.clone(), ports.db.clone()), seal.clone(), ports.executor.clone(), &restored));
             (address, restored)
         });
+        let read_outcome: super::write::outbox_executor::ReadOutcome = {
+            let (db, executor, wiring, counted) = (ports.db.clone(), ports.executor.clone(), wiring.clone(), builder.handle());
+            Arc::new(move |owner, id, cycle_id, reply| {
+                let (db, wiring) = (db.clone(), wiring.clone());
+                drop(crate::task::spawn_blocking_on(&executor, Some(counted.launch()), move || {
+                    let found = db.read_outcome(owner, id, cycle_id);
+                    let fault = |fault| match owner {
+                        OutcomeOwner::Operation => LifeReply::Outbox(OutboxAnswer::Err(fault)),
+                        OutcomeOwner::Transfer => LifeReply::Transfer(TransferAnswer::Err(fault)),
+                    };
+                    let answer = match found {
+                        Ok(Some(outcome)) => match owner {
+                            OutcomeOwner::Operation => LifeReply::Outbox(OutboxAnswer::Outcome(outcome)),
+                            OutcomeOwner::Transfer => LifeReply::Transfer(TransferAnswer::Outcome(outcome, None)),
+                        },
+                        Ok(None) => fault(Fault::NotFound),
+                        Err(error) => fault(Fault::Rejected(RejectReason::Storage(error.to_string()))),
+                    };
+                    wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), answer);
+                }));
+            })
+        };
         let has_transfer = session_address.is_some() && ports.transfer.is_some() && ports.transport.is_some();
         let transfer_at = has_transfer.then(|| builder.reserve::<Transfers>());
         let rounds_at = has_transfer.then(|| builder.reserve::<Rounds>());
@@ -425,6 +448,7 @@ impl Life {
                     OutboxSignal::RestoreClassified(epoch) => signal_wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner: Peer::Outbox, epoch }),
                 }),
                 counted: Some(builder.handle()),
+                read_outcome: Some(read_outcome.clone()),
                 stale: Some({
                     let stale_wiring = wiring.clone();
                     Arc::new(move |families: Vec<(String, String)>, revision: i64| {
@@ -455,6 +479,7 @@ impl Life {
                     port.codec.clone(),
                     ports.db.files().clone(),
                     TransferSinks {
+                        read_outcome: read_outcome.clone(),
                         settle: Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Transfer(answer)); }),
                         status: Arc::new(move |stream, shown, revision| status_wiring.to_deliveries(super::read::deliveries::DeliveryInput::TransferStatus { stream, blob: super::read::deliveries::BlobStatus::of(&shown), revision })),
                         drained: Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
@@ -492,6 +517,7 @@ impl Life {
                 stale: None,
                 decode: None,
                 counted: None,
+                read_outcome: None,
             };
             builder.add::<Outbox>("local_writes", OutboxState::local_writes(0, store), executor)
         };

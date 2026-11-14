@@ -452,14 +452,16 @@ fn out_removed_row_invalid_is_not_retried() {
         let (mut twin, id) = reach(stage, &ctx);
         twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "r".into(), revision: 20 });
         let effects = refuse(&mut twin, id, RejectReason::Invalid(String::new()));
+        let refused: Vec<Vec<crate::owners::store::StoreOp>> = twin.store_batches.iter().map(|batch| batch.ops.clone()).collect();
         let answered = if stage == St::Failed {
             let receipt = twin.receipt(id, EPOCH);
             answers(&twin.post(OutboxInput::Outcome { receipt, reply: WAITER, discard_on_failure: false }), WAITER)
         } else { answers(&effects, WAITER) };
-        let got = (kinds(&effects), timers(&effects), answered, twin.stage(id));
-        let want = (Vec::new(), 0, vec![OutboxAnswer::Outcome(OutboxOutcome::Discarded)], Some(St::Done));
+        let records: Vec<bool> = refused.iter().map(|ops| matches!(ops.as_slice(), [crate::owners::store::StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Operation, outcome: OutboxOutcome::Discarded, .. }])).collect();
+        let got = (records, timers(&effects), answered, twin.stage(id));
+        let want = (vec![true], 0, vec![OutboxAnswer::Outcome(OutboxOutcome::Discarded)], Some(St::Done));
         if got != want {
-            wrong.push(format!("{stage:?}: (batches, timers, answers, stage) = {got:?}, the spec asks {want:?}"));
+            wrong.push(format!("{stage:?}: (record batches, timers, answers, stage) = {got:?}, the spec asks {want:?}"));
         }
     }
     assert!(wrong.is_empty(), "{} wrong cases:\n{}", wrong.len(), wrong.join("\n"));
@@ -512,7 +514,7 @@ fn out_landing_committed_result() {
     twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: Some(r#"{"copies":3}"#.into()), missing: Vec::new(), errors: None });
     let effects = twin.committed(id);
     assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { result: Some(text), .. }) if text == r#"{"copies":3}"#)), "{effects:?}");
-    assert!(matches!(&twin.state().ops[&id].outcome, Some(OutboxOutcome::Confirmed { result: Some(text), .. }) if text == r#"{"copies":3}"#), "a second read of the outcome gives the same result");
+    assert!(twin.sent_ops().iter().any(|op| matches!(op, crate::owners::store::StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Operation, outcome: OutboxOutcome::Confirmed { result: Some(text), .. }, .. } if text == r#"{"copies":3}"#)), "the record that answers a later read holds the same result");
 }
 
 #[test]
@@ -576,7 +578,8 @@ fn out_destroy_discards_chain() {
     let done = twin.commit_batch(rollback);
     assert!(matches!(answers(&done, 22).as_slice(), [OutboxAnswer::Receipt(_)]), "{done:?}");
     assert_eq!((discarded(&done), transfer_outcomes(&done), twin.stage(later), twin.stage(after), twin.stage(moved), sends(&done)), (3, vec![OutboxOutcome::Discarded], Some(St::Done), Some(St::Done), Some(St::Done), 0), "out_destroy_unsent_create: every operation of the chain is Done");
-    assert_eq!(twin.state().ops[&destroy].outcome, Some(OutboxOutcome::Confirmed { revision: twin.revision, result: None, row_id: None }));
+    assert!(!twin.state().ops.contains_key(&destroy), "the destroy left the owner with the rollback of the create");
+    assert!(twin.sent_ops().iter().any(|op| matches!(op, crate::owners::store::StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Operation, id, outcome: OutboxOutcome::Confirmed { result: None, row_id: None, .. }, .. } if *id == destroy)), "the rollback batch wrote the record of the destroy");
     let online = twin.post(OutboxInput::Online(Online(true)));
     assert_eq!((discarded(&online), transfer_outcomes(&online)), (0, Vec::new()), "each operation is discarded once");
 }
@@ -598,7 +601,7 @@ fn out_destroy_discards_chain_with_a_batch_in_flight() {
         assert!(if committed { matches!(submit.as_slice(), [OutboxAnswer::Receipt(_)]) } else { matches!(submit.as_slice(), [OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage(detail)))] if detail == "disk") }, "committed={committed}: {reply:?}");
         if committed { twin.waiter(later); }
         let done = twin.commit_batch(rollback_batch);
-        assert_eq!((discarded(&done), twin.stage(later), sends(&done)), (if committed { 2 } else { 1 }, if committed { Some(St::Done) } else { None }, 0), "committed={committed}: a rejected submit leaves no operation: {done:?}");
+        assert_eq!((discarded(&done), twin.state().ops.contains_key(&later), sends(&done)), (if committed { 2 } else { 1 }, false, 0), "committed={committed}: a rejected submit leaves no operation: {done:?}");
         let rollbacks = done.iter().chain(reply.iter()).filter(|effect| kinds(std::slice::from_ref(effect)) == vec![CommitKind::Rollback]).count();
         assert_eq!(rollbacks, 0, "committed={committed}: the chain is taken back once");
     }

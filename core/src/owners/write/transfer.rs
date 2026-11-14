@@ -8,7 +8,7 @@ use super::outbox::{Fault, NewOp, OpSource, OutboxInput, OutboxOutcome, Receipt,
 use super::outbox_types::Phase;
 use super::rounds::RoundsInput;
 use crate::owners::contract::{BatchAuthor, Drained, EpochEnded, Online, RejectReason, ReplyId};
-use crate::owners::store::{StoreBatch, StoreInput, StoreOp, UploadKind};
+use crate::owners::store::{OutcomeOwner, StoreBatch, StoreInput, StoreOp, UploadKind};
 use crate::runtime::RetryPolicy;
 use crate::runtime::{Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
 
@@ -281,7 +281,7 @@ impl TransferState {
                 }
                 if let Some(upload_id) = Self::removal_orphan(transfer, &Removal::Discarded) { prefix.push(StoreOp::UploadOrphan { upload_id, key: transfer.key.clone() }); }
                 prefix.push(StoreOp::RetireTransferOutcome { transfer_id: old, cycle_id: transfer.cycle_id });
-                prefix.push(StoreOp::TransferOutcome { transfer_id: old, cycle_id: transfer.cycle_id, outcome: OutboxOutcome::Discarded });
+                prefix.push(StoreOp::Outcome { owner: OutcomeOwner::Transfer, id: old, cycle_id: transfer.cycle_id, model: transfer.mutation.model.clone(), outcome: OutboxOutcome::Discarded });
             }
         }
         let ops: Vec<StoreOp> = prefix.into_iter().chain(ids
@@ -296,10 +296,7 @@ impl TransferState {
                 if kind == StoreKind::Removed {
                     ops.push(Self::remove_upload(transfer));
                     if transfer.restore_element.is_some() { ops.push(Self::shown_op(transfer, Shown::Gone)); }
-                    ops.push(StoreOp::TransferOutcome { transfer_id: id, cycle_id: transfer.cycle_id, outcome: transfer.outcomes.get(&transfer.cycle_id).filter(|outcome| !matches!(outcome, OutboxOutcome::Ended(_))).cloned().unwrap_or(OutboxOutcome::Discarded) });
-                    if let (TransferStage::Removing, Some(Removal::Confirmed { row_id: Some(row_id), .. })) = (transfer.stage, &transfer.removal) {
-                        ops.push(StoreOp::Show { model: transfer.mutation.model.clone(), row_id: row_id.clone() });
-                    }
+                    ops.push(StoreOp::Outcome { owner: OutcomeOwner::Transfer, id, cycle_id: transfer.cycle_id, model: transfer.mutation.model.clone(), outcome: transfer.outcomes.get(&transfer.cycle_id).filter(|outcome| !matches!(outcome, OutboxOutcome::Ended(_))).cloned().unwrap_or(OutboxOutcome::Discarded) });
                     if let Some(upload_id) = transfer.removal.as_ref().and_then(|removal| Self::removal_orphan(transfer, removal)) {
                         ops.push(StoreOp::UploadOrphan { upload_id, key: transfer.key.clone() });
                     }
@@ -318,7 +315,7 @@ impl TransferState {
                     let kind = if cached_copy { StoreKind::Completed } else { kind };
                     if kind == StoreKind::Retrying || (transfer.stage == TransferStage::PersistingCopy && transfer.supply_back == Some(TransferStage::Failed)) {
                         if let Some(outcome) = transfer.outcomes.get(&transfer.cycle_id).filter(|outcome| !matches!(outcome, OutboxOutcome::Ended(_))) {
-                            ops.push(StoreOp::TransferOutcome { transfer_id: id, cycle_id: transfer.cycle_id, outcome: outcome.clone() });
+                            ops.push(StoreOp::Outcome { owner: OutcomeOwner::Transfer, id, cycle_id: transfer.cycle_id, model: transfer.mutation.model.clone(), outcome: outcome.clone() });
                         }
                     }
                     if transfer.stage == TransferStage::PersistingCopy && transfer.supply_back == Some(TransferStage::Failed) {
@@ -548,9 +545,8 @@ impl TransferState {
         let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut transfer.outcome_waiters).into_iter().partition(|(waits, _, _)| *waits == cycle);
         transfer.outcome_waiters = rest;
         let outcome = transfer.outcomes[&cycle].clone();
-        let row = self.landed_rows.get(&(id, cycle)).cloned();
         for (_, waiter, _) in mine {
-            reply(fx, waiter, TransferAnswer::Outcome(outcome.clone(), row.clone()));
+            reply(fx, waiter, TransferAnswer::Outcome(outcome.clone(), None));
         }
     }
 
@@ -717,7 +713,7 @@ impl TransferState {
             for id in &pending.ids {
                 if let Some((old, _)) = self.replacements.remove(id) {
                     if let Some(transfer) = self.transfers.get_mut(&old) { transfer.outcomes.insert(transfer.cycle_id, OutboxOutcome::Discarded); }
-                    self.removing_committed(now, &[old], BTreeMap::new(), fx);
+                    self.removing_committed(now, &[old], fx);
                     fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::FinishReplacement { target: ReserveTarget::Transfer(*id), committed: true })));
                 }
             }
@@ -772,10 +768,9 @@ impl TransferState {
             return self.maybe_drained(fx);
         }
         if pending.kind == StoreKind::MixedOutcomes {
-            let mut rows = self.shown_rows(&pending.ids, &shown);
             for &id in &pending.ids {
                 match self.stage_of(id) {
-                    Some(TransferStage::Removing) => self.removing_committed(now, &[id], rows.remove(&id).into_iter().map(|row| (id, row)).collect(), fx),
+                    Some(TransferStage::Removing) => self.removing_committed(now, &[id], fx),
                     Some(TransferStage::PersistingFailure) => self.failure_committed(id, fx),
                     _ => {}
                 }
@@ -810,7 +805,7 @@ impl TransferState {
                     self.failure_committed(id, fx);
                 }
             }
-            Some(TransferStage::Removing) => self.removing_committed(now, &pending.ids, self.shown_rows(&pending.ids, &shown), fx),
+            Some(TransferStage::Removing) => self.removing_committed(now, &pending.ids, fx),
             _ => {}
         }
         self.maybe_drained(fx);

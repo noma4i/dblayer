@@ -16,6 +16,8 @@ pub enum OutboxSignal {
 }
 
 pub type MarkStale = Arc<dyn Fn(Vec<(String, String)>, i64) + Send + Sync>;
+/// Reads the record of a receipt outside the actor and settles the reply with the answer of the owner (`owner`, `id`, `cycle_id`, `reply`).
+pub type ReadOutcome = Arc<dyn Fn(crate::owners::store::OutcomeOwner, u64, u64, ReplyId) + Send + Sync>;
 pub type DecodeAnswer = Arc<dyn Fn(&DecodeJob) -> Decoded + Send + Sync>;
 
 pub struct OutboxExecutor {
@@ -29,6 +31,7 @@ pub struct OutboxExecutor {
     pub decode: Option<(tokio::runtime::Handle, DecodeAnswer)>,
     /// The barrier of the owners waits for the jobs of this executor.
     pub counted: Option<crate::runtime::Handle>,
+    pub read_outcome: Option<ReadOutcome>,
 }
 
 impl EffectRunner<Outbox> for OutboxExecutor {
@@ -39,6 +42,10 @@ impl EffectRunner<Outbox> for OutboxExecutor {
             OutboxEffect::Started { epoch } => (self.signal)(OutboxSignal::Started(epoch)),
             OutboxEffect::SnapshotRequest { epoch } => (self.signal)(OutboxSignal::SnapshotRequest(epoch)),
             OutboxEffect::RestoreClassified { epoch } => (self.signal)(OutboxSignal::RestoreClassified(epoch)),
+            OutboxEffect::ReadOutcome { reply, op_id, cycle_id } => match &self.read_outcome {
+                Some(read) => read(crate::owners::store::OutcomeOwner::Operation, op_id, cycle_id, reply),
+                None => (self.settle)(reply, OutboxAnswer::Err(super::outbox::Fault::NotFound)),
+            },
             OutboxEffect::Stale { families, revision } => {
                 if let Some(stale) = &self.stale { stale(families, revision); }
             }

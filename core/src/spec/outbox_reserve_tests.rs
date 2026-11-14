@@ -38,9 +38,9 @@ fn retry_outcomes(sends: &[Sent]) -> Vec<(Vec<(u64, u64)>, Result<i64, Fault>)> 
 
 fn mutation_outcomes(sends: &[Sent]) -> Vec<(u64, Vec<(u64, u64, OutboxOutcome)>, bool)> { sends.iter().filter_map(|sent| match sent { Sent::Transfer(TransferInput::MutationOutcomes { batch_id, members, intent_removed }) => Some((*batch_id, members.clone(), *intent_removed)), _ => None }).collect() }
 
-fn transfer_outcome_op(ops: &[StoreOp], id: u64, cycle: u64) -> bool { ops.iter().any(|op| matches!(op, StoreOp::TransferOutcome { transfer_id, cycle_id, .. } if (*transfer_id, *cycle_id) == (id, cycle))) }
+fn transfer_outcome_op(ops: &[StoreOp], id: u64, cycle: u64) -> bool { ops.iter().any(|op| matches!(op, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: written, cycle_id, .. } if (*written, *cycle_id) == (id, cycle))) }
 
-fn any_transfer_outcome_op(ops: &[StoreOp]) -> bool { ops.iter().any(|op| matches!(op, StoreOp::TransferOutcome { .. } | StoreOp::RetireTransferOutcome { .. })) }
+fn any_transfer_outcome_op(ops: &[StoreOp]) -> bool { ops.iter().any(|op| matches!(op, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, .. } | StoreOp::RetireTransferOutcome { .. })) }
 
 fn session_has(twin: &Twin, matching: impl Fn(&SessionInput) -> bool) -> bool { twin.session_sends.iter().any(matching) }
 
@@ -168,7 +168,7 @@ fn out_transfer_group_outcomes_commit_with_the_intent() {
     let store = batches(&sends);
     assert_eq!(store.len(), 1);
     let batch = &store[0];
-    assert!(batch.contains(&StoreOp::RemoveIntent { op_id: 4 }) && batch.iter().any(|op| matches!(op, StoreOp::TransferOutcome { transfer_id: 11, cycle_id: 2, outcome: OutboxOutcome::Confirmed { .. } })) && batch.iter().any(|op| matches!(op, StoreOp::TransferOutcome { transfer_id: 12, cycle_id: 4, outcome: OutboxOutcome::Failed { .. } })), "{batch:?}");
+    assert!(batch.contains(&StoreOp::RemoveIntent { op_id: 4 }) && batch.iter().any(|op| matches!(op, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 11, cycle_id: 2, outcome: OutboxOutcome::Confirmed { .. }, .. })) && batch.iter().any(|op| matches!(op, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 12, cycle_id: 4, outcome: OutboxOutcome::Failed { .. }, .. })), "{batch:?}");
     assert!(to_transfer(&sends).is_empty());
     let (sends, _) = raw(&mut twin, OutboxInput::Committed(committed_at(1, 37, &[])));
     let events = mutation_outcomes(&sends);
@@ -213,7 +213,7 @@ fn out_group_rollback_outcome() {
     raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     let (sends, _) = raw(&mut twin, OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
     let store = batches(&sends).swap_remove(0);
-    assert!(store.iter().any(|op| matches!(op, StoreOp::RollBack { .. })) && store.iter().any(|op| matches!(op, StoreOp::RemoveIntent { .. })) && store.iter().any(|op| matches!(op, StoreOp::TransferOutcome { transfer_id: 11, cycle_id: 2, outcome: OutboxOutcome::Rejected { .. } })) && store.iter().any(|op| matches!(op, StoreOp::TransferOutcome { transfer_id: 12, cycle_id: 4, outcome: OutboxOutcome::Rejected { .. } })), "{store:?}");
+    assert!(store.iter().any(|op| matches!(op, StoreOp::RollBack { .. })) && store.iter().any(|op| matches!(op, StoreOp::RemoveIntent { .. })) && store.iter().any(|op| matches!(op, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 11, cycle_id: 2, outcome: OutboxOutcome::Rejected { .. }, .. })) && store.iter().any(|op| matches!(op, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 12, cycle_id: 4, outcome: OutboxOutcome::Rejected { .. }, .. })), "{store:?}");
     let (sends, _) = raw(&mut twin, OutboxInput::Committed(committed_at(1, 20, &[])));
     let events = mutation_outcomes(&sends);
     assert!(matches!(events.as_slice(), [(_, members, _)] if members.iter().any(|member| matches!(member, (11, 2, OutboxOutcome::Rejected { .. }))) && members.iter().any(|member| matches!(member, (12, 4, OutboxOutcome::Rejected { .. })))) && to_transfer(&sends).len() == 1, "{events:?}");
@@ -294,7 +294,7 @@ fn out_group_member_removed_keeps_group() {
     assert!(!session_has(&twin, is_cancel), "the request of the group goes on: {:?}", twin.session_sends);
     let membership = StoreOp::IntentOrigin { op_id: group, origin: IntentOrigin::TransferGroup { batch_id: 9, transfer_ids: vec![11] } };
     assert_eq!(
-        (twin.stores.len(), twin.store_ops.contains(&membership), twin.store_ops.contains(&StoreOp::RemoveUploadByTransferId { transfer_id: 12 }), has_op!(twin, StoreOp::TransferOutcome { transfer_id: 12, cycle_id: 4, outcome: OutboxOutcome::Discarded }), has_op!(twin, StoreOp::TransferOutcome { transfer_id: 11, .. }), session_has(&twin, is_cancel), session_has(&twin, is_release), twin.stage(group)),
+        (twin.stores.len(), twin.store_ops.contains(&membership), twin.store_ops.contains(&StoreOp::RemoveUploadByTransferId { transfer_id: 12 }), has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 12, cycle_id: 4, outcome: OutboxOutcome::Discarded, .. }), has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 11, .. }), session_has(&twin, is_cancel), session_has(&twin, is_release), twin.stage(group)),
         (1, true, true, true, false, false, false, Some(St::Sending)),
         "one batch rewrites membership to [11], drops member 12 and its upload, the shared pair is untouched: {:?}", twin.store_ops);
     let batch = twin.stores[0].0;
@@ -303,7 +303,7 @@ fn out_group_member_removed_keeps_group() {
     let rows = vec![("Moment".to_string(), ["a", "b"].into_iter().map(|row| crate::owners::store::RowValue { row_id: row.into(), values: format!("{{\"m\":\"{row}\"}}") }).collect())];
     twin.post(OutboxInput::Response { op_id: group, rows, swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     assert_eq!(
-        (has_op!(twin, StoreOp::TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: OutboxOutcome::Confirmed { .. } }), has_op!(twin, StoreOp::TransferOutcome { transfer_id: 12, .. })),
+        (has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 11, cycle_id: 1, outcome: OutboxOutcome::Confirmed { .. }, .. }), has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 12, .. })),
         (true, false),
         "the pair answer then lands with Confirmed for 11 and nothing for 12: {:?}", twin.store_ops);
 }
@@ -319,7 +319,7 @@ fn out_group_last_member_removed() {
     twin.commit_batch(first);
     let removed = twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "a".into(), revision: 31 });
     assert_eq!(
-        (twin.stores.len(), twin.store_ops.contains(&StoreOp::RollBack { op_id: group }), twin.store_ops.contains(&StoreOp::RemoveIntent { op_id: group }), twin.store_ops.contains(&StoreOp::RemoveUploadByTransferId { transfer_id: 11 }), has_op!(twin, StoreOp::TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: OutboxOutcome::Discarded }), twin.stage(group)),
+        (twin.stores.len(), twin.store_ops.contains(&StoreOp::RollBack { op_id: group }), twin.store_ops.contains(&StoreOp::RemoveIntent { op_id: group }), twin.store_ops.contains(&StoreOp::RemoveUploadByTransferId { transfer_id: 11 }), has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 11, cycle_id: 1, outcome: OutboxOutcome::Discarded, .. }), twin.stage(group)),
         (1, true, true, true, true, Some(St::RollingBack(RWhy::Discarded))),
         "removing the last member discards the group in one batch: {:?} {removed:?}", twin.store_ops);
     let batch = twin.stores[0].0;
@@ -349,7 +349,7 @@ fn out_group_member_removal_invalid_is_not_retried() {
     let rows = vec![("Moment".to_string(), ["a", "b"].into_iter().map(|row| crate::owners::store::RowValue { row_id: row.into(), values: format!("{{\"m\":\"{row}\"}}") }).collect())];
     twin.post(OutboxInput::Response { op_id: group, rows, swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     assert_eq!(
-        (twin.stores.len(), has_op!(twin, StoreOp::IntentOrigin { .. }), has_op!(twin, StoreOp::TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: OutboxOutcome::Confirmed { .. } }), has_op!(twin, StoreOp::TransferOutcome { transfer_id: 12, .. })),
+        (twin.stores.len(), has_op!(twin, StoreOp::IntentOrigin { .. }), has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 11, cycle_id: 1, outcome: OutboxOutcome::Confirmed { .. }, .. }), has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 12, .. })),
         (1, false, true, false),
         "the answer of the pair lands once with Confirmed for 11, the removal batch is not issued again: {:?}", twin.store_ops);
 }
@@ -366,7 +366,7 @@ fn out_group_member_removal_rejected() {
     let first = twin.stores[0].0;
     twin.reject_batch(first, RReason::Storage);
     assert_eq!(
-        (twin.stores.is_empty(), has_op!(twin, StoreOp::TransferOutcome { outcome: OutboxOutcome::Discarded, .. }), twin.stage(group)),
+        (twin.stores.is_empty(), has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, outcome: OutboxOutcome::Discarded, .. }), twin.stage(group)),
         (true, false, Some(St::Sending)),
         "Storage keeps the member in the group, nothing is written and no Discarded is delivered: {:?}", twin.store_ops);
     let membership = StoreOp::IntentOrigin { op_id: group, origin: IntentOrigin::TransferGroup { batch_id: 9, transfer_ids: vec![11] } };
@@ -405,7 +405,7 @@ fn out_group_answer_waits_membership() {
     assert_eq!((twin.stores.is_empty(), twin.stage(group)), (true, Some(St::Sending)), "the pair answer waits for the membership batch, no landing yet: {:?} {waited:?}", twin.store_ops);
     twin.commit_batch(member_batch);
     assert_eq!(
-        (has_op!(twin, StoreOp::TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: OutboxOutcome::Confirmed { .. } }), has_op!(twin, StoreOp::TransferOutcome { transfer_id: 12, .. })),
+        (has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 11, cycle_id: 1, outcome: OutboxOutcome::Confirmed { .. }, .. }), has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 12, .. })),
         (true, false),
         "Committed of the membership batch lets the answer land on [11]: {:?}", twin.store_ops);
 
@@ -419,12 +419,12 @@ fn out_group_answer_waits_membership() {
     let membership = StoreOp::IntentOrigin { op_id: group, origin: IntentOrigin::TransferGroup { batch_id: 9, transfer_ids: vec![11] } };
     let resent = twin.reject_batch(first, RReason::Storage);
     assert_eq!(
-        (twin.store_ops.contains(&membership), has_op!(twin, StoreOp::TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: OutboxOutcome::Confirmed { .. } })),
+        (twin.store_ops.contains(&membership), has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 11, cycle_id: 1, outcome: OutboxOutcome::Confirmed { .. }, .. })),
         (true, false),
         "Storage resends the membership batch first, nothing lands yet (D-258c): {:?} {resent:?}", twin.store_ops);
     let second = twin.stores[0].0;
     twin.commit_batch(second);
-    assert!(has_op!(twin, StoreOp::TransferOutcome { transfer_id: 11, cycle_id: 1, outcome: OutboxOutcome::Confirmed { .. } }) && !has_op!(twin, StoreOp::TransferOutcome { transfer_id: 12, .. }), "then the answer lands on [11]: {:?}", twin.store_ops);
+    assert!(has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 11, cycle_id: 1, outcome: OutboxOutcome::Confirmed { .. }, .. }) && !has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 12, .. }), "then the answer lands on [11]: {:?}", twin.store_ops);
 }
 
 #[test]
@@ -440,7 +440,7 @@ fn out_group_outcome_each_member() {
     let mut twin = Twin::new();
     group(&mut twin, Policy::Keep);
     twin.post(OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
-    assert!(has_op!(twin, StoreOp::TransferOutcome { transfer_id: 11, cycle_id: 2, outcome: OutboxOutcome::Failed { .. } }) && has_op!(twin, StoreOp::TransferOutcome { transfer_id: 12, cycle_id: 4, outcome: OutboxOutcome::Failed { .. } }), "Failed reaches each member with its cycle_id: {:?}", twin.store_ops);
+    assert!(has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 11, cycle_id: 2, outcome: OutboxOutcome::Failed { .. }, .. }) && has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 12, cycle_id: 4, outcome: OutboxOutcome::Failed { .. }, .. }), "Failed reaches each member with its cycle_id: {:?}", twin.store_ops);
 
     let mut twin = Twin::new();
     group(&mut twin, Policy::Rollback);

@@ -1,1 +1,0 @@
-DELETE FROM transfer_outcome

@@ -1,1 +1,1 @@
-INSERT INTO transfer_outcome (transfer_id, cycle_id, kind, revision, value, terminal_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(transfer_id, cycle_id) DO NOTHING
+INSERT INTO outcome (owner, id, cycle_id, kind, revision, value, model, row_id, terminal_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT(owner, id, cycle_id) DO UPDATE SET kind = excluded.kind, revision = excluded.revision, value = excluded.value, model = excluded.model, row_id = excluded.row_id, terminal_at = excluded.terminal_at WHERE outcome.owner = 'operation' AND outcome.kind = 'failed'

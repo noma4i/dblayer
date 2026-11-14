@@ -54,17 +54,17 @@ async fn xfer_prop_saved_outcome_reopens_sqlite() {
     let sqlite = rusqlite::Connection::open(&database_path).unwrap();
     sqlite.execute_batch("CREATE TRIGGER hold_upload_removal BEFORE DELETE ON sync_upload BEGIN SELECT RAISE(ABORT, 'hold removal'); END;").unwrap();
     server.answer(Kind::Put, super::rig::Reply::Ok);
-    crate::test_wait::settled(&rig, "the confirmed outcome is durable", || sqlite.query_row("SELECT COUNT(*) FROM transfer_outcome WHERE kind = 'confirmed'", [], |row| row.get::<_, i64>(0)).unwrap_or(0) == 1).await;
+    crate::test_wait::settled(&rig, "the confirmed outcome is durable", || sqlite.query_row("SELECT COUNT(*) FROM outcome WHERE owner = 'transfer' AND kind = 'confirmed'", [], |row| row.get::<_, i64>(0)).unwrap_or(0) == 1).await;
     assert_eq!(server.count("MakeMoment"), 1);
     assert_eq!(sqlite.query_row("SELECT COUNT(*) FROM sync_upload", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
     within(rig.db.close_database()).await.unwrap();
     drop(rig);
     sqlite.execute_batch("DROP TRIGGER hold_upload_removal").unwrap();
-    sqlite.execute_batch("UPDATE transfer_outcome SET terminal_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000").unwrap();
+    sqlite.execute_batch("UPDATE outcome SET terminal_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000").unwrap();
     let reopened = Rig::open_at(OnFailure::Keep, Some(path), server.clone()).await;
     crate::test_wait::settled(&reopened, "the restored upload is removed", || sqlite.query_row("SELECT COUNT(*) FROM sync_upload", [], |row| row.get::<_, i64>(0)).unwrap_or(1) == 0).await;
     assert_eq!(server.count("MakeMoment"), 1);
-    assert_eq!(sqlite.query_row("SELECT COUNT(*) FROM transfer_outcome", [], |row| row.get::<_, i64>(0)).unwrap(), 1, "RemoveUpload keeps the outcome of the cycle (D-237)");
+    assert_eq!(sqlite.query_row("SELECT COUNT(*) FROM outcome WHERE owner = 'transfer'", [], |row| row.get::<_, i64>(0)).unwrap(), 1, "RemoveUpload keeps the outcome of the cycle (D-237)");
     within(reopened.db.close_database()).await.unwrap();
 }
 
@@ -91,9 +91,9 @@ async fn xfer_prop_cancelled_outcome_reopens_sqlite() {
     let sqlite = rusqlite::Connection::open(&database_path).unwrap();
     within(rig.db.close_database()).await.unwrap();
     drop(rig);
-    sqlite.execute_batch("UPDATE transfer_outcome SET terminal_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000").unwrap();
+    sqlite.execute_batch("UPDATE outcome SET terminal_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000").unwrap();
     let reopened = Rig::open_at(OnFailure::Keep, Some(path), server.clone()).await;
-    assert_eq!(sqlite.query_row("SELECT COUNT(*) FROM transfer_outcome WHERE kind = 'discarded'", [], |row| row.get::<_, i64>(0)).unwrap(), 1, "the cancelled cycle keeps its outcome after close and open (D-237)");
+    assert_eq!(sqlite.query_row("SELECT COUNT(*) FROM outcome WHERE owner = 'transfer' AND kind = 'discarded'", [], |row| row.get::<_, i64>(0)).unwrap(), 1, "the cancelled cycle keeps its outcome after close and open (D-237)");
     within(reopened.db.close_database()).await.unwrap();
 }
 

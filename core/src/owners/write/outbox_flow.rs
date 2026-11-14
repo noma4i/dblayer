@@ -7,7 +7,7 @@ use crate::owners::contract::RequestId;
 
 use crate::owners::contract::{RejectReason, ReplyId};
 
-use crate::owners::store::{RowValue};
+use crate::owners::store::{RowValue, StoreOp};
 use crate::owners::session::SessionInput;
 use crate::runtime::{Effect, Effects, Epoch, Outbound, ScheduleId};
 
@@ -242,8 +242,21 @@ impl OutboxState {
             if operation.sent {
                 if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Cancel { req_id: operation.request_id }))); }
             }
+            if let Some(operation) = self.ops.get_mut(&op_id) { operation.recorded = false; }
             self.finish(now, op_id, OutboxOutcome::Discarded, false, fx);
+            self.record_outcome(op_id, &OutboxOutcome::Discarded, fx);
         }
+    }
+
+    /// An operation that ended with no terminal batch writes the record of its outcome; it leaves the memory when the batch commits.
+    pub(super) fn record_outcome(&mut self, op_id: OpId, outcome: &OutboxOutcome, fx: &mut Effects<Outbox>) {
+        let Some(operation) = self.ops.get(&op_id) else { return };
+        if operation.op.origin != OpSource::Api { return; }
+        let record = StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Operation, id: op_id, cycle_id: operation.cycle_id, model: operation.op.model.clone(), outcome: outcome.clone() };
+        let batch = self.next_batch;
+        self.next_batch += 1;
+        self.batches.insert(batch, Batch::Operation { op_id, kind: CommitKind::Record });
+        self.commit(batch, vec![record], 0, fx);
     }
 
     pub(super) fn row_removed(&mut self, model: &str, row: &str, revision: u64, fx: &mut Effects<Outbox>) {
@@ -283,7 +296,7 @@ impl OutboxState {
         let batch = self.next_batch;
         self.next_batch += 1;
         self.batches.insert(batch, Batch::Member { op_id });
-        self.commit(batch, vec![crate::owners::store::StoreOp::IntentOrigin { op_id, origin }, crate::owners::store::StoreOp::RemoveUploadByTransferId { transfer_id: member.transfer_id }, crate::owners::store::StoreOp::TransferOutcome { transfer_id: member.transfer_id, cycle_id: member.cycle_id, outcome: OutboxOutcome::Discarded }], 0, fx);
+        self.commit(batch, vec![crate::owners::store::StoreOp::IntentOrigin { op_id, origin }, crate::owners::store::StoreOp::RemoveUploadByTransferId { transfer_id: member.transfer_id }, crate::owners::store::StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: member.transfer_id, cycle_id: member.cycle_id, model: operation.op.model.clone(), outcome: OutboxOutcome::Discarded }], 0, fx);
     }
 
     pub(super) fn member_committed(&mut self, now: u64, op_id: OpId, fx: &mut Effects<Outbox>) {
@@ -337,7 +350,8 @@ impl OutboxState {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NoSession));
         }
         let Some(operation) = self.ops.get(&receipt.op_id) else {
-            return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound));
+            fx.push(Effect::Run(OutboxEffect::ReadOutcome { reply, op_id: receipt.op_id, cycle_id: receipt.cycle_id }));
+            return;
         };
         if let Some(error) = operation.failed_errors.get(&receipt.cycle_id).filter(|_| receipt.cycle_id != operation.cycle_id) {
             return Self::reply(fx, reply, OutboxAnswer::Outcome(OutboxOutcome::Failed { error: error.clone() }));

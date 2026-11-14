@@ -129,9 +129,12 @@ pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String
         delete_operation(connection, seq)?;
     }
     match models {
-        Some(models) => models.iter().try_for_each(|model| clear_sync(connection, Some(model)))?,
+        Some(models) => models.iter().try_for_each(|model| -> Result<(), rusqlite::Error> {
+            connection.execute(include_str!("sql/reset/retire_operations_delete_outcome_of_model.sql"), params![model])?;
+            clear_sync(connection, Some(model))
+        })?,
         None => {
-            connection.execute(include_str!("sql/reset/retire_operations_delete_transfer_outcome.sql"), [])?;
+            connection.execute(include_str!("sql/reset/retire_operations_delete_outcome.sql"), [])?;
             connection.execute(include_str!("sql/reset/retire_operations_delete_sync_upload_batch.sql"), [])?;
             clear_sync(connection, None)?;
         }

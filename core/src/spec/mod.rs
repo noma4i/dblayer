@@ -49,6 +49,7 @@ mod outbox_local_tests;
 mod outbox_time_tests;
 mod outbox_gap_cells_tests;
 mod outbox_wait_tests;
+mod outbox_record_tests;
 mod outbox_selector_tests;
 mod outbox_rollback_dependents_tests;
 mod transfer_harness;

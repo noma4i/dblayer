@@ -7,7 +7,7 @@ pub use super::outbox_types::*;
 use super::transfer::TransferInput;
 use crate::owners::contract::{BatchAuthor, BatchId, EpochEnded, Online, RejectReason, ReplyId};
 use crate::owners::session::{SessionInput, OUTBOX_AUTHOR};
-use crate::owners::store::{StoreBatch, StoreInput, StoreOp};
+use crate::owners::store::{OutcomeOwner, StoreBatch, StoreInput, StoreOp};
 use crate::runtime::RetryPolicy;
 use crate::schema::OnFailure;
 use crate::owners::store::StoreWriter;
@@ -334,6 +334,7 @@ impl OutboxState {
                 stale: Vec::new(),
                 landed: None,
                 shown: None,
+                recorded: false,
                 outcome: None,
                 error: None,
                 failed_errors: BTreeMap::new(),
@@ -368,6 +369,7 @@ impl OutboxState {
 
     pub(super) fn store(&mut self, op_id: OpId, kind: CommitKind, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get(&op_id) else { return };
+        let mut written: Vec<OpId> = Vec::new();
         let attempt = StoreOp::Attempt { op_id, attempts: if kind == CommitKind::ClearMark { 1 } else { operation.attempts + 1 }, cycle_id: operation.cycle_id, cause: if kind == CommitKind::ClearMark { None } else { operation.cause } };
         let mut ops: Vec<StoreOp> = match kind {
             CommitKind::Intent => vec![StoreOp::Intent {
@@ -396,7 +398,6 @@ impl OutboxState {
                 .chain(operation.missing_destroy.then(|| StoreOp::RemoveServerRows { model: operation.op.model.clone(), ids: vec![operation.op.row_id.clone()] }))
                 .chain((!operation.stale.is_empty()).then(|| StoreOp::StaleFamilies { families: operation.stale.clone() }))
                 .chain([StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }])
-                .chain(Self::landing_shows_of(operation))
                 .collect(),
             CommitKind::Rollback if operation.restore_element.is_some() => operation.restore_element.iter().map(|(table, key)| StoreOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() }).chain([StoreOp::RemoveIntent { op_id }]).collect(),
             CommitKind::Rollback => (!operation.answer_rows_dropped).then_some(StoreOp::RollBack { op_id }).into_iter().chain([StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }])
@@ -407,10 +408,10 @@ impl OutboxState {
             CommitKind::Requeue => vec![StoreOp::Requeue { op_id }],
             CommitKind::Cause => vec![StoreOp::Cause { op_id, cause: operation.cause }],
             CommitKind::RemoveRow => vec![StoreOp::RemoveIntent { op_id }, StoreOp::ReleasePendingOwner { request_id: operation.request_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }],
-            CommitKind::LocalWrite => Vec::new(),
+            CommitKind::LocalWrite | CommitKind::Record => Vec::new(),
         };
         let terminal = match kind {
-            CommitKind::Land => Some(OutboxOutcome::Confirmed { revision: 0, result: operation.result.clone(), row_id: None }),
+            CommitKind::Land => Some(OutboxOutcome::Confirmed { revision: 0, result: operation.result.clone(), row_id: Some(operation.landed.clone().unwrap_or_else(|| operation.op.row_id.clone())) }),
             CommitKind::Rollback => Some(if operation.stage == Stage::RollingBack(Why::Discarded) { OutboxOutcome::Discarded } else { OutboxOutcome::Rejected { error: operation.reject_error.clone().unwrap_or_else(|| "refused".into()) } }),
             CommitKind::ErrorMark => Some(OutboxOutcome::Failed { error: operation.error.clone().unwrap_or_else(|| "refused".into()) }),
             _ => None,
@@ -425,16 +426,29 @@ impl OutboxState {
             }
             if let Some(pending) = self.member_removals.get(&op_id).filter(|pending| pending.land_after_storage) {
                 ops.push(StoreOp::RemoveUploadByTransferId { transfer_id: pending.member.transfer_id });
-                ops.push(StoreOp::TransferOutcome { transfer_id: pending.member.transfer_id, cycle_id: pending.member.cycle_id, outcome: OutboxOutcome::Discarded });
+                ops.push(StoreOp::Outcome { owner: OutcomeOwner::Transfer, id: pending.member.transfer_id, cycle_id: pending.member.cycle_id, model: operation.op.model.clone(), outcome: OutboxOutcome::Discarded });
             }
         }
         if kind == CommitKind::Rollback && self.orphan_transfers.contains(&op_id) {
             if let OpSource::Transfer { transfer_id, cycle_id } = &operation.op.origin {
                 ops.push(StoreOp::RetireTransferOutcome { transfer_id: *transfer_id, cycle_id: *cycle_id });
-                ops.push(StoreOp::TransferOutcome { transfer_id: *transfer_id, cycle_id: *cycle_id, outcome: OutboxOutcome::Discarded });
+                ops.push(StoreOp::Outcome { owner: OutcomeOwner::Transfer, id: *transfer_id, cycle_id: *cycle_id, model: operation.op.model.clone(), outcome: OutboxOutcome::Discarded });
+                written.push(op_id);
             }
-        } else if let Some(outcome) = terminal.filter(|_| kind != CommitKind::Rollback || !operation.failed_errors.contains_key(&operation.cycle_id)) {
-            ops.extend(Self::transfer_outcomes(operation, &outcome).into_iter().map(|(transfer_id, cycle_id, outcome)| StoreOp::TransferOutcome { transfer_id, cycle_id, outcome }));
+        } else if let Some(outcome) = terminal {
+            let failed_before = kind == CommitKind::Rollback && operation.failed_errors.contains_key(&operation.cycle_id);
+            ops.extend(Self::outcome_records(operation, &outcome, !failed_before));
+            written.push(op_id);
+        }
+        if kind == CommitKind::RemoveRow {
+            ops.extend(Self::outcome_records(operation, &OutboxOutcome::Discarded, false));
+            written.push(op_id);
+        }
+        if kind == CommitKind::Rollback {
+            for cancelling in self.ops.values().filter(|other| other.cancels == Some(op_id) && other.stage == Stage::Submitting) {
+                ops.extend(Self::outcome_records(cancelling, &OutboxOutcome::Confirmed { revision: 0, result: None, row_id: None }, true));
+                written.push(cancelling.op_id);
+            }
         }
         if kind == CommitKind::Rollback && operation.cancels == Some(op_id) {
             let mut earlier = Vec::new();
@@ -448,7 +462,8 @@ impl OutboxState {
                 }
                 earlier.push(StoreOp::RemoveIntent { op_id: other.op_id });
                 if other.pending_owned || other.pair_in_flight { earlier.push(StoreOp::ReleasePendingOwner { request_id: other.request_id }); }
-                earlier.extend(Self::transfer_outcomes(other, &OutboxOutcome::Discarded).into_iter().map(|(transfer_id, cycle_id, outcome)| StoreOp::TransferOutcome { transfer_id, cycle_id, outcome }));
+                earlier.extend(Self::outcome_records(other, &OutboxOutcome::Discarded, true));
+                written.push(other.op_id);
             }
             earlier.append(&mut ops);
             ops = earlier;
@@ -467,12 +482,17 @@ impl OutboxState {
                 }
                 earlier.push(StoreOp::RemoveIntent { op_id: *id });
                 if other.pending_owned || other.pair_in_flight { earlier.push(StoreOp::ReleasePendingOwner { request_id: other.request_id }); }
-                earlier.extend(Self::transfer_outcomes(other, &outcome).into_iter().map(|(transfer_id, cycle_id, outcome)| StoreOp::TransferOutcome { transfer_id, cycle_id, outcome }));
+                earlier.extend(Self::outcome_records(other, &outcome, true));
+                written.push(other.op_id);
             }
             earlier.append(&mut ops);
             ops = earlier;
         }
         let intents = u64::from(kind == CommitKind::Intent);
+        if let Some(own) = self.ops.get_mut(&op_id) { own.recorded = false; }
+        for id in written {
+            if let Some(other) = self.ops.get_mut(&id) { other.recorded = true; }
+        }
         for id in &dependents {
             if let Some(other) = self.ops.get_mut(id) {
                 other.stage = Stage::RollingBack(Why::Rejected);
@@ -532,13 +552,12 @@ impl OutboxState {
         self.start_discard(op_id, fx);
     }
 
-    /// The rows the landing batch shows: one per member of a group under its real id, otherwise the row that landed.
-    pub(super) fn landing_shows_of(operation: &QueuedOperation) -> Vec<StoreOp> {
-        let model = operation.op.model.clone();
-        match &operation.op.origin {
-            OpSource::TransferGroup { members, .. } => members.iter().map(|member| StoreOp::Show { model: model.clone(), row_id: operation.swaps.iter().find(|(temp, _)| *temp == member.row_id).map_or_else(|| member.row_id.clone(), |(_, real)| real.clone()) }).collect(),
-            _ => vec![StoreOp::Show { model, row_id: operation.landed.clone().unwrap_or_else(|| operation.op.row_id.clone()) }],
-        }
+    /// The records of the outcome of an operation: one per transfer the operation carries, and its own when a call of the app made it.
+    fn outcome_records(operation: &QueuedOperation, outcome: &OutboxOutcome, with_transfers: bool) -> Vec<StoreOp> {
+        let model = &operation.op.model;
+        let transfers = Self::transfer_outcomes(operation, outcome).into_iter().filter(|_| with_transfers).map(|(id, cycle_id, outcome)| StoreOp::Outcome { owner: OutcomeOwner::Transfer, id, cycle_id, model: model.clone(), outcome });
+        let own = (operation.op.origin == OpSource::Api).then(|| StoreOp::Outcome { owner: OutcomeOwner::Operation, id: operation.op_id, cycle_id: operation.cycle_id, model: model.clone(), outcome: outcome.clone() });
+        transfers.chain(own).collect()
     }
 
     pub(super) fn receipt(&self, op_id: OpId, revision: i64) -> Receipt { Receipt { epoch: self.epoch, op_id, cycle_id: self.ops.get(&op_id).map_or(0, |operation| operation.cycle_id), revision, optimistic: self.ops.get(&op_id).and_then(|operation| operation.shown.clone()) } }
@@ -592,6 +611,7 @@ impl OutboxState {
         self.tell_transfer(op_id, &outcome, next_goes, fx);
         self.give_outcome(op_id, &outcome, fx);
         if !matches!(outcome, OutboxOutcome::Ended(_)) {
+            if self.ops.get(&op_id).is_some_and(|operation| operation.recorded) { self.ops.remove(&op_id); }
             self.drain(now, fx);
         }
     }
@@ -901,7 +921,7 @@ impl OutboxState {
             OutboxInput::SelectedNone { reply, version } => { if self.selection_current(reply, version, fx) { Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)); } }
             OutboxInput::SelectedTransfer { reply, version, .. } => { if self.selection_current(reply, version, fx) { if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::SelectConfirmed { reply }))); } } }
             OutboxInput::Outcome { receipt, reply, discard_on_failure } => self.outcome(receipt, reply, discard_on_failure, fx),
-            OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } => {}
+            OutboxInput::Resolve { .. } => {}
             #[cfg(test)]
             OutboxInput::WhenQuiet { .. } => {}
             OutboxInput::Online(Online(on)) => self.online_changed(now, on, fx),
@@ -957,7 +977,7 @@ impl StateOwner for Outbox {
                 _ => {}
             }
             match &input {
-                OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::DiscardTransfer { reply, .. } | OutboxInput::Outcome { reply, .. } | OutboxInput::Landed { reply, .. } | OutboxInput::Resolve { reply, .. } | OutboxInput::LocalWrite { reply, .. } => OutboxState::reply(&mut fx, *reply, OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))),
+                OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::DiscardTransfer { reply, .. } | OutboxInput::Outcome { reply, .. } | OutboxInput::Resolve { reply, .. } | OutboxInput::LocalWrite { reply, .. } => OutboxState::reply(&mut fx, *reply, OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))),
                 #[cfg(test)]
                 OutboxInput::WhenQuiet { reply } => OutboxState::reply(&mut fx, *reply, OutboxAnswer::Err(Fault::Ended(crate::ffi::EndCause::Closed))),
                 OutboxInput::ReserveOp { target, .. } => state.opened(&mut fx, *target, Err(Fault::Ended(crate::ffi::EndCause::Closed))),
@@ -969,14 +989,6 @@ impl StateOwner for Outbox {
         }
         if let OutboxInput::ActivateEpoch(epoch) = &input {
             state.begin_epoch(*epoch);
-            return fx;
-        }
-        if let OutboxInput::Landed { op_id, reply } = input {
-            let answer = state.ops.get(&op_id).map_or(OutboxAnswer::Err(Fault::NotFound), |operation| match &operation.outcome {
-                Some(OutboxOutcome::Confirmed { revision, .. }) => OutboxAnswer::Written { revision: *revision, shown: operation.shown.clone(), files_removed: 0 },
-                _ => OutboxAnswer::Err(Fault::NotFound),
-            });
-            OutboxState::reply(&mut fx, reply, answer);
             return fx;
         }
         if let OutboxInput::Resolve { model, row, reply } = input {

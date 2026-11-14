@@ -25,7 +25,7 @@ pub(super) const CORE_STATEMENTS: [&str; 40] = [
     include_str!("../sql/ddl/manifest.sql"),
     include_str!("../sql/ddl/op.sql"),
     include_str!("../sql/ddl/op_transfer.sql"),
-    include_str!("../sql/ddl/transfer_outcome.sql"),
+    include_str!("../sql/ddl/outcome.sql"),
     include_str!("../sql/ddl/op_effect.sql"),
     include_str!("../sql/ddl/op_effect_row.sql"),
     include_str!("../sql/ddl/op_effect_scope.sql"),

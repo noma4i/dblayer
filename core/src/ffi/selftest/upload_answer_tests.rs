@@ -72,6 +72,27 @@ async fn a_send_with_a_file_confirms_through_the_declared_steps() {
     database.close_now();
 }
 
+/// D-466: the record of a transfer written by the landing batch names the landed row, so a receipt read after the transfer left the memory shows that row.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_send_with_a_file_shows_the_landed_row_on_every_read_of_its_receipt() {
+    let stand = Stand::new();
+    let database = stand.open(None, &[CREATE_MOMENT]).await;
+    let epoch = database.session_epoch();
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("photo.jpg");
+    std::fs::write(&source, b"image").unwrap();
+    stand.script.data("CreateBlob", BLOB);
+    stand.script.data("CreateMoment", &format!(r#"{{"data":{{"createMoment":{{{ROW}}}}}}}"#));
+
+    let sent = bound(database.send(clip("Moment", r#"{"text":"group"}"#, "upload_clip", &source, epoch))).await.unwrap();
+
+    for read in ["first", "second"] {
+        let value = bound(database.confirmed(sent.clone(), false)).await.unwrap().value;
+        assert_eq!(value.as_ref().map(|row| row.id.as_str()), Some("m77"), "{read} read");
+    }
+    database.close_now();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn xfer_accept_check_order() {
     let stand = Stand::new();

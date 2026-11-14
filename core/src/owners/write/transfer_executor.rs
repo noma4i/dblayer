@@ -172,6 +172,7 @@ pub(crate) struct TransferExecutor {
     codec: Arc<dyn StepCodec>,
     files: Arc<FileDirectories>,
     settle: Arc<dyn Fn(ReplyId, TransferAnswer) + Send + Sync>,
+    read_outcome: super::outbox_executor::ReadOutcome,
     status: StatusSink,
     drained: Arc<dyn Fn(Drained) + Send + Sync>,
     signal: Arc<dyn Fn(LifeSignal) + Send + Sync>,
@@ -187,6 +188,7 @@ pub(crate) struct TransferExecutor {
 
 /// Where the executor reports to.
 pub struct TransferSinks {
+    pub read_outcome: super::outbox_executor::ReadOutcome,
     pub settle: Arc<dyn Fn(ReplyId, TransferAnswer) + Send + Sync>,
     pub status: StatusSink,
     pub drained: Arc<dyn Fn(Drained) + Send + Sync>,
@@ -195,8 +197,8 @@ pub struct TransferSinks {
 
 impl TransferExecutor {
     pub fn new(wire: Wire, codec: Arc<dyn StepCodec>, files: Arc<FileDirectories>, sinks: TransferSinks, cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>) -> Self {
-        let TransferSinks { settle, status, drained, signal } = sinks;
-        Self { wire, codec, files, settle, status, drained, signal, copies: Flights::default(), steps: Flights::default(), prepares: Flights::default(), preparer: Arc::default(), cache, doomed: Vec::new(), answers: Vec::new() }
+        let TransferSinks { read_outcome, settle, status, drained, signal } = sinks;
+        Self { wire, codec, files, settle, read_outcome, status, drained, signal, copies: Flights::default(), steps: Flights::default(), prepares: Flights::default(), preparer: Arc::default(), cache, doomed: Vec::new(), answers: Vec::new() }
     }
 
     pub fn with_preparer(mut self, preparer: Arc<std::sync::OnceLock<Arc<dyn crate::ffi::Preparer>>>) -> Self {
@@ -471,6 +473,7 @@ impl EffectRunner<Transfers> for TransferExecutor {
             TransferEffect::DeleteFile { path } => self.doomed.push(path),
             TransferEffect::ClearPrepare { transfer_id, clear_id } => self.clear_prepare(stamp, back, transfer_id, clear_id),
             TransferEffect::Reply { reply, answer } => self.answers.push((reply, answer)),
+            TransferEffect::ReadOutcome { reply, id, cycle_id } => (self.read_outcome)(crate::owners::store::OutcomeOwner::Transfer, id, cycle_id, reply),
             TransferEffect::Status { stream_id, shown, revision, .. } => (self.status)(stream_id, shown, revision),
             TransferEffect::Started { epoch } => (self.signal)(LifeSignal::Started(epoch)),
             TransferEffect::SnapshotRequest { epoch } => (self.signal)(LifeSignal::SnapshotRequest(epoch)),

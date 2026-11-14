@@ -77,18 +77,29 @@ pub(super) fn remove_upload(connection: &Connection, key: &str) -> Result<(), St
     Ok(())
 }
 
-pub(super) fn put_outcome(connection: &Connection, transfer_id: u64, cycle_id: u64, outcome: &crate::owners::write::outbox::OutboxOutcome, (revision, now): (i64, i64)) -> Result<bool, StoreError> {
+pub(super) fn put_outcome(connection: &Connection, (owner, id, cycle_id): (crate::owners::store::OutcomeOwner, u64, u64), model: &str, outcome: &crate::owners::write::outbox::OutboxOutcome, (revision, now): (i64, i64)) -> Result<bool, StoreError> {
     use crate::owners::write::outbox::OutboxOutcome;
-    let id = i64::try_from(transfer_id).map_err(|_| StoreError::Constraint("transfer id is too large".into()))?;
+    let id = i64::try_from(id).map_err(|_| StoreError::Constraint("outcome id is too large".into()))?;
     let cycle = i64::try_from(cycle_id).map_err(|_| StoreError::Constraint("cycle id is too large".into()))?;
-    let (kind, rev, value) = match outcome {
-        OutboxOutcome::Confirmed { result, .. } => ("confirmed", Some(revision), result.as_deref()),
-        OutboxOutcome::Rejected { error } => ("rejected", None, Some(error.as_str())),
-        OutboxOutcome::Failed { error } => ("failed", None, Some(error.as_str())),
-        OutboxOutcome::Discarded => ("discarded", None, None),
+    let (kind, rev, value, row_id) = match outcome {
+        OutboxOutcome::Confirmed { result, row_id, .. } => ("confirmed", Some(revision), result.as_deref(), row_id.as_deref()),
+        OutboxOutcome::Rejected { error } => ("rejected", None, Some(error.as_str()), None),
+        OutboxOutcome::Failed { error } => ("failed", None, Some(error.as_str()), None),
+        OutboxOutcome::Discarded => ("discarded", None, None, None),
         OutboxOutcome::Ended(_) => return Err(StoreError::Constraint("interrupted outcome is not durable".into())),
     };
-    Ok(connection.execute(include_str!("sql/upload_ops/put_outcome.sql"), params![id, cycle, kind, rev, value, now])? == 1)
+    Ok(connection.execute(include_str!("sql/upload_ops/put_outcome.sql"), params![owner.column(), id, cycle, kind, rev, value, model, row_id, now])? == 1)
+}
+
+pub(super) fn outcome_of(kind: &str, revision: Option<i64>, value: Option<String>, row_id: Option<String>) -> Option<crate::owners::write::outbox::OutboxOutcome> {
+    use crate::owners::write::outbox::OutboxOutcome;
+    Some(match (kind, revision, value) {
+        ("confirmed", Some(revision), result) => OutboxOutcome::Confirmed { revision, result, row_id },
+        ("rejected", None, Some(error)) => OutboxOutcome::Rejected { error },
+        ("failed", None, Some(error)) => OutboxOutcome::Failed { error },
+        ("discarded", None, None) => OutboxOutcome::Discarded,
+        _ => return None,
+    })
 }
 
 fn shown_columns(shown: &crate::owners::write::transfer::Shown) -> (Option<String>, Option<String>, Option<String>) {
