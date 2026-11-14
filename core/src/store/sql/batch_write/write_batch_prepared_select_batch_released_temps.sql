@@ -1,0 +1,1 @@
+SELECT model, temp FROM batch_released_temps

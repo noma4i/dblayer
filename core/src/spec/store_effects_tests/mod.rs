@@ -103,7 +103,7 @@ fn action_of(effect: &StoreEffect) -> Option<Action> {
         StoreEffect::CloseReads => Action::CloseReads,
         StoreEffect::CloseConnections => Action::CloseConnections,
         StoreEffect::StoreClosed => Action::StoreClosed,
-        StoreEffect::Prepare { .. } | StoreEffect::OpenLifecycle(_) | StoreEffect::OpenFailed(_) | StoreEffect::OpenCorrupt(_) | StoreEffect::RowsRemoved { .. } | StoreEffect::ArmExpiry { .. } | StoreEffect::DisarmExpiry { .. } | StoreEffect::OperationsGone { .. } | StoreEffect::ArmReset { .. } | StoreEffect::Observed { .. } => return None,
+        StoreEffect::Prepare { .. } | StoreEffect::OpenLifecycle(_) | StoreEffect::OpenFailed(_) | StoreEffect::OpenCorrupt(_) | StoreEffect::RowsRemoved { .. } | StoreEffect::AliasFacts { .. } | StoreEffect::ArmExpiry { .. } | StoreEffect::DisarmExpiry { .. } | StoreEffect::OperationsGone { .. } | StoreEffect::ArmReset { .. } | StoreEffect::Observed { .. } => return None,
     })
 }
 

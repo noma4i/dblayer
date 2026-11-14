@@ -351,6 +351,8 @@ pub struct CommitResult {
     pub replaced: Vec<(RowRef, RowId)>,
     /// The rows a server delete (event or NOT_FOUND answer) removed, cascade children included.
     pub server_removed: Vec<RowRef>,
+    /// The temporary ids whose row a destroy removed and did not replace: the batch ends those that no holder keeps.
+    pub ended_temps: Vec<(String, String)>,
     pub unknown_operation_acks: u32,
     pub(crate) snapshot: Option<crate::store::Row>,
     pub(crate) item_snapshots: Vec<(String, Option<crate::store::Row>)>,
@@ -375,6 +377,7 @@ impl CommitResult {
             queue_operations: BTreeMap::new(),
             replaced: Vec::new(),
             server_removed: Vec::new(),
+            ended_temps: Vec::new(),
             unknown_operation_acks: 0,
             snapshot: None,
             item_snapshots: Vec::new(),

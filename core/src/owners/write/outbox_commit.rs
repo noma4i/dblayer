@@ -97,8 +97,9 @@ impl OutboxState {
                 if let Some(pending) = self.member_removals.remove(&op_id) {
                     if let Some(transfer) = self.peers.transfer { fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::MutationOutcome { transfer_id: pending.member.transfer_id, cycle_id: pending.member.cycle_id, outcome: OutboxOutcome::Discarded, intent_removed: true, row_never_created: false }))); }
                 }
+                let model = self.ops[&op_id].op.model.clone();
                 for (temp, real) in self.ops.get(&op_id).map(|operation| operation.swaps.clone()).unwrap_or_default() {
-                    self.swap_row(op_id, &temp, &real);
+                    self.swap_row(&model, &temp, &real);
                 }
                 if let Some(operation) = self.ops.get(&op_id) {
                     let families = Self::stale_families_of(operation);
@@ -143,7 +144,7 @@ impl OutboxState {
                     fx.push(Effect::Run(OutboxEffect::Stale { families: Self::stale_families_of(operation), revision }));
                 }
                 let created = Self::created_temps(&self.ops[&op_id]);
-                self.ended_creates.extend(created);
+                self.end_temps(created);
                 let dependents = self.ops.get_mut(&op_id).map(|operation| std::mem::take(&mut operation.ended_dependents)).unwrap_or_default();
                 for id in dependents {
                     if self.ops[&id].pending_owned || self.ops[&id].pair_in_flight {
@@ -198,12 +199,12 @@ impl OutboxState {
     }
 
     /// The row `temp` became `real`: the open operations of the row address `real`.
-    pub(super) fn swap_row(&mut self, landed: OpId, temp: &str, real: &str) {
-        let model = self.ops[&landed].op.model.clone();
-        self.bump_selection_row(&model, temp);
-        self.bump_selection_row(&model, real);
-        self.aliases.insert((model.clone(), temp.to_string()), real.to_string());
-        for operation in self.ops.values_mut().filter(|operation| operation.stage != Stage::Done && Self::addresses_row(operation, &model, temp)) {
+    pub(super) fn swap_row(&mut self, model: &str, temp: &str, real: &str) {
+        if self.aliases.get(&(model.to_string(), temp.to_string())).is_some_and(|known| known == real) { return; }
+        self.bump_selection_row(model, temp);
+        self.bump_selection_row(model, real);
+        self.aliases.insert((model.to_string(), temp.to_string()), real.to_string());
+        for operation in self.ops.values_mut().filter(|operation| operation.stage != Stage::Done && Self::addresses_row(operation, model, temp)) {
             Self::resolve_operation(&self.aliases, &mut operation.op);
         }
     }

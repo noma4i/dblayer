@@ -21,6 +21,8 @@ struct WrittenBatch<'a> {
     candidates: usize,
     pointer_rows: usize,
     shown: Vec<Option<super::Row>>,
+    ended_temps: Vec<(String, String)>,
+    swaps: Vec<(String, String, String)>,
 }
 
 type ExpiryParts = (Vec<crate::owners::store::MemoryExpiry>, Vec<(String, String)>, Vec<String>);
@@ -38,6 +40,10 @@ pub(crate) struct BatchWritten {
     pub removed_operations: Vec<u64>,
     /// The rows a server delete removed: the Outbox discards every operation of them.
     pub removed_rows: Vec<(String, String)>,
+    /// The temporary ids the batch ended: the Outbox ends the operations that carry them.
+    pub ended_temps: Vec<(String, String)>,
+    /// The `(model, temp, real)` replacements of the batch: the Outbox addresses the open operations of the row to `real`.
+    pub swaps: Vec<(String, String, String)>,
     pub resets: Vec<crate::owners::store::EphemeralReset>,
     pub notice: crate::owners::contract::CommittedBroadcast,
     /// The row of each `Show` of the batch, in the order of the ops.
@@ -58,7 +64,7 @@ impl Store {
                 }
                 Err(error)
             }
-            Ok(WrittenBatch { committed: result, observed, refused, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, resets), candidates, pointer_rows, shown }) => {
+            Ok(WrittenBatch { committed: result, observed, refused, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, resets), candidates, pointer_rows, shown, ended_temps, swaps }) => {
                 let mut store = self.lock();
                 store.counters.outbox_candidates += candidates;
                 store.counters.pointer_rows_read += pointer_rows;
@@ -75,7 +81,7 @@ impl Store {
                 let revision = result.result().revision.ok_or_else(|| StoreError::Invalid("a committed batch has no revision".into()))?;
                 let notice = crate::owners::contract::CommittedBroadcast::of_commit(result.result());
                 result.publish();
-                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, observed, refused, faults, expiring, removed_memory, stale_parents, removed_operations, removed_rows, resets, notice, shown, files_removed })
+                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, observed, refused, faults, expiring, removed_memory, stale_parents, removed_operations, removed_rows, ended_temps, swaps, resets, notice, shown, files_removed })
             }
         }
     }
@@ -85,6 +91,7 @@ impl Store {
         if !inner.ready { return Err(StoreError::Refused); }
         let transaction = inner.connection.unchecked_transaction()?;
         transaction.execute_batch(include_str!("sql/batch_write/write_batch_prepared_create_table_batch_file_deletions.sql"))?;
+        transaction.execute_batch(&format!(include_str!("sql/batch_write/write_batch_prepared_create_table_batch_released_temps.sql"), flag = crate::identity::permanent_row_flag("OLD.row_id")))?;
         let base_revision = Reader::new(&transaction, &inner.models).revision_seq()?;
         let revision = base_revision.checked_add(1).ok_or_else(|| StoreError::Constraint("revision overflow".into()))?;
         let closing: Vec<i64> = batch.ops.iter().filter_map(|op| match op { crate::owners::store::StoreOp::RemoveIntent { op_id } => i64::try_from(*op_id).ok(), _ => None }).collect();
@@ -156,6 +163,7 @@ impl Store {
             if present { live_files.insert(file.record.id.clone()); }
         }
         let discarded = transaction.prepare(include_str!("sql/batch_write/write_batch_prepared_select_batch_file_deletions.sql"))?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
+        let released = transaction.prepare(include_str!("sql/batch_write/write_batch_prepared_select_batch_released_temps.sql"))?.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<std::collections::BTreeSet<_>>>()?;
         transaction.execute_batch(include_str!("sql/batch_write/write_batch_prepared_drop_trigger_batch_file_delete.sql"))?;
         let (expiring, removed_memory) = super::batch_result::expiry(&transaction, &inner.models, &results, inner.now_ms())?;
         let mut stale_parents = super::batch_result::stale_parents(&transaction, &inner.models, &results)?;
@@ -165,6 +173,14 @@ impl Store {
         stale_parents.extend(named_gone.into_iter().filter(|model| !stale_parents.contains(model)).collect::<Vec<_>>());
         let removed_operations: Vec<u64> = if batch.author == BatchAuthor::Feed { results.iter().flat_map(|result| result.operations.iter()).filter_map(|seq| u64::try_from(*seq).ok()).collect() } else { Vec::new() };
         let removed_rows: Vec<(String, String)> = results.iter().flat_map(|result| result.server_removed.iter()).map(|row| (row.model.to_string(), row.id.to_string())).collect();
+        let mut ended_temps: Vec<(String, String)> = Vec::new();
+        let reader = Reader::new(&transaction, &inner.models);
+        let ended_candidates: std::collections::BTreeSet<(String, String)> = results.iter().flat_map(|result| result.ended_temps.iter().cloned()).chain(released).collect();
+        for (model, temp) in ended_candidates {
+            let kept = reader.stored_row(&model, &temp)?.is_some() || transaction.query_row(include_str!("sql/ddl/read_temp_kept.sql"), rusqlite::params![model, temp], |row| row.get::<_, bool>(0))?;
+            if !kept && transaction.execute(include_str!("sql/ddl/end_temp_row_alias.sql"), rusqlite::params![model, temp])? > 0 { ended_temps.push((model, temp)); }
+        }
+        let swaps: Vec<(String, String, String)> = results.iter().flat_map(|result| result.replaced.iter()).map(|(from, real)| (from.model.to_string(), from.id.to_string(), real.to_string())).collect();
         let target_revision = if writes_database { revision } else { base_revision };
         let mut combined = super::batch_result::consolidate(&transaction, &inner.models, originals, results, target_revision)?;
         let mut shown = Vec::new();
@@ -200,6 +216,6 @@ impl Store {
             if position != current.position { self.overlays.publish(snapshot); }
         }
         if let Some(journal) = journal { journal.finish(); }
-        Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), observed, refused, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, arms), candidates, pointer_rows, shown })
+        Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), observed, refused, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, removed_rows, arms), candidates, pointer_rows, shown, ended_temps, swaps })
     }
 }

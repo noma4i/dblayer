@@ -1,0 +1,1 @@
+SELECT EXISTS(SELECT 1 FROM op WHERE temp_id = ?2 AND action_key = ?1 || ':create') OR EXISTS(SELECT 1 FROM sync_upload WHERE model = ?1 AND row_id = ?2) OR EXISTS(SELECT 1 FROM row_alias WHERE model = ?1 AND temp = ?2 AND real IS NOT NULL)

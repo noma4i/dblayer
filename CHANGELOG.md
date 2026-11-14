@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- Hold an operation on a temporary row until its create or upload lands.
+- Refuse an operation on a temporary row whose upload was cancelled, discarded or expired.
+
 ### Removed
 
 - apply: { effect: :reread } in .dbl files: write changed_by with via.

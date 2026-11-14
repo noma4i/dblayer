@@ -110,6 +110,7 @@ fn write_followed(
                 }
                 if removed > 0 {
                     changes.push(model, id.as_str(), RowChangeKind::Destroyed, BTreeSet::new());
+                    if crate::identity::is_temp_id(id.as_str()) && !matches!(reason, DestroyReason::Replaced { .. }) { result.ended_temps.push((model.to_string(), id.to_string())); }
                     if let DestroyReason::Replaced { by } = reason {
                         replaced.push((RowRef::new(model.clone(), id.clone()), by.clone()));
                     }

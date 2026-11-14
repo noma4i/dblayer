@@ -58,6 +58,7 @@ pub(super) fn consolidate(connection: &Connection, models: &BTreeMap<String, Mod
         combined.scopes.extend(result.scopes);
         combined.members.extend(result.members);
         combined.server_removed.extend(result.server_removed);
+        combined.ended_temps.extend(result.ended_temps);
         combined.operations.extend(result.operations);
         combined.uploads_changed |= result.uploads_changed;
         combined.queue_operations.extend(result.queue_operations);

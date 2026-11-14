@@ -181,7 +181,7 @@ impl OutboxState {
     /// An earlier operation of the same row is not Done.
     pub(super) fn row_busy(&self, op_id: OpId) -> bool {
         let Some(operation) = self.ops.get(&op_id) else { return true };
-        self.ops.values().any(|other| other.sequence < operation.sequence && other.stage != Stage::Done && Self::shares_row(other, operation)) || self.temp_dependency(operation) != TempDependency::Clear || self.awaits_ended_create(operation)
+        self.ops.values().any(|other| other.sequence < operation.sequence && other.stage != Stage::Done && Self::shares_row(other, operation) && !Self::awaits_row_of(other, operation)) || self.temp_dependency(operation) != TempDependency::Clear || self.awaits_ended_create(operation)
     }
 
     /// The temp ids the operation waits for: its own row when it acts on one, every temp id of the body except the row it creates.
@@ -197,12 +197,20 @@ impl OutboxState {
         temps
     }
 
-    /// Open while an earlier operation addresses the row of a temp id the operation waits for and no alias exists yet.
+    /// Open while the fate of a temp id the operation waits for is unknown: the cache has neither a real id nor an end for it.
     fn temp_dependency(&self, operation: &QueuedOperation) -> TempDependency {
-        let open = Self::awaited_temps(operation).iter().filter(|temp| !self.aliases.keys().any(|(_, aliased)| aliased == *temp)).any(|temp| {
-            self.ops.values().any(|other| other.op_id != operation.op_id && other.sequence < operation.sequence && other.stage != Stage::Done && Self::addresses_row(other, &other.op.model, temp))
-        });
-        if open { TempDependency::Open } else { TempDependency::Clear }
+        let holds = |temp: &String| matches!(operation.op.origin, OpSource::Transfer { .. }) && &operation.op.row_id == temp;
+        let unknown = Self::awaited_temps(operation).iter().any(|temp| !holds(temp) && !self.ended_creates.contains(temp) && !self.aliases.keys().any(|(_, aliased)| aliased == temp));
+        if unknown { TempDependency::Open } else { TempDependency::Clear }
+    }
+
+    /// `waiter` waits for the fate of the temp row that `holder` lands: it cannot go before the holder, whatever their order.
+    fn awaits_row_of(waiter: &QueuedOperation, holder: &QueuedOperation) -> bool {
+        let held = match &holder.op.origin {
+            OpSource::Transfer { .. } => vec![holder.op.row_id.clone()],
+            _ => Self::created_temps(holder),
+        };
+        Self::awaited_temps(waiter).iter().any(|temp| held.contains(temp))
     }
 
     /// The temp ids of the rows the operation creates.
@@ -212,6 +220,11 @@ impl OutboxState {
             _ if operation.op.action == "create" && crate::identity::is_temp_id(&operation.op.row_id) => vec![operation.op.row_id.clone()],
             _ => Vec::new(),
         }
+    }
+
+    /// The temp ids ended without a real id: the operations that wait for them end when they next start.
+    pub(super) fn end_temps(&mut self, temps: impl IntoIterator<Item = String>) {
+        self.ended_creates.extend(temps);
     }
 
     /// The operation waits for a temp id whose `create` ended without a real id.
@@ -458,9 +471,6 @@ impl OutboxState {
             }
             earlier.append(&mut ops);
             ops = earlier;
-        }
-        if kind == CommitKind::Rollback {
-            ops.extend(Self::created_temps(operation).into_iter().map(|temp| StoreOp::EndTemp { model: operation.op.model.clone(), temp }));
         }
         let intents = u64::from(kind == CommitKind::Intent);
         for id in &dependents {
@@ -898,6 +908,11 @@ impl OutboxState {
             OutboxInput::ResetField { reset } => self.reset_field(reset, fx),
             OutboxInput::RowsGone { ops } => self.rows_gone(now, ops, fx),
             OutboxInput::RowRemoved { model, row_id, revision } => self.row_removed(&model, &row_id, revision, fx),
+            OutboxInput::AliasFacts { swaps, ended } => {
+                for (model, temp, real) in swaps { self.swap_row(&model, &temp, &real); }
+                self.end_temps(ended.into_iter().map(|(_, temp)| temp));
+                self.drain(now, fx);
+            }
             OutboxInput::DisarmExpiry { model, row } => self.disarm_expiry(&model, &row, fx),
             OutboxInput::ExpireRow { model, row, revision } => self.expire_row(model, row, revision, fx),
         }

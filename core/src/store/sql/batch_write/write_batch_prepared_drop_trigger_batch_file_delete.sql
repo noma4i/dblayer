@@ -1,1 +1,1 @@
-DROP TRIGGER batch_file_delete; DROP TABLE batch_file_deletions;
+DROP TRIGGER batch_file_delete; DROP TABLE batch_file_deletions; DROP TRIGGER batch_op_release; DROP TRIGGER batch_upload_release; DROP TABLE batch_released_temps;

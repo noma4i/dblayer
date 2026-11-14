@@ -84,6 +84,8 @@ async fn temps_ended_update_of_a_row_an_upload_holds_goes_out_with_the_server_id
     held.release();
     assert!(bound(database.confirmed(update, false)).await.is_ok(), "the update lands after the upload");
     assert_eq!(carrying(&stand, &temporary), Vec::<String>::new(), "no request carries the temporary id");
-    assert_eq!((stand.script.count("UpdateMoment"), stand.script.variables("UpdateMoment").iter().all(|variables| variables.to_string().contains("m77"))), (1, true), "the update goes out once with the server id");
+    let names = stand.script.names();
+    let at = |operation: &str| names.iter().position(|name| name == operation);
+    assert_eq!((stand.script.count("UpdateMoment"), at("CreateMoment").zip(at("UpdateMoment")).map(|(create, update)| create < update)), (1, Some(true)), "the update goes out once, after the final mutation of the upload landed the row: {names:?}");
     database.close_now();
 }

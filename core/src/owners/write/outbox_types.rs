@@ -262,6 +262,8 @@ pub enum OutboxInput {
     RowsGone { ops: Vec<OpId> },
     /// The server deleted a row (event or NOT_FOUND answer), cascade children included: every operation of it ends `Discarded`.
     RowRemoved { model: String, row_id: String, revision: u64 },
+    /// The temporary ids a commit of any author replaced `(model, temp, real)` or ended: the operations that wait for their fate go out with the real id or end by P-OUT-57.
+    AliasFacts { swaps: Vec<(String, String, String)>, ended: Vec<(String, String)> },
     ExpireRow { model: String, row: String, revision: u64 },
 }
 
