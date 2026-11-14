@@ -868,15 +868,13 @@ Empty lists, duplicate paths, mixed types and unknown predicate keys fail genera
 Filters run before normalization, deletion and writes for every effect.
 Declarations with the same operation, variables and account share one incoming stream.
 A scope with `variables` sends its subscription with the variables of the open window, and windows with equal variables share one subscription. When such a scope writes `id:`, each entry names a variable of the scope, or generation fails.
-All matching row declarations apply in one commit. `ephemeral` values land in that commit. A `reread` marks the read stale after that commit, and the read reloads then.
+All matching row declarations apply in one commit. `ephemeral` values land in that commit.
 Model-level subscriptions are read with `scope.events(Model)`, without replay.
 `effect: :ephemeral` copies the response paths in `fields` into declared ephemeral attributes without changing stored columns.
-`effect: :reread, via: :node` rereads the declared node with the event ID. A singleton read needs no ID.
-`effect: :upsert` writes the row, with `values:` for ephemeral attributes, `delete_if: path` for a payload path that deletes the row when it is true and `delete_if: { not: path }` for a path that deletes the row when it is present and false. `effect: :delete` deletes it. `effect: :ignore` discards the event. Unknown effects, keys that do not fit the effect, empty ephemeral fields and missing reread destinations produce generator errors.
+`effect: :upsert` writes the row, with `values:` for ephemeral attributes, `delete_if: path` for a payload path that deletes the row when it is true and `delete_if: { not: path }` for a path that deletes the row when it is present and false. `effect: :delete` deletes it. `effect: :ignore` discards the event. Unknown effects, keys that do not fit the effect, empty ephemeral fields produce generator errors.
 
 ```ruby
 subscribe "PresenceSignal", from: "presenceSignal", id: "memberId", apply: { effect: :ephemeral, fields: { typing: "active" }, matches: { kind: ["ACTIVE"] } }
-subscribe "RecordSignal", from: "recordSignal", id: "recordId", apply: { effect: :reread, via: :node }
 ```
 
 Removal sends no mutation. It closes queued writes without sending or rollback and destroys children declared with `dependent: :destroy`.
@@ -1176,7 +1174,7 @@ Every attribute of the model, every `from:` path, every `id_from:` and every att
 
 - an attribute or path the schema does not have;
 - a list declared as a single value, or the reverse;
-- a nullable schema field declared without `null: true`, `optional: true` or `default:`;
+- a nullable schema field or a path through a nullable hop declared with `null: false` or crossed without `null: true`, `optional: true` or `default:` (a direct field takes `null` from the schema when you omit it);
 - a scalar, enum or object that does not fit the schema type, and an `enum` value the schema enum lacks;
 - a scope that paginates, lists or returns one row against a schema field of another shape;
 - an association `from:` path of the wrong shape.

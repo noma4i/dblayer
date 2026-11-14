@@ -1436,15 +1436,7 @@
           "sort": "server_order",
           "text_params": [],
           "updates": [
-            {
-              "apply": { "effect": "upsert", "matches": {} },
-              "debounce": null,
-              "deleted_by": null,
-              "removes": false,
-              "root": null,
-              "set": { "typing": true },
-              "subscription": "UserTyping"
-            }
+            { "apply": { "effect": "upsert", "matches": {} }, "debounce": null, "deleted_by": null, "root": null, "set": { "typing": true }, "subscription": "UserTyping" }
           ]
         },
         {

@@ -11,7 +11,6 @@ fn subscription(apply: &str) -> String {
 fn subscribe_applies_one_closed_effect_with_the_data_that_effect_needs() {
     for apply in [
         "effect: :ephemeral, fields: { active: \"typing.active\" }, matches: { kind: [\"ACTIVE\"] }",
-        "effect: :reread, via: :node",
         "effect: :ignore",
         "effect: :upsert",
         "effect: :upsert, delete_if: \"gone\"",
@@ -26,8 +25,8 @@ fn subscribe_applies_one_closed_effect_with_the_data_that_effect_needs() {
         ("effect: :unknown", "`effect` must be"),
         ("effect: :ephemeral", "ephemeral apply requires nonempty fields and paths"),
         ("effect: :ephemeral, fields: { active: \"a..b\" }", "has an empty segment"),
-        ("effect: :reread", "reread apply requires via"),
-        ("effect: :ignore, via: :node", "`via` applies only to effect `:reread`"),
+        ("effect: :reread, via: :node", "`effect: :reread` is removed"),
+        ("effect: :ignore, via: :node", "`apply` `via` is removed"),
         ("effect: :ignore, fields: { a: \"b\" }", "`fields` applies only to effect `:ephemeral`"),
         ("effect: :ignore, values: { active: true }", "`values` applies only to effect `:upsert`"),
         ("effect: :delete, delete_if: \"gone\"", "`delete_if` applies only to effect `:upsert`"),

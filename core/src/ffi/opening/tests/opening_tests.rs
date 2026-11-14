@@ -134,7 +134,7 @@ async fn life_register_missing_own_operation() {
         serde_json::from_value(serde_json::json!({"area":"ITEM", "relation":"node"})).unwrap(),
         serde_json::from_value(serde_json::json!({"area":"OWNER", "relation":"byOwner"})).unwrap(),
     ];
-    model.listens.push(UpdatesSpec { subscription: "ItemListen".into(), deleted_by: None, deleted_unless: None, set: Default::default(), removes: false, debounce: None, root: None, id: Vec::new(), apply: None });
+    model.listens.push(UpdatesSpec { subscription: "ItemListen".into(), deleted_by: None, deleted_unless: None, set: Default::default(), debounce: None, root: None, id: Vec::new(), apply: None });
     let model_with_steps = model.clone();
     let database = Database::open(config(), crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     database.set_online(true).await.unwrap();

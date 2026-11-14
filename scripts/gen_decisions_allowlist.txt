@@ -49,7 +49,6 @@ gen/src/build/mod.rs	let type_name = field.app_type.clone().unwrap_or_else(|| fo
 gen/src/build/mod.rs	let column = |name: &str| scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == name).map_or_else(|| name.to_string(), |(column, _)| column.item.clone());	M60
 gen/src/build/mod.rs	scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == parameter.item).map_or(parameter.item.clone(), |(column, _)| column.item.clone())	M60
 gen/src/build/mod.rs	let column = scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == parameter.item).map_or(parameter.item.clone(), |(column, _)| column.item.clone());	M60
-gen/src/build/mod.rs	Effect::Reread => Some(SubscriptionAction::Reread { via: apply.via.clone().unwrap_or_default() }),	M58
 gen/src/build/mod.rs	action.local = operation.local.clone().unwrap_or_default();	M58
 gen/src/lib.rs	action.client_mutation_id = action.mutation.as_ref().is_some_and(|name| checked.idempotent_inputs.contains(&(name.clone(), action.wrap.clone().unwrap_or_else(|| "input".into()))));	M64
 gen/src/schema_check/selection.rs	let key = field.from.as_ref().map_or(name, |found| found.item.as_str());	M59

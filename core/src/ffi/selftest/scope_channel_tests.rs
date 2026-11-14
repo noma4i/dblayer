@@ -22,7 +22,7 @@ fn page_models() -> String {
     let mut remote = crate::schema_fixtures::remote("ScreenPageBySlug", RemoteShape::Single, "1.minute");
     remote.variables.insert("slug".into(), VariableSource::Param { name: "slug".into() });
     by_slug.remote = Some(remote);
-    by_slug.updates.push(UpdatesSpec { apply: None, subscription: "ScreenPageUpdated".into(), deleted_by: None, deleted_unless: None, set: serde_json::Map::new(), removes: false, debounce: None, root: None, id: vec!["slug".into()] });
+    by_slug.updates.push(UpdatesSpec { apply: None, subscription: "ScreenPageUpdated".into(), deleted_by: None, deleted_unless: None, set: serde_json::Map::new(), debounce: None, root: None, id: vec!["slug".into()] });
     page.indexes.push(vec!["slug".into()]);
     page.relations.push(by_slug);
     models.push(serde_json::to_value(page).unwrap());

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+
+- apply: { effect: :reread } in .dbl files: write changed_by with via.
+
 ## 6.36.0 - 2026-11-14
 
 ### Added

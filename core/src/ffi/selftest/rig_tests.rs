@@ -516,7 +516,7 @@ impl Rig {
             if events {
                 let member = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Member").unwrap();
                 let relation = member["relations"].as_array_mut().unwrap().iter_mut().find(|relation| relation["name"] == "group_members").unwrap();
-                relation["updates"] = json!([{"subscription":"MemberChanged","set":{},"removes":false}]);
+                relation["updates"] = json!([{"subscription":"MemberChanged","set":{}}]);
             }
             if destroy {
                 let group = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Group").unwrap();

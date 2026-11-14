@@ -63,8 +63,6 @@ pub struct UpdatesSpec {
     #[serde(default)]
     pub set: Map<String, Value>,
     #[serde(default)]
-    pub removes: bool,
-    #[serde(default)]
     pub debounce: Option<String>,
     #[serde(default)]
     pub root: Option<String>,
@@ -111,7 +109,6 @@ pub enum SubscriptionAction {
     Upsert,
     Delete,
     Ephemeral { fields: BTreeMap<String, String> },
-    Reread { via: String },
     Ignore,
 }
 

@@ -488,7 +488,7 @@ pub(super) fn subscribe(cx: &mut Cx, call: &Call) -> Option<SubscribeDecl> {
     let debounce = line.opt(cx, "debounce").and_then(|pair| duration(cx, &pair.value, "`debounce`"));
     let apply = match line.opt(cx, "apply") {
         Some(pair) => apply(cx, pair)?,
-        None => ApplyDecl { pos: line.pos, effect: Effect::Upsert, fields: Vec::new(), values: Vec::new(), matches: Vec::new(), via: None, delete_if: None },
+        None => ApplyDecl { pos: line.pos, effect: Effect::Upsert, fields: Vec::new(), values: Vec::new(), matches: Vec::new(), delete_if: None },
     };
     line.finish(cx);
     Some(SubscribeDecl { pos: line.pos, name, from, id, apply, debounce })
@@ -496,7 +496,7 @@ pub(super) fn subscribe(cx: &mut Cx, call: &Call) -> Option<SubscribeDecl> {
 
 pub(super) fn apply(cx: &mut Cx, pair: &Pair) -> Option<ApplyDecl> {
     let pairs = hash_pairs(cx, &pair.value, "`apply`")?;
-    let mut decl = ApplyDecl { pos: at(&pair.value), effect: Effect::Upsert, fields: Vec::new(), values: Vec::new(), matches: Vec::new(), via: None, delete_if: None };
+    let mut decl = ApplyDecl { pos: at(&pair.value), effect: Effect::Upsert, fields: Vec::new(), values: Vec::new(), matches: Vec::new(), delete_if: None };
     let mut seen_effect = false;
     for entry in pairs {
         match entry.key.as_str() {
@@ -506,10 +506,13 @@ pub(super) fn apply(cx: &mut Cx, pair: &Pair) -> Option<ApplyDecl> {
                     Value::Symbol(name) if name == "upsert" => Effect::Upsert,
                     Value::Symbol(name) if name == "delete" => Effect::Delete,
                     Value::Symbol(name) if name == "ephemeral" => Effect::Ephemeral,
-                    Value::Symbol(name) if name == "reread" => Effect::Reread,
+                    Value::Symbol(name) if name == "reread" => {
+                        cx.fail(at(&entry.value), "`effect: :reread` is removed: declare `changed_by` with `via:` on the model");
+                        continue;
+                    }
                     Value::Symbol(name) if name == "ignore" => Effect::Ignore,
                     _ => {
-                        cx.fail(at(&entry.value), "`effect` must be `:upsert`, `:delete`, `:ephemeral`, `:reread` or `:ignore`");
+                        cx.fail(at(&entry.value), "`effect` must be `:upsert`, `:delete`, `:ephemeral` or `:ignore`");
                         continue;
                     }
                 };
@@ -555,7 +558,7 @@ pub(super) fn apply(cx: &mut Cx, pair: &Pair) -> Option<ApplyDecl> {
                     }
                 }
             }
-            "via" => decl.via = symbol(cx, &entry.value, "`via`"),
+            "via" => cx.fail(pair_pos(entry), "`apply` `via` is removed: declare `changed_by` with `via:` on the model"),
             "delete_if" => {
                 decl.delete_if = match &entry.value.item {
                     Value::Hash(parts) if parts.len() == 1 && parts[0].key == "not" => path(cx, &parts[0].value, "`delete_if`").map(|found| (found, true)),
@@ -566,7 +569,7 @@ pub(super) fn apply(cx: &mut Cx, pair: &Pair) -> Option<ApplyDecl> {
             other => cx.fail(pair_pos(entry), format!("unknown key `{other}` for `apply`")),
         }
     }
-    if !seen_effect && pairs.iter().any(|entry| matches!(entry.key.as_str(), "fields" | "via")) {
+    if !seen_effect && pairs.iter().any(|entry| matches!(entry.key.as_str(), "fields")) {
         cx.fail(decl.pos, "`apply` needs `effect:`");
     }
     Some(decl)

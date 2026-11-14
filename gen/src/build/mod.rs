@@ -309,7 +309,6 @@ fn updates_spec(update: &SubscribeDecl) -> UpdatesSpec {
         Effect::Upsert => Some(SubscriptionAction::Upsert),
         Effect::Delete => Some(SubscriptionAction::Delete),
         Effect::Ephemeral => Some(SubscriptionAction::Ephemeral { fields: apply.fields.iter().map(|(name, path, _)| (name.clone(), path.clone())).collect() }),
-        Effect::Reread => Some(SubscriptionAction::Reread { via: apply.via.clone().unwrap_or_default() }),
         Effect::Ignore => Some(SubscriptionAction::Ignore),
     };
     UpdatesSpec {
@@ -317,7 +316,6 @@ fn updates_spec(update: &SubscribeDecl) -> UpdatesSpec {
         deleted_by: apply.delete_if.as_ref().filter(|(_, negated)| !negated).map(|(found, _)| found.item.clone()),
         deleted_unless: apply.delete_if.as_ref().filter(|(_, negated)| *negated).map(|(found, _)| found.item.clone()),
         set: apply.values.iter().map(|(name, value, _)| (name.clone(), value.clone())).collect::<Map<_, _>>(),
-        removes: apply.effect == Effect::Delete,
         debounce: update.debounce.clone(),
         root: update.from.as_ref().map(|found| found.item.clone()),
         id: update.id.iter().map(|found| found.item.clone()).collect(),

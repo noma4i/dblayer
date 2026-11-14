@@ -1,4 +1,4 @@
-//! `changed_by` and `effect: :reread` on frames: the keys of the windows a frame turns stale, by form (`via`).
+//! `changed_by` on frames: the keys of the windows a frame turns stale, by form (`via`).
 
 use std::collections::BTreeSet;
 
@@ -109,18 +109,4 @@ fn feed_id_of_removed_source() {
     let payload: Value = serde_json::from_str(&of_model(&events, "messages")[0].payload).unwrap();
     assert_eq!(payload["op"], "delete", "the frame removes the source row");
     assert_eq!(of_model(&events, "chats")[0].reread, keys(&[key("list", json!({"list":"c7"}))]), "the key comes from the field before the removal");
-}
-
-#[test]
-fn feed_apply_reread() {
-    let known = super::ReadOperations::default();
-    known.declare([ReadOperation { name: "ChatChanged".into(), document: "subscription ChatChanged { chatChanged { id } }".into(), root_path: "chatChanged".into(), page_size: 0 }]);
-    let mut with = specs(Vec::new());
-    with[0].change_feed = None;
-    with[0].listens.push(serde_json::from_value(json!({"subscription":"ChatChanged", "apply":{"effect":"reread", "via":"list"}})).unwrap());
-    let codec = SchemaFeedCodec::new(Store::open_models(None, with, std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap(), known);
-    let events = codec.events("ChatChanged", Response::data(json!({"chatChanged":{"id":"c1"}})));
-    assert_eq!((events.len(), &events[0].reread), (1, &keys(&[key("list", json!({"list":"c1"}))])));
-    let payload: Value = serde_json::from_str(&events[0].payload).unwrap();
-    assert_eq!((payload["op"].as_str(), payload["id"].as_str()), (Some("reread"), Some("c1")));
 }

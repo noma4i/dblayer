@@ -16,7 +16,7 @@ fn typing_models() -> String {
     let mut models: Vec<ModelSpec> = serde_json::from_str(&plain_models()).unwrap();
     let mut typing = ModelSpec::new("Typing", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("userId", ScalarKind::Id)]);
     typing.storage = Storage::Memory;
-    typing.listens.push(UpdatesSpec { apply: None, subscription: "UserTyping".into(), deleted_by: None, deleted_unless: None, set: serde_json::Map::new(), removes: false, debounce: None, root: None, id: Vec::new() });
+    typing.listens.push(UpdatesSpec { apply: None, subscription: "UserTyping".into(), deleted_by: None, deleted_unless: None, set: serde_json::Map::new(), debounce: None, root: None, id: Vec::new() });
     models.push(typing);
     serde_json::to_string(&models).unwrap()
 }

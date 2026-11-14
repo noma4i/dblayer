@@ -6,7 +6,7 @@ use serde_json::{json, Map};
 
 use crate::schema::{
     ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec,
-    RemoteShape, RemoteSpec, RootShape, UpdatesSpec, EphemeralSpec, MergeRule,
+    RemoteShape, RemoteSpec, RootShape, SubscriptionAction, SubscriptionApply, UpdatesSpec, EphemeralSpec, MergeRule,
 };
 use crate::value::ScalarKind;
 
@@ -51,7 +51,7 @@ pub fn moments_spec() -> ModelSpec {
     vibe_feed.text_params = vec!["vibeId".to_string()];
     vibe_feed.remote = Some(remote("MomentsFeed", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(2), cursor: None }, "5.minutes"));
     vibe_feed.edge_fields = edge_fields();
-    vibe_feed.updates = vec![UpdatesSpec { apply: None, subscription: "VibeEvents".to_string(), deleted_by: None, deleted_unless: None, set: Map::new(), removes: false, debounce: None, root: None, id: Vec::new() }];
+    vibe_feed.updates = vec![UpdatesSpec { apply: None, subscription: "VibeEvents".to_string(), deleted_by: None, deleted_unless: None, set: Map::new(), debounce: None, root: None, id: Vec::new() }];
     let mut since = RelationSpec::new("since", &[]);
     since.text_params = vec!["afterSequence".to_string(), "pinned".to_string()];
     since.scalar_types = BTreeMap::from([("afterSequence".to_string(), ScalarKind::Int), ("pinned".to_string(), ScalarKind::Bool)]);
@@ -81,14 +81,14 @@ pub fn moments_spec() -> ModelSpec {
     let mut pulse = RelationSpec::global("pulse");
     let pulse_remote = remote("MomentsPulse", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(2), cursor: None }, "5.minutes");
     pulse.updates = vec![
-        UpdatesSpec { apply: None, subscription: "MomentEvents".to_string(), deleted_by: Some("destroyed".to_string()), deleted_unless: None, set: Map::new(), removes: false, debounce: None, root: None, id: Vec::new() },
-        UpdatesSpec { apply: None, subscription: "MomentRemoved".to_string(), deleted_by: None, deleted_unless: None, set: Map::new(), removes: true, debounce: None, root: None, id: Vec::new() },
+        UpdatesSpec { apply: None, subscription: "MomentEvents".to_string(), deleted_by: Some("destroyed".to_string()), deleted_unless: None, set: Map::new(), debounce: None, root: None, id: Vec::new() },
+        UpdatesSpec { apply: Some(SubscriptionApply { action: SubscriptionAction::Delete, matches: BTreeMap::new() }), subscription: "MomentRemoved".to_string(), deleted_by: None, deleted_unless: None, set: Map::new(), debounce: None, root: None, id: Vec::new() },
     ];
     pulse.remote = Some(pulse_remote);
     spec.relations.extend([feed, foreground_feed, vibe_feed, since, tail, user_since, history, by_user, by_mood, search, empty_aware, pulse, RelationSpec::global("recent")]);
-    spec.listens = vec![UpdatesSpec { apply: None, subscription: "MomentListen".to_string(), deleted_by: None, deleted_unless: None, set: Map::new(), removes: false, debounce: None, root: None, id: Vec::new() },
-        UpdatesSpec { apply: None, subscription: "MomentWrapped".to_string(), deleted_by: None, deleted_unless: None, set: Map::new(), removes: false, debounce: None, root: Some("momentWrapped.wrapped".to_string()), id: vec!["key".to_string()] },
-        UpdatesSpec { apply: None, subscription: "MomentDebounced".to_string(), deleted_by: None, deleted_unless: None, set: Map::new(), removes: false, debounce: Some("300.milliseconds".to_string()), root: None, id: Vec::new() },
+    spec.listens = vec![UpdatesSpec { apply: None, subscription: "MomentListen".to_string(), deleted_by: None, deleted_unless: None, set: Map::new(), debounce: None, root: None, id: Vec::new() },
+        UpdatesSpec { apply: None, subscription: "MomentWrapped".to_string(), deleted_by: None, deleted_unless: None, set: Map::new(), debounce: None, root: Some("momentWrapped.wrapped".to_string()), id: vec!["key".to_string()] },
+        UpdatesSpec { apply: None, subscription: "MomentDebounced".to_string(), deleted_by: None, deleted_unless: None, set: Map::new(), debounce: Some("300.milliseconds".to_string()), root: None, id: Vec::new() },
     ];
     spec.actions = vec![
         bound("create", RootShape::Upsert, "CreateMoment"),

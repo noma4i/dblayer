@@ -151,14 +151,10 @@ fn check_subscription(update: &SubscribeDecl, report: &mut impl FnMut(Pos, Strin
     let misplaced = |key: &str, allowed: &str| format!("subscription `{name}`: `{key}` applies only to effect {allowed}");
     match apply.effect {
         Effect::Ephemeral if apply.fields.is_empty() => report(apply.pos, "ephemeral apply requires nonempty fields and paths".into()),
-        Effect::Reread if apply.via.is_none() => report(apply.pos, "reread apply requires via".into()),
         _ => {}
     }
     if apply.effect != Effect::Ephemeral && !apply.fields.is_empty() {
         report(apply.pos, misplaced("fields", "`:ephemeral`"));
-    }
-    if apply.effect != Effect::Reread && apply.via.is_some() {
-        report(apply.pos, misplaced("via", "`:reread`"));
     }
     if apply.effect != Effect::Upsert && !apply.values.is_empty() {
         report(apply.pos, misplaced("values", "`:upsert`"));

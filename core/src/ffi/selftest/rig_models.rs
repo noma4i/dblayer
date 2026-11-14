@@ -55,7 +55,7 @@ pub(super) fn plain_models() -> String {
     let mut notice = crate::schema::ModelSpec::new("Notice", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id)]);
     notice.storage = crate::schema::Storage::Memory;
     let mut relation = crate::schema::RelationSpec::global("recent");
-    relation.updates.push(crate::schema::UpdatesSpec { apply: None, subscription: "Notices".into(), deleted_by: None, deleted_unless: None, set: serde_json::Map::new(), removes: false, debounce: None, root: None, id: Vec::new() });
+    relation.updates.push(crate::schema::UpdatesSpec { apply: None, subscription: "Notices".into(), deleted_by: None, deleted_unless: None, set: serde_json::Map::new(), debounce: None, root: None, id: Vec::new() });
     notice.relations.push(relation);
     models.push(notice);
     models.push(message_spec());

@@ -258,8 +258,8 @@ fn subscribe_in_a_scope_builds_updates_specs() {
     let model = build_one("  scope :feed do\n    query \"Feed\"\n    subscribe \"SampleEvents\", apply: { effect: :upsert, delete_if: \"destroyed\" }\n    subscribe \"PlainEvents\"\n  end");
     let updates = &model.relations[0].updates;
     let apply = Some(dblayer::schema::SubscriptionApply { action: dblayer::schema::SubscriptionAction::Upsert, matches: Default::default() });
-    assert_eq!(updates[0], UpdatesSpec { apply: apply.clone(), subscription: "SampleEvents".into(), deleted_by: Some("destroyed".into()), deleted_unless: None, set: Default::default(), removes: false, debounce: None, root: None, id: Vec::new() });
-    assert_eq!(updates[1], UpdatesSpec { apply, subscription: "PlainEvents".into(), deleted_by: None, deleted_unless: None, set: Default::default(), removes: false, debounce: None, root: None, id: Vec::new() });
+    assert_eq!(updates[0], UpdatesSpec { apply: apply.clone(), subscription: "SampleEvents".into(), deleted_by: Some("destroyed".into()), deleted_unless: None, set: Default::default(), debounce: None, root: None, id: Vec::new() });
+    assert_eq!(updates[1], UpdatesSpec { apply, subscription: "PlainEvents".into(), deleted_by: None, deleted_unless: None, set: Default::default(), debounce: None, root: None, id: Vec::new() });
 }
 
 #[test]
@@ -304,10 +304,10 @@ fn apply_values_build_the_ephemeral_values_of_an_event() {
 }
 
 #[test]
-fn a_delete_effect_sets_removes() {
+fn a_delete_effect_sets_the_delete_action() {
     let model = build_one("  scope :feed do\n    query \"Feed\"\n    subscribe \"Gone\", apply: { effect: :delete }, debounce: 300.milliseconds\n  end");
     let update = &model.relations[0].updates[0];
-    assert!(update.removes);
+    assert_eq!(update.apply.as_ref().map(|apply| &apply.action), Some(&dblayer::schema::SubscriptionAction::Delete));
     assert_eq!(update.debounce.as_deref(), Some("300.milliseconds"));
 }
 
@@ -326,7 +326,7 @@ fn a_scope_can_follow_several_subscriptions() {
     let updates = &model.relations[0].updates;
     assert_eq!(updates.iter().map(|update| update.subscription.as_str()).collect::<Vec<_>>(), ["itemCreated", "itemUpdated", "itemDeleted"]);
     assert_eq!(updates[1].debounce.as_deref(), Some("300.milliseconds"));
-    assert!(updates[2].removes && !updates[0].removes);
+    assert_eq!((updates[2].apply.as_ref().map(|apply| &apply.action), updates[0].apply.as_ref().map(|apply| &apply.action)), (Some(&dblayer::schema::SubscriptionAction::Delete), Some(&dblayer::schema::SubscriptionAction::Upsert)));
 }
 
 #[test]

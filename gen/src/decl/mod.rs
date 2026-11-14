@@ -250,7 +250,6 @@ pub enum Effect {
     Upsert,
     Delete,
     Ephemeral,
-    Reread,
     Ignore,
 }
 
@@ -261,7 +260,6 @@ pub struct ApplyDecl {
     pub fields: Vec<(String, String, Pos)>,
     pub values: Vec<(String, Json, Pos)>,
     pub matches: Vec<(String, dblayer::schema::MatchValues, Pos)>,
-    pub via: Option<String>,
     pub delete_if: Option<(Spanned<String>, bool)>,
 }
 

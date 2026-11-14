@@ -160,8 +160,7 @@ impl SchemaFeedCodec {
             if !apply.matches.iter().all(|(path, accepted)| root_value(node, path).is_some_and(|value| accepted.accepts(value))) { return None; }
         }
         let id = Self::event_id(&updates.id, node);
-        let removing = updates.removes || matches!(updates.apply.as_ref().map(|apply| &apply.action), Some(SubscriptionAction::Delete));
-        let removed = removing
+        let removed = matches!(updates.apply.as_ref().map(|apply| &apply.action), Some(SubscriptionAction::Delete))
             || updates.deleted_by.as_ref().and_then(|field| root_value(node, field)).is_some_and(truthy)
             || updates.deleted_unless.as_ref().and_then(|field| root_value(node, field)).is_some_and(|value| !truthy(value));
         let id = id.or_else(|| spec.is_memory().then(|| RowId::new(&uuid::Uuid::new_v4().to_string()).ok()).flatten());
@@ -173,10 +172,6 @@ impl SchemaFeedCodec {
                     Some(values) => event(model, json!({"op":"ephemeral", "model":model, "id":id.as_str(), "values":values}), StaleKeys::none()),
                     None => invalid(model, "missing event fields"),
                 }
-            }
-            Some(SubscriptionAction::Reread { via }) => {
-                let read = ChangeRead { area: String::new(), relation: via.clone(), parameter: None, removes_on: Vec::new(), observed: false, id_of: None, payload: None };
-                event(model, json!({"op":"reread", "model":model, "id":id.as_str()}), self.reread_keys(spec, &read, &id))
             }
             _ if removed => delete(model, &id),
             _ => {
