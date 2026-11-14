@@ -76,10 +76,11 @@ fn sess_blocked_released_mutate() {
 #[test]
 fn sess_calling_gate_closed() {
     let mut twin = calling();
+    let sent = twin.rid();
     let input = gate_closed(&twin, 0);
     assert!(twin.feed(input).is_empty(), "the request did not leave: nothing is answered");
     let effects = twin.feed(Input::Online(true));
-    assert!(matches!(&effects[..], [RefEffect::HttpRequest { pending, .. }] if pending.request_id == 1 && pending.sequence == 1), "the same pair goes out when the network is back: {effects:?}");
+    assert!(matches!(&effects[..], [RefEffect::HttpRequest { pending, .. }] if pending.request_id == sent && pending.sequence == 1), "the same pair goes out when the network is back: {effects:?}");
 }
 
 #[test]
