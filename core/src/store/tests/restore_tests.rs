@@ -104,3 +104,37 @@ fn store_commit_control_restart() {
     reopened.write_batch(&removal, reopened.files(), None).unwrap();
     assert!(reopened.read_restore().unwrap().orphans.is_empty(), "RemoveOrphan of the same stamp clears the debt");
 }
+
+fn put_upload(store: &crate::store::Store, row_id: &str, seq: i64, batch: Option<i64>, fields: Option<&str>) {
+    store.lock().connection.execute(
+        "INSERT INTO sync_upload (model, row_id, action, status, stage, sent, total, attempts, seq, transfer_id, cycle_id, batch, fields, completed, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure) VALUES ('messages', ?1, 'upload', 'queued', 'prepare', 0, 1, 0, ?2, ?2, 1, ?3, ?4, 0, 0, 0, 1, 'x', 'p', '{}', 'keep')",
+        rusqlite::params![row_id, seq, batch, fields],
+    ).unwrap();
+}
+
+fn restored_failure(store: &crate::store::Store, row_id: &str) -> Option<String> {
+    let restore = store.read_restore().unwrap();
+    restore.transfers.unwrap().into_iter().find(|row| row.key == format!("messages:{row_id}:upload")).unwrap().restore_failed
+}
+
+/// D-461: a stored upload whose `fields` are not JSON restores as `RestoreFailed`, the other upload restores as it was.
+#[test]
+fn store_restore_upload_fields_not_json_fails_the_element() {
+    let (store, _) = booted_store();
+    put_upload(&store, "bad", 1, None, Some("not json"));
+    put_upload(&store, "good", 2, None, Some("{\"a\":1}"));
+    assert!(restored_failure(&store, "bad").is_some(), "the upload with unreadable fields restored as it was written");
+    assert_eq!(restored_failure(&store, "good"), None);
+}
+
+/// D-461: a group whose stored rule does not parse fails its members, the members of a group with a readable rule restore as they were.
+#[test]
+fn store_restore_group_rule_not_json_fails_its_members() {
+    let (store, _) = booted_store();
+    let rule = r#"{"minimum":2,"maximum":10,"items_key":"items","renumber":null,"mutation":{"model":"messages","row_id":"r","action":"upload","keep":true,"path":"p","body":"{}"}}"#;
+    store.lock().connection.execute("INSERT INTO sync_upload_batch (batch_id, op_id, joint) VALUES (1, NULL, 'not json'), (2, NULL, ?1)", [rule]).unwrap();
+    put_upload(&store, "bad", 1, Some(1), Some("{}"));
+    put_upload(&store, "good", 2, Some(2), Some("{}"));
+    assert!(restored_failure(&store, "bad").is_some(), "the member of a group with an unreadable rule restored as it was written");
+    assert_eq!(restored_failure(&store, "good"), None);
+}

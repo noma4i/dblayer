@@ -87,7 +87,8 @@ fn list_object_array_and_enum_fields_keep_only_valid_shapes() {
     let object_value = json!({"enabled": true});
     let array_value = json!(["first", 2]);
 
-    assert_eq!(list.decode(&json!([1, "x", "3"])), Some(json!([1, 3])));
+    assert_eq!(list.decode(&json!([1, "3"])), Some(json!([1, 3])));
+    assert_eq!(list.decode(&json!([1, "x", "3"])), None);
     assert_eq!(record.decode(&object_value), Some(object_value.clone()));
     assert_eq!(record.decode(&json!("metadata")), None);
     assert_eq!(array.decode(&array_value), Some(array_value.clone()));

@@ -52,11 +52,14 @@ fn an_element_that_changes_variant_clears_the_columns_and_child_rows_of_the_old_
 }
 
 #[test]
-fn an_element_with_an_unknown_typename_keeps_only_its_name_and_a_bad_element_is_dropped() {
+fn an_element_with_an_unknown_typename_keeps_only_its_name_and_a_bad_element_stores_no_list() {
     let store = store_with_screens();
-    let mixed = vec![elements().remove(0), json!({"__typename": "SampleFuture", "id": "f1", "children": ["x"], "size": 3}), json!({"id": "n1"}), json!("x")];
-    put(&store, screen(mixed));
+    let known = vec![elements().remove(0), json!({"__typename": "SampleFuture", "id": "f1", "children": ["x"], "size": 3})];
+    put(&store, screen(known));
     assert_eq!(read(&store, "s1")["spec"]["elements"], json!([elements()[0].clone(), {"__typename": "SampleFuture"}]));
+    let fresh = store_with_screens();
+    put(&fresh, screen(vec![elements().remove(0), json!({"id": "n1"}), json!("x")]));
+    assert_eq!(read(&fresh, "s1")["spec"].get("elements"), None);
 }
 
 #[test]

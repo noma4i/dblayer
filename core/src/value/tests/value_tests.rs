@@ -97,7 +97,8 @@ fn enum_and_raw_values_convert_supported_values_only() {
 #[test]
 fn array_reads_only_its_own_container() {
     let list = json!(["1", "x", "2"]);
-    assert_eq!(read_array(&list, read_int), Some(vec![1, 2]));
+    assert_eq!(read_array(&list, read_int), None);
+    assert_eq!(read_array(&json!(["1", 2]), read_int), Some(vec![1, 2]));
     assert_eq!(read_array(&json!([]), read_int), Some(vec![]));
     assert_eq!(read_array(&json!("a"), read_int), None);
     assert_eq!(read_array(&Value::Null, read_int), None);

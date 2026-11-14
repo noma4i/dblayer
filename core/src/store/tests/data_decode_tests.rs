@@ -103,6 +103,23 @@ fn data_required_nested_object_absent_or_null_refuses_row() {
     assert!(stored(&db).is_some(), "the complete row lands");
 }
 
+/// P-DATA-63 (D-461): a list with an element of another type refuses the row like a scalar of another type, the list is not stored shortened.
+#[test]
+fn data_list_element_of_another_type_refuses_row() {
+    let blocks = FieldSpec::union_array("blocks", "Block", vec![FieldSpec::variant("text", "Text", vec![FieldSpec::scalar("body", ScalarKind::Str)])]);
+    let spec = ModelSpec::new("readings", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::list("tags", ScalarKind::Int), blocks]);
+    let db = Store::open_models(None, vec![spec], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    for (case, row) in [
+        ("a list element of another type", json!({"id": "r1", "tags": [1, "x", 3], "blocks": []})),
+        ("a union element without a typename", json!({"id": "r1", "tags": [], "blocks": [{"__typename": "Text", "body": "a"}, {"body": "b"}]})),
+    ] {
+        assert!(matches!(land(&db, row), Err(StoreError::Invalid(_))), "{case}: the row landed");
+        assert!(stored(&db).is_none(), "{case}: a refused row is stored");
+    }
+    land(&db, json!({"id": "r1", "tags": [1, "2", 3], "blocks": [{"__typename": "Text", "body": "a"}]})).unwrap();
+    assert_eq!(stored(&db).unwrap()["tags"], json!([1, 2, 3]));
+}
+
 /// P-DATA-64: a row that does not decode lands nothing: neither the row nor a revision.
 #[test]
 fn data_nested_decode_error_lands_nothing() {
