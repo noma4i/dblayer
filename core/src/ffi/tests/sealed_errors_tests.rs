@@ -133,6 +133,27 @@ async fn a_session_code_on_a_queued_mutation_reaches_settled_typed_and_keeps_the
     }
 }
 
+/// D-455, R16: a mutation the Outbox accepted answers the caller with its receipt even when its own revoked answer ends the session before the caller reads the answer; the end shows in the outcome, not in `send`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_mutation_accepted_before_the_session_ends_returns_its_receipt() {
+    let rig = Rig::new();
+    let database = signed_in(&rig).await;
+    rig.server.refuse_next("SESSION_ENDED", true);
+    let gate = Arc::new((crate::test_wait::Flag::default(), crate::test_wait::Flag::default()));
+    *database.db.answer_gate.lock().unwrap() = Some(gate.clone());
+    let epoch = database.session_epoch();
+    let sending = { let database = database.clone(); tokio::spawn(async move { database.send(crate::ffi::CommandRequest { epoch, model: "Moment".into(), values_json: r#"{"text":"hello"}"#.into(), args_json: "{}".into(), upload: None }).await }) };
+    let entered = gate.clone();
+    crate::test_wait::within(tokio::task::spawn_blocking(move || entered.0.wait_blocking("the send reached the answer of the owner"))).await.unwrap();
+    let life = database.life_handle();
+    crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
+    assert_eq!(rig.credentials.inner.value(), None, "the revoked answer of the mutation ended the session before the caller read its answer");
+    gate.1.set();
+    let receipt = crate::test_wait::within(sending).await.unwrap();
+    let receipt = receipt.unwrap_or_else(|error| panic!("the accepted mutation answers with its receipt, got {error:?}"));
+    assert!(matches!(database.confirmed(receipt, false).await, Err(DbError::NoSession { .. })), "the end of the session shows in the outcome");
+}
+
 pub(in super::super) fn graphql_posts(rig: &Rig) -> usize {
     rig.server.seen().iter().filter(|request| request["path"] == "/api/graphql").count()
 }

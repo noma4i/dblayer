@@ -61,8 +61,16 @@ pub(super) fn end_error(error: DbError) -> DbError {
 }
 
 impl Database {
-    async fn outbox_answer(&self, epoch: u64, waiter: crate::runtime::Waiter<LifeReply>, what: &str) -> Result<OutboxAnswer, DbError> {
-        match self.in_epoch(epoch, "write", self.await_life(waiter)).await? {
+    async fn outbox_answer(&self, waiter: crate::runtime::Waiter<LifeReply>, what: &str) -> Result<OutboxAnswer, DbError> {
+        #[cfg(test)]
+        {
+            let gate = self.db.answer_gate.lock().unwrap_or_else(|error| error.into_inner()).clone();
+            if let Some(gate) = gate {
+                gate.0.set();
+                let _ = super::database::blocking(move || Ok(gate.1.wait_blocking("the test released the answer of the owner"))).await;
+            }
+        }
+        match self.await_life(waiter).await? {
             LifeReply::Outbox(OutboxAnswer::Err(fault)) => Err(refused(fault, what)),
             LifeReply::Outbox(answer) => Ok(answer),
             _ => Err(super::database::foreign_reply()),
@@ -70,8 +78,8 @@ impl Database {
     }
 
     /// A local write is final when its batch commits: the revision and the row are those of that batch.
-    async fn written(&self, epoch: u64, waiter: crate::runtime::Waiter<LifeReply>, what: &str, model: &str) -> Result<(i64, Option<super::wire::WireRow>), DbError> {
-        match self.outbox_answer(epoch, waiter, what).await? {
+    async fn written(&self, waiter: crate::runtime::Waiter<LifeReply>, what: &str, model: &str) -> Result<(i64, Option<super::wire::WireRow>), DbError> {
+        match self.outbox_answer(waiter, what).await? {
             OutboxAnswer::Written { revision, shown, .. } => Ok((revision, shown.map(|row| self.wire_of_row(model, &row)).transpose()?)),
             _ => Err(super::database::foreign_reply()),
         }
@@ -140,11 +148,11 @@ impl Database {
             if action != "destroy" && self.db.spec(&model)?.is_memory() {
                 let renewal = IntentEffects { rows: vec![EffectRow { model: model.clone(), row_id: shown.to_string(), values: json!({ "id": shown.as_str() }).to_string() }], shown: Some((model.clone(), shown.to_string())), ..Default::default() };
                 let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Model(renewal), row.to_string(), String::new());
-                let (revision, value) = self.written(epoch, waiter, action, &model).await?;
+                let (revision, value) = self.written(waiter, action, &model).await?;
                 return Ok(receipt_of(epoch, model, None, revision, value, None, self.life.clone()));
             }
             let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Snapshot, shown.to_string(), String::new());
-            let (revision, value) = self.written(epoch, waiter, action, &model).await?;
+            let (revision, value) = self.written(waiter, action, &model).await?;
             return Ok(receipt_of(epoch, model, None, revision, value, None, self.life.clone()));
         }
         let destroyed = action == "destroy";
@@ -153,7 +161,7 @@ impl Database {
             let mut effects = planned.effects;
             if !destroyed { effects.shown = Some((model.clone(), shown.to_string())); }
             let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Model(effects), row.to_string(), String::new());
-            let (revision, value) = self.written(epoch, waiter, action, &model).await?;
+            let (revision, value) = self.written(waiter, action, &model).await?;
             return Ok(receipt_of(epoch, model, None, revision, value, None, self.life.clone()));
         };
         let (path, body) = self.mutation_request(&call)?;
@@ -161,7 +169,7 @@ impl Database {
         if !destroyed { effects.shown = Some((model.clone(), shown.to_string())); }
         let op = NewOp { model: model.clone(), row_id: row.to_string(), action: action.to_string(), on_failure: call.on_failure, origin: OpSource::Api, path, body, effects, expires_after: call.expires_after.map(std::time::Duration::from_secs) };
         let waiter = self.life.submit(epoch, op);
-        let OutboxAnswer::Receipt(held) = self.outbox_answer(epoch, waiter, action).await? else { return Err(DbError::Internal { detail: "the owner answered a call with no receipt".into() }) };
+        let OutboxAnswer::Receipt(held) = self.outbox_answer(waiter, action).await? else { return Err(DbError::Internal { detail: "the owner answered a call with no receipt".into() }) };
         let value = held.optimistic.as_ref().map(|row| self.wire_of_row(&model, row)).transpose()?;
         Ok(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, value, Some(held), self.life.clone()))
     }
@@ -240,7 +248,7 @@ impl Database {
             crate::store::LocalPlan::Pending { row_id, path, value } => (LocalWriteKind::SetLocalPending, row_id, serde_json::json!({ "path": path, "value": value }).to_string()),
         };
         let waiter = this_db.life.local_write(epoch, model, kind, row.to_string(), values);
-        this_db.outbox_answer(epoch, waiter, "set local").await.map(drop)
+        this_db.outbox_answer(waiter, "set local").await.map(drop)
     }).await? }
 
     pub async fn set_ephemeral(&self, epoch: u64, model: String, row_id: String, values_json: String) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
@@ -249,7 +257,7 @@ impl Database {
         this_db.offload(move || Ok(db.plan_set_ephemeral(&name, &parse_json(&text)?)?)).await?;
         let row = this_db.resolved(epoch, &model, id(&row_id)?).await?;
         let waiter = this_db.life.local_write(epoch, model, LocalWriteKind::SetEphemeral { expire_after: None }, row.to_string(), values_json);
-        this_db.outbox_answer(epoch, waiter, "set ephemeral").await.map(drop)
+        this_db.outbox_answer(waiter, "set ephemeral").await.map(drop)
     }).await? }
 
     /// Attaches the local file at `source_path`: the library copies it in pieces and the row shows the copy.
@@ -262,7 +270,7 @@ impl Database {
         let copy = this_db.offload(move || crate::store::files::copy_attachment(&copied, &source_path).map_err(|error| DbError::Storage { detail: format!("the source file could not be copied: {error}") })).await?;
         let id = copy.id.clone();
         let waiter = this_db.life.local_write(epoch, model, LocalWriteKind::AttachCopy { copy, name, mime }, row.to_string(), field.clone());
-        let answer = this_db.outbox_answer(epoch, waiter, "attach").await;
+        let answer = this_db.outbox_answer(waiter, "attach").await;
         let attached = match &answer {
             Ok(OutboxAnswer::Written { shown: Some(shown), .. }) => shown.get(&field).and_then(crate::store::files::FileDescriptor::from_value),
             _ => None,
@@ -278,7 +286,7 @@ impl Database {
     pub async fn detach(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<bool, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         let row = this_db.file_row(epoch, &model, &row_id, &field, true).await?;
         let waiter = this_db.life.local_write(epoch, model, LocalWriteKind::Detach, row.to_string(), field);
-        let OutboxAnswer::Written { files_removed, .. } = this_db.outbox_answer(epoch, waiter, "detach").await? else { return Err(super::database::foreign_reply()) };
+        let OutboxAnswer::Written { files_removed, .. } = this_db.outbox_answer(waiter, "detach").await? else { return Err(super::database::foreign_reply()) };
         Ok(files_removed > 0)
     }).await? }
 
@@ -293,7 +301,7 @@ impl Database {
             return this_db.discard_transfer(epoch, &model, &row_id, declared).await;
         }
         let waiter = this_db.life.discard_operation(epoch, (model.clone(), row_id.clone()), action);
-        match this_db.in_epoch(epoch, "discard", this_db.await_life(waiter)).await? {
+        match this_db.await_life(waiter).await? {
             LifeReply::Transfer(TransferAnswer::Err(fault)) | LifeReply::Outbox(OutboxAnswer::Err(fault)) => Err(refused(fault, "discard")),
             LifeReply::Outbox(_) | LifeReply::Transfer(_) => Ok(()),
             _ => Err(super::database::foreign_reply()),
@@ -375,7 +383,7 @@ impl Database {
     pub(super) async fn retry_operation(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<Retried, DbError> {
         self.account_call(epoch)?;
         let waiter = self.life.retry_operation(epoch, (model.clone(), row_id.clone()), action);
-        let held = match self.in_epoch(epoch, "retry", self.await_life(waiter)).await? {
+        let held = match self.await_life(waiter).await? {
             LifeReply::Outbox(OutboxAnswer::Receipt(held)) => held,
             LifeReply::Outbox(OutboxAnswer::Transfer { action }) => return Ok(Retried::Transfer(action)),
             LifeReply::Transfer(TransferAnswer::Receipt(held)) => {
