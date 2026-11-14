@@ -3,6 +3,8 @@ use super::transfer_harness::Twin;
 
 const KEY: &str = "Moment:r1:upload";
 
+fn ended(cause: crate::ffi::EndCause) -> crate::owners::write::transfer::TransferAnswer { crate::owners::write::transfer::TransferAnswer::Err(crate::owners::write::outbox::Fault::Ended(cause)) }
+
 #[test]
 fn xfer_accepting_closing() {
     use crate::owners::write::transfer::TransferStage;
@@ -12,7 +14,7 @@ fn xfer_accepting_closing() {
         let closing = twin.close();
         assert_eq!((twin.stage(id), closing.all_replies(), closing.drained(), closing.writes()), (TransferStage::Accepting, 0, 0, 0));
         let out = if committed { twin.commit() } else { twin.reject(crate::owners::contract::RejectReason::Storage("disk".into())) };
-        assert_eq!((twin.stage(id), format!("{:?}", out.replies(reply)), out.drained(), out.copies()), (TransferStage::Done, "[Err(Ended(Closed))]".into(), 1, 0));
+        assert_eq!((twin.stage(id), out.replies(reply), out.drained(), out.copies()), (TransferStage::Done, vec![ended(crate::ffi::EndCause::Closed)], 1, 0));
     }
 }
 
@@ -58,8 +60,8 @@ fn xfer_accepting_rejected_interrupted() {
         let mut twin = Twin::new();
         let (id, reply, _) = twin.accepting(KEY, 2);
         let out = twin.reject(reason.clone());
-        let cause = if reason == RejectReason::Closed { "Closed" } else { "SessionEnded" };
-        assert_eq!((twin.stage(id), format!("{:?}", out.replies(reply)), out.copies()), (TransferStage::Done, format!("[Err(Ended({cause}))]"), 0));
+        let cause = if reason == RejectReason::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded };
+        assert_eq!((twin.stage(id), out.replies(reply), out.copies()), (TransferStage::Done, vec![ended(cause.clone())], 0));
 
         let mut twin = Twin::new();
         let keys = [KEY, "Moment:r2:upload"];
@@ -67,7 +69,7 @@ fn xfer_accepting_rejected_interrupted() {
         let ids: Vec<_> = keys.iter().map(|key| twin.state().open_id(key).unwrap()).collect();
         twin.reserve_batch(&ids);
         let out = twin.reject(reason);
-        assert_eq!((format!("{:?}", out.replies(50)), out.all_replies(), out.copies()), (format!("[Err(Ended({cause}))]"), 1, 0));
+        assert_eq!((out.replies(50), out.all_replies(), out.copies()), (vec![ended(cause)], 1, 0));
         assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Done));
     }
 }

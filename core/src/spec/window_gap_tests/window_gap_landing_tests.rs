@@ -203,10 +203,9 @@ fn win_wait_refresh_result() {
         if closing { twin.det.close(); } else { twin.det.end_epoch(EPOCH, Ended::SessionReset); }
         twin.run();
         let effects = take(&twin.log);
-        let answers: Vec<_> = effects.iter().filter_map(|effect| match effect { Emitted::Run(WindowsEffect::Window { effect: WindowEffect::Outcome { id: 9, outcome }, .. }) => Some(format!("{outcome:?}")), _ => None }).collect();
-        let cause = if closing { "Closed" } else { "SessionEnded" };
-        assert_eq!(answers.len(), 1);
-        assert!(answers[0].contains(cause), "{:?}", answers);
+        let answers: Vec<_> = effects.iter().filter_map(|effect| match effect { Emitted::Run(WindowsEffect::Window { effect: WindowEffect::Outcome { id: 9, outcome }, .. }) => Some(outcome.clone()), _ => None }).collect();
+        let cause = if closing { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded };
+        assert_eq!(answers, vec![w::WindowOutcome::Ended { cause }]);
     }
 }
 

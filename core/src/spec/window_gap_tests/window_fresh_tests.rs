@@ -172,6 +172,7 @@ struct Flight {
 
 struct Trace {
     lines: Vec<String>,
+    commits: Vec<Option<StoreBatch>>,
     requests: Vec<usize>,
 }
 
@@ -191,7 +192,7 @@ fn drive(plan: &Plan) -> Trace {
     let mut twin = Twin::new();
     take(&twin.log);
     let mut flight = Flight::default();
-    let mut trace = Trace { lines: Vec::new(), requests: Vec::new() };
+    let mut trace = Trace { lines: Vec::new(), commits: Vec::new(), requests: Vec::new() };
     for (turn, step) in plan {
         twin.det.tick(Time(*step));
         if matches!(turn, Turn::Land) {
@@ -213,6 +214,7 @@ fn drive(plan: &Plan) -> Trace {
             }
         }
         trace.requests.push(requests(&effects));
+        trace.commits.push(commit.clone());
         trace.lines.push(format!("{turn:?}@{step}: {effects:?} {outcomes:?} {commit:?} {:?} {:?}", twin.stage(), twin.state().load_state(&key())));
     }
     trace
@@ -266,7 +268,8 @@ fn win_prop_fresh_for_any_input_times() {
     }
     let stamped = vec![(Turn::Watch, start), (Turn::Respond, start + 500), (Turn::Land, start + 500)];
     let trace = drive(&stamped);
-    assert!(trace.lines[1].contains(&format!("landed_at: {}", NOW + 500)), "landed_at is the time of the step of Response: {}", trace.lines[1]);
+    let stamp = trace.commits[1].as_ref().map_or(&[][..], |batch| batch.ops.as_slice());
+    assert!(stamp.iter().any(|op| matches!(op, StoreOp::Window { landed_at, .. } if *landed_at == NOW + 500)), "landed_at is the time of the step of Response: {}", trace.lines[1]);
     std::thread::scope(|scope| {
         let runs: Vec<_> = (1..=8u64)
             .map(|seed| {

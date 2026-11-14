@@ -143,8 +143,8 @@ fn out_prop_landing_ended_answer_lands_at_open() {
             }
             let ended = refuse(&mut twin, id, reason.clone());
             assert_eq!(twin.stage(id), Some(St::Done), "{reason:?}");
-            let cause = if reason == RejectReason::Closed { "Closed" } else { "SessionEnded" };
-            assert!(sends(&ended) == 0 && format!("{:?}", outcomes(&ended)) == format!("[Ended({cause})]"), "the unit of work ends with Ended, not Failed or Confirmed: {ended:?}");
+            let cause = if reason == RejectReason::Closed { crate::ffi::EndCause::Closed } else { crate::ffi::EndCause::SessionEnded };
+            assert!(sends(&ended) == 0 && outcomes(&ended) == vec![OutboxOutcome::Ended(cause)], "the unit of work ends with Ended, not Failed or Confirmed: {ended:?}");
             assert!(kinds(&ended).is_empty() && !has_op!(twin, StoreOp::RemoveAnswer { .. } | StoreOp::RemoveIntent { .. } | StoreOp::MarkError { .. }), "Ended writes nothing to the Store: {ended:?} {:?}", twin.store_ops);
             let saved = twin.state().ops[&id].clone();
             let mut reopened = Twin::bare();

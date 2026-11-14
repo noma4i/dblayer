@@ -122,8 +122,8 @@ fn call_awaiting_snapshot_end() {
         if closing { twin.det.close(); } else { twin.det.end_epoch(EPOCH, Cause::SessionReset); }
         twin.det.run_until_quiet(100).unwrap();
         let effects = take(&twin.log);
-        let answers: Vec<_> = effects.iter().filter_map(|effect| if let CallsEffect::Reply { id: 1, answer } = effect { Some(format!("{answer:?}")) } else { None }).collect();
-        assert_eq!(answers, vec![if closing { "Err(Closed)" } else { "Err(SessionEnded)" }], "calls.md:80 (D-279): the owner answers the end cause 1:1");
+        let answers: Vec<_> = effects.iter().filter_map(|effect| if let CallsEffect::Reply { id: 1, answer } = effect { Some(answer.clone()) } else { None }).collect();
+        assert_eq!(answers, vec![Err(if closing { CallError::Closed } else { CallError::SessionEnded })], "calls.md:80 (D-279): the owner answers the end cause 1:1");
         twin.det.tick(crate::runtime::Time(30_000));
         twin.det.run_until_quiet(100).unwrap();
         assert!(take(&twin.log).iter().all(|effect| !matches!(effect, CallsEffect::Reply { id: 1, .. })));
