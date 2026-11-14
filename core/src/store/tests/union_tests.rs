@@ -83,11 +83,11 @@ fn null_and_absent_are_the_same_state() {
 }
 
 #[test]
-fn a_value_without_a_text_typename_is_dropped() {
+fn a_value_without_a_text_typename_is_refused() {
     let store = store_with_messages();
     for bad in [json!({"body": "x"}), json!({"__typename": 7, "body": "x"}), json!("x")] {
-        put(&store, json!({"id": "m1", "attachment": bad}));
-        assert_eq!(read(&store, "m1").get("attachment"), None);
+        assert!(store.commit(envelope(vec![upsert("messages", json!({"id": "m1", "attachment": bad}))], vec![])).is_err());
+        assert!(store.point("messages", "m1").unwrap().is_none());
     }
 }
 

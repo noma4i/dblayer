@@ -204,6 +204,9 @@ pub(super) struct Encrypted {
 }
 
 impl Database {
+    #[cfg(test)]
+    pub(crate) fn store_revision(&self) -> Result<i64, crate::store::StoreError> { self.db.revision_seq() }
+
     fn start(config: Config, models_json: String, (transport, endpoint): (Option<Arc<dyn Transport>>, Option<String>), clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
         Self::start_with(config, models_json, clock, |db, _| {
             #[cfg(test)]
