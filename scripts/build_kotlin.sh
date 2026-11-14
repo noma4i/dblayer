@@ -5,11 +5,11 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 module="$root/kotlin"
 part="${1:---release}"
 abis=(arm64-v8a armeabi-v7a x86_64 x86)
-[ "$#" -le 1 ] || { echo "usage: build_kotlin.sh [--host | --jvm | --abis | --release]" >&2; exit 2; }
+[ "$#" -le 1 ] || { echo "usage: build_kotlin.sh [--host | --jvm | --abis | --release | --check]" >&2; exit 2; }
 case "$part" in
   --host | --jvm | --abis) ;;
-  --release) abis=(arm64-v8a armeabi-v7a) ;;
-  *) echo "usage: build_kotlin.sh [--host | --jvm | --abis | --release]" >&2; exit 2 ;;
+  --release | --check) abis=(arm64-v8a armeabi-v7a) ;;
+  *) echo "usage: build_kotlin.sh [--host | --jvm | --abis | --release | --check]" >&2; exit 2 ;;
 esac
 jvm_targets=(aarch64-apple-darwin x86_64-apple-darwin)
 android_triple() {
@@ -19,6 +19,16 @@ android_triple() {
     x86_64) echo x86_64-linux-android ;;
     x86) echo i686-linux-android ;;
   esac
+}
+export_android_env() {
+  local abi triple ndk_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin" clang
+  target_args=()
+  for abi in "${abis[@]}"; do
+    triple="$(android_triple "$abi")"
+    clang="$ndk_bin/${triple/armv7-/armv7a-}33-clang"
+    export "CARGO_TARGET_$(printf '%s' "$triple" | tr 'a-z-' 'A-Z_')_LINKER=$clang" "CC_${triple//-/_}=$clang" "AR_${triple//-/_}=$ndk_bin/llvm-ar"
+    target_args+=(--target "$triple")
+  done
 }
 if [ "${DBLAYER_BUILD_TARGETS_ONLY:-0}" = 1 ]; then
   if [ "$part" = --host ]; then printf '%s\n' host; elif [ "$part" = --jvm ]; then printf '%s\n' "${jvm_targets[@]}"; else printf '%s\n' "${abis[@]}"; fi
@@ -32,7 +42,12 @@ if [ "$part" != --host ] && [ "$part" != --jvm ]; then
   export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$(ls -d "$HOME"/Library/Android/sdk/ndk/* | sort -V | tail -1)}"
 fi
 
-if [ "$part" = --host ]; then
+if [ "$part" = --check ]; then
+  kind=android-check
+  targets=("${abis[@]}")
+  stamp="$root/target/android-check.SOURCE_HASH"
+  outputs=()
+elif [ "$part" = --host ]; then
   kind=host
   targets=(host)
   stamp="$root/target/debug/libdblayer.dylib.SOURCE_HASH"
@@ -50,12 +65,19 @@ else
   outputs=()
   for abi in "${abis[@]}"; do outputs+=("$module/src/main/jniLibs/$abi/libdblayer.so"); done
 fi
-if [ "$part" != --jvm ]; then outputs+=("$module/src/main/kotlin/com/noma4i/dblayer/dblayer.kt"); fi
-if bash "$root/scripts/native_source_hash.sh" --fresh "$stamp" "$kind" "${targets[@]}" -- "${outputs[@]}"; then
-  if [ "$part" = --jvm ]; then echo "$root/target/jvm-build/libdblayer.dylib"; elif [ "$part" != --host ]; then for abi in "${abis[@]}"; do printf '%s\n' "$module/src/main/jniLibs/$abi/libdblayer.so"; done; fi
+if [ "$part" != --jvm ] && [ "$part" != --check ]; then outputs+=("$module/src/main/kotlin/com/noma4i/dblayer/dblayer.kt"); fi
+if bash "$root/scripts/native_source_hash.sh" --fresh "$stamp" "$kind" "${targets[@]}" -- ${outputs[@]+"${outputs[@]}"}; then
+  if [ "$part" = --jvm ]; then echo "$root/target/jvm-build/libdblayer.dylib"; elif [ "$part" != --host ] && [ "$part" != --check ]; then for abi in "${abis[@]}"; do printf '%s\n' "$module/src/main/jniLibs/$abi/libdblayer.so"; done; fi
   exit 0
 fi
 hash="$(bash "$root/scripts/native_source_hash.sh" "$kind" "${targets[@]}")"
+
+if [ "$part" = --check ]; then
+  export_android_env
+  cargo check --manifest-path "$root/core/Cargo.toml" "${target_args[@]}"
+  printf '%s\n' "$hash" > "$stamp"
+  exit 0
+fi
 
 if [ "$part" = --jvm ]; then
   target_args=()
@@ -75,14 +97,7 @@ fi
 PATH="$host_path" bash "$root/scripts/build_bindgen.sh"
 
 if [ "$part" != --host ]; then
-  ndk_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin"
-  target_args=()
-  for abi in "${abis[@]}"; do
-    triple="$(android_triple "$abi")"
-    clang="$ndk_bin/${triple/armv7-/armv7a-}33-clang"
-    export "CARGO_TARGET_$(printf '%s' "$triple" | tr 'a-z-' 'A-Z_')_LINKER=$clang" "CC_${triple//-/_}=$clang" "AR_${triple//-/_}=$ndk_bin/llvm-ar"
-    target_args+=(--target "$triple")
-  done
+  export_android_env
   cargo build --release --manifest-path "$root/core/Cargo.toml" "${target_args[@]}"
   /bin/rm -rf "$module/src/main/jniLibs"
   for abi in "${abis[@]}"; do

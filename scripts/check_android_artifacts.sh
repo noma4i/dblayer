@@ -2,30 +2,11 @@
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-if [ "$#" -gt 1 ] || { [ "${1:---release}" != --release ] && [ "${1:---release}" != --abis ]; }; then
-  echo "usage: check_android_artifacts.sh [--release | --abis]" >&2
-  exit 2
-fi
-export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
-export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$(ls -d "$HOME"/Library/Android/sdk/ndk/* | sort -V | tail -1)}"
-abis="$(DBLAYER_BUILD_TARGETS_ONLY=1 bash "$root/scripts/build_kotlin.sh" "${1:---release}")"
-if [ "${1:---release}" = --release ]; then
-  declared="$(sed -n 's/^ *abiFilters += listOf(\(.*\))$/\1/p' "$root/kotlin/build.gradle.kts" | tr -d '" ' | tr ',' '\n' | sort)"
-  if [ "$declared" != "$(printf '%s\n' "$abis" | sort)" ]; then
-    echo "abiFilters in kotlin/build.gradle.kts differ from the release ABIs of build_kotlin.sh: $(echo $declared) vs $(echo $abis)" >&2
-    exit 1
-  fi
-fi
-while IFS= read -r abi; do
-  if [ ! -f "$root/kotlin/src/main/jniLibs/$abi/libdblayer.so" ]; then
-    echo "android artifact missing: $abi/libdblayer.so" >&2
-    exit 1
-  fi
-done <<< "$abis"
-stamp="$root/kotlin/src/main/jniLibs/SOURCE_HASH"
-current="$(bash "$root/scripts/native_source_hash.sh" android $abis)"
-if [[ ! -f "$stamp" || "$(cat "$stamp")" != "$current" ]]; then
-  echo "android artifacts are stale: libdblayer.so was not built from the current core sources. Run scripts/build_kotlin.sh" >&2
+[ "$#" -eq 0 ] || { echo "usage: check_android_artifacts.sh" >&2; exit 2; }
+abis="$(DBLAYER_BUILD_TARGETS_ONLY=1 bash "$root/scripts/build_kotlin.sh" --release)"
+declared="$(sed -n 's/^ *abiFilters += listOf(\(.*\))$/\1/p' "$root/kotlin/build.gradle.kts" | tr -d '" ' | tr ',' '\n' | sort)"
+if [ "$declared" != "$(printf '%s\n' "$abis" | sort)" ]; then
+  echo "abiFilters in kotlin/build.gradle.kts differ from the release ABIs of build_kotlin.sh: $(echo $declared) vs $(echo $abis)" >&2
   exit 1
 fi
-echo "android artifacts match the core sources"
+echo "abiFilters match the release ABIs"

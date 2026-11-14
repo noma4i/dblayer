@@ -54,13 +54,13 @@ export PATH=/opt/homebrew/opt/rustup/bin:$PATH
 bash scripts/check_dblayer.sh
 ```
 
-It runs cheap checks first, including build modes, and stops on failure. The lanes except final run at the same time, and the steps inside a lane run in order. Android release builds contain arm64-v8a and armeabi-v7a. Swift tests use macOS and arm64 simulator slices. Every step has a time limit.
+It runs cheap checks first, including build modes, and stops on failure. The lanes except final run at the same time, and the steps inside a lane run in order. Android release builds contain arm64-v8a and armeabi-v7a. The device lane runs `cargo check` for the iOS device slice and for these two Android ABIs, and checks that `abiFilters` equal them. Swift tests use macOS and arm64 simulator slices. Every step has a time limit.
 
 The workspace release profile uses optimization level 3, no LTO, one codegen unit, symbol stripping and panic unwinding.
 It applies to Android and iOS builds. Panic unwinding remains enabled for UniFFI.
 Android binding generation reads the static archive, which retains UniFFI metadata after the shared library loses its symbol table.
 Native builds reuse their artifacts. `scripts/native_source_hash.sh` fingerprints the content of `core/src`, `gen/`, the manifests, `Cargo.lock`, `core/uniffi.toml`, the build scripts, the toolchain versions, the build flags in the environment and the target list.
-The Android ABI libraries, the host library for Kotlin bindings and the iOS slices store the fingerprint next to the artifact. The iOS device check stores it in `target/ios-device-check.SOURCE_HASH`.
+The Android ABI libraries, the host library for Kotlin bindings and the iOS slices store the fingerprint next to the artifact. The iOS device check stores it in `target/ios-device-check.SOURCE_HASH`, the Android check in `target/android-check.SOURCE_HASH`.
 When the stored fingerprint equals the current one and the artifacts exist, the step prints `native build skipped: inputs unchanged, fingerprint <hash>` and builds nothing. Any change of an input rebuilds, including the release profile in `Cargo.toml`.
 See [Android R8 checks](android-r8.md) for the consumer rules.
 
@@ -85,7 +85,8 @@ The native build fingerprint includes both deployment versions.
 | `bash scripts/build_kotlin.sh --host` | Builds the host debug library and Kotlin bindings for JNA unit tests |
 | `bash scripts/build_kotlin.sh --jvm` | Builds a universal macOS release library for JVM without changing Kotlin bindings |
 | `bash scripts/generate_kotlin_bindings.sh --bindgen <uniffi-bindgen> --library <libdblayer.a or .so> --config <uniffi.toml> --out <directory>` | Generates `dblayer.kt` from a built library. The `uniffi-bindgen` of this repository (`bindgen/`) makes every edit of the output, including `ProcessOwner.claim()`. Needs no DBlayer checkout layout: copy this one file and pass the paths. `build_kotlin.sh` uses it too |
-| `bash scripts/check_android_artifacts.sh --release` | Checks release ABI files and the fingerprint. Use `--abis` to check all 4 ABIs |
+| `bash scripts/build_kotlin.sh --check` | Runs `cargo check` for the release ABIs with the NDK linker environment, builds nothing and writes no bindings |
+| `bash scripts/check_android_artifacts.sh` | Checks that `abiFilters` in `kotlin/build.gradle.kts` equal the release ABIs of `build_kotlin.sh` |
 | `bash scripts/check_zoo.sh` | Finds duplicate mechanisms and names (see [architecture](architecture.md)) |
 | `bash scripts/check_docs.sh` | Checks that paths mentioned in README and docs exist |
 | `bash scripts/reclaim_target.sh` | Removes the build output of `dblayer` and `dblayer-gen` from `target` and prints its size before and after. Refuses while `cargo` runs |

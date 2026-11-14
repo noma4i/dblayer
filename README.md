@@ -200,7 +200,7 @@ Requirements: Xcode, Android SDK with NDK, Homebrew `rustup` with the iOS and An
 
 ```sh
 export PATH=/opt/homebrew/opt/rustup/bin:$PATH
-bash scripts/check_dblayer.sh      # cheap checks, then the Rust, Swift, Kotlin and Android lanes at the same time (--fast: touched directories only)
+bash scripts/check_dblayer.sh      # cheap checks, then the Rust, Swift, Kotlin and device lanes at the same time (--fast: touched directories only)
 cargo test                         # Rust core and generator only
 ```
 
