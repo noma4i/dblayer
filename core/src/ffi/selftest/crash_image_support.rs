@@ -56,6 +56,7 @@ pub(super) async fn checkpoint_live(database: &crate::ffi::Database, live: &Path
     let connection = rusqlite::Connection::open(live).unwrap();
     connection.busy_timeout(crate::store::ddl::LOCK_WAIT).unwrap();
     connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    database.db.lock().connection.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
 }
 
 /// The length of the log of a live database now.
@@ -76,7 +77,7 @@ impl Base {
         if wal.len() >= 32 {
             let page_size = u32::from_be_bytes(wal[8..12].try_into().unwrap()) as usize;
             let frame = 24 + if page_size == 1 { 65536 } else { page_size };
-            cuts.extend((32..wal.len()).step_by(frame).filter(|offset| u32::from_be_bytes(wal[offset + 4..offset + 8].try_into().unwrap()) != 0).map(|offset| offset + frame));
+            cuts.extend((32..wal.len()).step_by(frame).filter(|offset| u32::from_be_bytes(wal[offset + 4..offset + 8].try_into().unwrap()) != 0).inspect(|offset| assert_eq!(wal[offset + 8..offset + 16], wal[16..24], "the log restarted during the scenario: a frame of another generation")).map(|offset| offset + frame));
         }
         (Capture { directory: self.directory, base: self.base, wal, cuts }, files)
     }
