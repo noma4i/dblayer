@@ -319,9 +319,6 @@ impl TransferState {
                 transfer.waiting_retry = false;
                 self.start_in_order(now, fx);
             }
-            TransferStage::PersistingAttempt => self.store(&[id], StoreKind::SyncUpload, fx),
-            TransferStage::PersistingPart => self.store(&[id], StoreKind::ConfirmedParts, fx),
-            TransferStage::PersistingComplete => self.store(&[id], StoreKind::Completed, fx),
             _ => {}
         }
     }

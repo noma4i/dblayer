@@ -25,6 +25,7 @@
 - Keep the server ids of created rows across a database format change.
 - Treat a server id that starts with temp- as a server id.
 - Keep a stream release, a resync and a load start behind the calls started before them.
+- Finish an upload after a refused database write is retried.
 
 ### Removed
 

@@ -615,3 +615,28 @@ fn inv_upload_08_a_restarted_part_never_lowers_the_total_inside_a_phase() {
     commit(&mut twin, &mut committed);
     assert_eq!(committed, 50);
 }
+
+/// P-XFER-50: a Store write of the upload refused once with `Storage` goes again and the upload ends, at the attempt, the part and the `complete` write.
+#[test]
+fn xfer_refused_write_does_not_stall_the_upload() {
+    let mut twin = Twin::new();
+    let id = twin.accepted(KEY, 1);
+    assert_eq!(twin.stage(id), TransferStage::PersistingAttempt);
+    assert_eq!(twin.reject(RejectReason::Storage("disk".into())).timers, 1);
+    assert_eq!(twin.tick_retry(id).writes(), 1);
+    let out = twin.commit();
+    assert_eq!((twin.stage(id), out.steps().len()), (TransferStage::Uploading, 1), "the step runs after the retried attempt write");
+    twin.step_ok(id, 1, None);
+    assert_eq!(twin.stage(id), TransferStage::PersistingPart);
+    assert_eq!(twin.reject(RejectReason::Storage("disk".into())).timers, 1);
+    assert_eq!(twin.tick_retry(id).writes(), 1);
+    twin.commit();
+    let out = twin.commit();
+    assert_eq!((twin.stage(id), out.completes()), (TransferStage::Completing, 1), "the complete step runs after the retried part write");
+    twin.completed(id);
+    assert_eq!(twin.stage(id), TransferStage::PersistingComplete);
+    assert_eq!(twin.reject(RejectReason::Storage("disk".into())).timers, 1);
+    assert_eq!(twin.tick_retry(id).writes(), 1);
+    let out = twin.commit();
+    assert_eq!((twin.stage(id), out.submits()), (TransferStage::Mutating, 1), "the final mutation goes once");
+}

@@ -613,11 +613,6 @@ impl TransferState {
         self.retry_after(id, attempt, fx);
     }
 
-    pub(super) fn storage_retry(&mut self, id: TransferId, fx: &mut Fx) {
-        let Some(attempt) = self.storage_refused(id) else { return };
-        self.retry_after(id, attempt, fx);
-    }
-
     pub(super) fn storage_refused(&mut self, id: TransferId) -> Option<u32> {
         let transfer = self.transfers.get_mut(&id)?;
         transfer.storage_refusals = transfer.storage_refusals.saturating_add(1);
@@ -633,7 +628,6 @@ impl TransferState {
         for id in ids {
             if let Some(transfer) = self.transfers.get_mut(id) {
                 transfer.waiting_retry = true;
-                transfer.in_flight = false;
                 transfer.attempt_id = attempt_id;
             }
         }
@@ -928,7 +922,7 @@ impl TransferState {
             (Some(TransferStage::PersistingFailure), Some(_)) => self.failure_rejected(pending.kind, &pending.ids, fx),
             (Some(TransferStage::PersistingCopy), Some(_)) => self.copy_rejected(&pending.ids, rejected.reason, fx),
             (Some(TransferStage::PersistingPrepared), Some(detail)) => self.fail_prepare(now, pending.ids[0], crate::value::sync::PrepareReason::Failed, detail, fx),
-            (Some(TransferStage::PersistingAttempt | TransferStage::PersistingPart | TransferStage::PersistingComplete), Some(_)) => self.storage_retry(pending.ids[0], fx),
+            (Some(TransferStage::PersistingAttempt | TransferStage::PersistingPart | TransferStage::PersistingComplete), Some(_)) => self.storage_retry_batch(pending.kind, &pending.ids, fx),
             (Some(_), None) => {
                 for id in pending.ids {
                     self.interrupt(id, super::outbox_types::end_cause(&rejected.reason), fx);
