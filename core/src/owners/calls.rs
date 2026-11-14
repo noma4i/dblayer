@@ -148,6 +148,9 @@ impl CallsState {
 
     pub fn phase(&self, call: CallId) -> Option<CallPhase> { self.calls.get(&call).map(|(phase, _)| *phase) }
 
+    #[cfg(test)]
+    pub fn held(&self) -> usize { self.calls.len() + self.by_reply.len() + self.attempts.len() + self.awaiting.len() + self.awaiting_by_id.len() }
+
     fn sending(&self, call_id: CallId) -> bool { matches!(self.phase(call_id), Some(CallPhase::Sending { .. })) }
 
     fn releasing(&self, call_id: CallId) -> bool { matches!(self.phase(call_id), Some(CallPhase::Sending { releasing: true, .. })) }

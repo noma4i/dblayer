@@ -51,6 +51,21 @@ fn xfer_open_batch_ready() {
     assert!(matches!(&out.submit_ops()[0].origin, OpSource::TransferGroup { batch_id: 7, members } if members.len() == 2));
 }
 
+/// A batch whose first element saved an interrupted outcome leaves the table; the second element restores into the same batch.
+#[test]
+fn xfer_open_batch_first_element_ended() {
+    let mut twin = Twin::bare(1);
+    let rows = vec![element(1, FIRST, false), element(2, SECOND, false)];
+    let declarations = rows.iter().map(|row| (row.mutation.model.clone(), row.mutation.action.clone())).collect();
+    twin.post(TransferInput::RegisterOperations { declarations, complete: false });
+    let ended = OutboxOutcome::Ended(crate::owners::read::deliveries::EndCause::SessionEnded);
+    let outcomes = std::collections::BTreeMap::from([(1, std::collections::BTreeMap::from([(1, ended)]))]);
+    let batches = [(7, StoredGroup { joint: joint(), op_id: Some(1_000_007), intent_members: Vec::new() })].into();
+    let out = twin.post(TransferInput::Restored { uploads: rows, outcomes, orphans: Vec::new(), batches, held_orphan: None });
+    assert_eq!((twin.stage(2), out.shows()), (TransferStage::BatchReady, vec![Shown::Uploading { progress: 100 }]), "the live element is not restore_failed");
+    assert!(!twin.state().transfers.contains_key(&1), "the ended element leaves the table");
+}
+
 #[test]
 fn xfer_open_batch_intent() {
     let (mut twin, out) = restored(vec![element(1, FIRST, true), element(2, SECOND, true)], vec![1, 2]);

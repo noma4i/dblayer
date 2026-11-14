@@ -30,6 +30,19 @@ fn out_selector_version() {
     assert_eq!((select_rows(&sends), answers(&effects, reply).len()), (1, 0));
 }
 
+/// An operation of another row does not make the answer stale, and a settled selection leaves no version entry.
+#[test]
+fn out_selector_other_row_keeps_the_choice_and_leaves_no_entry() {
+    let (mut twin, _id) = reach(St::Sending, &ready());
+    let reply = 555;
+    let (_, asked) = twin.selector(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply });
+    let version = asked.iter().find_map(|send| match send { TransferInput::SelectRow { version, .. } => Some(*version), _ => None }).expect("the row question");
+    assert_eq!(twin.state().selection_versions.len(), 1, "the row of the selection in flight has an entry");
+    twin.submit("other", Policy::Rollback, false);
+    let (_, sends) = twin.selector(OutboxInput::SelectedOutbox { model: "Moment".into(), row_id: "r".into(), action: "update".into(), kind: o::SelectKind::Retry, reply, version });
+    assert_eq!((select_rows(&sends), twin.state().selection_versions.len()), (0, 0), "the choice stands and no entry stays");
+}
+
 /// A selector answer whose reply waits for no choice (R2): nothing.
 #[test]
 fn out_selector_stray() {

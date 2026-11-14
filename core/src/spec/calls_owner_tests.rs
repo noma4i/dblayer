@@ -1,6 +1,6 @@
 //! Owner-level tests of the `calls` owner on `DetScheduler`: input -> effects and answers.
 
-use crate::owners::calls::{CallAnswer, CallError, CallKind, CallPhase, Calls, CallsEffect, CallsInput, CallsState};
+use crate::owners::calls::{CallAnswer, CallError, CallKind, Calls, CallsEffect, CallsInput, CallsState};
 use crate::owners::contract::Online;
 use crate::spec::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
@@ -72,6 +72,27 @@ fn call_deadline_after_done() {
     twin.det.tick(crate::runtime::Time(30_000));
     twin.det.run_until_quiet(100).unwrap();
     assert!(take(&twin.log).is_empty());
+}
+
+/// A finished call leaves no entry: a late input of its id answers like the terminal stage, and Closing still drains once.
+#[test]
+fn call_finished_leaves_no_entry() {
+    let mut twin = Twin::new();
+    for reply in 1..=4 {
+        twin.feed(run(reply));
+    }
+    twin.feed(response(1));
+    twin.feed(Input::TransportError { call_id: 2, error: http() });
+    twin.feed(Input::CallerCancel { reply: 3 });
+    twin.feed(Input::Deadline { call_id: 4 });
+    assert_eq!(twin.det.state(twin.addr).expect("state").held(), 0, "no entry of a finished call stays");
+    for late in [Input::CallerCancel { reply: 1 }, Input::CallerCancel { reply: 3 }, Input::Deadline { call_id: 3 }, response(2), Input::RetryDue { call_id: 4, attempt: 1 }] {
+        let out = twin.feed(late);
+        assert!(out.effects.is_empty() && out.replies.is_empty(), "a late input of a finished call does nothing");
+    }
+    twin.feed(Input::Closing);
+    twin.feed(Input::Closing);
+    assert_eq!(twin.history.iter().filter(|e| matches!(e, CallsEffect::Drained(_))).count(), 1, "Drained goes out once");
 }
 
 #[test]
@@ -382,7 +403,7 @@ fn call_declare_in_flight() {
     twin.feed(Input::Declare(vec![]));
     let out = twin.feed(response(1));
     assert_eq!(out.replies.len(), 1, "an accepted call outlives a new declaration");
-    assert!(matches!(twin.det.state(twin.addr).expect("state").phase(1), Some(CallPhase::Done)));
+    assert!(twin.det.state(twin.addr).expect("state").phase(1).is_none(), "a finished call leaves no entry");
 }
 
 #[test]

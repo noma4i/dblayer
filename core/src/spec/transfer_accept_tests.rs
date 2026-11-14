@@ -153,6 +153,7 @@ fn xfer_accepting_rejected() {
     let out = twin.reject(RejectReason::Storage("disk".into()));
     assert_eq!(Twin::fault(&out, reply), Some(Fault::Rejected(RejectReason::Storage("disk".into()))));
     assert_eq!((twin.stage(id), out.copies(), out.shows().len()), (TransferStage::Done, 0, 0));
+    assert!(twin.state().transfers.is_empty(), "a refused accept leaves no transfer entry");
     let (ids, batch_reply, _) = accepting_batch(&mut twin, &[OTHER, "Moment:r3:upload"]);
     twin.reserve_batch(&ids);
     let out = twin.reject(RejectReason::NoSession);

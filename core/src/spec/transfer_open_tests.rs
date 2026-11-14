@@ -507,6 +507,7 @@ fn xfer_open_saved_interrupted() {
     let (mut twin, out) = Twin::opened(vec![completed(1, KEY)], outcomes(1, OutboxOutcome::Ended(cause.clone())));
     assert!(out.batches.is_empty() && out.shows().is_empty() && out.outbox.is_empty() && out.timers == 0, "a saved interrupted outcome restores no live transfer: no batch, no status, no network, only RestoreClassified: {out:?}");
     assert_eq!(twin.stage(1), TransferStage::Done, "the cycle already ended");
+    assert!(twin.state().transfers.is_empty(), "an ended cycle leaves no transfer entry");
     let (reply, out) = twin.outcome(1, 1);
     assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Ended(cause), None)], "the Outcome call gets the saved interrupted outcome, no revision");
 }
