@@ -614,7 +614,8 @@ impl StateOwner for Deliveries {
     #[cfg(test)]
     fn diagnostic(state: &DeliveriesState) -> Option<String> {
         let queues: Vec<String> = state.streams.iter().filter(|(_, machine)| machine.view.kind == Kind::Operations).map(|(id, machine)| format!("{id:?}: stage={:?}, read_id={}, read_inflight={}, read_seen={}, read_position={}, journal={}, operations={}, waiting_pull={}, items=[{}]", machine.stage, machine.read_id, machine.read_inflight, machine.read_seen, machine.read_position, machine.journal.len(), machine.operations.as_ref().map_or_else(|| "none".to_string(), |items| items.len().to_string()), machine.waiting.is_some(), machine.operations.iter().flatten().map(|item| format!("{}:{:?}:upload={}", item.seq, item.status, item.upload.is_some())).collect::<Vec<_>>().join(", "))).collect();
-        Some(format!("revision={}, operation streams [{}]", state.revision, queues.join("; ")))
+        let rows: Vec<String> = state.streams.iter().filter(|(_, machine)| machine.view.kind != Kind::Operations).map(|(id, machine)| format!("{id:?}: kind={:?}, model={}, stage={:?}, read_id={}, read_inflight={}, read_seen={}, journal={}, waiting_pull={}, window={:?}, held_state={}, pending_read={}, rows={}, count={:?}", machine.view.kind, machine.view.model, machine.stage, machine.read_id, machine.read_inflight, machine.read_seen, machine.journal.len(), machine.waiting.is_some(), machine.window.phase, machine.held_state.is_some(), machine.pending_read.is_some(), machine.rows.len(), machine.count)).collect();
+        Some(format!("revision={}, operation streams [{}], streams [{}]", state.revision, queues.join("; "), rows.join("; ")))
     }
 
     fn step(state: &mut DeliveriesState, input: DeliveryInput, _now: crate::runtime::Time) -> Effects<Self> {

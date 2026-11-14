@@ -490,6 +490,12 @@ impl StateOwner for Windows {
     type Input = WindowsInput;
     type Effect = WindowsEffect;
 
+    #[cfg(test)]
+    fn diagnostic(state: &WindowsState) -> Option<String> {
+        let windows: Vec<String> = state.windows.iter().map(|(key, window)| format!("{key:?}: stage={:?}, interest={:?}, waiters={:?}", window.stage(), window.interest(), window.waiters())).collect();
+        Some(format!("online={:?}, held_loads={}, held_nowait={}, windows [{}]", state.online, state.held_loads.len(), state.held_nowait.len(), windows.join("; ")))
+    }
+
     fn step(state: &mut WindowsState, input: WindowsInput, turn: crate::runtime::Time) -> Effects<Self> {
         let now = i64::try_from(turn.0).unwrap_or(i64::MAX);
         let mut out: Effects<Self> = Vec::new();
