@@ -6,8 +6,8 @@ use super::outbox_harness::{In, Out, Policy, St};
 use crate::owners::contract::{Committed, Online};
 
 
-use crate::spec::support::{Emitted, Log};
-use crate::owners::write::outbox::{self as o, CommitKind, Fault, LocalWriteKind, OpId, Outbox, OutboxAnswer, OutboxEffect as Run, OutboxInput, Stage};
+use crate::spec::support::Log;
+use crate::owners::write::outbox::{self as o, CommitKind, Fault, LocalWriteKind, OpId, Outbox, OutboxAnswer, OutboxInput, Stage};
 
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
 use super::outbox_harness::*;
@@ -92,7 +92,7 @@ use crate::spec::support::{Source, SourceInput, SourceState};
 use crate::runtime::{explore, Limits};
 use std::cell::RefCell;
 
-thread_local! { static LOG: RefCell<Option<Log<Emitted<Run>>>> = const { RefCell::new(None) }; }
+thread_local! { static LOG: RefCell<Option<Log<Seen>>> = const { RefCell::new(None) }; }
 
 fn scripted(sources: Vec<Vec<OutboxInput>>) -> DetScheduler {
     let (mut det, log, _) = world(3);

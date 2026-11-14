@@ -2,30 +2,50 @@
 
 use super::outbox_harness::*;
 use super::outbox_harness::Policy;
-use crate::spec::support::{snapshot, Emitted};
+use crate::spec::support::snapshot;
+use crate::owners::write::transfer::TransferInput;
+use crate::owners::session::SessionInput;
 use crate::owners::write::outbox::{Fault, OutboxAnswer, OutboxInput, ReserveTarget};
 use crate::owners::store::{IntentOrigin, StoreOp};
 use crate::owners::write::outbox_types::{OpId, OutboxOutcome, Stage};
 use crate::owners::contract::Online;
 use crate::runtime::Cause;
 
-/// The typed text of every send the step gave, by receiver, and the replies.
-fn raw(twin: &mut Twin, input: OutboxInput) -> (Vec<(usize, String)>, Vec<OutboxAnswer>) {
+/// The typed inputs of every send the step gave, and the replies.
+fn raw(twin: &mut Twin, input: OutboxInput) -> (Vec<Sent>, Vec<OutboxAnswer>) {
     take_fx(&twin.log, None);
     twin.det.post(crate::runtime::Address::<crate::owners::write::outbox::Outbox>::new(OUTBOX_AT), crate::runtime::EpochStamp::Epoch(EPOCH), input);
     twin.run();
     settle(twin)
 }
 
-fn settle(twin: &mut Twin) -> (Vec<(usize, String)>, Vec<OutboxAnswer>) {
-    let emitted = snapshot(&twin.log);
+fn settle(twin: &mut Twin) -> (Vec<Sent>, Vec<OutboxAnswer>) {
+    let seen = snapshot(&twin.log);
     take_fx(&twin.log, None);
-    let sends = emitted.iter().filter_map(|found| if let Emitted::Send { to, input } = found { Some((*to, input.clone())) } else { None }).collect();
-    let replies = emitted.into_iter().filter_map(|found| if let Emitted::Run(crate::owners::write::outbox::OutboxEffect::Reply { answer, .. }) = found { Some(answer) } else { None }).collect();
+    let sends = seen.iter().filter_map(|found| if let Seen::Sent(sent) = found { Some(sent.clone()) } else { None }).collect();
+    let replies = seen.into_iter().filter_map(|found| if let Seen::Run(crate::owners::write::outbox::OutboxEffect::Reply { answer, .. }) = found { Some(answer) } else { None }).collect();
     (sends, replies)
 }
 
-fn reserved(sends: &[(usize, String)]) -> Vec<String> { sends.iter().filter(|(to, text)| *to == TRANSFER_AT && text.contains("OpReserved")).map(|(_, text)| text.clone()).collect() }
+fn reserved(sends: &[Sent]) -> Vec<(ReserveTarget, Result<OpId, Fault>)> { sends.iter().filter_map(|sent| match sent { Sent::Transfer(TransferInput::OpReserved { target, result }) => Some((*target, result.clone())), _ => None }).collect() }
+
+fn batches(sends: &[Sent]) -> Vec<Vec<StoreOp>> { sends.iter().filter_map(|sent| match sent { Sent::Store(batch) => Some(batch.ops.clone()), _ => None }).collect() }
+
+fn to_transfer(sends: &[Sent]) -> Vec<&TransferInput> { sends.iter().filter_map(|sent| match sent { Sent::Transfer(input) => Some(input), _ => None }).collect() }
+
+fn retry_outcomes(sends: &[Sent]) -> Vec<(Vec<(u64, u64)>, Result<i64, Fault>)> { sends.iter().filter_map(|sent| match sent { Sent::Transfer(TransferInput::RetryOutcome { cycles, result }) => Some((cycles.clone(), result.clone())), _ => None }).collect() }
+
+fn mutation_outcomes(sends: &[Sent]) -> Vec<(u64, Vec<(u64, u64, OutboxOutcome)>, bool)> { sends.iter().filter_map(|sent| match sent { Sent::Transfer(TransferInput::MutationOutcomes { batch_id, members, intent_removed }) => Some((*batch_id, members.clone(), *intent_removed)), _ => None }).collect() }
+
+fn transfer_outcome_op(ops: &[StoreOp], id: u64, cycle: u64) -> bool { ops.iter().any(|op| matches!(op, StoreOp::TransferOutcome { transfer_id, cycle_id, .. } if (*transfer_id, *cycle_id) == (id, cycle))) }
+
+fn any_transfer_outcome_op(ops: &[StoreOp]) -> bool { ops.iter().any(|op| matches!(op, StoreOp::TransferOutcome { .. } | StoreOp::RetireTransferOutcome { .. })) }
+
+fn session_has(twin: &Twin, matching: impl Fn(&SessionInput) -> bool) -> bool { twin.session_sends.iter().any(matching) }
+
+fn is_cancel(input: &SessionInput) -> bool { matches!(input, SessionInput::Cancel { .. }) }
+
+fn is_release(input: &SessionInput) -> bool { matches!(input, SessionInput::Release { .. }) }
 
 fn undeclared_op() -> crate::owners::write::outbox::NewOp { crate::owners::write::outbox::NewOp { action: "send".into(), ..model_op("r", Policy::Rollback, false) } }
 
@@ -44,10 +64,10 @@ fn out_reserve_op() {
     let mut twin = Twin::new();
     let (sends, _) = raw(&mut twin, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Transfer(5) });
     let found = reserved(&sends);
-    assert!(found.len() == 1 && found[0].contains("Transfer(5)") && found[0].contains("Ok(1)"), "{sends:?}");
-    assert!(sends.iter().all(|(to, _)| *to != STORE_AT), "nothing is written");
+    assert!(matches!(found.as_slice(), [(ReserveTarget::Transfer(5), Ok(1))]), "{sends:?}");
+    assert!(batches(&sends).is_empty(), "nothing is written");
     let (sends, _) = raw(&mut twin, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Group(6) });
-    assert!(reserved(&sends)[0].contains("Ok(2)"), "the next op_id of the sequence");
+    assert!(matches!(reserved(&sends).first(), Some((_, Ok(2)))), "the next op_id of the sequence: {sends:?}");
     let id: OpId = twin.submit("r", Policy::Rollback, false);
     assert_eq!(id, 3, "a reserved op_id is not given again");
 }
@@ -60,7 +80,7 @@ fn out_reserve_op_while_restoring() {
     raw(&mut twin, OutboxInput::ReservedFloor { op_id: 9 });
     let (sends, _) = raw(&mut twin, OutboxInput::Restored { ops: Vec::new(), pending_lost: false });
     let found = reserved(&sends);
-    assert!(found.len() == 1 && found[0].contains("Ok(10)"), "after Restored, above the floor of the restored transfers: {sends:?}");
+    assert!(matches!(found.as_slice(), [(_, Ok(10))]), "after Restored, above the floor of the restored transfers: {sends:?}");
 
     let mut ended = Twin::bare();
     raw(&mut ended, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Transfer(5) });
@@ -68,7 +88,7 @@ fn out_reserve_op_while_restoring() {
     ended.run();
     let (sends, _) = settle(&mut ended);
     let found = reserved(&sends);
-    assert!(found.len() == 1 && found[0].contains("Err(Ended(SessionEnded))"), "{sends:?}");
+    assert!(matches!(found.as_slice(), [(_, Err(Fault::Ended(crate::ffi::EndCause::SessionEnded)))]), "{sends:?}");
 }
 
 #[test]
@@ -77,7 +97,7 @@ fn out_reserve_op_queue_failed() {
     raw(&mut twin, OutboxInput::RestoreFailed { error: "queue".into() });
     let (sends, _) = raw(&mut twin, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Transfer(5) });
     let found = reserved(&sends);
-    assert!(found.len() == 1 && found[0].contains("Err(Rejected(Storage("), "{sends:?}");
+    assert!(matches!(found.as_slice(), [(_, Err(Fault::Rejected(crate::owners::contract::RejectReason::Storage(_))))]), "{sends:?}");
 }
 
 #[test]
@@ -86,7 +106,7 @@ fn out_submit_intent_written() {
     let op = crate::owners::write::outbox::NewOp { effects: Default::default(), ..model_op("r", Policy::Rollback, true) };
     let (sends, replies) = raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op: op.clone(), created_at: 0 });
     assert_eq!(twin.state().stage_of(4), Some(Stage::Sending), "online and the row free: the request leaves");
-    assert!(sends.iter().all(|(to, _)| *to != STORE_AT) && sends.iter().any(|(to, _)| *to == SESSION_AT), "no write of the intent, one Mutate: {sends:?}");
+    assert!(batches(&sends).is_empty() && sends.iter().any(|sent| matches!(sent, Sent::Session(SessionInput::Mutate { .. }))), "no write of the intent, one Mutate: {sends:?}");
     assert!(replies.is_empty(), "the outcome goes to Transfer, nobody waits for a receipt");
 
     let mut offline = Twin::new();
@@ -129,11 +149,11 @@ fn out_sending_response_batch_items_batch() {
     raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     let rows = vec![("Moment".into(), vec![RowValue { row_id: "A".into(), values: "{}".into() }, RowValue { row_id: "B".into(), values: "{}".into() }])];
     let (sends, _) = raw(&mut twin, OutboxInput::Response { op_id: 4, rows, swaps: vec![("a".into(), "A".into()), ("b".into(), "B".into())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    let batches: Vec<_> = sends.iter().filter(|(to, _)| *to == STORE_AT).collect();
-    assert_eq!(batches.len(), 1);
-    let batch = &batches[0].1;
-    assert!(batch.contains("Swap { model: \"Moment\", temp: \"a\", real: \"A\" }") && batch.contains("Swap { model: \"Moment\", temp: \"b\", real: \"B\" }"), "{batch}");
-    assert!(batch.contains("Rows { model: \"Moment\"") && batch.contains("RemoveIntent { op_id: 4 }") && batch.contains("RemoveAnswer { request_id:"), "{batch}");
+    let written = batches(&sends);
+    assert_eq!(written.len(), 1);
+    let batch = &written[0];
+    assert!(batch.contains(&StoreOp::Swap { model: "Moment".into(), temp: "a".into(), real: "A".into() }) && batch.contains(&StoreOp::Swap { model: "Moment".into(), temp: "b".into(), real: "B".into() }), "{batch:?}");
+    assert!(batch.iter().any(|op| matches!(op, StoreOp::Rows { model, .. } if model == "Moment")) && batch.contains(&StoreOp::RemoveIntent { op_id: 4 }) && batch.iter().any(|op| matches!(op, StoreOp::RemoveAnswer { .. })), "{batch:?}");
 }
 
 #[test]
@@ -145,15 +165,16 @@ fn out_transfer_group_outcomes_commit_with_the_intent() {
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", Policy::Rollback, false) };
     raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     let (sends, _) = raw(&mut twin, OutboxInput::Response { op_id: 4, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: vec!["b".into()], errors: None });
-    let store: Vec<_> = sends.iter().filter(|(to, _)| *to == STORE_AT).collect();
+    let store = batches(&sends);
     assert_eq!(store.len(), 1);
-    let batch = &store[0].1;
-    assert!(batch.contains("RemoveIntent { op_id: 4 }") && batch.contains("TransferOutcome { transfer_id: 11, cycle_id: 2, outcome: Confirmed") && batch.contains("TransferOutcome { transfer_id: 12, cycle_id: 4, outcome: Failed"), "{batch}");
-    assert!(sends.iter().all(|(to, _)| *to != TRANSFER_AT));
+    let batch = &store[0];
+    assert!(batch.contains(&StoreOp::RemoveIntent { op_id: 4 }) && batch.iter().any(|op| matches!(op, StoreOp::TransferOutcome { transfer_id: 11, cycle_id: 2, outcome: OutboxOutcome::Confirmed { .. } })) && batch.iter().any(|op| matches!(op, StoreOp::TransferOutcome { transfer_id: 12, cycle_id: 4, outcome: OutboxOutcome::Failed { .. } })), "{batch:?}");
+    assert!(to_transfer(&sends).is_empty());
     let (sends, _) = raw(&mut twin, OutboxInput::Committed(Committed { batch: 1, revision: 37, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
-    let events: Vec<_> = sends.iter().filter(|(to, _)| *to == TRANSFER_AT).collect();
+    let events = mutation_outcomes(&sends);
     assert_eq!(events.len(), 1);
-    assert!(events[0].1.contains("MutationOutcomes { batch_id: 9") && events[0].1.contains("(11, 2, Confirmed { revision: 37") && events[0].1.contains("(12, 4, Failed") && events[0].1.contains("intent_removed: true"), "{events:?}");
+    let (batch_id, members, intent_removed) = &events[0];
+    assert!(*batch_id == 9 && *intent_removed && members.iter().any(|member| matches!(member, (11, 2, OutboxOutcome::Confirmed { revision: 37, .. }))) && members.iter().any(|member| matches!(member, (12, 4, OutboxOutcome::Failed { .. }))), "{events:?}");
 }
 
 #[test]
@@ -165,22 +186,22 @@ fn out_group_failed_outcome_and_retry_preserves_cycles() {
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", Policy::Keep, false) };
     raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     let (sends, _) = raw(&mut twin, OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
-    let store = &sends.iter().find(|(to, _)| *to == STORE_AT).unwrap().1;
-    assert!(store.contains("MarkError") && store.contains("transfer_id: 11, cycle_id: 1") && store.contains("transfer_id: 12, cycle_id: 1"), "{store}");
+    let store = batches(&sends).swap_remove(0);
+    assert!(store.iter().any(|op| matches!(op, StoreOp::MarkError { .. })) && transfer_outcome_op(&store, 11, 1) && transfer_outcome_op(&store, 12, 1), "{store:?}");
     let (sends, _) = raw(&mut twin, OutboxInput::Committed(Committed { batch: 1, revision: 20, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
-    assert!(sends.iter().any(|(to, input)| *to == TRANSFER_AT && input.contains("MutationOutcomes") && input.contains("intent_removed: false")), "{sends:?}");
+    assert!(mutation_outcomes(&sends).iter().any(|(_, _, intent_removed)| !*intent_removed), "{sends:?}");
     let (sends, _) = raw(&mut twin, OutboxInput::RetryTransfer { model: "Moment".into(), row_id: "a".into(), reply: 1, uploads: vec![upload(11, 2), upload(12, 2)] });
-    let store = &sends.iter().find(|(to, _)| *to == STORE_AT).unwrap().1;
-    assert!(store.contains("MarkError") && store.contains("Attempt") && store.contains("Retrying") && !store.contains("TransferOutcome"), "{store}");
-    assert!(sends.iter().all(|(to, _)| *to != TRANSFER_AT));
+    let store = batches(&sends).swap_remove(0);
+    assert!(store.iter().any(|op| matches!(op, StoreOp::MarkError { .. })) && store.iter().any(|op| matches!(op, StoreOp::Attempt { .. })) && store.iter().any(|op| matches!(op, StoreOp::Upload { kind: crate::owners::store::UploadKind::Retrying, .. })) && !any_transfer_outcome_op(&store), "{store:?}");
+    assert!(to_transfer(&sends).is_empty());
     let (sends, _) = raw(&mut twin, OutboxInput::Rejected(Rejected { batch: 2, reason: RejectReason::Storage("disk".into()) }));
-    assert!(sends.iter().any(|(to, input)| *to == TRANSFER_AT && input.contains("RetryOutcome") && input.contains("(11, 2)") && input.contains("Err(Rejected(Storage")), "{sends:?}");
+    assert!(retry_outcomes(&sends).iter().any(|(cycles, result)| cycles.contains(&(11, 2)) && matches!(result, Err(Fault::Rejected(RejectReason::Storage(_))))), "{sends:?}");
     raw(&mut twin, OutboxInput::RetryTransfer { model: "Moment".into(), row_id: "a".into(), reply: 2, uploads: vec![upload(11, 2), upload(12, 2)] });
     let (sends, _) = raw(&mut twin, OutboxInput::Committed(Committed { batch: 3, revision: 21, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
-    assert!(sends.iter().any(|(to, input)| *to == TRANSFER_AT && input.contains("RetryOutcome") && input.contains("(11, 2)") && input.contains("(12, 2)") && input.contains("Ok(21)")), "{sends:?}");
+    assert!(retry_outcomes(&sends).iter().any(|(cycles, result)| cycles.contains(&(11, 2)) && cycles.contains(&(12, 2)) && matches!(result, Ok(21))), "{sends:?}");
     let (sends, _) = raw(&mut twin, OutboxInput::Response { op_id: 4, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    let store = &sends.iter().find(|(to, _)| *to == STORE_AT).unwrap().1;
-    assert!(store.contains("transfer_id: 11, cycle_id: 2") && store.contains("transfer_id: 12, cycle_id: 2"), "{store}");
+    let store = batches(&sends).swap_remove(0);
+    assert!(transfer_outcome_op(&store, 11, 2) && transfer_outcome_op(&store, 12, 2), "{store:?}");
 }
 
 #[test]
@@ -192,18 +213,18 @@ fn out_group_rollback_outcome() {
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", Policy::Rollback, false) };
     raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     let (sends, _) = raw(&mut twin, OutboxInput::Refused { op_id: 4, temporary: false, detail: "refused".into() });
-    let store = &sends.iter().find(|(to, _)| *to == STORE_AT).unwrap().1;
-    assert!(store.contains("RollBack") && store.contains("RemoveIntent") && store.contains("transfer_id: 11, cycle_id: 2, outcome: Rejected") && store.contains("transfer_id: 12, cycle_id: 4, outcome: Rejected"), "{store}");
+    let store = batches(&sends).swap_remove(0);
+    assert!(store.iter().any(|op| matches!(op, StoreOp::RollBack { .. })) && store.iter().any(|op| matches!(op, StoreOp::RemoveIntent { .. })) && store.iter().any(|op| matches!(op, StoreOp::TransferOutcome { transfer_id: 11, cycle_id: 2, outcome: OutboxOutcome::Rejected { .. } })) && store.iter().any(|op| matches!(op, StoreOp::TransferOutcome { transfer_id: 12, cycle_id: 4, outcome: OutboxOutcome::Rejected { .. } })), "{store:?}");
     let (sends, _) = raw(&mut twin, OutboxInput::Committed(Committed { batch: 1, revision: 20, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
-    let events: Vec<_> = sends.iter().filter(|(to, _)| *to == TRANSFER_AT).collect();
-    assert!(matches!(events.as_slice(), [(_, input)] if input.contains("(11, 2, Rejected") && input.contains("(12, 4, Rejected")), "{events:?}");
+    let events = mutation_outcomes(&sends);
+    assert!(matches!(events.as_slice(), [(_, members, _)] if members.iter().any(|member| matches!(member, (11, 2, OutboxOutcome::Rejected { .. }))) && members.iter().any(|member| matches!(member, (12, 4, OutboxOutcome::Rejected { .. })))) && to_transfer(&sends).len() == 1, "{events:?}");
 }
 
 /// A TransferGroup on the root row `a` and the member `member`: its intent is written by Transfer under the reserved `op_id`.
 fn group_on_rows(twin: &mut Twin, member: &str, policy: Policy) -> OpId {
     use crate::owners::write::outbox::{OpSource, TransferMember};
     let (sends, _) = raw(twin, OutboxInput::ReserveOp { epoch: EPOCH, target: ReserveTarget::Group(9) });
-    let op_id = reserved(&sends).first().and_then(|text| crate::spec::support::number_after(text, "Ok(")).expect("the reserved op_id");
+    let op_id = reserved(&sends).first().and_then(|(_, result)| result.clone().ok()).expect("the reserved op_id");
     let members = vec![TransferMember { transfer_id: 11, cycle_id: 1, row_id: "a".into(), op_id: None }, TransferMember { transfer_id: 12, cycle_id: 4, row_id: member.into(), op_id: None }];
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", policy, false) };
     twin.post(OutboxInput::SubmitReserved { epoch: EPOCH, op_id, op, created_at: 0 });
@@ -271,10 +292,10 @@ fn out_group_member_removed_keeps_group() {
     let group = group_on_rows(&mut twin, "b", Policy::Rollback);
     group_sending(&mut twin, group);
     twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
-    assert!(!twin.session_text.contains("Cancel"), "the request of the group goes on: {}", twin.session_text);
+    assert!(!session_has(&twin, is_cancel), "the request of the group goes on: {:?}", twin.session_sends);
     let membership = StoreOp::IntentOrigin { op_id: group, origin: IntentOrigin::TransferGroup { batch_id: 9, transfer_ids: vec![11] } };
     assert_eq!(
-        (twin.stores.len(), twin.store_ops.contains(&membership), twin.store_ops.contains(&StoreOp::RemoveUploadByTransferId { transfer_id: 12 }), has_op!(twin, StoreOp::TransferOutcome { transfer_id: 12, cycle_id: 4, outcome: OutboxOutcome::Discarded }), has_op!(twin, StoreOp::TransferOutcome { transfer_id: 11, .. }), twin.session_text.contains("Cancel"), twin.session_text.contains("Release"), twin.stage(group)),
+        (twin.stores.len(), twin.store_ops.contains(&membership), twin.store_ops.contains(&StoreOp::RemoveUploadByTransferId { transfer_id: 12 }), has_op!(twin, StoreOp::TransferOutcome { transfer_id: 12, cycle_id: 4, outcome: OutboxOutcome::Discarded }), has_op!(twin, StoreOp::TransferOutcome { transfer_id: 11, .. }), session_has(&twin, is_cancel), session_has(&twin, is_release), twin.stage(group)),
         (1, true, true, true, false, false, false, Some(St::Sending)),
         "one batch rewrites membership to [11], drops member 12 and its upload, the shared pair is untouched: {:?}", twin.store_ops);
     let batch = twin.stores[0].0;
@@ -305,9 +326,9 @@ fn out_group_last_member_removed() {
     let batch = twin.stores[0].0;
     let done = twin.commit_batch(batch);
     assert_eq!(
-        (twin.session_text.contains("Release"), done.iter().any(|effect| matches!(effect, OutboxEffect::TransferOutcomes)), twin.stage(group), twin.stores.is_empty()),
+        (session_has(&twin, is_release), done.iter().any(|effect| matches!(effect, OutboxEffect::TransferOutcomes)), twin.stage(group), twin.stores.is_empty()),
         (true, true, Some(St::Done), true),
-        "the started pair is released, the shared mutation ends Discarded, no empty group remains: {} {done:?}", twin.session_text);
+        "the started pair is released, the shared mutation ends Discarded, no empty group remains: {:?} {done:?}", twin.session_sends);
 }
 
 /// P-OUT-60: the Store refuses the removal batch of a group member as invalid data: the batch is not written again, the member ends `Discarded`, the answer of the pair lands for the members left.
@@ -359,8 +380,8 @@ fn out_group_member_removal_rejected() {
     twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
     let first = twin.stores[0].0;
     let (sends, _) = raw(&mut twin, OutboxInput::Rejected(Rejected { batch: first, reason: RejectReason::NoSession }));
-    let transfer: Vec<_> = sends.iter().filter(|(to, _)| *to == TRANSFER_AT).map(|(_, text)| text.clone()).collect();
-    assert!(transfer.iter().any(|text| text.contains("(11, 1, Ended(SessionEnded))") && text.contains("(12, 4, Ended(SessionEnded))")) && twin.stage(group) == Some(St::Done), "NoSession ends the group SessionEnded to every member: {transfer:?}");
+    let transfer = mutation_outcomes(&sends);
+    assert!(transfer.iter().any(|(_, members, _)| members.contains(&(11, 1, OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded))) && members.contains(&(12, 4, OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded)))) && twin.stage(group) == Some(St::Done), "NoSession ends the group SessionEnded to every member: {transfer:?}");
 
     let mut twin = Twin::new();
     let group = group_on_rows(&mut twin, "b", Policy::Rollback);
@@ -368,8 +389,8 @@ fn out_group_member_removal_rejected() {
     twin.post(OutboxInput::RowRemoved { model: "Moment".into(), row_id: "b".into(), revision: 30 });
     let first = twin.stores[0].0;
     let (sends, _) = raw(&mut twin, OutboxInput::Rejected(Rejected { batch: first, reason: RejectReason::Closed }));
-    let transfer: Vec<_> = sends.iter().filter(|(to, _)| *to == TRANSFER_AT).map(|(_, text)| text.clone()).collect();
-    assert!(transfer.iter().any(|text| text.contains("(11, 1, Ended(Closed))") && text.contains("(12, 4, Ended(Closed))")) && twin.stage(group) == Some(St::Done), "Closed ends the group Closed to every member: {transfer:?}");
+    let transfer = mutation_outcomes(&sends);
+    assert!(transfer.iter().any(|(_, members, _)| members.contains(&(11, 1, OutboxOutcome::Ended(crate::ffi::EndCause::Closed))) && members.contains(&(12, 4, OutboxOutcome::Ended(crate::ffi::EndCause::Closed)))) && twin.stage(group) == Some(St::Done), "Closed ends the group Closed to every member: {transfer:?}");
 }
 
 #[test]
@@ -428,7 +449,7 @@ fn out_group_outcome_each_member() {
     twin.det.end_epoch(EPOCH, Cause::SessionReset);
     twin.run();
     let (sends, _) = settle(&mut twin);
-    assert!(sends.iter().any(|(to, text)| *to == TRANSFER_AT && text.contains("MutationOutcomes") && text.contains("(11, 2, Ended(SessionEnded))") && text.contains("(12, 4, Ended(SessionEnded))")), "EpochEnded reaches every member: {sends:?}");
+    assert!(mutation_outcomes(&sends).iter().any(|(_, members, _)| members.contains(&(11, 2, OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded))) && members.contains(&(12, 4, OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded)))), "EpochEnded reaches every member: {sends:?}");
 
     let mut twin = Twin::new();
     group(&mut twin, Policy::Rollback);
@@ -436,7 +457,7 @@ fn out_group_outcome_each_member() {
     twin.det.close();
     twin.run();
     let (sends, _) = settle(&mut twin);
-    assert!(sends.iter().any(|(to, text)| *to == TRANSFER_AT && text.contains("MutationOutcomes") && text.contains("(11, 2, Ended(Closed))") && text.contains("(12, 4, Ended(Closed))")), "Closing reaches every member: {sends:?}");
+    assert!(mutation_outcomes(&sends).iter().any(|(_, members, _)| members.contains(&(11, 2, OutboxOutcome::Ended(crate::ffi::EndCause::Closed))) && members.contains(&(12, 4, OutboxOutcome::Ended(crate::ffi::EndCause::Closed)))), "Closing reaches every member: {sends:?}");
 }
 
 #[test]
@@ -451,25 +472,24 @@ fn out_retry_outcome_target() {
         raw(twin, OutboxInput::Committed(Committed { batch: 1, revision: 20, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
         raw(twin, OutboxInput::RetryTransfer { model: "Moment".into(), row_id: "r".into(), reply: 1, uploads: vec![upload(1, 2)] });
     };
-    let retry_outcome = |sends: &[(usize, String)]| -> Vec<String> { sends.iter().filter(|(to, text)| *to == TRANSFER_AT && text.contains("RetryOutcome")).map(|(_, text)| text.clone()).collect() };
 
     let mut twin = Twin::new();
     failed(&mut twin);
     let (sends, _) = raw(&mut twin, OutboxInput::Committed(committed(21)));
-    let found = retry_outcome(&sends);
-    assert!(found.iter().any(|text| text.contains("(1, 2)") && text.contains("Ok(21)")), "Committed is addressed to the target (1, 2): {sends:?}");
+    let found = retry_outcomes(&sends);
+    assert!(found.iter().any(|(cycles, result)| cycles.contains(&(1, 2)) && matches!(result, Ok(21))), "Committed is addressed to the target (1, 2): {sends:?}");
 
     let mut twin = Twin::new();
     failed(&mut twin);
     let (sends, _) = raw(&mut twin, OutboxInput::Rejected(Rejected { batch: 2, reason: RejectReason::Storage("disk".into()) }));
-    let found = retry_outcome(&sends);
-    assert!(found.iter().any(|text| text.contains("(1, 2)") && text.contains("Err(Rejected(Storage")), "Rejected(Storage) is addressed to the target (1, 2): {sends:?}");
+    let found = retry_outcomes(&sends);
+    assert!(found.iter().any(|(cycles, result)| cycles.contains(&(1, 2)) && matches!(result, Err(Fault::Rejected(RejectReason::Storage(_))))), "Rejected(Storage) is addressed to the target (1, 2): {sends:?}");
 
     let mut twin = Twin::new();
     failed(&mut twin);
     let (sends, _) = raw(&mut twin, OutboxInput::Rejected(Rejected { batch: 2, reason: RejectReason::NoSession }));
-    let found = retry_outcome(&sends);
-    assert!(found.iter().any(|text| text.contains("(1, 2)") && text.contains("Err(Ended(SessionEnded")), "Rejected(NoSession) is addressed to the target (1, 2): {sends:?}");
+    let found = retry_outcomes(&sends);
+    assert!(found.iter().any(|(cycles, result)| cycles.contains(&(1, 2)) && matches!(result, Err(Fault::Ended(crate::ffi::EndCause::SessionEnded)))), "Rejected(NoSession) is addressed to the target (1, 2): {sends:?}");
 }
 
 #[test]
@@ -480,8 +500,8 @@ fn out_retry_transfer_not_failed() {
     raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     assert_eq!(twin.state().stage_of(4), Some(Stage::Sending), "the operation is not Failed");
     let (sends, _) = raw(&mut twin, OutboxInput::RetryTransfer { model: "Moment".into(), row_id: "r".into(), reply: 5, uploads: vec![upload(1, 2)] });
-    assert!(sends.iter().any(|(to, text)| *to == TRANSFER_AT && text.contains("RetryOutcome") && text.contains("(1, 2)") && text.contains("Err(InFlight)")), "RetryTransfer outside Failed answers Err(InFlight) to the target: {sends:?}");
-    assert_eq!((twin.state().stage_of(4), sends.iter().any(|(to, _)| *to == STORE_AT)), (Some(Stage::Sending), false), "the operation is unchanged and nothing is written");
+    assert!(retry_outcomes(&sends).iter().any(|(cycles, result)| cycles.contains(&(1, 2)) && matches!(result, Err(Fault::InFlight))), "RetryTransfer outside Failed answers Err(InFlight) to the target: {sends:?}");
+    assert_eq!((twin.state().stage_of(4), !batches(&sends).is_empty()), (Some(Stage::Sending), false), "the operation is unchanged and nothing is written");
 }
 
 #[test]
@@ -492,5 +512,5 @@ fn out_landing_swaps_all() {
     twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: vec![("a".into(), "real_a".into()), ("b".into(), "real_b".into())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     assert_eq!(twin.stores.len(), 1, "all swaps must land in one batch");
     let batch = &twin.stores[0].1;
-    assert!(batch.contains("temp: \"a\", real: \"real_a\"") && batch.contains("temp: \"b\", real: \"real_b\""), "{batch}");
+    assert!(batch.contains(&StoreOp::Swap { model: "Moment".into(), temp: "a".into(), real: "real_a".into() }) && batch.contains(&StoreOp::Swap { model: "Moment".into(), temp: "b".into(), real: "real_b".into() }), "{batch:?}");
 }

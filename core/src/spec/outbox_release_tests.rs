@@ -1,7 +1,7 @@
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, St};
 use crate::owners::contract::{ErrorClass, Online, RequestId};
-use crate::owners::session::{AuthorOutcome, SessionError};
+use crate::owners::session::{AuthorOutcome, SessionError, SessionInput};
 use crate::owners::store::StoreOp;
 use crate::owners::write::outbox::{OpId, OutboxInput, StoredOp};
 
@@ -24,19 +24,18 @@ fn queued_after_answer(pending_retained: bool) -> (Twin, OpId, RequestId) {
 
 fn discard(twin: &mut Twin) { twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD }); }
 
-fn releases(text: &str) -> usize { text.matches("Release {").count() }
+fn releases(sends: &[SessionInput]) -> Vec<RequestId> { sends.iter().filter_map(|input| match input { SessionInput::Release { req_id } => Some(*req_id), _ => None }).collect() }
 
 #[test]
 fn out_discard_releases_pending() {
     let (mut twin, id, req_id) = queued_after_answer(true);
     discard(&mut twin);
     assert!(twin.store_ops.contains(&StoreOp::ReleasePendingOwner { request_id: req_id }), "the rollback batch hands the pair to Session: {:?}", twin.store_ops);
-    assert_eq!(releases(&twin.session_text), 0, "Release waits for the commit of the rollback");
+    assert_eq!(releases(&twin.session_sends), Vec::<RequestId>::new(), "Release waits for the commit of the rollback");
     twin.committed(id);
-    assert_eq!(releases(&twin.session_text), 1, "{}", twin.session_text);
-    assert!(twin.session_text.contains(&format!("req_id: {req_id}")));
+    assert_eq!(releases(&twin.session_sends), vec![req_id], "{:?}", twin.session_sends);
     twin.post(OutboxInput::Online(Online(true)));
-    assert_eq!(releases(&twin.session_text), 0, "Release goes out once");
+    assert_eq!(releases(&twin.session_sends), Vec::<RequestId>::new(), "Release goes out once");
 }
 
 #[test]
@@ -45,7 +44,7 @@ fn out_discard_without_pending_owner() {
     discard(&mut twin);
     assert!(!has_op!(twin, StoreOp::ReleasePendingOwner { .. }), "{:?}", twin.store_ops);
     twin.committed(id);
-    assert_eq!(releases(&twin.session_text), 0, "no pending, nothing to release");
+    assert_eq!(releases(&twin.session_sends), Vec::<RequestId>::new(), "no pending, nothing to release");
 }
 
 #[test]
@@ -60,7 +59,7 @@ fn out_discard_pending_owner_crash() {
     assert!(twin.store_ops.contains(&StoreOp::ReleasePendingOwner { request_id: 41 }), "a pair restored from the base is released by the rollback batch: {:?}", twin.store_ops);
     twin.rejected(7, super::outbox_harness::RReason::Storage);
     assert!(twin.state().ops[&7].pending_owned, "a refused batch leaves the owner as it was");
-    assert_eq!(releases(&twin.session_text), 0, "no Release without the commit");
+    assert_eq!(releases(&twin.session_sends), Vec::<RequestId>::new(), "no Release without the commit");
 }
 
 fn retried_request_id(pending_retained: bool) -> (RequestId, RequestId) {

@@ -539,11 +539,8 @@ fn out_rollback_invalid() {
 fn discarded(effects: &[OutboxEffect]) -> usize { answers(effects, WAITER).iter().filter(|answer| **answer == OutboxAnswer::Outcome(OutboxOutcome::Discarded)).count() }
 
 /// The `RollBack` and `RemoveIntent` ops of one Store batch, sorted: `("RollBack", op_id)`.
-fn take_back_ops(batch: &str) -> Vec<(&'static str, u64)> {
-    let mut ops: Vec<(&'static str, u64)> = ["RollBack", "RemoveIntent"].into_iter().flat_map(|name| {
-        let marker = format!("{name} {{ op_id: ");
-        batch.match_indices(&marker).filter_map(|(at, _)| crate::spec::support::number_after(&batch[at..], "op_id: ")).map(move |id| (name, id)).collect::<Vec<_>>()
-    }).collect();
+fn take_back_ops(batch: &[StoreOp]) -> Vec<(&'static str, u64)> {
+    let mut ops: Vec<(&'static str, u64)> = batch.iter().filter_map(|op| match op { StoreOp::RollBack { op_id } => Some(("RollBack", *op_id)), StoreOp::RemoveIntent { op_id } => Some(("RemoveIntent", *op_id)), _ => None }).collect();
     ops.sort();
     ops
 }
@@ -572,7 +569,7 @@ fn out_destroy_discards_chain() {
     let effects = twin.post(OutboxInput::Submit { epoch: EPOCH, op: NewOp { action: "destroy".into(), ..model_op("r", Policy::Rollback, false) }, reply: 22 });
     assert_eq!(kinds(&effects), vec![CommitKind::Rollback], "one batch takes back the create and every later operation of the row");
     let [(rollback, batch)] = twin.stores.clone().try_into().expect("one Store batch");
-    assert_eq!(take_back_ops(&batch), chain(&[created, later, after, moved]), "{batch}");
+    assert_eq!(take_back_ops(&batch), chain(&[created, later, after, moved]), "{batch:?}");
     let destroy = *twin.state().ops.keys().max().expect("the destroy");
     let done = twin.commit_batch(rollback);
     assert!(matches!(answers(&done, 22).as_slice(), [OutboxAnswer::Receipt(_)]), "{done:?}");
@@ -593,7 +590,7 @@ fn out_destroy_discards_chain_with_a_batch_in_flight() {
         let rollback = twin.post(OutboxInput::Submit { epoch: EPOCH, op: NewOp { action: "destroy".into(), ..model_op("r", Policy::Rollback, false) }, reply: 22 });
         assert_eq!(kinds(&rollback), vec![CommitKind::Rollback], "committed={committed}");
         let [(rollback_batch, batch)] = twin.stores.clone().try_into().expect("one Store batch");
-        assert_eq!(take_back_ops(&batch), chain(&[created, later]), "committed={committed}: {batch}");
+        assert_eq!(take_back_ops(&batch), chain(&[created, later]), "committed={committed}: {batch:?}");
         let reply = if committed { twin.commit_batch(later_batch) } else { twin.reject_batch(later_batch, RReason::Storage) };
         let submit = answers(&reply, 21);
         assert!(if committed { matches!(submit.as_slice(), [OutboxAnswer::Receipt(_)]) } else { matches!(submit.as_slice(), [OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage(detail)))] if detail == "disk") }, "committed={committed}: {reply:?}");

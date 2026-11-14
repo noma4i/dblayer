@@ -2,9 +2,9 @@
 
 use super::outbox_harness::*;
 use crate::owners::write::outbox::{self as o, OutboxInput};
-use crate::spec::support::number_after;
+use crate::owners::write::transfer::TransferInput;
 
-fn select_rows(sends: &[String]) -> usize { sends.iter().filter(|send| send.starts_with("SelectRow")).count() }
+fn select_rows(sends: &[TransferInput]) -> usize { sends.iter().filter(|send| matches!(send, TransferInput::SelectRow { .. })).count() }
 
 /// `SelectedTransfer` of the current version: the Outbox stays, sends Transfer `SelectConfirmed{reply}`, answers the caller nothing.
 #[test]
@@ -12,10 +12,9 @@ fn out_selector_transfer_confirmed() {
     let (mut twin, _id) = reach(St::Sending, &ready());
     let reply = 555;
     let (_, asked) = twin.selector(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply });
-    let select_row = asked.iter().find(|send| send.starts_with("SelectRow")).expect("the row question");
-    let version = number_after(select_row, "version: ").expect("the version of the question");
+    let version = asked.iter().find_map(|send| match send { TransferInput::SelectRow { version, .. } => Some(*version), _ => None }).expect("the row question");
     let (effects, sends) = twin.selector(OutboxInput::SelectedTransfer { reply, transfer_id: 1, version });
-    let confirmed = sends.iter().filter(|send| send.starts_with("SelectConfirmed")).count();
+    let confirmed = sends.iter().filter(|send| matches!(send, TransferInput::SelectConfirmed { .. })).count();
     assert_eq!((confirmed, answers(&effects, reply).len()), (1, 0));
 }
 
@@ -25,8 +24,7 @@ fn out_selector_version() {
     let (mut twin, _id) = reach(St::Sending, &ready());
     let reply = 555;
     let (_, asked) = twin.selector(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply });
-    let select_row = asked.iter().find(|send| send.starts_with("SelectRow")).expect("the row question");
-    let stale = number_after(select_row, "version: ").expect("the version of the question");
+    let stale = asked.iter().find_map(|send| match send { TransferInput::SelectRow { version, .. } => Some(*version), _ => None }).expect("the row question");
     twin.submit("r", Policy::Rollback, false);
     let (effects, sends) = twin.selector(OutboxInput::SelectedOutbox { model: "Moment".into(), row_id: "r".into(), action: "update".into(), kind: o::SelectKind::Retry, reply, version: stale });
     assert_eq!((select_rows(&sends), answers(&effects, reply).len()), (1, 0));

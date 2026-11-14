@@ -3,12 +3,14 @@
 use crate::schema::OnFailure;
 use std::collections::BTreeMap;
 use crate::owners::contract::{BatchId, Committed, Online, RejectReason, Rejected, ReplyId, RequestId};
-use crate::owners::session::SessionCalls;
-use crate::owners::store::{StoreBatch, StoreOp, StoreWriter};
-use crate::spec::support::{new_log, number_after, Discard, Emitted, Log, Sink, Spy, SpyState};
+use crate::owners::session::{SessionCalls, SessionInput};
+use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter};
+use crate::spec::support::{new_log, Discard, Log, Sink};
 use crate::owners::write::outbox::{self as o, CommitKind, NewOp, OpId, OpSource, Outbox, OutboxAnswer, OutboxEffect as Run, OutboxInput, OutboxPeers, OutboxState, Receipt, Stage, StoredOp, Why};
-use crate::owners::write::transfer::Transfers;
-use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
+use crate::owners::write::transfer::{TransferInput, Transfers};
+use crate::runtime::{Address, Cause, DetScheduler, Effect, Effects, Epoch, EpochStamp, StateOwner, Time};
+use std::any::Any;
+use std::sync::PoisonError;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RWhy { Rejected, Discarded }
 
@@ -53,7 +55,7 @@ pub(super) const TRANSFER_AT: usize = 2;
 pub(super) const OUTBOX_AT: usize = 3;
 
 /// What the owner gave out in a step, in the terms the rows of the table use: the executor effects (`Run`) and the inputs for the Store,
-/// the Session and Transfer (`Send`), read from the typed `Debug` form the `Spy` keeps. `Schedule` is a timer of the owner.
+/// the Session and Transfer (`Send`), read from the typed inputs the `OutboxSpy` keeps. `Schedule` is a timer of the owner.
 #[derive(Clone, Debug)]
 pub(super) enum OutboxEffect {
     Store { op_id: Option<OpId>, batch: u64, kind: CommitKind },
@@ -70,77 +72,165 @@ pub(super) enum OutboxEffect {
     RestoreClassified { epoch: u64 },
 }
 
-
-/// The kind of a batch from the ops it holds (`Debug` form of the typed ops).
-pub(super) fn kind_in(input: &str) -> CommitKind {
-    if input.contains("ops: [Intent {") { CommitKind::Intent }
-    else if input.contains("ops: [RollBack {") || input.contains("ops: [DiscardRestoreFailed {") { CommitKind::Rollback }
-    else if input.contains("MarkError { op_id") && input.contains("error: Some(") { CommitKind::ErrorMark }
-    else if input.contains("MarkError { op_id") { CommitKind::ClearMark }
-    else if input.contains("Attempt {") { CommitKind::Attempt }
-    else if input.contains("ops: [Requeue {") { CommitKind::Requeue }
-    else if input.contains("ops: [LocalRows {") || input.contains("ops: [EphemeralRows {") || input.contains("ops: [LocalPending {") || input.contains("ops: [DetachFile {") || input.contains("ops: [AttachFile {") || input.contains("ops: [Planned {") || input.contains("ops: [Show {") { CommitKind::LocalWrite }
-    else if input.contains("ops: [RemoveRows {") { CommitKind::RemoveRow }
-    else { CommitKind::Land }
+/// An input the owner sent to one of its peers.
+#[derive(Clone, Debug)]
+pub(super) enum Sent {
+    Store(StoreBatch),
+    Session(SessionInput),
+    Transfer(TransferInput),
 }
 
-pub(super) fn outcome_named(text: &str) -> o::OutboxOutcome {
-    if text.contains("Confirmed") { o::OutboxOutcome::Confirmed { revision: 0, result: None, row_id: None } }
-    else if text.contains("Rejected") { o::OutboxOutcome::Rejected { error: String::new() } }
-    else if text.contains("Failed") { o::OutboxOutcome::Failed { error: String::new() } }
-    else if text.contains("Ended(Closed)") { o::OutboxOutcome::Ended(crate::ffi::EndCause::Closed) }
-    else if text.contains("Ended(SessionEnded)") { o::OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded) }
-    else if text.contains("Discarded") { o::OutboxOutcome::Discarded }
-    else { panic!("unknown outbox outcome: {text}") }
+/// What the owner gave out in a step, typed, in the order of the effects.
+#[derive(Clone, Debug)]
+pub(super) enum Seen {
+    Run(Run),
+    Sent(Sent),
+    Schedule(std::time::Duration),
+    CancelTimer,
 }
 
-pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Option<OutboxEffect> {
-    Some(match emitted {
-        Emitted::Run(Run::Reply { reply, answer }) => OutboxEffect::Reply { reply, answer },
-        Emitted::Run(Run::Drained(_)) => OutboxEffect::Drained,
-        Emitted::Run(Run::Started { epoch }) => OutboxEffect::Started { epoch },
-        Emitted::Run(Run::SnapshotRequest { .. }) => OutboxEffect::SnapshotRequest,
-        Emitted::Run(Run::RestoreClassified { epoch }) => OutboxEffect::RestoreClassified { epoch },
-        Emitted::Run(Run::Decode(_) | Run::Stale { .. }) => return None,
-        Emitted::Send { to: STORE_AT, input } => {
-            let kind = kind_in(&input);
-            let op_id = matches!(kind, CommitKind::Intent | CommitKind::Attempt | CommitKind::Land | CommitKind::Rollback | CommitKind::ErrorMark | CommitKind::ClearMark | CommitKind::Requeue).then(|| number_after(&input, "op_id: ")).flatten();
-            OutboxEffect::Store { op_id, batch: number_after(&input, "id: ")?, kind }
+/// The owner `Outbox` with a log of everything its steps give out: `seen` is drained by the tests, `history` is never drained.
+pub(super) struct OutboxSpy;
+
+pub(super) struct OutboxSpyState {
+    pub inner: OutboxState,
+    pub seen: Log<Seen>,
+    pub history: Log<Seen>,
+}
+
+impl StateOwner for OutboxSpy {
+    const EPOCHED: bool = Outbox::EPOCHED;
+
+    type State = OutboxSpyState;
+    type Input = OutboxInput;
+    type Effect = Run;
+
+    fn step(state: &mut OutboxSpyState, input: OutboxInput, now: Time) -> Effects<Self> {
+        let effects = Outbox::step(&mut state.inner, input, now);
+        let mut seen = state.seen.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut history = state.history.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut note = |found: Seen| { seen.push(found.clone()); history.push(found); };
+        effects
+            .into_iter()
+            .map(|effect| match effect {
+                Effect::Run(run) => {
+                    note(Seen::Run(run.clone()));
+                    Effect::Run(run)
+                }
+                Effect::Send(outbound) => {
+                    let payload = &*outbound.payload as &dyn Any;
+                    if let Some(StoreInput::Commit(batch)) = payload.downcast_ref::<StoreInput>() { note(Seen::Sent(Sent::Store(batch.clone()))); }
+                    else if let Some(input) = payload.downcast_ref::<SessionInput>() { note(Seen::Sent(Sent::Session(input.clone()))); }
+                    else if let Some(input) = payload.downcast_ref::<TransferInput>() { note(Seen::Sent(Sent::Transfer(input.clone()))); }
+                    else if payload.downcast_ref::<StoreInput>().is_none() { panic!("a send of an unknown input: {:?}", outbound.payload); }
+                    Effect::Send(outbound)
+                }
+                Effect::Schedule { id, after, input } => {
+                    note(Seen::Schedule(after));
+                    Effect::Schedule { id, after, input }
+                }
+                Effect::ScheduleAt { id, at, input } => {
+                    note(Seen::Schedule(std::time::Duration::from_millis(at.0)));
+                    Effect::ScheduleAt { id, at, input }
+                }
+                Effect::Backoff { id, policy, attempt, input } => {
+                    note(Seen::Schedule(policy.delay_seeded(attempt, 0)));
+                    Effect::Backoff { id, policy, attempt, input }
+                }
+                Effect::Cancel(id) => {
+                    note(Seen::CancelTimer);
+                    Effect::Cancel(id)
+                }
+                Effect::Broadcast(control) => Effect::Broadcast(control),
+            })
+            .collect()
+    }
+
+    fn epoch_started(epoch: Epoch) -> Option<OutboxInput> { Outbox::epoch_started(epoch) }
+
+    fn epoch_ended(epoch: Epoch, cause: Cause) -> OutboxInput { Outbox::epoch_ended(epoch, cause) }
+
+    fn closing() -> OutboxInput { Outbox::closing() }
+}
+
+/// The op id of the first write of the batch that names one.
+fn op_id_of(op: &StoreOp) -> Option<OpId> {
+    match op {
+        StoreOp::Intent { op_id, .. } | StoreOp::IntentOrigin { op_id, .. } | StoreOp::Effects { op_id, .. } | StoreOp::Attempt { op_id, .. } | StoreOp::Cause { op_id, .. } | StoreOp::Requeue { op_id } | StoreOp::RollBack { op_id } | StoreOp::RemoveIntent { op_id } | StoreOp::MarkError { op_id, .. } => Some(*op_id),
+        _ => None,
+    }
+}
+
+/// The kind of a batch from the ops it holds.
+pub(super) fn kind_of(ops: &[StoreOp]) -> CommitKind {
+    match ops.first() {
+        Some(StoreOp::Intent { .. }) => return CommitKind::Intent,
+        Some(StoreOp::RollBack { .. } | StoreOp::DiscardRestoreFailed { .. }) => return CommitKind::Rollback,
+        _ => {}
+    }
+    if ops.iter().any(|op| matches!(op, StoreOp::MarkError { error: Some(_), .. })) { CommitKind::ErrorMark }
+    else if ops.iter().any(|op| matches!(op, StoreOp::MarkError { .. })) { CommitKind::ClearMark }
+    else if ops.iter().any(|op| matches!(op, StoreOp::Attempt { .. })) { CommitKind::Attempt }
+    else {
+        match ops.first() {
+            Some(StoreOp::Requeue { .. }) => CommitKind::Requeue,
+            Some(StoreOp::LocalRows { .. } | StoreOp::EphemeralRows { .. } | StoreOp::LocalPending { .. } | StoreOp::DetachFile { .. } | StoreOp::AttachFile { .. } | StoreOp::Planned { .. } | StoreOp::Show { .. }) => CommitKind::LocalWrite,
+            Some(StoreOp::RemoveRows { .. }) => CommitKind::RemoveRow,
+            _ => CommitKind::Land,
         }
-        Emitted::Send { to: SESSION_AT, input } if input.starts_with("Release") => return None,
-        Emitted::Send { to: SESSION_AT, input } if input.starts_with("Cancel") => {
-            number_after(&input, "req_id: ")?;
-            OutboxEffect::CancelRequest
+    }
+}
+
+pub(super) fn lower(seen: Seen, state: Option<&OutboxState>) -> Option<OutboxEffect> {
+    Some(match seen {
+        Seen::Run(Run::Reply { reply, answer }) => OutboxEffect::Reply { reply, answer },
+        Seen::Run(Run::Drained(_)) => OutboxEffect::Drained,
+        Seen::Run(Run::Started { epoch }) => OutboxEffect::Started { epoch },
+        Seen::Run(Run::SnapshotRequest { .. }) => OutboxEffect::SnapshotRequest,
+        Seen::Run(Run::RestoreClassified { epoch }) => OutboxEffect::RestoreClassified { epoch },
+        Seen::Run(Run::Decode(_) | Run::Stale { .. }) => return None,
+        Seen::Sent(Sent::Store(batch)) => {
+            let kind = kind_of(&batch.ops);
+            let op_id = matches!(kind, CommitKind::Intent | CommitKind::Attempt | CommitKind::Land | CommitKind::Rollback | CommitKind::ErrorMark | CommitKind::ClearMark | CommitKind::Requeue).then(|| batch.ops.iter().find_map(op_id_of)).flatten();
+            OutboxEffect::Store { op_id, batch: batch.id, kind }
         }
-        Emitted::Send { to: SESSION_AT, input } => {
-            let request_id = number_after(&input, "req_id: ")?;
-            let operation = state.and_then(|state| state.ops.values().find(|operation| operation.request_id == request_id));
-            OutboxEffect::Send { op_id: operation.map_or(request_id, |operation| operation.op_id), request_id, sequence: operation.map_or(0, |operation| operation.sequence) }
+        Seen::Sent(Sent::Session(SessionInput::Cancel { .. })) => OutboxEffect::CancelRequest,
+        Seen::Sent(Sent::Session(SessionInput::Mutate { req_id, .. })) => {
+            let operation = state.and_then(|state| state.ops.values().find(|operation| operation.request_id == req_id));
+            OutboxEffect::Send { op_id: operation.map_or(req_id, |operation| operation.op_id), request_id: req_id, sequence: operation.map_or(0, |operation| operation.sequence) }
         }
-        Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("SelectRow") => return None,
-        Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("MutationOutcomes") => OutboxEffect::TransferOutcomes,
-        Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("MutationOutcome") => OutboxEffect::TransferOutcome { outcome: outcome_named(&input) },
-        Emitted::Send { to: TRANSFER_AT, .. } => return None,
-        Emitted::Send { to, .. } => panic!("a send to the slot {to}"),
-        Emitted::Schedule { .. } => OutboxEffect::Schedule,
-        Emitted::Cancel(_) => OutboxEffect::CancelTimer,
-        Emitted::Broadcast(_) => return None,
+        Seen::Sent(Sent::Session(_)) => return None,
+        Seen::Sent(Sent::Transfer(TransferInput::MutationOutcomes { .. })) => OutboxEffect::TransferOutcomes,
+        Seen::Sent(Sent::Transfer(TransferInput::MutationOutcome { outcome, .. })) => OutboxEffect::TransferOutcome { outcome },
+        Seen::Sent(Sent::Transfer(_)) => return None,
+        Seen::Schedule(_) => OutboxEffect::Schedule,
+        Seen::CancelTimer => OutboxEffect::CancelTimer,
     })
 }
 
-pub(super) fn take_fx(log: &Log<Emitted<Run>>, state: Option<&OutboxState>) -> Vec<OutboxEffect> { crate::spec::support::take(log).into_iter().filter_map(|emitted| lower(emitted, state)).collect() }
+pub(super) fn stale_marks(seen: &[Seen]) -> usize { seen.iter().filter(|found| matches!(found, Seen::Run(Run::Stale { .. }))).count() }
 
-pub(super) fn state_of(det: &DetScheduler) -> Option<&OutboxState> { det.state(Address::<Spy<Outbox>>::new(OUTBOX_AT)).map(|spy: &SpyState<Outbox>| &spy.inner) }
+pub(super) fn timer_cancels(seen: &[Seen]) -> usize { seen.iter().filter(|found| matches!(found, Seen::CancelTimer)).count() }
+
+pub(super) fn session_inputs(seen: &[Seen]) -> Vec<SessionInput> { seen.iter().filter_map(|found| match found { Seen::Sent(Sent::Session(input)) => Some(input.clone()), _ => None }).collect() }
+
+pub(super) fn transfer_inputs(seen: &[Seen]) -> Vec<TransferInput> { seen.iter().filter_map(|found| match found { Seen::Sent(Sent::Transfer(input)) => Some(input.clone()), _ => None }).collect() }
+
+pub(super) fn take_fx(log: &Log<Seen>, state: Option<&OutboxState>) -> Vec<OutboxEffect> { crate::spec::support::take(log).into_iter().filter_map(|seen| lower(seen, state)).collect() }
+
+pub(super) fn state_of(det: &DetScheduler) -> Option<&OutboxState> { det.state(Address::<OutboxSpy>::new(OUTBOX_AT)).map(|spy: &OutboxSpyState| &spy.inner) }
+
+pub(super) fn history_of(det: &DetScheduler) -> Vec<Seen> { det.state(Address::<OutboxSpy>::new(OUTBOX_AT)).map(|spy: &OutboxSpyState| crate::spec::support::snapshot(&spy.history)).unwrap_or_default() }
 
 /// The owner with its three peers: the Store, the Session and Transfer keep what they receive.
-pub(super) fn world(seed: u64) -> (DetScheduler, Log<Emitted<Run>>, Address<Spy<Outbox>>) {
+pub(super) fn world(seed: u64) -> (DetScheduler, Log<Seen>, Address<OutboxSpy>) {
     let mut det = DetScheduler::new(seed);
     let peer = |det: &mut DetScheduler, name: &'static str| -> usize { det.add::<Sink<StoreWriter>>(name, new_log(), crate::spec::support::Silent).index() };
     let (store, session, transfer) = (peer(&mut det, "store"), det.add::<Sink<SessionCalls>>("session", new_log(), crate::spec::support::Silent).index(), det.add::<Sink<Transfers>>("transfer", new_log(), crate::spec::support::Silent).index());
     assert_eq!((store, session, transfer), (STORE_AT, SESSION_AT, TRANSFER_AT));
     let peers = OutboxPeers { store: Address::new(store), session: Some(Address::new(session)), transfer: Some(Address::new(transfer)) };
     let log = new_log();
-    let addr = det.add::<Spy<Outbox>>("outbox", SpyState::new(OutboxState::new(EPOCH, peers), &log), Discard);
+    let addr = det.add::<OutboxSpy>("outbox", OutboxSpyState { inner: OutboxState::new(EPOCH, peers), seen: log.clone(), history: new_log() }, Discard);
     assert_eq!(addr.index(), OUTBOX_AT);
     (det, log, addr)
 }
@@ -207,15 +297,15 @@ pub(super) fn model_op_as(row: &str, policy: Policy, transfer: bool, action: &st
 /// The owner with a recorder and the book of what it sent.
 pub(super) struct Twin {
     pub(super) det: DetScheduler,
-    pub(super) log: Log<Emitted<Run>>,
+    pub(super) log: Log<Seen>,
     pub(super) batches: BTreeMap<OpId, BatchId>,
     pub(super) first_pair: BTreeMap<OpId, (RequestId, u64)>,
     /// The questions of the owner to Transfer that wait for an answer.
-    asked: Vec<String>,
+    asked: Vec<TransferInput>,
     pub(super) revision: i64,
     pub(super) reply: ReplyId,
     pub(super) follower: Option<OpId>,
-    /// The typed text of the last inputs the Store received (`StoreOp` names).
+    /// The effects of the last post.
     pub(super) last: Vec<OutboxEffect>,
     /// The Store batches of the last post, in the order sent.
     pub(super) store_batches: Vec<StoreBatch>,
@@ -223,9 +313,10 @@ pub(super) struct Twin {
     pub(super) store_ops: Vec<StoreOp>,
     /// The pauses of the timers the last post set.
     pub(super) pauses: Vec<std::time::Duration>,
-    /// Every Store input of the last post with the id of its batch, in the order sent.
-    pub(super) stores: Vec<(BatchId, String)>,
-    pub(super) session_text: String,
+    /// Every Store batch of the last post with its id and ops, in the order sent.
+    pub(super) stores: Vec<(BatchId, Vec<StoreOp>)>,
+    /// The inputs the Session received in the last post, in the order sent.
+    pub(super) session_sends: Vec<SessionInput>,
 }
 
 impl Twin {
@@ -240,7 +331,7 @@ impl Twin {
         det.start_epoch(EPOCH);
         det.run_until_quiet(10_000).expect("the owner is quiet");
         take_fx(&log, None);
-        Self { det, log, batches: BTreeMap::new(), first_pair: BTreeMap::new(), asked: Vec::new(), revision: 10, reply: 10, follower: None, last: Vec::new(), store_batches: Vec::new(), store_ops: Vec::new(), pauses: Vec::new(), stores: Vec::new(), session_text: String::new() }
+        Self { det, log, batches: BTreeMap::new(), first_pair: BTreeMap::new(), asked: Vec::new(), revision: 10, reply: 10, follower: None, last: Vec::new(), store_batches: Vec::new(), store_ops: Vec::new(), pauses: Vec::new(), stores: Vec::new(), session_sends: Vec::new() }
     }
 
     /// The owner in the phase `Ready` with an empty queue.
@@ -269,11 +360,8 @@ impl Twin {
         let mut effects = self.post_input(input);
         loop {
             let Some(asked) = self.asked.pop() else { self.last = effects.clone(); return effects };
-            let asked = &asked;
-            let reply = number_after(asked, "reply: ").expect("the reply of the question");
-            let version = number_after(asked, "version: ").expect("the version of the question");
-            let kind = if asked.contains("kind: Retry") { o::SelectKind::Retry } else { o::SelectKind::Discard };
-            let asked_row = asked.split("row_id: \"").nth(1).and_then(|rest| rest.split('"').next()).unwrap_or("r").to_string();
+            let TransferInput::SelectRow { rows, kind, reply, version, .. } = asked else { unreachable!("only SelectRow is kept in asked") };
+            let asked_row = rows.first().cloned().unwrap_or_else(|| "r".to_string());
             let smallest = self.state().ops.values().find(|operation| operation.op.row_id == asked_row && operation.stage != Stage::Done).map(|operation| operation.op.action.clone());
             effects.extend(self.post_input(match smallest {
                 Some(action) => OutboxInput::SelectedOutbox { model: "Moment".into(), row_id: asked_row.clone(), action, kind, reply, version },
@@ -282,35 +370,33 @@ impl Twin {
         }
     }
 
-    /// Posts `input` and returns the owner effects with the raw text of every send to Transfer, without the auto-answer of `post`.
-    pub(super) fn selector(&mut self, input: OutboxInput) -> (Vec<OutboxEffect>, Vec<String>) {
+    /// Posts `input` and returns the owner effects with every input sent to Transfer, without the auto-answer of `post`.
+    pub(super) fn selector(&mut self, input: OutboxInput) -> (Vec<OutboxEffect>, Vec<TransferInput>) {
         take_fx(&self.log, None);
         self.det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), input);
         self.run();
-        let sends = crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: TRANSFER_AT, input } => Some(input), _ => None }).collect();
+        let sends = transfer_inputs(&crate::spec::support::snapshot(&self.log));
         let effects = take_fx(&self.log, state_of(&self.det));
         (effects, sends)
     }
 
     fn post_input(&mut self, input: OutboxInput) -> Vec<OutboxEffect> {
         take_fx(&self.log, None);
-        self.spy_batches();
         self.det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), input);
         self.run();
-        self.stores = crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: STORE_AT, input } => Some((number_after(&input, "id: ")?, input)), _ => None }).collect();
-        self.store_batches = self.spy_batches();
+        let seen = crate::spec::support::snapshot(&self.log);
+        self.store_batches = seen.iter().filter_map(|found| match found { Seen::Sent(Sent::Store(batch)) => Some(batch.clone()), _ => None }).collect();
+        self.stores = self.store_batches.iter().map(|batch| (batch.id, batch.ops.clone())).collect();
         self.store_ops = self.store_batches.iter().flat_map(|batch| batch.ops.clone()).collect();
-        self.pauses = crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Schedule { after, .. } => Some(after), _ => None }).collect();
-        self.asked.extend(crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("SelectRow") => Some(input), _ => None }));
-        self.session_text = crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: SESSION_AT, input } => Some(input), _ => None }).collect::<Vec<_>>().join("\n");
+        self.pauses = seen.iter().filter_map(|found| match found { Seen::Schedule(after) => Some(*after), _ => None }).collect();
+        self.asked.extend(transfer_inputs(&seen).into_iter().filter(|input| matches!(input, TransferInput::SelectRow { .. })));
+        self.session_sends = session_inputs(&seen);
         let effects = take_fx(&self.log, state_of(&self.det));
         self.note(&effects);
         effects
     }
 
-    fn spy_batches(&self) -> Vec<StoreBatch> {
-        self.det.state(Address::<Spy<Outbox>>::new(OUTBOX_AT)).map(|spy: &SpyState<Outbox>| crate::spec::support::take(&spy.store_batches)).unwrap_or_default()
-    }
+    pub(super) fn history(&self) -> Vec<Seen> { history_of(&self.det) }
 
     pub(super) fn state(&self) -> &OutboxState { state_of(&self.det).expect("the owner state") }
 

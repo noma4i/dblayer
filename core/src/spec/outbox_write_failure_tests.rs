@@ -32,18 +32,18 @@ fn out_invalid_refusal_of_the_server_outcome_batch_writes_it_again_without_rows(
     for landing_stage in [true, false] {
         let mut twin = Twin::new();
         let id = if landing_stage { landing(&mut twin) } else { rolling_back(&mut twin) };
-        let at = twin.det.trace().len();
+        let at = twin.history().len();
         let refused = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
         assert_eq!(sends(&refused), 0, "landing={landing_stage}");
-        assert!(!twin.det.trace()[at..].iter().any(|entry| entry.effects.contains("Stale")), "landing={landing_stage}: no Stale inside the refused batch");
+        assert!(stale_marks(&twin.history()[at..]) == 0, "landing={landing_stage}: no Stale inside the refused batch");
         let rows_or_rollback = if landing_stage { has_op!(twin, StoreOp::Rows { model, .. } if model == "Moment") } else { has_op!(twin, StoreOp::RollBack { .. }) };
         assert!(has_op!(twin, StoreOp::RemoveIntent { .. }) && has_op!(twin, StoreOp::RemoveAnswer { .. }) && !rows_or_rollback, "landing={landing_stage}: {:?}", twin.store_ops);
         assert!(outcomes(&refused).is_empty(), "no outcome before Committed: {refused:?}");
-        let at = twin.det.trace().len();
+        let at = twin.history().len();
         let done = twin.committed(id);
         let want = if landing_stage { matches!(outcomes(&done).as_slice(), [OutboxOutcome::Confirmed { .. }]) } else { matches!(outcomes(&done).as_slice(), [OutboxOutcome::Rejected { .. }]) };
         assert!(want, "landing={landing_stage}: {done:?}");
-        assert_eq!(twin.det.trace()[at..].iter().filter(|entry| entry.effects.contains("Stale")).count(), 1, "landing={landing_stage}: the windows of the answer models are marked stale after Committed");
+        assert_eq!(stale_marks(&twin.history()[at..]), 1, "landing={landing_stage}: the windows of the answer models are marked stale after Committed");
     }
 }
 
@@ -169,10 +169,10 @@ fn out_sending_retry_offline_requeues() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
     twin.post(OutboxInput::TransportError { op_id: id, temporary: true });
-    let before = twin.det.trace().len();
+    let before = twin.history().len();
     let effects = twin.post(OutboxInput::Online(Online(false)));
     assert_eq!((twin.stage(id), kinds(&effects), sends(&effects), twin.state().ops[&id].attempts), (Some(St::Queued), vec![CommitKind::Requeue], 0, 1));
-    let cancelled = twin.det.trace()[before..].iter().filter(|entry| entry.effects.contains("Cancel")).count();
+    let cancelled = timer_cancels(&twin.history()[before..]);
     assert_eq!(cancelled, 1, "the timer of the wait is removed");
     let stale = tick(&mut twin, id);
     assert_eq!((twin.stage(id), sends(&stale), kinds(&stale)), (Some(St::Queued), 0, Vec::new()), "a late Tick changes nothing");

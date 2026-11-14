@@ -130,7 +130,7 @@ fn out_prop_landing_no_stale() {
         twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale, result: None, missing: Vec::new(), errors: None });
         assert_eq!(has_op!(twin, StoreOp::StaleFamilies { .. }), marks, "{:?}", twin.store_ops);
         twin.committed(id);
-        let announced = twin.det.trace().iter().any(|entry| entry.effects.contains("Stale"));
+        let announced = stale_marks(&twin.history()) > 0;
         assert_eq!(announced, marks, "the windows turn stale only for a declared refetch");
     }
 }
