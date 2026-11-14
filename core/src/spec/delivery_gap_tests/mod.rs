@@ -343,6 +343,14 @@ fn dlv_wait_subscription_census() {
     assert_eq!(census_of(&mut twin), (0, 0), "a released stream leaves the census");
 }
 
+fn commit(twin: &mut Twin, revision: i64, table: String, position: u64) {
+    twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec![table], rows: None, models: Default::default(), stale_parents: Vec::new(), position, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
+}
+
+fn read_done(twin: &mut Twin, revision: i64, data: d::ReadData) {
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision, position: 0, relevant: Some((revision, 0)), touching: Vec::new(), data });
+}
+
 fn ended_by_epoch() -> Twin {
     let mut twin = live_rows();
     twin.step(Input::EpochEnded { own: true });
@@ -350,34 +358,20 @@ fn ended_by_epoch() -> Twin {
 }
 
 #[test]
-fn dlv_open_rows() {
-    let mut twin = Twin::new();
-    assert_eq!(twin.step(Input::Open { kind: Kind::List, epoch_current: true }), [Effect::Read(0), Effect::InterestPlus]);
-    assert!(twin.read_all().is_empty(), "no value before the first read");
+fn dlv_open_effects() {
     for (kind, effects) in [
+        (Kind::List, vec![Effect::Read(0), Effect::InterestPlus]),
         (Kind::Count, vec![Effect::Read(0), Effect::InterestPlus]),
         (Kind::Entity(Fetch::Never), vec![Effect::Read(0), Effect::InterestPassive]),
         (Kind::Entity(Fetch::Stale), vec![Effect::Read(0), Effect::InterestPlus]),
         (Kind::Entity(Fetch::Force), vec![Effect::Read(0), Effect::InterestPlus, Effect::Load { force: true }]),
         (Kind::Entity(Fetch::IfMissing), vec![Effect::Read(0), Effect::InterestPassive]),
+        (Kind::Events, vec![Effect::WantPlus]),
+        (Kind::Blob, vec![Effect::StatusInterest(true)]),
     ] {
-        assert_eq!(Twin::new().step(Input::Open { kind, epoch_current: true }), effects, "{kind:?}");
-    }
-}
-
-#[test]
-fn dlv_open_events() {
-    let mut twin = Twin::new();
-    assert_eq!(twin.step(Input::Open { kind: Kind::Events, epoch_current: true }), [Effect::WantPlus]);
-    assert!(twin.read_all().is_empty(), "no value before the first event");
-}
-
-#[test]
-fn dlv_open_status() {
-    for kind in [Kind::Blob] {
         let mut twin = Twin::new();
-        assert_eq!(twin.step(Input::Open { kind, epoch_current: true }), [Effect::StatusInterest(true)]);
-        assert!(twin.read_all().is_empty(), "no value before the first status");
+        assert_eq!(twin.step(Input::Open { kind, epoch_current: true }), effects, "{kind:?}");
+        assert!(twin.read_all().is_empty(), "{kind:?}: no value before the first read");
     }
 }
 

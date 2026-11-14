@@ -63,7 +63,11 @@ fn dlv_live_resync_other() {
         let before = twin.state().journal(STREAM);
         assert!(resync(&mut twin).is_empty());
         assert_eq!(twin.state().journal(STREAM), before);
-    }
+    }    let mut queue = super::delivery_operations_tests::live();
+    let before = queue.state().journal(STREAM);
+    queue.call(d::DeliveryInput::Resync { stream: STREAM });
+    assert!(take(&queue.log).is_empty());
+    assert_eq!(queue.state().journal(STREAM), before);
 }
 
 #[test]
@@ -115,25 +119,16 @@ fn dlv_live_read_recovered() {
 }
 
 #[test]
-fn dlv_resync_read_failed_retry() {
+fn dlv_resync_read_failed_retries_then_ends() {
     let mut twin = live_rows();
     resync(&mut twin);
-    let read_id = twin.read_id();
+    let first_id = twin.read_id();
     take(&twin.log);
-    twin.post(d::DeliveryInput::ReadFailed { stream: STREAM, read_id, revision: 1, error: "offline storage".into() });
-    assert!(twin.read_id() > read_id);
-    assert!(Twin::modelled(take(&twin.log)).contains(&Effect::Read(1)));
+    twin.post(d::DeliveryInput::ReadFailed { stream: STREAM, read_id: first_id, revision: 1, error: "first".into() });
+    let read_id = twin.read_id();
+    assert!(read_id > first_id);
+    assert!(Twin::modelled(take(&twin.log)).contains(&Effect::Read(1)), "the first failure retries the read");
     assert!(matches!(twin.state().journal(STREAM).as_slice(), [d::Value::State { state, .. }] if state.error.is_some()));
-}
-
-#[test]
-fn dlv_resync_read_failed_end() {
-    let mut twin = live_rows();
-    resync(&mut twin);
-    let read_id = twin.read_id();
-    twin.post(d::DeliveryInput::ReadFailed { stream: STREAM, read_id, revision: 1, error: "first".into() });
-    let read_id = twin.read_id();
-    take(&twin.log);
     twin.post(d::DeliveryInput::ReadFailed { stream: STREAM, read_id, revision: 1, error: "second".into() });
     assert!(matches!(twin.state().journal(STREAM).as_slice(), [d::Value::Ended(d::EndCause::Storage { error })] if error == "second"));
     let effects = Twin::modelled(take(&twin.log));

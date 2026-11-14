@@ -9,15 +9,6 @@ fn queue_view() -> d::View {
     d::View { kind: d::Kind::Operations, model: String::new(), tables: vec!["op".into()], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), node: None, wants: Vec::new(), deferred_rows: Vec::new(), query: None }
 }
 
-fn commit(twin: &mut Twin, revision: i64, table: &str) {
-    twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec![table.into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
-}
-
-fn read_done(twin: &mut Twin, revision: i64, items: Vec<OperationInfo>) {
-    let read_id = twin.read_id();
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, position: 0, relevant: Some((revision, 0)), touching: Vec::new(), data: d::ReadData::Operations(items) });
-}
-
 fn opened() -> Twin {
     let mut twin = Twin::new();
     twin.det.post(twin.addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: queue_view(), epoch: EPOCH, identity: false, valid: true, revision: 0, deferred: None });
@@ -25,9 +16,9 @@ fn opened() -> Twin {
     twin
 }
 
-fn live() -> Twin {
+pub(super) fn live() -> Twin {
     let mut twin = opened();
-    read_done(&mut twin, 1, vec![info(1, OperationQueueStatus::Pending)]);
+    read_done(&mut twin, 1, d::ReadData::Operations(vec![info(1, OperationQueueStatus::Pending)]));
     take(&twin.log);
     twin
 }
@@ -54,7 +45,7 @@ fn dlv_open_operations() {
 fn dlv_opening_operations_done() {
     let mut twin = opened();
     let items = vec![info(1, OperationQueueStatus::Pending), info(2, OperationQueueStatus::Failed)];
-    read_done(&mut twin, 1, items.clone());
+    read_done(&mut twin, 1, d::ReadData::Operations(items.clone()));
     assert_eq!(twin.state().journal(STREAM), [d::Value::Operations { revision: 1, items }]);
     assert_eq!(twin.state().stage(STREAM), Some(d::DeliveryStage::Live));
 }
@@ -62,31 +53,22 @@ fn dlv_opening_operations_done() {
 #[test]
 fn dlv_live_operations_commit() {
     let mut twin = live();
-    commit(&mut twin, 2, "op");
+    commit(&mut twin, 2, "op".into(), 0);
     assert_eq!(reads(take(&twin.log)), [2]);
     let before = twin.state().journal(STREAM).len();
-    commit(&mut twin, 9, "moments");
+    commit(&mut twin, 9, "moments".into(), 0);
     assert!(take(&twin.log).is_empty() && twin.state().journal(STREAM).len() == before, "a commit of another table starts no read");
     let sending = vec![info(1, OperationQueueStatus::Sending)];
-    read_done(&mut twin, 2, sending.clone());
+    read_done(&mut twin, 2, d::ReadData::Operations(sending.clone()));
     assert_eq!(twin.state().journal(STREAM), [d::Value::Operations { revision: 2, items: sending.clone() }], "the unread value is replaced by the new one");
-    commit(&mut twin, 3, "op");
-    read_done(&mut twin, 3, sending.clone());
+    commit(&mut twin, 3, "op".into(), 0);
+    read_done(&mut twin, 3, d::ReadData::Operations(sending.clone()));
     assert_eq!(twin.state().journal(STREAM), [d::Value::Operations { revision: 2, items: sending }], "the same queue gives no value");
-}
-
-#[test]
-fn dlv_live_resync_operations() {
-    let mut twin = live();
-    let before = twin.state().journal(STREAM);
-    twin.call(d::DeliveryInput::Resync { stream: STREAM });
-    assert!(take(&twin.log).is_empty());
-    assert_eq!(twin.state().journal(STREAM), before);
 }
 
 fn live_after_commit() -> Twin {
     let mut twin = live();
-    commit(&mut twin, 2, "op");
+    commit(&mut twin, 2, "op".into(), 0);
     twin
 }
 

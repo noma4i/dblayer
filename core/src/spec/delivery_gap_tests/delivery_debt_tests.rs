@@ -9,12 +9,16 @@ fn debt_list() -> Twin {
     twin
 }
 
+fn windows_sends(twin: &mut Twin) -> Vec<String> {
+    take(&twin.log).into_iter().filter_map(|entry| match entry { Emitted::Send { to: WINDOWS, input } => Some(input), _ => None }).collect()
+}
+
 fn read(twin: &mut Twin, revision: i64, owing: &[&str]) -> Vec<String> {
     take(&twin.log);
     let rows = ["r1", "r2"].iter().map(|id| d::StreamRow::new(id, 1)).collect();
     let debts = owing.iter().map(|id| ("Moment".to_string(), id.to_string(), "node".to_string())).collect();
     twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision, position: 0, relevant: Some((revision, 0)), touching: Vec::new(), data: d::ReadData::Owed(Box::new(d::ReadData::Rows { rows, replaced: Vec::new(), total: None }), debts) });
-    take(&twin.log).into_iter().filter_map(|entry| match entry { Emitted::Send { to: WINDOWS, input } => Some(input), _ => None }).collect()
+    windows_sends(twin)
 }
 
 /// dlv_owed_row_interest: a shown row in debt holds the interest of its `node` window, a row that pays nothing holds none; a stream with `fetch: never` holds it as well when the window is not its own.
@@ -44,7 +48,7 @@ fn dlv_owed_row_paid_releases() {
     assert_eq!(again.iter().filter(|send| send.starts_with("InterestPlus") && send.contains("r1")).count(), 1, "{again:?}");
     take(&twin.log);
     twin.call(d::DeliveryInput::Release { stream: STREAM, reader: None });
-    let ended: Vec<String> = take(&twin.log).into_iter().filter_map(|entry| match entry { Emitted::Send { to: WINDOWS, input } => Some(input), _ => None }).collect();
+    let ended: Vec<String> = windows_sends(&mut twin);
     assert_eq!(ended.iter().filter(|send| send.starts_with("InterestMinus") && send.contains("r1")).count(), 1, "{ended:?}");
 }
 
@@ -71,7 +75,7 @@ fn dlv_owed_row_interest_count_and_local_table() {
     count.step(Input::WindowState(Ws::loaded_at(1)));
     take(&count.log);
     count.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: count.read_id(), revision: 1, position: 0, relevant: Some((1, 0)), touching: Vec::new(), data: d::ReadData::Owed(Box::new(d::ReadData::Count(2)), ids(&["r1"])) });
-    let sends: Vec<String> = take(&count.log).into_iter().filter_map(|entry| match entry { Emitted::Send { to: WINDOWS, input } => Some(input), _ => None }).collect();
+    let sends: Vec<String> = windows_sends(&mut count);
     assert_eq!(sends.iter().filter(|send| send.starts_with("InterestPlus") && send.contains("r1")).count(), 1, "{sends:?}");
     let mut local = Twin::new();
     let mut table = view(Kind::List);
@@ -80,7 +84,7 @@ fn dlv_owed_row_interest_count_and_local_table() {
     local.post(d::DeliveryInput::Open { stream: STREAM, view: table, epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: None });
     take(&local.log);
     local.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: local.read_id(), revision: 1, position: 0, relevant: Some((1, 0)), touching: Vec::new(), data: d::ReadData::Owed(Box::new(d::ReadData::Rows { rows: vec![d::StreamRow::new("r1", 1)], replaced: Vec::new(), total: None }), ids(&["r9"])) });
-    let sends: Vec<String> = take(&local.log).into_iter().filter_map(|entry| match entry { Emitted::Send { to: WINDOWS, input } => Some(input), _ => None }).collect();
+    let sends: Vec<String> = windows_sends(&mut local);
     assert_eq!(sends.iter().filter(|send| send.starts_with("InterestPlus") && send.contains("r9")).count(), 1, "{sends:?}");
 }
 

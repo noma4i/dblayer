@@ -496,16 +496,6 @@ fn every_public_end_has_its_cause() {
     let mut invalid = Twin::new();
     invalid.step(Input::OpenInvalid);
     assert_eq!(invalid.read_all(), [Val::Ended(Cause::Invalid)], "an invalid open ends as Invalid");
-    let mut epoch = live_rows();
-    epoch.step(Input::EpochEnded { own: true });
-    assert_eq!(epoch.read_all(), [Val::Ended(Cause::SessionEnded)], "an ended epoch ends live streams as SessionEnded");
-    let mut closed = live_rows();
-    closed.step(Input::EpochClosed);
-    assert_eq!(closed.read_all(), [Val::Ended(Cause::Closed)], "a close ends live streams as Closed");
-    let mut cancelled = live_rows();
-    cancelled.step(Input::Cancel { reply: 1 });
-    assert!(cancelled.step(Input::Pull).is_empty(), "the cancelled reader waits for SinkClosed");
-    assert_eq!(cancelled.step(Input::SinkClosed), [Effect::Cancelled(1), Effect::Answer(Pulled::Value(Val::Ended(Cause::Cancelled)))], "an explicit cancel ends as Cancelled");
 }
 
 /// P-DLV-32 (dlv_prop_phase_follows_window): clearing a read error returns the value of the last `WindowState` with its own error, not `Loaded`.

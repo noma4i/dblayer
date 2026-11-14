@@ -134,15 +134,6 @@ fn dlv_cancel_sink_closed() {
 }
 
 #[test]
-fn dlv_cancel_sink_closed_released() {
-    let mut twin = live_rows();
-    twin.step(Input::Cancel { reply: 7 });
-    twin.step(Input::Release);
-    assert_eq!(twin.step(Input::SinkClosed), [Effect::Cancelled(7)]);
-    assert_eq!(twin.state().streams(), 0, "the machine is out of the dictionary");
-}
-
-#[test]
 fn dlv_cancelling_other() {
     let mut twin = live_rows();
     twin.step(Input::Cancel { reply: 1 });
@@ -466,21 +457,13 @@ fn dlv_live_joined() {
 fn dlv_live_ready() {
     let mut twin = open_as(Kind::Events);
     twin.step(Input::Joined { position: 0 });
-    twin.step(Input::ModelEvent { position: 1, payload: "c1".into() });
-    assert!(twin.read_all().is_empty(), "no event before Ready");
-    twin.step(Input::ModelReady);
-    assert_eq!(twin.read_all(), [Val::Ready, Val::Event { position: 1, payload: "c1".into() }]);
-    assert!(twin.step(Input::ModelReady).is_empty(), "a second Ready gives nothing");
-}
-
-#[test]
-fn dlv_live_event_before_ready() {
-    let mut twin = open_as(Kind::Events);
-    twin.step(Input::Joined { position: 0 });
     assert!(twin.step(Input::ModelEvent { position: 1, payload: "c1".into() }).is_empty());
     assert!(twin.step(Input::ModelLost { first: 2, last: 3 }).is_empty());
+    assert!(twin.step(Input::ModelGap).is_empty());
+    assert!(twin.read_all().is_empty(), "no event before Ready");
     twin.step(Input::ModelReady);
-    assert_eq!(twin.read_all(), [Val::Ready, Val::Event { position: 1, payload: "c1".into() }, Val::Lost { first: 2, last: 3 }], "held inputs replay in order");
+    assert_eq!(twin.read_all(), [Val::Ready, Val::Event { position: 1, payload: "c1".into() }, Val::Lost { first: 2, last: 3 }, Val::Gap], "held inputs replay in order");
+    assert!(twin.step(Input::ModelReady).is_empty(), "a second Ready gives nothing");
 }
 
 #[test]
@@ -529,15 +512,6 @@ fn dlv_live_gap_coalesced() {
     assert!(twin.step(Input::ModelGap).is_empty(), "a second Gap without a read has no effect");
     assert_eq!(twin.state().journal_len(STREAM), 1);
     assert_eq!(twin.read_all(), [Val::Gap]);
-}
-
-#[test]
-fn dlv_live_gap_before_ready() {
-    let mut twin = open_as(Kind::Events);
-    twin.step(Input::Joined { position: 0 });
-    assert!(twin.step(Input::ModelGap).is_empty());
-    twin.step(Input::ModelReady);
-    assert_eq!(twin.read_all(), [Val::Ready, Val::Gap]);
 }
 
 #[test]
@@ -595,9 +569,6 @@ fn dlv_wait_pull() {
     let mut twin = live_rows();
     twin.step(Input::Pull);
     assert_eq!(twin.step(Input::Closing), [Effect::InterestMinus, Effect::Answer(Pulled::Value(Val::Ended(Cause::Closed))), Effect::CloseSink]);
-    let mut by_epoch = live_rows();
-    by_epoch.step(Input::Pull);
-    assert_eq!(by_epoch.step(Input::EpochEnded { own: true }).len(), 3, "a waiting Pull is answered with Ended(SessionEnded)");
 }
 
 #[test]

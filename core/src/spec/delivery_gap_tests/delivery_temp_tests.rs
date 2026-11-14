@@ -19,11 +19,7 @@ fn temporary_entity(fetch: Fetch) -> (Twin, Arc<AtomicBool>) {
 }
 
 fn rows(twin: &mut Twin, revision: i64, rows: Vec<d::StreamRow>, replaced: Vec<(String, String)>) {
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision, position: 0, relevant: Some((revision, 0)), touching: Vec::new(), data: d::ReadData::Rows { rows, replaced, total: None } });
-}
-
-fn commit(twin: &mut Twin, revision: i64) {
-    twin.post(d::DeliveryInput::Committed(Committed { batch: 1, revision, tables: vec![crate::store::ddl::table_name("Moment")], rows: None, models: Models::default(), stale_parents: Vec::new(), position: revision as u64, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
+    read_done(twin, revision, d::ReadData::Rows { rows, replaced, total: None });
 }
 
 #[test]
@@ -129,7 +125,7 @@ fn dlv_deferred_index_released() {
     rows(&mut twin, 0, vec![d::StreamRow::new("temp-00000000-0000-0000-0000-310000000000", 0)], vec![]);
     take(&twin.log);
     ready.store(true, Ordering::SeqCst);
-    commit(&mut twin, 1);
+    commit(&mut twin, 1, crate::store::ddl::table_name("Moment"), 1);
     take(&twin.log);
     rows(&mut twin, 1, vec![d::StreamRow::new("real-1", 1)], vec![("temp-00000000-0000-0000-0000-310000000000".into(), "real-1".into())]);
     take(&twin.log);
@@ -155,7 +151,7 @@ fn dlv_entity_temp_swap() {
         rows(&mut twin, 0, vec![d::StreamRow::new("temp-00000000-0000-0000-0000-310000000000", 0)], vec![]);
         take(&twin.log);
         resolved.store(true, Ordering::SeqCst);
-        commit(&mut twin, 1);
+        commit(&mut twin, 1, crate::store::ddl::table_name("Moment"), 1);
         take(&twin.log);
         rows(&mut twin, 1, vec![d::StreamRow::new("real-1", 1)], vec![("temp-00000000-0000-0000-0000-310000000000".into(), "real-1".into())]);
         let effects = take(&twin.log);
@@ -166,7 +162,7 @@ fn dlv_entity_temp_swap() {
         rows(&mut twin, 1, vec![d::StreamRow::new("real-1", 1)], vec![]);
         assert!(twin.state().journal(STREAM).iter().any(|value| matches!(value, d::Value::Snapshot { rows, .. } if rows.iter().any(|row| row.id == "real-1"))));
         take(&twin.log);
-        commit(&mut twin, 2);
+        commit(&mut twin, 2, crate::store::ddl::table_name("Moment"), 2);
         rows(&mut twin, 2, vec![d::StreamRow::new("real-1", 2)], vec![("temp-00000000-0000-0000-0000-310000000000".into(), "real-1".into())]);
         assert!(!Twin::modelled(take(&twin.log)).contains(&Effect::InterestPlus));
     }
@@ -178,7 +174,7 @@ fn dlv_entity_temp_rollback() {
     take(&twin.log);
     rows(&mut twin, 0, vec![d::StreamRow::new("temp-00000000-0000-0000-0000-310000000000", 0)], vec![]);
     take(&twin.log);
-    commit(&mut twin, 1);
+    commit(&mut twin, 1, crate::store::ddl::table_name("Moment"), 1);
     rows(&mut twin, 1, vec![], vec![]);
     let journal = twin.state().journal(STREAM);
     assert!(journal.iter().any(|value| matches!(value, d::Value::Snapshot { rows, state, .. } if rows.is_empty() && state.phase == WindowPhase::Loaded && state.settled && state.error.is_none())), "{journal:?}");
