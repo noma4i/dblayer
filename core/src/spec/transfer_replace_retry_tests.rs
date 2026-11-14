@@ -2,7 +2,7 @@
 
 use super::transfer_harness::*;
 use crate::owners::contract::RejectReason;
-use crate::owners::store::{EffectRow, IntentEffects, StoreOp};
+use crate::owners::store::{EffectRow, IntentEffects};
 use crate::owners::write::outbox::{Fault, OutboxInput, OutboxOutcome, ReserveTarget};
 use crate::owners::write::transfer::{TransferAnswer, TransferId, TransferInput, TransferStage};
 
@@ -17,7 +17,6 @@ fn accept_with_effects(key: &str, reply: u64) -> TransferInput {
     TransferInput::Accept { epoch: EPOCH, item: Box::new(element), reply }
 }
 
-fn rolled_back(out: &Out) -> Vec<u64> { out.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::RollBack { op_id } = op { Some(*op_id) } else { None }).collect() }
 
 /// A `Failed` transfer under `KEY` with its optimistic row, and the replacing `upload` after the reservation: the accept batch of the replacement is in the Store.
 fn replacing() -> (Twin, TransferId, TransferId, Out) {
@@ -39,7 +38,7 @@ fn replacing() -> (Twin, TransferId, TransferId, Out) {
         _ => None,
     }).expect("the replacement reserves its operation");
     let accept = twin.post(TransferInput::ReplacementReserved { target: ReserveTarget::Transfer(new), result: Ok((8, None)) });
-    assert_eq!((accept.writes(), accept.removed(), rolled_back(&accept)), (1, vec![KEY.to_string()], vec![OP_ID]));
+    assert_eq!((accept.writes(), accept.removed(), accept.rolled_back()), (1, vec![KEY.to_string()], vec![OP_ID]));
     (twin, old, new, accept)
 }
 

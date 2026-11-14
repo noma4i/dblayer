@@ -40,7 +40,6 @@ fn ready(twin: &mut Twin) -> TransferId {
     id
 }
 
-fn rolled_back(out: &Out) -> Vec<u64> { out.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::RollBack { op_id } = op { Some(*op_id) } else { None }).collect() }
 
 fn intents(out: &Out) -> Vec<(u64, IntentEffects)> { out.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::Effects { op_id, effects, .. } = op { Some((*op_id, effects.clone())) } else { None }).collect() }
 
@@ -189,7 +188,7 @@ fn xfer_accept_replaces_failed() {
     let out = twin.post(TransferInput::ReplacementReserved { target: ReserveTarget::Transfer(new), result: Ok((8, None)) });
     assert_eq!(out.writes(), 1, "removal and acceptance must share a Store batch");
     assert_eq!(out.removed(), vec![KEY.to_string()]);
-    assert_eq!(rolled_back(&out), vec![OP_ID]);
+    assert_eq!(out.rolled_back(), vec![OP_ID]);
     assert_eq!(out.outcomes_written(), vec![(old, 1, OutboxOutcome::Discarded)]);
     assert_eq!(out.rows().len(), 1);
     let committed = twin.commit();
@@ -265,7 +264,7 @@ fn xfer_accept_replaces_failed_without_operation_after_open() {
     let out = twin.post(TransferInput::ReplacementReserved { target: ReserveTarget::Transfer(new), result: Ok((8, None)) });
     assert_eq!(out.writes(), 1);
     assert_eq!(out.removed(), vec![KEY.to_string()]);
-    assert!(rolled_back(&out).is_empty());
+    assert!(out.rolled_back().is_empty());
     assert_eq!(out.outcomes_written(), vec![(1, 1, OutboxOutcome::Discarded)]);
     assert_eq!(out.rows().len(), 1);
 }
@@ -292,7 +291,7 @@ fn xfer_accept_batch_replaces_failed_single() {
     let out = twin.post(TransferInput::OpReserved { target: ReserveTarget::Group(group), result: Ok(10) });
     assert_eq!(out.writes(), 1);
     assert_eq!(out.removed(), vec![KEY.to_string()]);
-    assert_eq!(rolled_back(&out), vec![OP_ID]);
+    assert_eq!(out.rolled_back(), vec![OP_ID]);
     assert_eq!(out.outcomes_written(), vec![(old, 1, OutboxOutcome::Discarded)]);
     assert_eq!(out.rows().len(), 2);
 }
@@ -357,42 +356,42 @@ fn xfer_prop_optimistic_row_once() {
     let (id, _) = reserved(&mut cancel_copying);
     cancel_copying.commit();
     assert_eq!(cancel_copying.stage(id), TransferStage::Copying);
-    assert_eq!(rolled_back(&cancel_copying.cancel(KEY).1), vec![OP_ID], "cancel while copying");
+    assert_eq!(cancel_copying.cancel(KEY).1.rolled_back(), vec![OP_ID], "cancel while copying");
 
     let mut copy_failed = Twin::new();
     let (id, _) = reserved(&mut copy_failed);
     copy_failed.commit();
-    assert_eq!(rolled_back(&copy_failed.copy_failed(id)), vec![OP_ID], "the copy failed");
+    assert_eq!(copy_failed.copy_failed(id).rolled_back(), vec![OP_ID], "the copy failed");
 
     let mut stored_copy = Twin::new();
     let (id, _) = reserved(&mut stored_copy);
     stored_copy.commit();
     stored_copy.copy_done(id);
-    assert_eq!(rolled_back(&stored_copy.reject(RejectReason::Storage("full".into()))), vec![OP_ID], "the copy is not durable");
+    assert_eq!(stored_copy.reject(RejectReason::Storage("full".into())).rolled_back(), vec![OP_ID], "the copy is not durable");
 
     let mut failed = Twin::new();
     let id = ready(&mut failed);
     failed.step_error(id, false);
     failed.commit();
     assert_eq!(failed.stage(id), TransferStage::Failed);
-    assert_eq!(rolled_back(&failed.discard(KEY).1), vec![OP_ID], "discard of a failed transfer");
+    assert_eq!(failed.discard(KEY).1.rolled_back(), vec![OP_ID], "discard of a failed transfer");
 
     let mut plain = Twin::new();
     let id = ready(&mut plain);
     let (reply, out) = plain.cancel(KEY);
-    assert_eq!((rolled_back(&out), out.removed()), (vec![OP_ID], vec![KEY.to_string()]), "cancel of a ready transfer: the row goes with the removal in one batch");
+    assert_eq!((out.rolled_back(), out.removed()), (vec![OP_ID], vec![KEY.to_string()]), "cancel of a ready transfer: the row goes with the removal in one batch");
     let out = plain.commit();
     assert_eq!((plain.stage(id), out.replies(reply)), (TransferStage::Done, vec![TransferAnswer::Cancelled(true)]));
 
     let mut confirmed = Twin::new();
     confirmed.completing_with_effects();
     let out = confirmed.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 5, result: None, row_id: None });
-    assert!(rolled_back(&out).is_empty(), "a confirmed mutation keeps its row");
+    assert!(out.rolled_back().is_empty(), "a confirmed mutation keeps its row");
 
     let mut sent = Twin::new();
     sent.completing_with_effects();
     let out = sent.mutation_outcome(KEY, OutboxOutcome::Discarded);
-    assert!(rolled_back(&out).is_empty(), "Outbox rolled the operation back, the removal does not repeat it");
+    assert!(out.rolled_back().is_empty(), "Outbox rolled the operation back, the removal does not repeat it");
 }
 
 impl Twin {
