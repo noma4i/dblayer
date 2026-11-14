@@ -197,7 +197,7 @@ pub(in super::super) fn panicked_read() -> Vec<String> {
     let reader: WindowReader = Arc::new(|_| panic!("the read failed"));
     let mut rig = rig_with(MockTransport::new(), Arc::new(MockTransport::new()), Some(reader));
     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), interest(1));
-    pump(&mut rig.det, |det| saw_input(det, "Pin") > 0 && saw_input(det, "TaskFailed") > 0);
+    pump(&mut rig.det, |det| saw_input(det, "TaskFailed") > 0);
     task_failed(&rig.det)
 }
 

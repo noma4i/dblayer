@@ -23,15 +23,17 @@ struct Pages {
     last_page: AtomicUsize,
     response: Mutex<Option<String>>,
     panics: std::sync::atomic::AtomicBool,
+    reached: tokio::sync::Notify,
 }
 
 #[async_trait::async_trait]
 impl FakeTransport for Pages {
     async fn query(&self, request: super::TransportRequest) -> Result<String, DbError> {
         let number = self.count.fetch_add(1, Ordering::SeqCst);
-        assert!(!self.panics.load(Ordering::SeqCst), "the transport failed");
         self.asked.lock().unwrap().push(request.variables_json);
+        self.reached.notify_waiters();
         if self.gated { self.gate.acquire().await.unwrap().forget(); }
+        assert!(!self.panics.load(Ordering::SeqCst), "the transport failed");
         if let Some(response) = self.response.lock().unwrap().clone() { return Ok(response); }
         let has_next = number < self.last_page.load(Ordering::SeqCst);
         Ok(format!(r#"{{"data":{{"feed":{{"nodes":[{{"id":"m{number}","text":"t"}}],"pageInfo":{{"hasNextPage":{has_next},"endCursor":"c{number}"}}}}}}}}"#))
@@ -52,7 +54,7 @@ async fn open(gated: bool) -> (Arc<Database>, Arc<Pages>) {
         stale_time: "5.minutes".into(), empty_stale_time: None, selects_page_info: true, page_size: None, variables: Default::default(), root: None, total_from: None,
     });
     model.relations.push(feed);
-    let transport = Arc::new(Pages { asked: Mutex::new(Vec::new()), gate: Arc::new(Semaphore::new(0)), gated, count: AtomicUsize::new(0), last_page: AtomicUsize::new(1), response: Mutex::new(None), panics: std::sync::atomic::AtomicBool::new(false) });
+    let transport = Arc::new(Pages { asked: Mutex::new(Vec::new()), gate: Arc::new(Semaphore::new(0)), gated, count: AtomicUsize::new(0), last_page: AtomicUsize::new(1), response: Mutex::new(None), panics: std::sync::atomic::AtomicBool::new(false), reached: tokio::sync::Notify::new() });
     let db = Database::open_with_clock(Config { path: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000)).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).await.unwrap();
     db.set_online(true).await.unwrap();
@@ -171,20 +173,25 @@ async fn net_prop_offline_decided_by_owner() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_panic_in_the_window_transport_ends_the_refresh_with_an_error_and_closes_the_database() {
-    let (db, transport) = open(false).await;
+    let (db, transport) = open(true).await;
+    let refreshed = tokio::spawn({ let db = db.clone(); async move { refresh(&db).await } });
+    crate::test_wait::signalled(&transport.reached, "the refresh did not reach the transport", || transport.requests() == 1).await;
     transport.panics.store(true, Ordering::SeqCst);
-    let result = crate::test_wait::within(refresh(&db)).await;
-    assert!(matches!(result, Err(DbError::Runtime { .. } | DbError::Interrupted { .. })), "{result:?}");
+    transport.gate.add_permits(1);
+    let result = crate::test_wait::within(async { refreshed.await.unwrap() }).await;
+    assert!(matches!(result, Err(DbError::Runtime { .. })), "{result:?}");
     crate::test_wait::settled(&db, "Lifecycle did not close after the task panic", || db.life.published().closed).await;
+    assert_eq!(transport.requests(), 1, "the panic leaves the one request that was sent");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_panic_in_the_window_read_ends_the_refresh_with_an_error_and_closes_the_database() {
-    let (db, _transport) = open(false).await;
+    let (db, transport) = open(true).await;
     db.db.panic_reads.store(crate::store::PANIC_WINDOW_READ, Ordering::SeqCst);
     let result = crate::test_wait::within(refresh(&db)).await;
-    assert!(matches!(result, Err(DbError::Closed { .. })), "the panic closes the database, the wait ends Closed (D-263, P-RT-12): {result:?}");
+    assert!(matches!(result, Err(DbError::Runtime { .. })), "the read panic ends the wait with the runtime error of the window (D-469, P-RT-12): {result:?}");
     crate::test_wait::settled(&db, "Lifecycle did not close after the window read panic", || db.life.published().closed).await;
+    assert_eq!(transport.requests(), 0, "no request leaves after the read panic");
 }
 
 #[tokio::test(flavor = "multi_thread")]
