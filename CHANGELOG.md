@@ -7,6 +7,7 @@
 - Give a list value the revision of the commit that changed its rows.
 - Read a row once after its event when a counter or list also shows it.
 - Return the receipt of an accepted write when the session ends before the call returns.
+- Show the loaded state when a window lands while the first read of its stream runs.
 
 ## 6.37.0 - 2026-11-14
 

@@ -521,6 +521,26 @@ async fn data_insert_on_node_reread() {
     bound(database.close_database()).await.unwrap();
 }
 
+/// D-456, P-DLV-32: the first read of a stream took its snapshot before its window landed and answers after the loaded state came: the stream reads again up to the revision of that state and shows the loaded window.
+#[tokio::test(flavor = "multi_thread")]
+async fn first_read_older_than_the_window_landing_shows_the_loaded_window() {
+    let world = World::new("server", "A", true);
+    let (database, _transport) = feed_database_joining(world.clone(), None, None, false, vec![json!({"area":"CHAT","relation":"node"})], (true, false)).await;
+    let held = world.hold_next("ChatList");
+    let gate = Arc::new((crate::test_wait::Flag::default(), crate::test_wait::Flag::default()));
+    *database.db.snapshot_gate.lock().unwrap() = Some(gate.clone());
+    let list = Arc::new(crate::ffi::tape::Rows::default());
+    let _window = database.watch_query(r#"{"model":"Chat","relation":"list","params":{"list":"PRIMARY"}}"#, list.clone());
+    let snapshot = gate.clone();
+    crate::test_wait::within(tokio::task::spawn_blocking(move || snapshot.0.wait_blocking("the first read took its snapshot"))).await.unwrap();
+    held.entered().await;
+    held.release();
+    bound(database.load(database.session_epoch(), "Chat".into(), "list".into(), r#"{"list":"PRIMARY"}"#.into())).await.unwrap();
+    gate.1.set();
+    crate::test_wait::settled_showing(&database, "the stream shows the loaded window", || format!(": phases {:?}", list.1.lock().unwrap().iter().map(|seen| (seen.revision, seen.phase)).collect::<Vec<_>>()), || list.1.lock().unwrap().last().is_some_and(|seen| seen.phase == Some(crate::ffi::ReadPhase::Loaded))).await;
+    bound(database.close_database()).await.unwrap();
+}
+
 /// data_insert_on_node_reread_of_a_row_in_debt (D-397): the first reader of the `node` window of a row in debt lands the row as a node reread, so the row joins the window with `insert_on: :server` with `changed_by via: :node`.
 #[tokio::test(flavor = "multi_thread")]
 async fn data_insert_on_node_reread_of_a_row_in_debt() {

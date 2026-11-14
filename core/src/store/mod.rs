@@ -248,6 +248,8 @@ pub struct Store {
     #[cfg(test)]
     pub(crate) answer_gate: Mutex<Option<Arc<(crate::test_wait::Flag, crate::test_wait::Flag)>>>,
     #[cfg(test)]
+    pub(crate) snapshot_gate: Mutex<Option<Arc<(crate::test_wait::Flag, crate::test_wait::Flag)>>>,
+    #[cfg(test)]
     pub(crate) after_network_check: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     #[cfg(test)]
     pub(crate) after_commit: Mutex<Option<CommitCallback>>,
@@ -291,6 +293,8 @@ impl Store {
             view_gate: Mutex::new(None),
             #[cfg(test)]
             answer_gate: Mutex::new(None),
+            #[cfg(test)]
+            snapshot_gate: Mutex::new(None),
             #[cfg(test)]
             after_network_check: Mutex::new(None),
             #[cfg(test)]

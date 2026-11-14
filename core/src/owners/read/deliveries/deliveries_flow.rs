@@ -106,7 +106,7 @@ impl Delivery {
                 let visible = visible_after(&state);
                 if visible > self.read_seen {
                     self.held_state = Some(state);
-                    if !self.read_inflight || self.read_revision < visible { fx.push(self.new_read(visible)); }
+                    self.catch_up(fx);
                 } else if state != self.window {
                     let before = self.delivered(&self.window);
                     self.window = state.clone();
@@ -116,6 +116,12 @@ impl Delivery {
             }
             _ => {}
         }
+    }
+
+    pub(super) fn catch_up(&mut self, fx: &mut Vec<Emit>) {
+        if self.stage != DeliveryStage::Live || !self.view.kind.reads_rows() { return; }
+        let Some(visible) = self.held_state.as_ref().map(visible_after).filter(|visible| *visible > self.read_seen) else { return };
+        if !self.read_inflight || self.read_revision < visible { fx.push(self.new_read(visible)); }
     }
 
     pub(super) fn events_open(&self) -> bool { self.stage == DeliveryStage::Live && self.view.kind == Kind::Events }

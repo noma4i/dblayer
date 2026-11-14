@@ -67,6 +67,11 @@ impl Snapshots for DbSnapshots {
             ReadMode::Changes { from_revision, from_position, limit } => Some(crate::store::HeldVersion { from: (from_revision, from_position), limit }),
         };
         let (revision, position, relevant, read, swapped) = self.db.read_view(&query, count, revision, after, view.remote.then_some(&view.window), held, view, from).map_err(|error| error.to_string())?;
+        #[cfg(test)]
+        {
+            let gate = self.db.snapshot_gate.lock().unwrap_or_else(|error| error.into_inner()).take();
+            if let Some(gate) = gate { gate.0.set(); gate.1.wait_blocking("the test released the read after its snapshot"); }
+        }
         let shown: Vec<String> = match &read {
             crate::store::ViewRead::Rows(rows, _) => rows.iter().map(|(id, _, _)| id.clone()).collect(),
             crate::store::ViewRead::Changes { keys, .. } => keys.iter().map(|(id, _)| id.clone()).collect(),

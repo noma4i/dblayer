@@ -358,6 +358,7 @@ impl Delivery {
             }
             _ => {}
         }
+        self.catch_up(fx);
     }
 
     pub(super) fn same_rows(&mut self, read: i64, fx: &mut Vec<Emit>) {
