@@ -23,7 +23,7 @@ pub(crate) fn committed_at(batch: BatchId, revision: i64, tables: &[&str]) -> Co
 }
 
 /// The typed batches behind the `Commit` sends of `emitted`: the last ones the captured Store received, in the order of the sends.
-pub(crate) fn sent_batches<E>(emitted: &[Emitted<E>], stored: &Log<StoreBatch>) -> Vec<StoreBatch> {
+pub(crate) fn sent_batches<E, I>(emitted: &[Emitted<E, I>], stored: &Log<StoreBatch>) -> Vec<StoreBatch> {
     let sent = emitted.iter().filter(|entry| matches!(entry, Emitted::Send { input, .. } if input.starts_with("Commit("))).count();
     let all = snapshot(stored);
     all[all.len() - sent..].to_vec()
@@ -114,12 +114,12 @@ impl StateOwner for Ender {
     fn closing() -> SourceInput { SourceInput::Idle }
 }
 
-/// What an owner gave out in a step, in the order of the effects. `Send` and `Schedule` keep the `Debug` form of their input.
+/// What an owner gave out in a step, in the order of the effects. `Send` keeps the `Debug` form of its input, `Schedule` the input of the owner.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Emitted<E> {
+pub(crate) enum Emitted<E, I> {
     Run(E),
     Send { to: usize, input: String },
-    Schedule { id: ScheduleId, after: Duration, input: String },
+    Schedule { id: ScheduleId, after: Duration, input: I },
     Cancel(ScheduleId),
     Broadcast(Control),
 }
@@ -130,13 +130,14 @@ pub(crate) struct Spy<O: StateOwner>(PhantomData<fn() -> O>);
 
 pub(crate) struct SpyState<O: StateOwner> {
     pub inner: O::State,
-    pub seen: Log<Emitted<O::Effect>>,
+    pub seen: Log<Emitted<O::Effect, O::Input>>,
     pub store_batches: Log<StoreBatch>,
 }
 
 impl<O: StateOwner> StateOwner for Spy<O>
 where
     O::Effect: Clone,
+    O::Input: Clone,
 {
     const EPOCHED: bool = O::EPOCHED;
 
@@ -162,15 +163,15 @@ where
                     Effect::Send(outbound)
                 }
                 Effect::Schedule { id, after, input } => {
-                    seen.push(Emitted::Schedule { id, after, input: format!("{input:?}") });
+                    seen.push(Emitted::Schedule { id, after, input: input.clone() });
                     Effect::Schedule { id, after, input }
                 }
                 Effect::ScheduleAt { id, at, input } => {
-                    seen.push(Emitted::Schedule { id, after: std::time::Duration::from_millis(at.0), input: format!("{input:?}") });
+                    seen.push(Emitted::Schedule { id, after: std::time::Duration::from_millis(at.0), input: input.clone() });
                     Effect::ScheduleAt { id, at, input }
                 }
                 Effect::Backoff { id, policy, attempt, input } => {
-                    seen.push(Emitted::Schedule { id, after: policy.delay_seeded(attempt, 0), input: format!("{input:?}") });
+                    seen.push(Emitted::Schedule { id, after: policy.delay_seeded(attempt, 0), input: input.clone() });
                     Effect::Backoff { id, policy, attempt, input }
                 }
                 Effect::Cancel(id) => {
@@ -194,13 +195,14 @@ where
 }
 
 impl<O: StateOwner> SpyState<O> {
-    pub fn new(inner: O::State, seen: &Log<Emitted<O::Effect>>) -> Self { Self { inner, seen: seen.clone(), store_batches: new_log() } }
+    pub fn new(inner: O::State, seen: &Log<Emitted<O::Effect, O::Input>>) -> Self { Self { inner, seen: seen.clone(), store_batches: new_log() } }
 }
 
 /// The address of `O` for the slot of a `Spy<O>`.
 pub(crate) fn as_owner<O: StateOwner>(spy: Address<Spy<O>>) -> Address<O>
 where
     O::Effect: Clone,
+    O::Input: Clone,
 {
     Address::new(spy.index())
 }

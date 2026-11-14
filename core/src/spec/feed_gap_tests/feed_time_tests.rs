@@ -61,7 +61,7 @@ impl Drive {
         }
         let emitted = take(&twin.log);
         let pings = emitted.iter().filter(|effect| matches!(effect, Emitted::Run(FeedEffect::Seal { frame: Outgoing::Ping { .. }, .. }))).count();
-        let pongs = emitted.iter().filter(|effect| matches!(effect, Emitted::Schedule { input, .. } if input.starts_with("PongDeadline"))).count();
+        let pongs = emitted.iter().filter(|effect| matches!(effect, Emitted::Schedule { input: FeedInput::PongDeadline { .. }, .. })).count();
         if pings > 0 {
             self.ping_counter = before;
         }
@@ -108,7 +108,7 @@ fn debounce_from_step_time() {
     }
     let scheduled = take(&drive.twin.log);
     let debounce = std::time::Duration::from_millis(DEBOUNCE_MS);
-    assert_eq!(scheduled.iter().filter(|effect| matches!(effect, Emitted::Schedule { after, input, .. } if *after == debounce && input.starts_with("Tick"))).count(), 1, "the landing of the batch is ordered after the debounce: {scheduled:?}");
+    assert_eq!(scheduled.iter().filter(|effect| matches!(effect, Emitted::Schedule { after, input: FeedInput::Tick, .. } if *after == debounce)).count(), 1, "the landing of the batch is ordered after the debounce: {scheduled:?}");
     let landed = |log: &Spied| take(log).iter().filter(|effect| matches!(effect, Emitted::Send { to: STORE, .. })).count();
     drive.twin.det.tick(Time(at + DEBOUNCE_MS - 1));
     drive.twin.run();

@@ -32,7 +32,7 @@ fn channels() -> BTreeMap<String, Vec<String>> {
 struct Rig {
     det: DetScheduler,
     addr: Address<Spy<Feed>>,
-    log: Log<Emitted<FeedEffect>>,
+    log: Log<Emitted<FeedEffect, FeedInput>>,
     batches: Vec<u64>,
     subscribes: Vec<Outgoing>,
     store_batches: Log<crate::owners::store::StoreBatch>,
@@ -75,7 +75,7 @@ impl Rig {
                 }
                 Emitted::Run(FeedEffect::Seal { frame: Outgoing::Unsubscribe { channel }, .. }) => words.push(format!("unsubscribe:{channel}")),
                 Emitted::Run(FeedEffect::Close { .. }) => words.push("close".to_string()),
-                Emitted::Schedule { input, .. } if input.starts_with("ChannelResubscribe") => words.push("schedule:channel".to_string()),
+                Emitted::Schedule { input: FeedInput::ChannelResubscribe { .. }, .. } => words.push("schedule:channel".to_string()),
                 Emitted::Send { to: STORE, input } => {
                     self.batches.push(number_after(&input, "id: ").expect("the batch id"));
                     words.push("commit".to_string());
@@ -356,7 +356,7 @@ fn feed_chan_ended_retryable() {
         let emitted = take(&timed.log);
         assert_eq!(emitted.iter().filter(|entry| matches!(entry, Emitted::Send { to: STORE, .. })).count(), 1, "a retryable end commits the stale debt once");
         assert_eq!(timed.state().confirmed(), ["A"], "a retryable cable error leaves the channel like a plain end");
-        let delays: Vec<_> = emitted.iter().filter_map(|entry| match entry { Emitted::Schedule { after, input, .. } if input.starts_with("ChannelResubscribe") => Some(*after), _ => None }).collect();
+        let delays: Vec<_> = emitted.iter().filter_map(|entry| match entry { Emitted::Schedule { after, input: FeedInput::ChannelResubscribe { .. }, .. } => Some(*after), _ => None }).collect();
         assert_eq!(delays, vec![crate::runtime::RetryPolicy::Cable.delay_seeded(attempt, 0)]);
         timed.det.post(timed.addr, EpochStamp::Epoch(EPOCH), FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() });
         timed.det.run_until_quiet(10_000).unwrap();

@@ -326,7 +326,7 @@ fn feed_drain_vs_cancel_orders() {
         let cancels = twin.history.iter().filter(|entry| matches!(entry, Emitted::Run(FeedEffect::Cancel { .. }))).count();
         let drained = twin.history.iter().filter(|entry| matches!(entry, Emitted::Run(FeedEffect::Drained(_)))).count();
         let timer_cancels = twin.history.iter().filter(|entry| matches!(entry, Emitted::Cancel(id) if f::is_drain_schedule(*id))).count();
-        let schedules = twin.history.iter().filter(|entry| matches!(entry, Emitted::Schedule { input, .. } if input.starts_with("Drain"))).count();
+        let schedules = twin.history.iter().filter(|entry| matches!(entry, Emitted::Schedule { input: FeedInput::Drain { .. }, .. })).count();
         let first_is_tick = order[0] == Input::Drain { own: true };
         assert_eq!((cancels, drained, schedules, timer_cancels), (1, usize::from(*close == Input::Closing), 1, usize::from(!first_is_tick)), "close {close:?} order {order:?}");
     }

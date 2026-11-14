@@ -23,7 +23,7 @@ pub(super) fn live() -> Twin {
     twin
 }
 
-fn reads(entries: Vec<Emitted<DeliveryEffect>>) -> Vec<i64> {
+fn reads(entries: Vec<Emitted<DeliveryEffect, DeliveryInput>>) -> Vec<i64> {
     entries.into_iter().filter_map(|entry| match entry {
         Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Read { revision, .. }, .. }) => Some(revision),
         _ => None,

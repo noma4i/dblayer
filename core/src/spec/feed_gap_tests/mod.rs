@@ -29,7 +29,7 @@ const CHAT: u64 = 1;
 const POST: u64 = 2;
 const WINDOW: u64 = 11;
 
-type Spied = Log<Emitted<FeedEffect>>;
+type Spied = Log<Emitted<FeedEffect, FeedInput>>;
 
 fn peers() -> FeedPeers { FeedPeers { store: Address::<StoreWriter>::new(STORE), windows: Address::<Windows>::new(WINDOWS), deliveries: Address::<Deliveries>::new(DELIVERIES) } }
 
@@ -85,7 +85,7 @@ struct Twin {
     snapshots: usize,
     reread: Reread,
     /// Everything the owner gave out, in order, across the steps.
-    history: Vec<Emitted<FeedEffect>>,
+    history: Vec<Emitted<FeedEffect, FeedInput>>,
     /// Everything the streams saw, in order, across the steps.
     shown: Vec<Obs>,
     /// What the streams saw in the last step.
@@ -265,7 +265,7 @@ impl Twin {
     }
 
     /// Shows the owner effects as the row tests write them: `Stale` per model, `Joined` and `ModelReady` per stream, the events as what a stream sees.
-    fn split(&mut self, emitted: Vec<Emitted<FeedEffect>>) -> (Vec<Effect>, Vec<Obs>) {
+    fn split(&mut self, emitted: Vec<Emitted<FeedEffect, FeedInput>>) -> (Vec<Effect>, Vec<Obs>) {
         let (mut modelled, mut seen) = (Vec::new(), Vec::new());
         let mut batches = sent_batches(&emitted, &self.stored).into_iter();
         let stale_sends = emitted.iter().filter(|entry| matches!(entry, Emitted::Send { to: WINDOWS, input } if input.starts_with("Stale {"))).count();
@@ -288,19 +288,19 @@ impl Twin {
                 Emitted::Run(FeedEffect::SnapshotRequest { .. }) => self.snapshots += 1,
                 Emitted::Run(FeedEffect::Drained(_)) => modelled.push(Effect::Drained),
                 Emitted::Run(FeedEffect::Census { .. }) => {}
-                Emitted::Schedule { after, input, .. } if input.starts_with("Tick") => {
+                Emitted::Schedule { after, input: FeedInput::Tick, .. } => {
                     assert_eq!(after, std::time::Duration::from_millis(self.debounce_ms), "the debounce is the delay of the Schedule");
                     modelled.push(Effect::ScheduleTick);
                 }
-                Emitted::Schedule { after, input, .. } if input.starts_with("HandshakeDeadline") => {
+                Emitted::Schedule { after, input: input @ FeedInput::HandshakeDeadline { .. }, .. } => {
                     assert_eq!(after, f::HANDSHAKE_DEADLINE, "the deadline of a handshake");
-                    assert_eq!(modelled.last(), Some(&Effect::Connect), "a deadline is set by a Connect: {input}");
+                    assert_eq!(modelled.last(), Some(&Effect::Connect), "a deadline is set by a Connect: {input:?}");
                 }
-                Emitted::Schedule { after, input, .. } if input.starts_with("Drain") => {
+                Emitted::Schedule { after, input: FeedInput::Drain { .. }, .. } => {
                     assert_eq!(after, crate::owners::read::CLOSE_DRAIN, "the drain is CLOSE_DRAIN");
                     modelled.push(Effect::ScheduleDrain);
                 }
-                Emitted::Schedule { input, .. } if input.starts_with("Resubscribe") => modelled.push(Effect::ScheduleResubscribe),
+                Emitted::Schedule { input: FeedInput::Resubscribe { .. }, .. } => modelled.push(Effect::ScheduleResubscribe),
                 Emitted::Send { to: STORE, .. } => {
                     let batch = batches.next().expect("a batch for every Commit");
                     assert_eq!(batch.author, BatchAuthor::Feed, "a batch of Feed names its author");

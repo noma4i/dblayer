@@ -57,7 +57,7 @@ pub(super) struct Out {
     pub outbox: Vec<OutboxInput>,
     pub rounds: Vec<RoundsInput>,
     pub timers: usize,
-    pub schedules: Vec<(std::time::Duration, String)>,
+    pub schedules: Vec<(std::time::Duration, TransferInput)>,
     /// The ids of the timers set, in the order of `schedules`.
     pub timer_ids: Vec<crate::runtime::ScheduleId>,
     pub cancels: usize,
@@ -208,7 +208,7 @@ pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
 
 pub(super) struct Twin {
     pub det: DetScheduler,
-    log: Log<Emitted<Run>>,
+    log: Log<Emitted<Run, TransferInput>>,
     store: Log<StoreInput>,
     outbox: Log<OutboxInput>,
     rounds: Log<RoundsInput>,
@@ -220,7 +220,7 @@ pub(super) struct Twin {
     /// The batches of shown values wait for the test to answer them.
     pub hold_shown: bool,
     /// What the real Outbox of `with_outbox` gave out; empty when Outbox is a peer that keeps its inputs.
-    outbox_fx: Log<Emitted<OutboxEffect>>,
+    outbox_fx: Log<Emitted<OutboxEffect, OutboxInput>>,
     /// The records of outcomes the Store double holds: the first record of an id and a cycle stays.
     records: Vec<(u64, u64, OutboxOutcome)>,
 }

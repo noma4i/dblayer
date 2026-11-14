@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use super::delivery_words::{self as r, rows, Cause, Effect, Fetch, Input, Kind, Phase, Pulled, Val, Ws, insert, remove, Ed};
 use crate::owners::contract::{Committed, Models, WindowPhase, WindowState};
-use crate::owners::read::deliveries::{self as d, DeliveryEffect, DeliveryPeers, Deliveries, PullAnswer, StreamEffect};
+use crate::owners::read::deliveries::{self as d, DeliveryEffect, DeliveryInput, DeliveryPeers, Deliveries, PullAnswer, StreamEffect};
 use crate::owners::read::feed::Feed;
 use crate::owners::read::windows::{WindowKey, Windows, WindowsInput};
 use crate::spec::support::{as_owner, new_log, Captured, snapshot, take, Discard, Emitted, Ender, EnderState, Log, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState};
@@ -26,7 +26,7 @@ const EPOCH: u64 = 1;
 const WINDOWS: usize = 0;
 const FEED: usize = 1;
 
-type Spied = Log<Emitted<DeliveryEffect>>;
+type Spied = Log<Emitted<DeliveryEffect, DeliveryInput>>;
 
 fn peers() -> DeliveryPeers { DeliveryPeers { windows: Address::<Windows>::new(WINDOWS), feed: Address::<Feed>::new(FEED) } }
 
@@ -159,7 +159,7 @@ impl Twin {
 
     fn read_id(&self) -> u64 { self.state().read_id(STREAM) }
 
-    fn modelled(&self, entries: Vec<Emitted<DeliveryEffect>>) -> Vec<Effect> {
+    fn modelled(&self, entries: Vec<Emitted<DeliveryEffect, DeliveryInput>>) -> Vec<Effect> {
         let mut modelled = Vec::new();
         let load_sends = entries.iter().filter(|entry| matches!(entry, Emitted::Send { to: WINDOWS, input } if input.starts_with("Load"))).count();
         let forces = snapshot(&self.windows).into_iter().filter_map(|input| match input { WindowsInput::Load { force, .. } | WindowsInput::LoadNoWait { force, .. } => Some(force), _ => None }).collect::<Vec<_>>();

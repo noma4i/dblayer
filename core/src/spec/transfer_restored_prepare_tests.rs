@@ -26,9 +26,9 @@ fn preparing_row(start: Start) -> crate::owners::write::transfer::StoredTransfer
 fn answers_of(out: &Out, files: &mut PrepareFiles, pool: &mut Vec<Pending>) {
     for run in &out.runs { files.effect(run, pool); }
     for (_, input) in &out.schedules {
-        match input.as_str() {
-            "PrepareSlotFreed" => pool.push(Pending::Input(TransferInput::PrepareSlotFreed)),
-            "SlotFreed" => pool.push(Pending::Input(TransferInput::SlotFreed)),
+        match input {
+            TransferInput::PrepareSlotFreed => pool.push(Pending::Input(TransferInput::PrepareSlotFreed)),
+            TransferInput::SlotFreed => pool.push(Pending::Input(TransferInput::SlotFreed)),
             _ => {}
         }
     }

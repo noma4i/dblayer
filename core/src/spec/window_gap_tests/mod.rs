@@ -17,7 +17,7 @@ use crate::spec::support::{new_log, sent_batches, snapshot, take, Discard, Emitt
 use crate::owners::read::deliveries::Deliveries;
 use crate::owners::contract::BatchAuthor;
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter};
-use crate::owners::read::windows::{self as w, AnswerPage, StaleKeys, WindowEffect, WindowKey, WindowKind, WindowOutcome, WindowStage, Windows, WindowsEffect, WindowsPeers};
+use crate::owners::read::windows::{self as w, AnswerPage, StaleKeys, WindowEffect, WindowKey, WindowKind, WindowOutcome, WindowStage, Windows, WindowsEffect, WindowsInput, WindowsPeers};
 use crate::runtime::{explore, Address, Back, Cause as Ended, DetScheduler, Effect as RuntimeEffect, EffectRunner, Effects, EpochStamp, Limits, Outbound, StateOwner, Time};
 use crate::spec::support::committed_at;
 
@@ -29,7 +29,7 @@ const WINDOWS: usize = 2;
 /// The id of the stream that watches the window in the tests: a call gets a smaller id.
 const STREAM: u32 = 100;
 
-type Spied = Log<Emitted<WindowsEffect>>;
+type Spied = Log<Emitted<WindowsEffect, WindowsInput>>;
 
 fn peers() -> WindowsPeers { WindowsPeers { store: Address::<StoreWriter>::new(STORE), deliveries: Address::<Deliveries>::new(DELIVERIES) } }
 
@@ -118,7 +118,7 @@ impl EffectRunner<Spy<Windows>> for Reads {
     }
 }
 
-fn runs(emitted: Vec<Emitted<WindowsEffect>>) -> Vec<WindowsEffect> { emitted.into_iter().filter_map(|entry| if let Emitted::Run(effect) = entry { Some(effect) } else { None }).filter(|effect| !matches!(effect, WindowsEffect::ReadWindow { .. })).collect() }
+fn runs(emitted: Vec<Emitted<WindowsEffect, WindowsInput>>) -> Vec<WindowsEffect> { emitted.into_iter().filter_map(|entry| if let Emitted::Run(effect) = entry { Some(effect) } else { None }).filter(|effect| !matches!(effect, WindowsEffect::ReadWindow { .. })).collect() }
 
 fn inner(det: &DetScheduler, address: Address<Spy<Windows>>) -> &w::WindowsState { &det.state(address).expect("the owner state").inner }
 
@@ -374,7 +374,7 @@ impl Twin {
     }
 
     /// One `WindowState` effect stands for the sends to every stream of the interest.
-    fn split(&self, emitted: Vec<Emitted<WindowsEffect>>) -> (Vec<Effect>, Vec<(u32, Result3)>) {
+    fn split(&self, emitted: Vec<Emitted<WindowsEffect, WindowsInput>>) -> (Vec<Effect>, Vec<(u32, Result3)>) {
         let (mut modelled, mut outcomes) = (Vec::new(), Vec::new());
         let mut batches = sent_batches(&emitted, &self.stored).into_iter();
         for entry in emitted {
@@ -396,7 +396,7 @@ impl Twin {
                 }
                 Emitted::Send { to: DELIVERIES, .. } if modelled.last() == Some(&Effect::WindowState) => {}
                 Emitted::Send { to: DELIVERIES, .. } => modelled.push(Effect::WindowState),
-                Emitted::Schedule { id, input, .. } if input.starts_with("RetryDue") => modelled.push(Effect::ScheduleRetry { request: id.0 }),
+                Emitted::Schedule { id, input: WindowsInput::RetryDue { .. }, .. } => modelled.push(Effect::ScheduleRetry { request: id.0 }),
                 Emitted::Send { .. } | Emitted::Schedule { .. } | Emitted::Cancel(_) | Emitted::Broadcast(_) => {}
             }
         }

@@ -6,7 +6,7 @@ use crate::spec::support::committed_at;
 
 // Orders of the inputs of a window (P-WIN-*), second part: freshness, opening, power saving, media, epoch, keys, reconnect.
 
-fn requests_of(emitted: Vec<Emitted<WindowsEffect>>) -> Vec<(WindowKey, u64, u32, u32, Option<String>)> {
+fn requests_of(emitted: Vec<Emitted<WindowsEffect, WindowsInput>>) -> Vec<(WindowKey, u64, u32, u32, Option<String>)> {
     runs(emitted).into_iter().filter_map(|effect| if let WindowsEffect::Window { key, effect: WindowEffect::Request { request, attempt, page, cursor, .. } } = effect { Some((key, request, attempt, page, cursor)) } else { None }).collect()
 }
 
