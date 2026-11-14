@@ -221,6 +221,26 @@ impl<O: StateOwner> StateOwner for Sink<O> {
     fn closing() -> O::Input { O::closing() }
 }
 
+/// A peer of the owner tests that keeps the inputs it received as typed values.
+pub(crate) struct Captured<O: StateOwner>(PhantomData<fn() -> O>);
+
+impl<O: StateOwner> StateOwner for Captured<O> {
+    const EPOCHED: bool = false;
+
+    type State = Log<O::Input>;
+    type Input = O::Input;
+    type Effect = NoEffect;
+
+    fn step(state: &mut Self::State, input: O::Input, _now: crate::runtime::Time) -> Effects<Self> {
+        state.lock().unwrap_or_else(PoisonError::into_inner).push(input);
+        Vec::new()
+    }
+
+    fn epoch_ended(epoch: Epoch, cause: Cause) -> O::Input { O::epoch_ended(epoch, cause) }
+
+    fn closing() -> O::Input { O::closing() }
+}
+
 /// The Store of the owner tests that keeps the batches as typed values.
 pub(crate) struct CapturedStore;
 

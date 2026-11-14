@@ -10,9 +10,9 @@ use super::feed_words::{Counter, Effect, Input, Kind, Obs, Reject, Reread, To};
 use crate::owners::contract::{BatchId, Committed, ConnectionId, EpochEnded, EpochStarted, Online, RejectReason, Rejected};
 use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
 use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, Frame, FramedEvent, Outgoing, Protocol, ProtocolReason};
-use crate::owners::read::windows::{StaleKeys, WindowKey, Windows};
+use crate::owners::read::windows::{StaleCause, StaleKeys, WindowKey, Windows, WindowsInput};
 use crate::owners::store::{StoreBatch, StoreOp, StoreWriter};
-use crate::spec::support::{new_log, CapturedStore, number_after, snapshot, take, text_after, Discard, Emitted, Log, NoEffect, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
+use crate::spec::support::{new_log, Captured, CapturedStore, number_after, snapshot, take, text_after, Discard, Emitted, Log, NoEffect, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
 use crate::runtime::{explore, Address, Back, Cause as Ended, DetScheduler, Effects, EffectRunner, Epoch, EpochStamp, Limits, StateOwner, Time};
 
 const EPOCH: u64 = 1;
@@ -60,9 +60,9 @@ fn framed(model: &str, payload: &str, reread: &Reread, refused: bool) -> FramedE
     FramedEvent { model: model.into(), payload: payload.into(), reread, refused }
 }
 
-fn add_feed(det: &mut DetScheduler, log: &Spied, stored: &Log<StoreBatch>, state: f::FeedState, runner: impl EffectRunner<Spy<Feed>>) -> Address<Spy<Feed>> {
+fn add_feed(det: &mut DetScheduler, log: &Spied, stored: &Log<StoreBatch>, staled: &Log<WindowsInput>, state: f::FeedState, runner: impl EffectRunner<Spy<Feed>>) -> Address<Spy<Feed>> {
     det.add::<CapturedStore>("store", stored.clone(), Discard);
-    det.add::<Sink<Windows>>("windows", new_log(), Discard);
+    det.add::<Captured<Windows>>("windows", staled.clone(), Discard);
     det.add::<Sink<Deliveries>>("deliveries", new_log(), Discard);
     det.add::<Spy<Feed>>("feed", SpyState::new(state, log), runner)
 }
@@ -73,6 +73,8 @@ struct Twin {
     addr: Address<Spy<Feed>>,
     log: Spied,
     stored: Log<StoreBatch>,
+    /// What the Windows received, typed.
+    staled: Log<WindowsInput>,
     debounce_ms: u64,
     batches: VecDeque<BatchId>,
     used: Vec<BatchId>,
@@ -99,10 +101,11 @@ impl Twin {
         let mut det = DetScheduler::new(11);
         let log = new_log();
         let stored = new_log();
+        let staled = new_log();
         let ms = if debounce { DEBOUNCE_MS } else { 0 };
-        let addr = add_feed(&mut det, &log, &stored, f::FeedState::new(EPOCH, peers(), debounces(ms), channels()), Discard);
+        let addr = add_feed(&mut det, &log, &stored, &staled, f::FeedState::new(EPOCH, peers(), debounces(ms), channels()), Discard);
         det.start_epoch(EPOCH);
-        let mut twin = Self { det, addr, log, stored, debounce_ms: ms, batches: VecDeque::new(), used: Vec::new(), sealed: Vec::new(), snapshots: 0, reread: Reread::None, history: Vec::new(), shown: Vec::new(), seen: Vec::new() };
+        let mut twin = Self { det, addr, log, stored, staled, debounce_ms: ms, batches: VecDeque::new(), used: Vec::new(), sealed: Vec::new(), snapshots: 0, reread: Reread::None, history: Vec::new(), shown: Vec::new(), seen: Vec::new() };
         if let Some(on) = online {
             twin.post(FeedInput::Online { online: Online(on), online_seq: u64::from(on) });
         }

@@ -230,7 +230,7 @@ fn feed_live_rejected_session() {
     }
 }
 
-/// P-FEED-37: an event the Store refused alone is lost at its own position, the events around it reach the stream.
+/// P-FEED-37, D-457, D-454: an event the Store refused alone is lost at its own position, the events around it reach the stream, and every `Stale` of the batch carries the revision of its commit.
 #[test]
 fn feed_refused_event_is_lost_alone() {
     let mut twin = live();
@@ -238,7 +238,10 @@ fn feed_refused_event_is_lost_alone() {
         twin.step(chat(payload));
     }
     twin.step(Input::Tick);
+    take(&twin.staled);
     assert_eq!(twin.step(Input::CommittedRefused(vec![1])), [Effect::Commit, Effect::Stale { model: "Chat".into(), all: true }]);
+    let staled = take(&twin.staled);
+    assert!(!staled.is_empty() && staled.iter().all(|input| matches!(input, WindowsInput::Stale { cause: StaleCause::Change { revision: Some(1) }, .. })), "every Stale of the committed batch names its revision: {} sent", staled.len());
     assert_eq!(twin.shown, [Obs::Event { stream: CHAT, position: 1, payload: "c1".into() }, Obs::Lost { stream: CHAT, first: 2, last: 2 }, Obs::Event { stream: CHAT, position: 3, payload: "c3".into() }]);
 }
 
@@ -594,18 +597,4 @@ fn feed_inputs_that_do_not_apply_change_nothing() {
         }
         assert_eq!(twin.state().mode(), mode, "{name}");
     }
-}
-
-/// D-457, D-454: the `Stale` of an event the Store refused inside a committed batch carries the revision of that commit, so a window load pinned after the commit covers it and no second request goes out.
-#[test]
-fn feed_refused_event_stale_carries_the_commit_revision() {
-    let mut twin = live();
-    for payload in ["c1", "c2"] {
-        twin.step(chat(payload));
-    }
-    twin.step(Input::Tick);
-    let before = twin.history.len();
-    twin.step(Input::CommittedRefused(vec![1]));
-    let stale: Vec<&String> = twin.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { input, .. } if input.starts_with("Stale") => Some(input), _ => None }).collect();
-    assert!(!stale.is_empty() && stale.iter().all(|input| input.contains("Change { revision: Some(1) }")), "every Stale of the committed batch names its revision: {stale:?}");
 }
