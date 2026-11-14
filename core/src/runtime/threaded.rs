@@ -174,22 +174,28 @@ pub struct Handle {
 impl Handle {
     fn router(&self) -> Option<&Arc<Router>> { self.router.get() }
 
+    fn started(&self) -> Option<&Arc<Router>> {
+        let router = self.router();
+        assert!(router.is_some(), "the runtime is not started");
+        router
+    }
+
     pub fn post<O: StateOwner>(&self, to: Address<O>, stamp: EpochStamp, input: O::Input) {
-        if let Some(router) = self.router() {
+        if let Some(router) = self.started() {
             router.push(to.index, Command::Deliver(stamp, Box::new(input)));
         }
     }
 
     pub fn start_epoch(&self, epoch: Epoch) {
-        if let Some(router) = self.router() { router.broadcast(Control::EpochStarted(epoch)); }
+        if let Some(router) = self.started() { router.broadcast(Control::EpochStarted(epoch)); }
     }
 
     pub fn end_epoch(&self, epoch: Epoch, cause: Cause) {
-        if let Some(router) = self.router() { router.broadcast(Control::EpochEnded(epoch, cause)); }
+        if let Some(router) = self.started() { router.broadcast(Control::EpochEnded(epoch, cause)); }
     }
 
     pub fn close(&self) {
-        if let Some(router) = self.router() { router.broadcast(Control::Closing); }
+        if let Some(router) = self.started() { router.broadcast(Control::Closing); }
     }
 
     #[cfg(test)]

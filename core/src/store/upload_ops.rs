@@ -13,20 +13,20 @@ fn key_parts(key: &str) -> Result<[&str; 3], StoreError> {
     }
 }
 
-pub(super) fn put_intent_origin(connection: &Connection, op_id: u64, origin: &IntentOrigin) -> Result<(), StoreError> {
+pub(super) fn put_intent_origin(connection: &Connection, op_id: u64, origin: &IntentOrigin) -> Result<bool, StoreError> {
     let id = i64::try_from(op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
     let (kind, transfer, group, members) = match origin {
         IntentOrigin::Api => ("api", None, None, &[][..]),
         IntentOrigin::Transfer { transfer_id } => ("transfer", Some(i64::try_from(*transfer_id).map_err(|_| StoreError::Constraint("transfer id is too large".into()))?), None, &[][..]),
         IntentOrigin::TransferGroup { batch_id, transfer_ids } => ("transfer_group", None, Some(i64::try_from(*batch_id).map_err(|_| StoreError::Constraint("batch id is too large".into()))?), transfer_ids.as_slice()),
     };
-    connection.execute(include_str!("sql/upload_ops/put_intent_origin_update_op.sql"), params![id, kind, transfer, group])?;
+    if connection.execute(include_str!("sql/upload_ops/put_intent_origin_update_op.sql"), params![id, kind, transfer, group])? == 0 { return Ok(false); }
     connection.execute(include_str!("sql/upload_ops/put_intent_origin_delete_op_transfer.sql"), [id])?;
     for (position, transfer_id) in members.iter().enumerate() {
         let transfer_id = i64::try_from(*transfer_id).map_err(|_| StoreError::Constraint("transfer id is too large".into()))?;
         connection.execute(include_str!("sql/upload_ops/put_intent_origin_insert_op_transfer.sql"), params![id, position as i64, transfer_id])?;
     }
-    Ok(())
+    Ok(true)
 }
 
 fn error_columns(error: Option<&str>) -> (Option<String>, Option<&str>) {

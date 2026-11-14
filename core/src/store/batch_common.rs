@@ -61,7 +61,10 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
         StoreOp::Cause { op_id, cause } => {
             let seq = i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
             let (kind, limit) = cause.and_then(|cause| cause.cause_columns()).map_or((None, None), |(kind, limit)| (Some(kind), Some(limit)));
-            writer.connection.execute(include_str!("sql/batch_common/op_cause.sql"), rusqlite::params![seq, kind, limit])?;
+            let written = writer.connection.execute(include_str!("sql/batch_common/op_cause.sql"), rusqlite::params![seq, kind, limit])?;
+            let mut result = crate::store::CommitResult::noop(uuid::Uuid::new_v4());
+            super::apply::acknowledge(writer.connection, &mut result, seq, written)?;
+            results.push(result);
         }
         StoreOp::Requeue { op_id } => {
             let seq = i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
@@ -75,15 +78,15 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
         }
         StoreOp::Planned { effects } => results.push(super::intent_write::planned(writer, effects)?),
         StoreOp::IntentOrigin { op_id, origin } => {
-            super::upload_ops::put_intent_origin(writer.connection, *op_id, origin)?;
+            let written = super::upload_ops::put_intent_origin(writer.connection, *op_id, origin)?;
             let mut result = crate::store::CommitResult::noop(uuid::Uuid::new_v4());
-            result.operations.insert(i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?);
+            super::apply::acknowledge(writer.connection, &mut result, i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?, usize::from(written))?;
             results.push(result);
         }
         StoreOp::Show { .. } => {}
         StoreOp::Intent { op_id, model, row_id, action, payload, effects, origin, attempts, cycle_id, created_at } => {
             results.push(super::intent_write::intent(writer, *op_id, (model, row_id, action), payload, effects, (false, *created_at))?);
-            super::upload_ops::put_intent_origin(writer.connection, *op_id, origin)?;
+            if !super::upload_ops::put_intent_origin(writer.connection, *op_id, origin)? { return Err(StoreError::Constraint("the intent was not written".into())); }
             let seq = i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
             let cycle_id = i64::try_from(*cycle_id).map_err(|_| StoreError::Constraint("cycle id is too large".into()))?;
             if writer.connection.execute(include_str!("sql/batch_common/intent_attempts.sql"), rusqlite::params![seq, i64::from(*attempts), cycle_id])? != 1 { return Err(StoreError::Constraint("the intent was not written".into())); }

@@ -49,26 +49,17 @@ pub(super) fn apply_transitions(
                     &format!(include_str!("../sql/apply_transitions/attempt_operation.sql"), operation_guard(OperationEvent::Attempt)?),
                     params![seq, attempts, cycle_id, cause.and_then(|cause| cause.cause_columns().map(|(kind, _)| kind)), cause.and_then(|cause| cause.cause_columns().map(|(_, limit)| limit))],
                 )?;
-                if written > 0 {
-                    result.operations.insert(*seq);
-                    wrote = true;
-                }
+                wrote |= acknowledge(connection, result, *seq, written)?;
             }
             OperationTransition::Sending { seq } => {
                 synced.extend(op_keys_of(connection, *seq)?);
                 let written = connection.execute(&format!(include_str!("../sql/apply_transitions/sending_operation.sql"), operation_guard(OperationEvent::Attempt)?), params![seq])?;
-                if written > 0 {
-                    result.operations.insert(*seq);
-                    wrote = true;
-                }
+                wrote |= acknowledge(connection, result, *seq, written)?;
             }
             OperationTransition::Requeue { seq } => {
                 synced.extend(op_keys_of(connection, *seq)?);
                 let written = connection.execute(&format!(include_str!("../sql/apply_transitions/requeue_operation.sql"), operation_guard(OperationEvent::Requeue)?), params![seq])?;
-                if written > 0 {
-                    result.operations.insert(*seq);
-                    wrote = true;
-                }
+                wrote |= acknowledge(connection, result, *seq, written)?;
             }
             OperationTransition::Retry { seq } => {
                 synced.extend(op_keys_of(connection, *seq)?);
@@ -101,6 +92,17 @@ pub(super) fn apply_transitions(
         }
     }
     Ok(wrote)
+}
+
+pub(crate) fn acknowledge(connection: &Connection, result: &mut CommitResult, seq: i64, written: usize) -> Result<bool, StoreError> {
+    if written > 0 {
+        result.operations.insert(seq);
+        return Ok(true);
+    }
+    if connection.query_row(include_str!("../sql/batch_common/op_exists.sql"), params![seq], |_| Ok(())).optional()?.is_none() {
+        result.unknown_operation_acks += 1;
+    }
+    Ok(false)
 }
 
 fn destroyed_parents(connection: &Connection, models: &BTreeMap<String, ModelInfo>, seq: i64, parents: &mut BTreeSet<RowRef>, result: &mut CommitResult) -> Result<(), StoreError> {
