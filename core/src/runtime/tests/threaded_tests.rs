@@ -8,7 +8,7 @@ fn reporting(report: mpsc::Sender<u32>) -> ToyRunner { ToyRunner { report: Some(
 
 struct OrderedRecipient;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum OrderedRecipientInput { Hold, Notice, Idle }
 
 #[derive(Debug)]
@@ -37,7 +37,7 @@ impl EffectRunner<OrderedRecipient> for HoldRecipient {
 
 struct OrderedSource;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum OrderedSourceInput { Go, Idle }
 
 #[derive(Debug)]
@@ -219,7 +219,7 @@ fn rt_prop_addresses_reserved() {
 
 struct Recorder;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum RecorderInput { Poke, Idle }
 
 impl StateOwner for Recorder {

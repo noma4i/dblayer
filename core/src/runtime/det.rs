@@ -13,8 +13,16 @@ pub struct TraceEntry {
     pub owner: &'static str,
     pub stamp: EpochStamp,
     pub input: String,
+    #[cfg(test)]
+    pub typed: Option<super::owner::Typed>,
     pub effects: String,
     pub dropped: bool,
+}
+
+#[cfg(test)]
+impl TraceEntry {
+    /// Whether the input of the step is an `I` for which `check` holds.
+    pub fn input_is<I: 'static>(&self, check: impl FnOnce(&I) -> bool) -> bool { self.typed.as_ref().is_some_and(|typed| typed.is::<I>(check)) }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -259,7 +267,7 @@ impl DetScheduler {
     }
 
     fn finish_step(&mut self, index: usize, ran: Ran) {
-        self.trace.push(TraceEntry { slot: index, owner: self.slots[index].name(), stamp: ran.stamp, input: ran.input, effects: ran.effects, dropped: ran.dropped });
+        self.trace.push(TraceEntry { slot: index, owner: self.slots[index].name(), stamp: ran.stamp, input: ran.input, #[cfg(test)] typed: ran.typed, effects: ran.effects, dropped: ran.dropped });
         if ran.failed {
             self.report_failure(index);
         }

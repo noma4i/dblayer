@@ -5,7 +5,7 @@ pub use vocab::{author_of, Class, Credential as RefCredential, Effect as RefEffe
 use crate::owners::contract::{EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected};
 use crate::owners::session::{self as owner, AuthorOutcome, Credential, OperationClass, PendingCall, SecretState, SessionCalls, SessionEffect, SessionError, SessionInput, SessionState};
 use crate::spec::support::{new_log, take, Log, Recorder};
-use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
+use crate::runtime::{Address, Cause, DetScheduler, Effect, EpochStamp};
 use crate::transport::SessionCode;
 use crate::spec::support::committed_at;
 
@@ -163,7 +163,8 @@ struct Twin {
     log: Log<SessionEffect>,
     history: Vec<RefEffect>,
     replies: Vec<(u64, Result<String, Fail>)>,
-    raw_text: String,
+    scheduled: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    pauses: std::sync::Arc<std::sync::Mutex<Vec<u64>>>,
     seal: Option<u64>,
     pending: Option<RefPending>,
     attempt: Option<u64>,
@@ -181,7 +182,14 @@ impl Twin {
         let mut det = DetScheduler::new(2);
         let log = new_log();
         let addr = det.add::<SessionCalls>("session", SessionState::with_operations(owner_operations(), online), Recorder::<SessionCalls>::new(&log));
-        let mut twin = Self { det, addr, log, history: Vec::new(), replies: Vec::new(), raw_text: String::new(), seal: None, pending: None, attempt: None, op: None, batch: None };
+        let scheduled = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let pauses = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (counter, backoffs) = (scheduled.clone(), pauses.clone());
+        det.tap_effects::<SessionCalls>(addr, move |effects| {
+            if effects.iter().any(|effect| matches!(effect, Effect::Schedule { .. } | Effect::Backoff { .. })) { counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
+            if let Some(attempt) = effects.iter().find_map(|effect| match effect { Effect::Backoff { attempt, .. } => Some(u64::from(*attempt)), _ => None }) { backoffs.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(attempt); }
+        });
+        let mut twin = Self { det, addr, log, history: Vec::new(), replies: Vec::new(), scheduled, pauses, seal: None, pending: None, attempt: None, op: None, batch: None };
         twin.feed(Input::Published { epoch: EPOCH, identity: None, state: PubState::Session });
         if let Some(online) = online { twin.feed(Input::Snapshot { epoch: EPOCH, online }); }
         let secret = credential.as_ref().map_or(Secret::Missing, |credential| Secret::Present(credential.digest));
@@ -238,12 +246,11 @@ impl Twin {
             Input::Closing => SessionInput::Closing,
         };
         let cleared = matches!(&owner_input, SessionInput::SecretCleared { .. });
-        let traced = self.det.trace().len();
+        let traced = self.scheduled.load(std::sync::atomic::Ordering::SeqCst);
         self.det.post(self.addr, EpochStamp::Control, owner_input);
         self.det.run_until_quiet(100).expect("the owner is quiet");
-        let scheduled = self.det.trace()[traced..].iter().filter(|entry| entry.effects.contains("Schedule {") || entry.effects.contains("Backoff {")).count();
+        let scheduled = self.scheduled.load(std::sync::atomic::Ordering::SeqCst) - traced;
         let raw = take(&self.log);
-        self.raw_text = format!("{raw:?}");
         let mut effects: Vec<RefEffect> = raw.iter().filter_map(effect_of).collect();
         effects.extend(std::iter::repeat_n(RefEffect::ScheduleTick, scheduled));
         let replies: Vec<(u64, Result<String, Fail>)> = raw.iter().filter_map(|effect| match effect {

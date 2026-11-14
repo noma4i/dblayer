@@ -8,13 +8,13 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use super::rig::{admit, open_gate_over, collector, pump, runtime, saw_input, BatchPeer, Batches};
+use super::rig::{admit, open_gate_over, collector, inputs_of, pump, runtime, saw_input, BatchPeer, Batches};
 use super::{WindowCodec, WindowIo, WindowReader};
 use crate::owners::read::deliveries::Deliveries;
 use crate::owners::read::windows::{self as w, AnswerPage, WindowEffect, WindowKey, WindowOutcome, Windows, WindowsEffect, WindowsInput};
 use crate::owners::store::{RowValue, StoreInput, StoreOp, StoreWriter};
 use crate::spec::support::Sink;
-use crate::runtime::{Address, Cause, DetScheduler, Effect, Effects, EpochStamp, Outbound, StateOwner};
+use crate::runtime::{Address, Cause, DetScheduler, Effect, EffectId, Effects, EpochStamp, Outbound, StateOwner};
 use crate::transport::{GraphQLRequest, MockTransport, PutRequest, PutReply, Reply, Response, Upstream, TransportError};
 
 const EPOCH: u64 = 1;
@@ -139,7 +139,7 @@ fn win_io_request_lands() {
     assert_eq!((batch.stamp, batch.intents), (crate::runtime::EpochStamp::Epoch(EPOCH), 0));
     let landed_rows: Vec<&str> = batch.ops.iter().flat_map(|op| match op { StoreOp::Window { roots, .. } => roots.iter().map(|row| row.row_id.as_str()).collect(), _ => Vec::new() }).collect();
     assert_eq!(landed_rows, ["r1", "r2"]);
-    assert_eq!(saw_input(&rig.det, "Response"), 1, "the answer came back as one input");
+    assert_eq!(saw_input::<WindowsInput>(&rig.det, |input| matches!(input, WindowsInput::Response { .. })), 1, "the answer came back as one input");
     assert_eq!(rig.mock.calls().iter().map(|call| call.wire).collect::<Vec<_>>(), [Some(crate::transport::WireIds::new(crate::transport::Author::Window, 1, 1))], "the request goes out with the request and attempt of the Window");
 }
 
@@ -171,7 +171,7 @@ fn win_io_cancel_no_answer() {
     pump(&mut rig.det, |_| steps.lock().unwrap().contains(&Given::Cancel));
     let flights = rig.flights.clone();
     pump(&mut rig.det, |_| flights.load(std::sync::atomic::Ordering::SeqCst) == 0);
-    assert_eq!(saw_input(&rig.det, "Response"), 0, "a cancelled request gives no answer");
+    assert_eq!(saw_input::<WindowsInput>(&rig.det, |input| matches!(input, WindowsInput::Response { .. })), 0, "a cancelled request gives no answer");
     assert!(rig.batches.all().is_empty());
 }
 
@@ -205,9 +205,9 @@ impl Upstream for Panicking {
     fn put<'a, 'b>(&'a self, _: PutRequest) -> Sent<'b, PutReply> where 'a: 'b, Self: 'b { panic!("the transport failed") }
 }
 
-fn task_failed(det: &DetScheduler) -> Vec<String> { det.trace().iter().filter(|entry| entry.input.starts_with("TaskFailed")).map(|entry| entry.input.clone()).collect() }
+fn task_failed(det: &DetScheduler) -> Vec<EffectId> { inputs_of::<WindowsInput>(det).into_iter().filter_map(|input| match input { WindowsInput::TaskFailed { id } => Some(id), _ => None }).collect() }
 
-pub(in super::super) fn panicked_request() -> Vec<String> {
+pub(in super::super) fn panicked_request() -> Vec<EffectId> {
     let mut rig = rig_with(MockTransport::new(), Arc::new(Panicking), None);
     rig.watch(1);
     let rest = rig.rest.clone();
@@ -215,17 +215,17 @@ pub(in super::super) fn panicked_request() -> Vec<String> {
     task_failed(&rig.det)
 }
 
-pub(in super::super) fn panicked_read() -> Vec<String> {
+pub(in super::super) fn panicked_read() -> Vec<EffectId> {
     let reader: WindowReader = Arc::new(|_| panic!("the read failed"));
     let mut rig = rig_with(MockTransport::new(), Arc::new(MockTransport::new()), Some(reader));
     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), interest(1));
-    pump(&mut rig.det, |det| saw_input(det, "TaskFailed") > 0);
+    pump(&mut rig.det, |det| !task_failed(det).is_empty());
     task_failed(&rig.det)
 }
 
-pub(in super::super) fn request_id(request: u64, attempt: u32) -> String { format!("TaskFailed {{ id: {} }}", w::request_task(request, attempt)) }
+pub(in super::super) fn request_id(request: u64, attempt: u32) -> EffectId { w::request_task(request, attempt) }
 
-pub(in super::super) fn read_id(read: u64) -> String { format!("TaskFailed {{ id: {} }}", w::read_task(read)) }
+pub(in super::super) fn read_id(read: u64) -> EffectId { w::read_task(read) }
 
 /// P-RT-14 for Window: a close while a page request is inside the transport leaves that request alone and no later request of the Window reaches the old transport.
 #[test]
@@ -239,7 +239,7 @@ fn rt_prop_close_against_query_no_old_transport_window() {
     let other = WindowKey { model: "Moment".into(), name: "other".into() };
     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Load { key: other.clone(), id: 2, goal: w::Goal::First, force: false, store_revision: 0 });
     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::WindowRead { key: other, read_id: 2, result: Ok(None) });
-    pump(&mut rig.det, |det| saw_input(det, "Dropped") == 1);
+    pump(&mut rig.det, |det| saw_input::<WindowsInput>(det, |input| matches!(input, WindowsInput::Dropped { .. })) == 1);
     let late: Vec<_> = rig.mock.calls().iter().skip(1).map(|call| (call.operation_name.clone(), call.wire)).collect();
     assert!(late.is_empty(), "late calls reached the old transport after the close: {late:?}");
 }

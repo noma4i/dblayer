@@ -555,7 +555,7 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, time
             #[cfg(test)]
             if let Some(state) = O::diagnostic(&owner.cell.state) { *lock(&router.diagnostics[owner.slot]) = state; }
             if router.record {
-                lock(&owner.history).push(TraceEntry { slot: owner.slot, owner: owner.name, stamp: ran.stamp, input: ran.input, effects: ran.effects, dropped: ran.dropped });
+                lock(&owner.history).push(TraceEntry { slot: owner.slot, owner: owner.name, stamp: ran.stamp, input: ran.input, #[cfg(test)] typed: ran.typed, effects: ran.effects, dropped: ran.dropped });
             }
             if ran.failed {
                 router.report_failure(owner.name);

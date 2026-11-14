@@ -76,4 +76,8 @@ pub fn pump(det: &mut DetScheduler, mut done: impl FnMut(&DetScheduler) -> bool)
     }
 }
 
-pub fn saw_input(det: &DetScheduler, prefix: &str) -> usize { det.trace().iter().filter(|entry| entry.input.starts_with(prefix)).count() }
+/// The steps of the scheduler whose input is an `I` for which `kind` holds.
+pub fn saw_input<I: 'static>(det: &DetScheduler, kind: impl Fn(&I) -> bool) -> usize { det.trace().iter().filter(|entry| entry.input_is::<I>(&kind)).count() }
+
+/// The inputs of type `I` the scheduler stepped, in order.
+pub fn inputs_of<I: Clone + 'static>(det: &DetScheduler) -> Vec<I> { det.trace().iter().filter_map(|entry| entry.typed.as_ref()?.typed::<I>()).collect() }

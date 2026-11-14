@@ -24,15 +24,15 @@ fn rt_prop_overload_bounded() {
     }
     runtime.post(store, EpochStamp::Epoch(1), ToyInput::Release);
     runtime.barrier();
-    assert!(runtime.history(store).iter().any(|entry| entry.input == "Result(14)" && !entry.dropped), "the held answer of the store arrives when it is released");
+    assert!(runtime.history(store).iter().any(|entry| entry.input_is::<ToyInput>(|input| *input == ToyInput::Result(14)) && !entry.dropped), "the held answer of the store arrives when it is released");
     runtime.end_epoch(1, Cause::SessionReset);
     runtime.post(feed, EpochStamp::Epoch(1), ToyInput::Deposit(1));
     runtime.start_epoch(2);
     runtime.barrier();
     assert_eq!(runtime.pending(), 0, "no input is left behind");
-    let kept: Vec<String> = runtime.history(feed).into_iter().filter(|entry| !entry.dropped).map(|entry| entry.input).collect();
-    assert_eq!(kept.iter().filter(|input| input.as_str() == "Deposit(1)").count(), FRAMES as usize, "every frame before the end of the epoch reached the owner, the late one of the old epoch did not");
-    assert_eq!(kept.iter().filter(|input| input.starts_with("Result(")).count(), CALLS as usize, "every accepted call has its outcome");
-    let signals: Vec<&str> = kept.iter().map(String::as_str).filter(|input| *input == format!("Note({OFFLINE})") || *input == format!("Note({ONLINE})") || input.starts_with("Epoch")).collect();
-    assert_eq!(signals, ["EpochStarted(1)".to_string(), format!("Note({OFFLINE})"), format!("Note({ONLINE})"), "EpochEnded(1, SessionReset)".to_string(), "EpochStarted(2)".to_string()], "the signals and the epochs keep their order");
+    let kept: Vec<ToyInput> = runtime.history(feed).into_iter().filter(|entry| !entry.dropped).filter_map(|entry| entry.typed?.typed::<ToyInput>()).collect();
+    assert_eq!(kept.iter().filter(|input| **input == ToyInput::Deposit(1)).count(), FRAMES as usize, "every frame before the end of the epoch reached the owner, the late one of the old epoch did not");
+    assert_eq!(kept.iter().filter(|input| matches!(input, ToyInput::Result(_))).count(), CALLS as usize, "every accepted call has its outcome");
+    let signals: Vec<ToyInput> = kept.into_iter().filter(|input| matches!(input, ToyInput::Note(OFFLINE | ONLINE) | ToyInput::EpochStarted(_) | ToyInput::EpochEnded(..))).collect();
+    assert_eq!(signals, [ToyInput::EpochStarted(1), ToyInput::Note(OFFLINE), ToyInput::Note(ONLINE), ToyInput::EpochEnded(1, Cause::SessionReset), ToyInput::EpochStarted(2)], "the signals and the epochs keep their order");
 }

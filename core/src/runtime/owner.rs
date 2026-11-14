@@ -31,10 +31,49 @@ pub enum EpochStamp {
 
 pub trait Message: Any + Send + Debug {
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
+
+    /// A typed copy the tests of the owners read; every input is `Clone` in the test build.
+    #[cfg(test)]
+    fn typed(&self) -> Typed;
 }
 
+#[cfg(not(test))]
 impl<T: Any + Send + Debug> Message for T {
     fn into_any(self: Box<Self>) -> Box<dyn Any> { self }
+}
+
+#[cfg(test)]
+impl<T: Any + Send + Debug + Clone> Message for T {
+    fn into_any(self: Box<Self>) -> Box<dyn Any> { self }
+
+    fn typed(&self) -> Typed { Typed(Arc::new(std::sync::Mutex::new(Box::new(self.clone())))) }
+}
+
+/// The input of a step or of a `Send` as a typed value: the test names the input type of the owner and matches on it.
+#[cfg(test)]
+#[derive(Clone)]
+pub struct Typed(Arc<std::sync::Mutex<Box<dyn Any + Send>>>);
+
+#[cfg(test)]
+impl Debug for Typed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str("Typed") }
+}
+
+#[cfg(test)]
+impl PartialEq for Typed {
+    fn eq(&self, other: &Self) -> bool { Arc::ptr_eq(&self.0, &other.0) }
+}
+
+#[cfg(test)]
+impl Eq for Typed {}
+
+#[cfg(test)]
+impl Typed {
+    /// Whether the input is a `T` for which `check` holds.
+    pub fn is<T: 'static>(&self, check: impl FnOnce(&T) -> bool) -> bool { self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).downcast_ref::<T>().is_some_and(check) }
+
+    /// A clone of the input when it is a `T`.
+    pub fn typed<T: 'static + Clone>(&self) -> Option<T> { self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).downcast_ref::<T>().cloned() }
 }
 
 pub type Effects<O> = Vec<Effect<O>>;

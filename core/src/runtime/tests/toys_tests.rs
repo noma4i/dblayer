@@ -191,7 +191,7 @@ impl EffectRunner<Toy> for ToyRunner {
 
 pub struct Hub;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum HubInput {
     Begin(Epoch),
     Finish(Epoch, Cause),
@@ -231,7 +231,7 @@ impl EffectRunner<Hub> for HubRunner {
 
 pub struct Sink;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum SinkInput {
     Note(u32),
     Idle,

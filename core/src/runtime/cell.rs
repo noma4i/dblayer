@@ -33,6 +33,8 @@ pub(crate) struct Ran {
     pub stamp: EpochStamp,
     pub dropped: bool,
     pub input: String,
+    #[cfg(test)]
+    pub typed: Option<super::owner::Typed>,
     pub effects: String,
     pub failed: bool,
 }
@@ -140,7 +142,7 @@ impl<O: StateOwner> Cell<O> {
         let (stamp, input, ended) = match self.queue.pop_front()? {
             Item::Input(stamp, input) => {
                 if !self.admits(stamp) {
-                    let ran = self.drop_input(stamp, label(trace, &input));
+                    let ran = self.drop_input(stamp, trace, &input);
                     return Some(ran);
                 }
                 (stamp, input, false)
@@ -148,7 +150,7 @@ impl<O: StateOwner> Cell<O> {
             Item::End(epoch, cause) => {
                 let input = O::epoch_ended(epoch, cause);
                 if O::EPOCHED && self.epoch != Some(epoch) {
-                    let ran = self.drop_input(EpochStamp::Epoch(epoch), label(trace, &input));
+                    let ran = self.drop_input(EpochStamp::Epoch(epoch), trace, &input);
                     return Some(ran);
                 }
                 (EpochStamp::Epoch(epoch), input, true)
@@ -157,12 +159,14 @@ impl<O: StateOwner> Cell<O> {
                 self.epoch = Some(epoch);
                 self.purge_schedule(|stamp| stamp != EpochStamp::Epoch(epoch) && stamp != EpochStamp::Control);
                 let Some(input) = O::epoch_started(epoch) else {
-                    return Some(Ran { stamp: EpochStamp::Control, dropped: false, input: if trace { format!("EpochStarted({epoch})") } else { String::new() }, effects: String::new(), failed: false });
+                    return Some(Ran { stamp: EpochStamp::Control, dropped: false, input: if trace { format!("EpochStarted({epoch})") } else { String::new() }, #[cfg(test)] typed: None, effects: String::new(), failed: false });
                 };
                 (EpochStamp::Control, input, false)
             }
         };
         let input_label = label(trace, &input);
+        #[cfg(test)]
+        let typed = trace.then(|| Message::typed(&input));
         #[cfg(test)]
         self.taps.inputs.iter_mut().for_each(|tap| tap(&input));
         let mut failed = false;
@@ -182,7 +186,7 @@ impl<O: StateOwner> Cell<O> {
         let out = self.owner_stamp();
         self.pending = Some(PendingStep { effects: effects.into(), stamp: out, ended, failed, failures });
         let failed = if self.pending.as_ref().is_some_and(|pending| pending.effects.is_empty()) { self.finish_step(name, runner) } else { false };
-        Some(Ran { stamp, dropped: false, input: input_label, effects: effects_label, failed })
+        Some(Ran { stamp, dropped: false, input: input_label, #[cfg(test)] typed, effects: effects_label, failed })
     }
 
     pub fn emit_one(&mut self, name: &str, runner: &mut dyn EffectRunner<O>, back: &Back<O>) -> (Option<Emitted>, bool) {
@@ -265,9 +269,9 @@ impl<O: StateOwner> Cell<O> {
         }
     }
 
-    fn drop_input(&mut self, stamp: EpochStamp, input: String) -> Ran {
+    fn drop_input(&mut self, stamp: EpochStamp, trace: bool, input: &O::Input) -> Ran {
         self.dropped += 1;
-        Ran { stamp, dropped: true, input, effects: String::new(), failed: false }
+        Ran { stamp, dropped: true, input: label(trace, input), #[cfg(test)] typed: trace.then(|| Message::typed(input)), effects: String::new(), failed: false }
     }
 
     fn owner_stamp(&self) -> EpochStamp {

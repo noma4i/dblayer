@@ -155,8 +155,8 @@ impl World {
         settle(&mut self.det, &self.spawn, |det| det.post(transfers, EpochStamp::Control, TransferInput::Tick { kind: TransferTick::Retry { transfer_id: u64::MAX, attempt_id: 0 } }));
     }
 
-    fn late(&self, prefixes: &[&str]) -> usize {
-        self.det.trace().iter().filter(|entry| entry.owner == "transfers" && prefixes.iter().any(|prefix| entry.input.starts_with(prefix))).count()
+    fn late(&self, kind: fn(&TransferInput) -> bool) -> usize {
+        self.det.trace().iter().filter(|entry| entry.owner == "transfers" && entry.input_is::<TransferInput>(kind)).count()
     }
 }
 
@@ -190,7 +190,7 @@ fn exec_xfer_copy_cancel_leaves_nothing() {
     w.settle();
     assert_eq!((w.stage(KEY), w.spawn.pending()), (None, 0));
     assert!(w.files.directory_entries().expect("entries").is_empty());
-    assert_eq!(w.late(&["CopyDone", "CopyFailed"]), 0);
+    assert_eq!(w.late(|input| matches!(input, TransferInput::CopyDone { .. } | TransferInput::CopyFailed { .. })), 0);
     assert!(lock(&w.answers).contains(&(2, TransferAnswer::Cancelled(true))));
 }
 
@@ -247,7 +247,7 @@ fn exec_xfer_offline_cancels_step() {
     assert_eq!((w.stage(KEY), w.spawn.pending()), (Some(TransferStage::Uploading), 1));
     w.post(TransferInput::Online(Online(false)));
     assert_eq!((w.stage(KEY), w.stub.dropped(), w.spawn.pending()), (Some(TransferStage::Ready), 1, 0));
-    assert_eq!(w.late(&["StepOk", "StepError"]), 0, "a cancelled step gives no answer");
+    assert_eq!(w.late(|input| matches!(input, TransferInput::StepOk { .. } | TransferInput::StepError { .. })), 0, "a cancelled step gives no answer");
 }
 
 #[test]
@@ -359,7 +359,7 @@ fn xfer_prop_put_cancel() {
             _ => w.post(TransferInput::Discard { key: KEY.into(), reply: 9 }),
         }
         assert!(token.is_cancelled(), "{cause}: the attempt stays cancelled");
-        if cause == "offline" { assert_eq!((w.stage(KEY), w.late(&["StepOk", "StepError"])), (Some(TransferStage::Ready), 0)); }
+        if cause == "offline" { assert_eq!((w.stage(KEY), w.late(|input| matches!(input, TransferInput::StepOk { .. } | TransferInput::StepError { .. }))), (Some(TransferStage::Ready), 0)); }
         assert!(lock(&w.shown).iter().all(|shown| !matches!(shown, Shown::Uploading { progress } if *progress > 0)), "{cause}: the bytes of a cancelled attempt raise no progress");
     }
 }

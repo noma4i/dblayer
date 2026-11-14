@@ -176,7 +176,7 @@ fn feed_io_frames_commit() {
     let sent = peer.sent.lock().unwrap_or_else(PoisonError::into_inner).clone();
     assert_eq!(sent.len(), 1);
     assert_eq!((sent[0].0, sent[0].1["t"].as_str(), sent[0].1["id"].as_str(), sent[0].1["variables"]["channel"].as_str()), (f::FIRST_SEND_COUNTER, Some("subscribe"), Some("1"), Some("1")), "the subscribe frame is sealed with the first send counter");
-    assert_eq!((saw_input(&det, "HandshakeDone"), saw_input(&det, "FrameOpened")), (1, 2), "one handshake, the frames confirmed and next");
+    assert_eq!((saw_input::<FeedInput>(&det, |input| matches!(input, FeedInput::HandshakeDone { .. })), saw_input::<FeedInput>(&det, |input| matches!(input, FeedInput::FrameOpened { .. }))), (1, 2), "one handshake, the frames confirmed and next");
 }
 
 #[test]
@@ -188,15 +188,15 @@ fn feed_io_close_drains_then_cancels_once() {
     det.close();
     let closed = peer.closed.clone();
     pump(&mut det, |_| closed.load(Ordering::SeqCst) == 1);
-    assert_eq!((peer.cancels.load(Ordering::SeqCst), saw_input(&det, "Drain")), (0, 0), "the queue is sent and the line is closed, the drain runs");
+    assert_eq!((peer.cancels.load(Ordering::SeqCst), saw_input::<FeedInput>(&det, |input| matches!(input, FeedInput::Drain { .. }))), (0, 0), "the queue is sent and the line is closed, the drain runs");
     let half = crate::owners::read::CLOSE_DRAIN.as_millis() as u64 / 2;
     det.tick(crate::runtime::Time(half));
     det.run_until_quiet(10_000).expect("quiet");
-    assert_eq!((peer.cancels.load(Ordering::SeqCst), saw_input(&det, "Drain")), (0, 0), "half of the drain: no cancel");
+    assert_eq!((peer.cancels.load(Ordering::SeqCst), saw_input::<FeedInput>(&det, |input| matches!(input, FeedInput::Drain { .. }))), (0, 0), "half of the drain: no cancel");
     det.tick(crate::runtime::Time(2 * half));
     let cancels = peer.cancels.clone();
     pump(&mut det, |_| cancels.load(Ordering::SeqCst) == 1);
-    assert_eq!((peer.closed.load(Ordering::SeqCst), saw_input(&det, "Drain"), det.state(feed).map(|state| state.mode())), (1, 1, Some(Mode::Ended)), "one close, one drain tick, one cancel");
+    assert_eq!((peer.closed.load(Ordering::SeqCst), saw_input::<FeedInput>(&det, |input| matches!(input, FeedInput::Drain { .. })), det.state(feed).map(|state| state.mode())), (1, 1, Some(Mode::Ended)), "one close, one drain tick, one cancel");
 }
 
 #[test]
@@ -209,11 +209,11 @@ fn feed_io_unsubscribe_closes() {
     pump(&mut det, |_| closed.load(Ordering::SeqCst) >= 1);
     let sent = peer.sent.lock().unwrap_or_else(PoisonError::into_inner).clone();
     assert_eq!(sent.iter().map(|(counter, body)| (*counter, body["t"].as_str().unwrap_or(""))).collect::<Vec<_>>(), [(0, "subscribe"), (1, "unsubscribe")]);
-    let before = saw_input(&det, "FrameOpened");
+    let before = saw_input::<FeedInput>(&det, |input| matches!(input, FeedInput::FrameOpened { .. }));
     pump(&mut det, |_| line.incoming.try_lock().is_ok());
     let _ = peer.frames.send(next(1, "late"));
     pump(&mut det, |_| true);
-    assert_eq!(saw_input(&det, "FrameOpened"), before, "no frame reaches the owner after the line closed");
+    assert_eq!(saw_input::<FeedInput>(&det, |input| matches!(input, FeedInput::FrameOpened { .. })), before, "no frame reaches the owner after the line closed");
 }
 
 #[test]
@@ -244,14 +244,14 @@ fn feed_io_broken_next_drops() {
     let (mut det, feed, batches, _runtime) = rig(vec![first, second]);
     pump(&mut det, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
     peer.frames.send(Incoming::Frame { counter: 1, body: json!({"t":"next", "id":"1", "result":{}}) }).unwrap();
-    pump(&mut det, |det| saw_input(det, "ProtocolError") == 1);
+    pump(&mut det, |det| saw_input::<FeedInput>(det, |input| matches!(input, FeedInput::ProtocolError { .. })) == 1);
     det.tick(crate::runtime::Time(crate::owners::read::CLOSE_DRAIN.as_millis() as u64));
     pump(&mut det, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
     let saved = batches.all();
     assert_eq!(saved.len(), 1);
     assert!(saved[0].rows.is_empty(), "the broken frame must not write rows");
     assert!(matches!(saved[0].ops.as_slice(), [crate::owners::store::StoreOp::MarkStale { models, keys, .. }] if models == &["Chat"] && keys.is_empty()));
-    assert!(saw_input(&det, "ProtocolError") == 1, "the broken frame is an explicit protocol error");
+    assert!(saw_input::<FeedInput>(&det, |input| matches!(input, FeedInput::ProtocolError { .. })) == 1, "the broken frame is an explicit protocol error");
 }
 
 fn two_channel_rig(lines: Vec<Arc<Line>>) -> (DetScheduler, Address<Feed>, Batches, tokio::runtime::Runtime) {
@@ -286,14 +286,14 @@ fn feed_io_graphql_errors_drop() {
         peer.frames.send(confirmed(1)).unwrap();
         peer.frames.send(Incoming::Frame { counter: 2, body: json!({"t":"next", "id":"1", "result":result}) }).unwrap();
         if errored {
-            pump(&mut det, |det| saw_input(det, "FrameOpened") >= 2 || saw_input(det, "ProtocolError") >= 1);
-            assert_eq!(saw_input(&det, "ProtocolError"), 0, "{name}: a next with errors ends only its channel, not the connection");
+            pump(&mut det, |det| saw_input::<FeedInput>(det, |input| matches!(input, FeedInput::FrameOpened { .. })) >= 2 || saw_input::<FeedInput>(det, |input| matches!(input, FeedInput::ProtocolError { .. })) >= 1);
+            assert_eq!(saw_input::<FeedInput>(&det, |input| matches!(input, FeedInput::ProtocolError { .. })), 0, "{name}: a next with errors ends only its channel, not the connection");
             assert_eq!(det.state(feed).map(|state| state.active_connection()), Some(Some(1)), "{name}: the connection and the other channel stay");
             assert!(batches.all().is_empty(), "{name}: no event reaches the Store");
         } else {
             let seen = batches.clone();
             pump(&mut det, |_| !seen.all().is_empty());
-            assert_eq!(saw_input(&det, "ProtocolError"), 0, "{name}: a clean frame is no error");
+            assert_eq!(saw_input::<FeedInput>(&det, |input| matches!(input, FeedInput::ProtocolError { .. })), 0, "{name}: a clean frame is no error");
         }
     }
 }
@@ -429,7 +429,7 @@ fn feed_io_foreign_subscription_is_ignored() {
     let seen = batches.clone();
     pump(&mut det, |_| !seen.all().is_empty());
     assert_eq!(batches.all()[0].rows, [("Chat".to_string(), "mine".to_string())]);
-    assert_eq!((saw_input(&det, "ProtocolError"), det.state(feed).map(|state| state.active_connection())), (0, Some(Some(1))), "frames of a channel this connection never subscribed neither end nor break it");
+    assert_eq!((saw_input::<FeedInput>(&det, |input| matches!(input, FeedInput::ProtocolError { .. })), det.state(feed).map(|state| state.active_connection())), (0, Some(Some(1))), "frames of a channel this connection never subscribed neither end nor break it");
 }
 
 /// P-RT-14 for Feed: a connection requested after the close of the epoch never reaches the lines of the old transport.
@@ -450,7 +450,7 @@ fn rt_prop_close_against_query_no_old_transport_feed() {
     gate.close(EPOCH);
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1 });
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false, scoped: Vec::new() });
-    pump(&mut det, |det| saw_input(det, "Dropped") >= 1);
+    pump(&mut det, |det| saw_input::<FeedInput>(det, |input| matches!(input, FeedInput::Dropped { .. })) >= 1);
     assert_eq!(started.load(Ordering::SeqCst), 0, "a connect reached the old lines after the close");
 }
 
@@ -464,7 +464,7 @@ fn rt_prop_close_against_send_no_old_connection_feed() {
     pump(&mut det, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live) && sent.lock().unwrap_or_else(PoisonError::into_inner).len() == 1);
     gate.close(EPOCH);
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1 });
-    pump(&mut det, |det| saw_input(det, "Dropped") >= 1);
+    pump(&mut det, |det| saw_input::<FeedInput>(det, |input| matches!(input, FeedInput::Dropped { .. })) >= 1);
     let late: Vec<_> = peer.sent.lock().unwrap_or_else(PoisonError::into_inner).iter().skip(1).map(|(counter, body)| (*counter, body["t"].as_str().unwrap_or("").to_string())).collect();
     assert!(late.is_empty(), "late frames reached the old connection after the close: {late:?}");
 }

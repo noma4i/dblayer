@@ -7,15 +7,15 @@ use std::sync::{Arc, Mutex};
 use rusqlite::{params, Connection};
 
 use super::deliveries::{self as d, Deliveries, DeliveryInput, Kind, PullAnswer, Value, View};
-use super::rig::{collector, pump, runtime};
+use super::rig::{collector, inputs_of, pump, runtime, saw_input};
 use super::feed::Feed;
-use super::windows::{WindowKey, Windows};
+use super::windows::{WindowKey, Windows, WindowsInput};
 use super::{DeliveryIo, Snapshots};
 use crate::store::ddl::{create_model_tables, manifest_read, manifest_write, migrate_core, REVISION_SEQ_KEY};
 use crate::owners::contract::{WindowPhase, WindowState};
 use crate::store::query::{compile_keys, fetch_keys, Query};
-use crate::spec::support::{new_log, Discard, Log, Sink};
-use crate::runtime::{Address, DetScheduler, EpochStamp, Outcome, Outcomes, Waiter};
+use crate::spec::support::{new_log, Captured, Discard, Log, Sink};
+use crate::runtime::{Address, DetScheduler, EffectId, EpochStamp, Outcome, Outcomes, Waiter};
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 
@@ -59,7 +59,7 @@ struct Rig {
     det: DetScheduler,
     owner: Address<Deliveries>,
     answers: Outcomes<PullAnswer>,
-    windows: Log<String>,
+    windows: Log<WindowsInput>,
     rest: Arc<Mutex<Vec<d::DeliveryEffect>>>,
     writer: Connection,
     _dir: tempfile::TempDir,
@@ -80,7 +80,7 @@ fn rig_with(snapshots: impl FnOnce(std::path::PathBuf) -> Arc<dyn Snapshots>) ->
     let io = DeliveryIo::new(snapshots(path), answers.clone(), runtime.handle().clone(), take_rest);
     let mut det = DetScheduler::new(1);
     let windows = new_log();
-    let windows_slot = det.add::<Sink<Windows>>("windows", windows.clone(), Discard);
+    let windows_slot = det.add::<Captured<Windows>>("windows", windows.clone(), Discard);
     let feed_slot = det.add::<Sink<Feed>>("feed", new_log(), Discard);
     let peers = d::DeliveryPeers { windows: Address::<Windows>::new(windows_slot.index()), feed: Address::<Feed>::new(feed_slot.index()) };
     let owner = det.add::<Deliveries>("deliveries", d::DeliveriesState::new(EPOCH, peers), io);
@@ -117,7 +117,7 @@ fn delivery_io_read_sees_commit() {
     let Value::Snapshot { revision, rows, .. } = *first else { panic!("the first value is a Snapshot") };
     assert_eq!(revision, 2);
     assert_eq!(rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["p1", "p2"]);
-    assert!(rig.windows.lock().unwrap().iter().any(|input| input.starts_with("InterestPlus")), "the window interest of a List is an input of the Windows");
+    assert!(rig.windows.lock().unwrap().iter().any(|input| matches!(input, WindowsInput::InterestPlus { .. })), "the window interest of a List is an input of the Windows");
     assert!(rig.rest.lock().unwrap().is_empty(), "nothing but IO leaves the runner");
 }
 
@@ -150,12 +150,12 @@ fn rt_prop_task_panic_fails() {
     let mut rig = rig_with(|_| Arc::new(Panicking));
     open(&mut rig, 1);
     let owner = rig.owner;
-    pump(&mut rig.det, |det| det.trace().iter().filter(|entry| entry.input.starts_with("TaskFailed")).count() == 2 && det.state(owner).is_some_and(|state| !state.journal(STREAM).is_empty()));
-    let failed: Vec<String> = rig.det.trace().iter().filter(|entry| entry.input.starts_with("TaskFailed")).map(|entry| entry.input.clone()).collect();
+    pump(&mut rig.det, |det| saw_input::<DeliveryInput>(det, |input| matches!(input, DeliveryInput::TaskFailed { .. })) == 2 && det.state(owner).is_some_and(|state| !state.journal(STREAM).is_empty()));
+    let failed: Vec<EffectId> = inputs_of::<DeliveryInput>(&rig.det).into_iter().filter_map(|input| match input { DeliveryInput::TaskFailed { id } => Some(id), _ => None }).collect();
     let inputs: Vec<&str> = rig.det.trace().iter().map(|entry| entry.input.as_str()).collect();
     let mut failed = failed;
     failed.sort();
-    assert_eq!(failed, [1, 2].map(|read| format!("TaskFailed {{ id: {} }}", d::read_task(STREAM, read))), "each panicked read reports its stream and read, inputs {inputs:?}");
+    assert_eq!(failed, [1, 2].map(|read| d::read_task(STREAM, read)), "each panicked read reports its stream and read, inputs {inputs:?}");
     let journal = rig.det.state(owner).unwrap().journal(STREAM);
     let Some(Value::Snapshot { rows, state, .. }) = journal.first() else { panic!("a panicked first read gives a Snapshot without rows: {journal:?}") };
     assert!(rows.is_empty() && state.phase == WindowPhase::Failed, "the stream ends its wait with an error: {state:?}");

@@ -3,10 +3,10 @@
 use super::*;
 
 fn post(twin: &mut Twin, input: SessionInput) -> (Vec<SessionEffect>, Vec<u64>) {
-    let traced = twin.det.trace().len();
+    let traced = twin.pauses.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len();
     twin.det.post(twin.addr, EpochStamp::Control, input);
     twin.det.run_until_quiet(100).expect("the owner is quiet");
-    let pauses = twin.det.trace()[traced..].iter().filter_map(|entry| entry.effects.split("Backoff {").nth(1)).filter_map(|text| text.split("attempt: ").nth(1)).filter_map(|text| text.split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()).collect();
+    let pauses = twin.pauses.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[traced..].to_vec();
     (take(&twin.log), pauses)
 }
 
