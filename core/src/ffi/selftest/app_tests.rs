@@ -49,7 +49,7 @@ async fn app_logout_ios_order_ends_a_pending_initial_wait_and_hides_the_account_
     let marks = held.deliveries();
 
     drop(bound(pending).await.unwrap());
-    assert!(held.entities_empty(), "the held singleton and entity still show a row after the exit");
+    held.ended(&rig.database).await;
     rig.world.forbid(true);
     ends(&rig.database).await;
     assert!(rig.world.violations().is_empty(), "a read followed the exit: {:?}", rig.world.violations());
@@ -74,7 +74,7 @@ async fn app_logout_android_order_cancels_the_streams_and_the_next_login_reads_a
 
     rig.exit(&held, true, true).await;
 
-    assert!(held.entities_empty());
+    held.ended(&rig.database).await;
     let before = rig.world.count("Users");
     rig.login_android("B").await;
     let fresh = Held::open(&rig.database);
@@ -107,7 +107,7 @@ async fn app_logout_local_only_skips_the_revoke_and_stops_every_read() {
         rig.world.forbid(true);
         ends(&rig.database).await;
         assert!(rig.world.violations().is_empty(), "cancel={cancel}: a read followed the local exit: {:?} log {:?}", rig.world.violations(), rig.world.log().iter().rev().take(6).collect::<Vec<_>>());
-        assert!(held.entities_empty());
+        held.ended(&rig.database).await;
         assert!(held.quiet_since(mark, "A"));
         rig.database.close_now();
     }
@@ -172,7 +172,7 @@ async fn logout_then_login_of_the_same_account_reads_it_again() {
     let reads = rig.world.count("MyProfile");
 
     rig.exit(&held, true, false).await;
-    assert!(held.entities_empty());
+    held.ended(&rig.database).await;
     rig.login_ios("A").await;
     ends(&rig.database).await;
 

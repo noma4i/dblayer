@@ -61,6 +61,10 @@ impl Held {
         settled(handle, &format!("the held entities show {account}"), || Self::shown(&self.single, account) && Self::shown(&self.entity, account)).await;
     }
 
+    pub(super) async fn ended(&self, handle: &impl crate::test_wait::Quiet) {
+        settled(handle, "the held entities ended", || self.entities_empty()).await;
+    }
+
     pub(super) async fn lists_show(&self, handle: &impl crate::test_wait::Quiet, account: &str) {
         for rows in [&self.rows, &self.window_rows] {
             settled(handle, &format!("the held list shows {account}"), || Self::shown(rows, account)).await;
