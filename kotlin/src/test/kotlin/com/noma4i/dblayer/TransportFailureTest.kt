@@ -52,14 +52,4 @@ class TransportFailureTest {
         val put = putFile(okhttp3.OkHttpClient(), "ftp://example.test/upload", emptyMap(), 10_000uL, 10_000uL, PutFile(file.path, 0u, 4u), progress, 64uL * 1024uL)
         assertEquals("url", put.rawFailure()?.domain)
     }
-
-    @Test
-    fun bridge_prop_classifier_only_theWrapperNeverBuildsAClassOfItsOwn() {
-        val sources = java.io.File("src/main/kotlin/com/noma4i/dblayer").walkTopDown().filter { it.extension == "kt" && it.name != "dblayer.kt" }.toList()
-        assertTrue(sources.isNotEmpty())
-        for (file in sources) {
-            val offenders = file.readLines().filter { "DbException.Network(" in it || "DbException.Interrupted(" in it || "DbException.Http(" in it }
-            assertEquals(file.name, emptyList<String>(), offenders)
-        }
-    }
 }

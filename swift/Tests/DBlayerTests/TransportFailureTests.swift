@@ -50,17 +50,4 @@ struct TransportFailureTests {
     default: "other"
     }
   }
-
-  @Test
-  func bridge_prop_classifier_only_theWrapperNeverBuildsAClassOfItsOwn() throws {
-    let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-      .appendingPathComponent("Sources/DBlayer")
-    let files = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
-    for case let file as URL in files where file.pathExtension == "swift" {
-      if file.lastPathComponent == "dblayer.swift" { continue }
-      let text = try String(contentsOf: file, encoding: .utf8)
-      let offenders = text.split(separator: "\n").filter { $0.contains("Network(") || $0.contains("Interrupted(") || $0.contains("DbError.Http") }
-      #expect(offenders.isEmpty, "\(file): \(offenders)")
-    }
-  }
 }

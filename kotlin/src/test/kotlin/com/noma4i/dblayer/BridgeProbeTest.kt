@@ -15,12 +15,32 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BridgeProbeTest {
+    @Test
+    fun aSearchPassesWholeWordsToTheCore() = bounded {
+        openSignedOffline(Config(null), modelsJSON)
+        Moment.create(text = "hello world", account = AccountScope.current())
+        Moment.create(text = "hel", account = AccountScope.current())
+        eventually("the row with the whole word") { Query("Moment", Moment).search("hel", wholeWords = true).read().map { it.text } == listOf<String?>("hel") }
+    }
+
+    @Test
+    fun setLocalReachesTheTypedRow() = bounded {
+        openSignedOffline(Config(null), modelsJSON)
+        val moment = Moment.create(text = "m", account = AccountScope.current()).optimisticValue!!
+        moment.setLocal("tone", JsonPrimitive("warm"))
+        eventually("the local value reaches the row") { Moment.find(moment.id).current()?.tone == "warm" }
+        moment.setLocal("tone", JsonNull)
+        eventually("the local value is cleared") { Moment.find(moment.id).current()?.tone == null }
+    }
+
     @Test
     fun updateAndDestroyReachTypedLiveRows() = bounded {
         val transport = MockTransport()

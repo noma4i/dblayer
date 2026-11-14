@@ -269,8 +269,8 @@ struct BootstrapConfigTests {
     let headers = request.components(separatedBy: "\r\n").dropFirst().prefix(while: { !$0.isEmpty }).map { $0.lowercased() }
     #expect(headers.contains("content-type: application/jose"))
     let names = headers.map { String($0.split(separator: ":")[0]) }
-    #expect(headers.contains("accept: ") || headers.contains("accept:"))
-    #expect(headers.contains("accept-language: ") || headers.contains("accept-language:"))
+    #expect(names.filter { $0 == "accept" || $0 == "accept-language" } == ["accept", "accept-language"])
+    #expect(headers.filter { $0.hasPrefix("accept:") || $0.hasPrefix("accept-language:") }.allSatisfy { $0.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)[1].trimmingCharacters(in: .whitespaces).isEmpty })
     let userAgent = request.components(separatedBy: "\r\n").dropFirst().prefix(while: { !$0.isEmpty })
       .filter { $0.lowercased().hasPrefix("user-agent:") }
       .map { $0.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)[1].trimmingCharacters(in: .whitespaces) }

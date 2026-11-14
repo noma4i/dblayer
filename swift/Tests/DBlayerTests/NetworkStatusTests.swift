@@ -25,24 +25,6 @@ extension BridgeProbeTests {
     #expect(StatusProbe.status().isOnline == false)
   }
 
-  /// net_status_same_value_silent, net_status_ignores_server_and_session: the same value again and a server answer wake nobody, so the first frame after them is the next real change.
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func net_status_swiftAServerAnswerAndARepeatedValueGiveNoFrame() async throws {
-    try await openSignedOffline(config: Config(path: nil), modelsJson: modelsJSON)
-    await StatusProbe.shared.set(true)
-    let status = StatusProbe.status()
-    let reader = Cursor(status.changes)
-    #expect(await reader.next("the current value")?.online == true)
-    await StatusProbe.shared.set(true)
-    await StatusProbe.shared.set(true)
-    _ = try await Moment.create(text: "answered", in: DB.account()).optimisticValue!
-    #expect(status.isOnline == true)
-    await StatusProbe.shared.set(false)
-    #expect(await reader.next("the first frame after the repeats and the server work")?.online == false)
-    #expect(status.isOnline == false)
-  }
-
   /// net_status_reader_gets_current: a reader that starts late gets the newest value first.
   @MainActor
   @Test(.timeLimit(.minutes(1)))

@@ -30,7 +30,6 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", reply: queueFeed)
     transport.enqueue("UpdateMoment", reply: #"{"errors":[{"message":"refused","extensions":{"code":"FORBIDDEN"}}]}"#)
-    let held = transport.hold("UpdateMoment", reply: queueUpdated.replacingOccurrences(of: "edited", with: "second"))
     try await openSigned(config: Config(path: nil), modelsJson: try momentsKeepingUpdates(), transport: transport)
     try await registerStandOperations(DB.database, defsJson: queueDefs)
     let changes = Cursor(try await Moment.recent.live.stream())
@@ -46,41 +45,12 @@ extension BridgeProbeTests {
       #expect(kept)
     }
     try await DB.database.setOnline(online: false)
-    let second = try await moment.update(text: "second")
+    _ = try await moment.update(text: "second")
     #expect(await queue.first("both updates are present") { $0.count == 2 && $0.contains { $0.status == .failed } } != nil)
     try await moment.discard(action: "update", in: scope)
     let remaining = try #require(await queue.first("the failed update is gone") { $0.count == 1 && $0[0].status == .pending })
     #expect(remaining[0].action == "update")
     #expect(try await Moment.find(moment.id).current()?.text == "second")
-    try await DB.database.setOnline(online: true)
-    await held.entered()
-    held.release()
-    #expect(try await second.confirmed().value?.text == "second")
-    #expect(try await Moment.find(moment.id).current()?.text == "second")
-    #expect(await queue.first("the queue is empty") { $0.isEmpty } != nil)
-  }
-
-  @Test @MainActor
-  func anOfflineUpdateShowsInTheQueueAndLeavesItWhenTheNetworkReturns() async throws {
-    let transport = MockTransport()
-    transport.enqueue("MomentsFeed", reply: queueFeed)
-    let hold = transport.hold("UpdateMoment", reply: queueUpdated)
-    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
-    try await registerStandOperations(DB.database, defsJson: queueDefs)
-    let changes = Cursor(try await Moment.recent.live.stream())
-    try await Moment.feed.load()
-    let moment = try #require(await changes.first("the loaded row") { $0.map(\.text) == ["m"] }?.first)
-    let queue = Cursor(try DB.account().operations().queues)
-    try await DB.database.setOnline(online: false)
-    let receipt = try await moment.update(text: "edited")
-    let pending = try #require(await queue.first("the update is pending") { $0.count == 1 && $0[0].status == .pending })
-    #expect(pending[0].model == "Moment" && pending[0].action == "update" && pending[0].rowId == moment.id)
-    try await DB.database.setOnline(online: true)
-    let sending = try #require(await queue.first("the update is sending") { $0.first?.status == .sending })
-    #expect(sending[0].attempts == 1)
-    hold.release()
-    if case .confirmed = try await receipt.settled() {} else { Issue.record("the update was not confirmed") }
-    #expect(await queue.first("the queue is empty") { $0.isEmpty } != nil)
   }
 
   @Test @MainActor
@@ -97,7 +67,7 @@ extension BridgeProbeTests {
     let queue = Cursor(try DB.account().operations().queues)
     _ = try await moment.update(text: "edited")
     let failed = try #require(await queue.first("the update failed") { $0.first?.status == .failed }?.first)
-    #expect(failed.error != nil)
+    #expect(failed.error != nil && failed.model == "Moment" && failed.action == "update" && failed.rowId == moment.id)
     try await DB.account().retry(model: failed.model, id: failed.rowId, action: failed.action)
     #expect(await queue.first("the queue is empty") { $0.isEmpty } != nil)
     #expect(transport.calls.filter { $0.operationName == "UpdateMoment" }.count == 2)

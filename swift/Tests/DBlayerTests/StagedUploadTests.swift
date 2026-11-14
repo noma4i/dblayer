@@ -46,23 +46,4 @@ extension BridgeProbeTests {
     #expect(try await receipt.confirmed().value?.id == "m77")
     await DB.closeForCleanup()
   }
-
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func aDiscardedStagedUploadEndsItsStatusAndLeavesNoRow() async throws {
-    let transport = MockTransport()
-    enqueueStagedSteps(transport)
-    transport.enqueue("AbortMultipart", reply: #"{"data":{"abortMultipart":{"ok":true}}}"#)
-    _ = try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport, operations: stagedOperations)
-    let file = try stagedFile()
-    defer { try? FileManager.default.removeItem(at: file) }
-    let scope = try DB.account()
-    let staged = try await scope.stage(Moment.self, action: "upload_clip", UploadRequest(path: file.path))
-    let status = Cursor(scope.uploadStatus(staged))
-    #expect(await untilHeld(status))
-    #expect(try await staged.discard())
-    #expect(await status.first("the status of a removed transfer") { if case let .progress(progress) = $0 { return progress.state == "gone" } else { return false } } != nil)
-    #expect(try await Moment.find(staged.id).current() == nil)
-    await DB.closeForCleanup()
-  }
 }

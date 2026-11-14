@@ -67,6 +67,6 @@ struct RustFutureHandleTests {
     await withCheckedContinuation { continuation in RuntimeLane.enqueue { continuation.resume() } }
     #expect(calls.calls.filter { $0 == "free:42" }.count == 1)
     #expect(calls.calls.filter { $0 == "cancel:42" }.count <= 1)
-    #expect(calls.calls.first != "free:42" || !calls.calls.contains("cancel:42"))
+    #expect(calls.calls.last == "free:42")
   }
 }

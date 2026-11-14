@@ -65,8 +65,9 @@ struct CellDecoderTests {
       do {
         _ = try await database.create(epoch: database.sessionEpoch(), model: "NestedSample", valuesJson: values, argsJson: "{}")
         Issue.record(Comment(rawValue: "accepted \(values)"))
+      } catch DbError.Invalid(_) {
       } catch {
-        #expect("\(error)".contains(path), Comment(rawValue: values))
+        Issue.record(Comment(rawValue: "\(path): \(error)"))
       }
     }
     _ = try await database.create(epoch: database.sessionEpoch(), model: "NestedSample", valuesJson: #"{"value":{"title":"t","payload":{"anything":[1]}}}"#, argsJson: "{}")

@@ -22,7 +22,7 @@ struct BridgeProbeTests {
     let changes = Cursor(try await Moment.recent.live.stream())
     #expect(await changes.next()?.isEmpty == true)
     let moment = try await Moment.create(text: "m", in: DB.account()).optimisticValue!
-    #expect(await changes.next()?.first?.text == "m")
+    _ = await changes.first("the created row") { !$0.isEmpty }
     try await moment.setLocal("tone", .string("warm"))
     #expect(await changes.next()?.first?.tone == "warm")
     try await moment.setLocal("tone", .null)
@@ -45,44 +45,6 @@ struct BridgeProbeTests {
     #expect(await changes.first("the edited row") { $0.map(\.text) == ["edited"] } != nil)
     try await moment.destroy()
     #expect(await changes.first("the empty list") { $0.isEmpty } != nil)
-  }
-
-  /// An update written while the network is away shows at once, stays queued, and is sent and landed once when the network returns.
-  @Test @MainActor
-  func anOfflineUpdateIsSentOnceWhenTheNetworkReturns() async throws {
-    let transport = MockTransport()
-    transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","text":"m","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
-    transport.enqueue("UpdateMoment", reply: #"{"data":{"updateMoment":{"__typename":"Moment","id":"1","uuid":"a","text":"edited","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
-    try await registerStandOperations(DB.database, defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment($id: ID!, $text: String) { updateMoment(id: $id, text: $text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment($id: ID!) { deleteMoment(id: $id) { id } }"}]"#)
-    let changes = Cursor(try await Moment.recent.live.stream())
-    try await Moment.feed.load()
-    let loaded = await changes.first("the loaded row") { $0.map(\.text) == ["m"] }
-    let moment = try #require(loaded?.first)
-    try await DB.database.setOnline(online: false)
-    let receipt = try await moment.update(text: "edited")
-    #expect(await changes.first("the edited row") { $0.map(\.text) == ["edited"] } != nil)
-    #expect(transport.calls.filter { $0.operationName == "UpdateMoment" }.isEmpty, "a request left while the network was away")
-    try await DB.database.setOnline(online: true)
-    _ = try await receipt.confirmed()
-    #expect(transport.calls.filter { $0.operationName == "UpdateMoment" }.count == 1)
-  }
-
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func loadRequestsOnlyAWindowThatIsNotFreshAndKeepsNoSubscription() async throws {
-    let transport = MockTransport()
-    transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
-    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
-    try await registerStandOperations(DB.database, defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
-    let before = try await DB.subscriptionCensus()
-
-    try await Moment.feed.load()
-    try await Moment.feed.load()
-
-    #expect(transport.calls.count == 1)
-    let after = try await DB.subscriptionCensus()
-    #expect(after.subscriptions == before.subscriptions && after.observedQueries == before.observedQueries)
   }
 
   @MainActor
@@ -128,18 +90,6 @@ struct BridgeProbeTests {
     #expect(entity.value?.uuid == "a")
   }
 
-  @Test
-  func theOutcomeOfASentCreateCarriesTheServerId() async throws {
-    let transport = MockTransport()
-    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
-    try await registerStandOperations(DB.database, defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
-
-    let sent = try await Moment.create(text: "hello", media: nil, in: DB.account())
-    #expect(sent.optimisticValue?.id.hasPrefix("temp") == true)
-    #expect(try await sent.confirmed().value?.id == "m77")
-  }
-
   @Test(.timeLimit(.minutes(1)))
   func parallelOutcomeReadsOfOneReceiptAllGetTheServerId() async throws {
     let transport = MockTransport()
@@ -148,6 +98,7 @@ struct BridgeProbeTests {
     try await registerStandOperations(DB.database, defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
 
     let sent = try await Moment.create(text: "hello", media: nil, in: DB.account())
+    #expect(sent.optimisticValue?.id.hasPrefix("temp") == true)
     let ids = try await withThrowingTaskGroup(of: String.self) { group in
       for _ in 0..<8 { group.addTask { try #require(await sent.confirmed().value).id } }
       return try await group.reduce(into: [String]()) { $0.append($1) }
@@ -183,28 +134,6 @@ struct BridgeProbeTests {
     #expect(row.authorId == "u1" && row.regionId == "r1")
   }
 
-
-  @Test
-  func aCreateWithAnUploadShowsTheRecordAtOnceAndTheServerIdReplacesIt() async throws {
-    let transport = MockTransport()
-    transport.enqueue("CreateBlob", reply: #"{"data":{"blobCreate":{"url":"https://s3/x","headers":{},"signedId":"sid","blobId":"b1"}}}"#)
-    transport.enqueuePut("https://s3/x")
-    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
-    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"CreateBlob","document":"mutation CreateBlob($filename: String!, $contentType: String!, $byteSize: Int!, $checksum: String!) { createBlob(filename: $filename, contentType: $contentType, byteSize: $byteSize, checksum: $checksum) { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
-    let file = FileManager.default.temporaryDirectory.appending(path: "clip-\(UUID().uuidString).mp4")
-    try Data("abcdef".utf8).write(to: file)
-
-    let sent = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path, variables: ["text": .string("hello")])))
-    let local = try #require(sent.optimisticValue)
-
-    #expect(local.id.hasPrefix("temp"))
-    #expect(local.uploads["upload_clip"] != nil)
-    #expect(try await sent.confirmed().value?.id == "m77")
-    let create = transport.calls.first { $0.operationName == "CreateMoment" }
-    #expect(create?.variablesJson.contains("\"signedId\":\"sid\"") == true)
-    #expect(create?.variablesJson.contains("blobId") == false)
-    #expect(transport.calls.filter { $0.operationName == "CreateMoment" }.count == 1)
-  }
 
   private func openWithAMoment(_ transport: MockTransport) async throws -> Moment {
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)

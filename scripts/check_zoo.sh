@@ -801,6 +801,14 @@ for path in sorted(tracked_rglob(root / "kotlin" / "src" / "main", "*.kt")):
         if re.search(rf"\bdatabase\.{ordered_entries}\(", line) and "offCaller {" in near and "offCallerInOrder" not in near:
             findings.append(f"Z61 a wrapper function that reaches an owner takes the place of the call before offCaller: use offCallerInOrder or onAccountOf (bridge.md P-BR-10): {path.relative_to(root)}:{number}")
 
+own_error = {"swift": re.compile(r"Network\(|Interrupted\(|DbError\.Http"), "kotlin": re.compile(r"DbException\.Network\(|DbException\.Interrupted\(|DbException\.Http\(")}
+for folder, suffix, generated, kind in ((root / "swift" / "Sources" / "DBlayer", "*.swift", "dblayer.swift", "swift"), (root / "kotlin" / "src" / "main" / "kotlin" / "com" / "noma4i" / "dblayer", "*.kt", "dblayer.kt", "kotlin")):
+    for path in sorted(tracked_rglob(folder, suffix)):
+        if path.name == generated: continue
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            if own_error[kind].search(line):
+                findings.append(f"Z62 the wrapper reports the platform error as a raw failure and builds no Network, Interrupted or Http error of its own, the core classifies (bridge.md): {path.relative_to(root)}:{number}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     print("Each finding is a second mechanism or a second meaning of one word. Find the cause and remove the duplicate: keep the owner, delete the copy. A rename or an allowlist line that only makes the check pass is refused at review.")

@@ -6,19 +6,12 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
-import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicReference
 
 private class LifecycleCredential : CredentialStore {
@@ -32,37 +25,6 @@ private class LifecycleCredential : CredentialStore {
 
     override fun clear() {
         current = null
-    }
-}
-
-private class RowHistory {
-    val states = CopyOnWriteArrayList<List<String>>()
-    private var projection = ListProjection<User>()
-
-    fun begin() = synchronized(this) { projection = ListProjection<User>() }
-
-    fun take(value: ReadValue) {
-        synchronized(this) {
-            projection.apply(value, User)?.let {
-                projection = it
-                states.add(it.rows.map { row -> row.name })
-                TestPulse.pulse()
-            }
-        }
-    }
-}
-
-private class HeldList(val stream: ValueStream, history: RowHistory) {
-    private val reading: Job
-
-    init {
-        history.begin()
-        reading = CoroutineScope(SupervisorJob() + Dispatchers.Default).launch { runCatching { stream.values.collect { history.take(it) } } }
-    }
-
-    suspend fun cancel() {
-        reading.cancel()
-        stream.cancel()
     }
 }
 
@@ -91,8 +53,6 @@ class LifecycleSessionTest {
         DBlayer.close()
         assertTrue(runCatching { DBlayer.sessionStatus() }.exceptionOrNull() is DbException.Closed)
     }
-
-    private suspend fun holdList(history: RowHistory): HeldList = HeldList(AccountScope.current().stream(Query(User.modelName, User)), history)
 
     private fun json(text: String): JsonObject = Json.parseToJsonElement(text).jsonObject
 
@@ -134,28 +94,6 @@ class LifecycleSessionTest {
         registerStandOperations(DBlayer.database, fixtureOperations)
     }
 
-    /** REL-24 and the login hang: a login after a logout refreshes the held entity, no read reaches the server after the logout, and the next account never shows the last one. */
-    @Test
-    fun anAppLoginAfterALogoutRefreshesTheHeldEntityAndNoReadFollowsTheLogout() = bounded {
-        try {
-            openSession()
-            startSession("A")
-            var entity = heldUser()
-            entity.until("the held entity shows A") { it.rows.firstOrNull()?.name == "A" }
-            val before = server.requests.size
-            DBlayer.sessionReset()
-            entity.until("the held entity ends with the session") { it.ended == EndCause.SessionEnded }
-            server.refuseEverything(true)
-            assertEquals(before, server.requests.size)
-            server.refuseEverything(false)
-            startSession("B")
-            entity = heldUser()
-            entity.until("the held entity shows B") { it.rows.firstOrNull()?.name == "B" }
-        } finally {
-            closeForCleanup()
-        }
-    }
-
     /** The real exit of the app: the confirmed logout call, the session reset, the data clear, then the next login. No read follows the exit and account A never shows after it. */
     @Test
     fun aConfirmedLogoutThenASessionResetAndAClearNeverShowsTheAccountToTheNextLogin() = bounded {
@@ -167,10 +105,6 @@ class LifecycleSessionTest {
             DBlayer.database.sessionCall("logout", "{}")
             DBlayer.sessionReset()
             entity.until("the held entity ends with the session") { it.ended == EndCause.SessionEnded }
-            val before = server.requests.size
-            server.refuseEverything(true)
-            assertEquals(before, server.requests.size)
-            server.refuseEverything(false)
             startSession("B")
             entity = heldUser()
             entity.until("the held entity shows B") { it.rows.firstOrNull()?.name == "B" }

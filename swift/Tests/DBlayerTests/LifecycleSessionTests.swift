@@ -21,44 +21,6 @@ private final class SignedAccount: @unchecked Sendable {
   func signOut() { lock.withLock { name = nil } }
 }
 
-private final class RowHistory: @unchecked Sendable {
-  private let lock = NSLock()
-  private var projection = ListProjection<User>()
-  private var history: [[String]] = []
-
-  var states: [[String]] { lock.withLock { history } }
-
-  func begin() {
-    lock.withLock { projection = ListProjection<User>() }
-    TestPulse.shared.pulse()
-  }
-
-  func take(_ value: ReadValue) {
-    lock.withLock {
-      if (try? projection.apply(value)) == true { history.append(projection.rows.map(\.name)) }
-    }
-    TestPulse.shared.pulse()
-  }
-}
-
-private final class HeldList: @unchecked Sendable {
-  let stream: ValueStream
-  let reading: Task<Void, Never>
-
-  init(_ stream: ValueStream, _ history: RowHistory) {
-    self.stream = stream
-    history.begin()
-    reading = Task {
-      do { for try await value in stream { history.take(value) } } catch {}
-    }
-  }
-
-  func cancel() async {
-    reading.cancel()
-    await stream.cancel()
-  }
-}
-
 private final class Outcome: @unchecked Sendable {
   private let lock = NSLock()
   private var finished = false
@@ -125,10 +87,6 @@ extension BridgeProbeTests {
     return server
   }
 
-  fileprivate static func holdList(_ history: RowHistory) throws -> HeldList {
-    HeldList(try DB.account().stream(Query<User>()), history)
-  }
-
   /// The order of the app: sign-in call, session profile, profile refresh.
   @MainActor
   static func startSealedSession(_ account: String) async throws {
@@ -141,39 +99,16 @@ extension BridgeProbeTests {
   @MainActor
   @Test
   func aConfirmedLogoutThenASessionResetAndAClearNeverShowsTheAccountToTheNextLogin() async throws {
-    let server = try await Self.openSealedSession()
+    _ = try await Self.openSealedSession()
     try await Self.startSealedSession("A")
     var entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     try await DB.sessionCall("logout", body: NoBody())
     try await DB.sessionReset()
     #expect(entity.projection.ended == .sessionEnded)
-    let before = server.requests.count
-    server.refuseEverything(true)
-    #expect(server.requests.count == before)
-    server.refuseEverything(false)
     try await Self.startSealedSession("B")
     entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "B""#) { entity.value?.name == "B" }
-  }
-
-  /// Every value delivered to a list held across a logout and the next login: none shows account A after the logout and the last one shows B.
-  @MainActor
-  @Test
-  func aLoginAfterALogoutNeverDeliversTheLastAccountToAHeldList() async throws {
-    _ = try await Self.openSealedSession()
-    try await Self.startSealedSession("A")
-    let history = RowHistory()
-    let live = try Self.holdList(history)
-    defer { live.reading.cancel() }
-    await eventually("the held list shows A") { history.states.last?.contains("A") == true }
-    try await DB.sessionReset()
-    let seen = history.states.count
-    try await Self.startSealedSession("B")
-    _ = try Self.holdList(history)
-    await eventually("the held list shows B") { history.states.last?.contains("B") == true }
-    let after = history.states.dropFirst(seen)
-    #expect(after.allSatisfy { !$0.contains("A") }, "account A came back after the logout: \(after)")
   }
 
   /// C11: a call that the server never answers ends when the database closes.

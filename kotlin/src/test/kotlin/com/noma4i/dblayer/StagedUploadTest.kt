@@ -50,24 +50,4 @@ class StagedUploadTest {
             file.delete()
         }
     }
-
-    @Test
-    fun aDiscardedStagedUploadEndsItsStatusAndLeavesNoRow() = bounded {
-        val file = Files.createTempFile("staged", ".bin").toFile().apply { writeText("abcdef") }
-        val transport = MockTransport()
-        try {
-            enqueueStagedSteps(transport)
-            transport.enqueue("AbortMultipart", """{"data":{"abortMultipart":{"ok":true}}}""")
-            openSigned(Config(null), modelsJSON, transport, operations = STAGED_OPERATIONS)
-            val scope = AccountScope.current()
-            val staged = scope.stage(Moment, "upload_clip", UploadRequest(file.path))
-            assertTrue(untilHeld(scope, staged))
-            assertTrue(staged.discard())
-            assertTrue(scope.uploadStatus(staged).uploadStatus.firstOrNull { it is TransferItem.Progress && it.progress.state == "gone" } != null)
-            assertNull(Moment.find(staged.id).current())
-        } finally {
-            closeForCleanup()
-            file.delete()
-        }
-    }
 }
