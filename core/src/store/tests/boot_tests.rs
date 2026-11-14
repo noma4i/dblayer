@@ -151,24 +151,6 @@ fn a_manifest_without_its_format_goes_through_the_format_change() {
 }
 
 #[test]
-fn store_boot_journal_unknown() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("unknown.sqlite");
-    let models = [messages_spec(), items_spec()];
-    {
-        let (store, _) = reopen(&path, &models);
-        seed(&store);
-        exec(&store, "INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'unknown-end', 1)");
-    }
-    let store = Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-    let result = store.boot(&models);
-    assert!(result.is_err(), "unknown end journal must fail open: {result:?}");
-    assert_eq!(store.reset_intent().unwrap().as_deref(), Some("unknown-end"));
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE action_key = 'messages:send'"), 1);
-}
-
-#[test]
 fn store_boot_replay_end_storage_error() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("failure.sqlite");

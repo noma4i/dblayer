@@ -72,6 +72,9 @@ fn bump_revision(connection: &Connection) -> Result<i64, StoreError> {
     Ok(current + 1)
 }
 
+/// The values of `reset_intent.mode` the writer writes: any other record is dropped by `Boot` with the cache (D-452).
+pub(crate) const END_MODES: [&str; 2] = ["account", "session_end"];
+
 pub(crate) fn pending_intent(connection: &Connection) -> Result<Option<String>, StoreError> {
     Ok(connection.query_row(include_str!("sql/reset/pending_intent.sql"), [], |row| row.get(0)).optional()?)
 }
@@ -251,9 +254,6 @@ pub(crate) fn current_fingerprints(inner: &Inner) -> Result<BTreeMap<String, Str
 
 pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreError> {
     let Some(mode) = pending_intent(&inner.connection)? else { return Ok(false) };
-    if !matches!(mode.as_str(), "account" | "session_end") {
-        return Err(StoreError::Constraint(format!("unknown reset intent mode: {mode}")));
-    }
     let transaction = inner.connection.unchecked_transaction()?;
     wipe_all_cache(&transaction, true)?;
     transaction.execute_batch(include_str!("sql/reset/clear_row_alias.sql"))?;

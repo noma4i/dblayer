@@ -256,6 +256,11 @@ pub fn recreate_reason(connection: &Connection) -> Result<Option<RecreateReason>
             return Ok(Some(RecreateReason::CoreFormat));
         }
     }
+    let has_journal: bool = connection.query_row(include_str!("../sql/ddl/recreate_reason_journal.sql"), [], |row| row.get(0))?;
+    let mode: Option<String> = if has_journal { connection.query_row(include_str!("../sql/reset/pending_intent.sql"), [], |row| row.get(0)).optional()? } else { None };
+    if mode.is_some_and(|mode| !crate::store::reset::END_MODES.contains(&mode.as_str())) {
+        return Ok(Some(RecreateReason::CoreFormat));
+    }
     Ok(None)
 }
 
