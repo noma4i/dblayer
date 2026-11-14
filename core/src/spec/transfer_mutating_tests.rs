@@ -66,28 +66,21 @@ fn failed_mutation(twin: &mut Twin) -> TransferId {
     id
 }
 
+/// Discard and cancel of a failed transfer with a live intent go through Outbox; Transfer removes the transfer only after `MutationOutcome(Discarded)` and answers the call after the removal commit.
 #[test]
 fn xfer_failed_discard_live_intent() {
-    let mut twin = Twin::new();
-    let id = failed_mutation(&mut twin);
-    let (reply, out) = twin.discard(KEY);
-    assert_eq!((out.outbox_discards(), out.all_replies(), out.removed(), twin.stage(id)), (1, 0, Vec::<String>::new(), TransferStage::Failed), "the live intent is discarded by Outbox, Transfer does not remove it behind its back");
-    let out = twin.post(TransferInput::DiscardOutcome { key: KEY.into(), result: Ok(()) });
-    assert!(Twin::quiet(&out), "{out:?}");
-    let out = twin.mutation_outcome(KEY, OutboxOutcome::Discarded);
-    assert_eq!((twin.stage(id), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
-    assert_eq!((twin.commit().replies(reply), twin.stage(id)), (vec![TransferAnswer::Ok], TransferStage::Done));
-}
-
-#[test]
-fn xfer_failed_cancel_live_intent() {
-    let mut twin = Twin::new();
-    let id = failed_mutation(&mut twin);
-    let (reply, out) = twin.cancel(KEY);
-    assert_eq!((out.outbox_discards(), out.all_replies(), out.removed(), twin.stage(id)), (1, 0, Vec::<String>::new(), TransferStage::Failed), "the live intent is discarded by Outbox, Transfer does not remove it behind its back");
-    let out = twin.mutation_outcome(KEY, OutboxOutcome::Discarded);
-    assert_eq!((twin.stage(id), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
-    assert_eq!((twin.commit().replies(reply), twin.stage(id)), (vec![TransferAnswer::Cancelled(true)], TransferStage::Done));
+    for cancel in [false, true] {
+        let mut twin = Twin::new();
+        let id = failed_mutation(&mut twin);
+        let (reply, out) = if cancel { twin.cancel(KEY) } else { twin.discard(KEY) };
+        assert_eq!((out.outbox_discards(), out.all_replies(), out.removed(), twin.stage(id)), (1, 0, Vec::<String>::new(), TransferStage::Failed), "cancel {cancel}: the live intent is discarded by Outbox, Transfer does not remove it behind its back");
+        let out = twin.post(TransferInput::DiscardOutcome { key: KEY.into(), result: Ok(()) });
+        assert!(Twin::quiet(&out), "cancel {cancel}: {out:?}");
+        let out = twin.mutation_outcome(KEY, OutboxOutcome::Discarded);
+        assert_eq!((twin.stage(id), out.removed(), out.rolled_back(), out.all_replies()), (TransferStage::Removing, vec![KEY.to_string()], Vec::<u64>::new(), 0), "cancel {cancel}");
+        let answer = if cancel { TransferAnswer::Cancelled(true) } else { TransferAnswer::Ok };
+        assert_eq!((twin.commit().replies(reply), twin.stage(id)), (vec![answer], TransferStage::Done), "cancel {cancel}");
+    }
 }
 
 #[test]
@@ -96,9 +89,33 @@ fn xfer_failed_discard_live_intent_refused() {
     let id = failed_mutation(&mut twin);
     let (reply, _) = twin.discard(KEY);
     let out = twin.post(TransferInput::DiscardOutcome { key: KEY.into(), result: Err(Fault::InFlight) });
-    assert_eq!((out.replies(reply), twin.stage(id)), (vec![TransferAnswer::Err(Fault::InFlight)], TransferStage::Failed));
+    assert_eq!((out.replies(reply), out.all_replies(), out.writes(), twin.stage(id)), (vec![TransferAnswer::Err(Fault::InFlight)], 1, 0, TransferStage::Failed));
     let (_, out) = twin.discard(KEY);
     assert_eq!(out.outbox_discards(), 1, "a new discard goes to Outbox again");
+}
+
+#[test]
+fn xfer_failed_confirmed_before_discard() {
+    for cancel in [false, true] {
+        let mut twin = Twin::new();
+        let id = failed_mutation(&mut twin);
+        let (reply, _) = if cancel { twin.cancel(KEY) } else { twin.discard(KEY) };
+        let out = twin.mutation_outcome(KEY, confirmed(7));
+        let answer = if cancel { TransferAnswer::Cancelled(false) } else { TransferAnswer::Err(Fault::NotFound) };
+        assert_eq!((twin.stage(id), out.replies(reply), out.removed()), (TransferStage::Removing, vec![answer], vec![KEY.to_string()]));
+    }
+}
+
+#[test]
+fn xfer_failed_outcome_failed_waiting() {
+    for outcome in [failed("error"), OutboxOutcome::Rejected { error: "error".into() }, OutboxOutcome::Ended(crate::owners::read::deliveries::EndCause::SessionEnded)] {
+        let mut twin = Twin::new();
+        let id = failed_mutation(&mut twin);
+        twin.discard(KEY);
+        let out = twin.mutation_outcome(KEY, outcome);
+        assert_eq!(twin.stage(id), TransferStage::Failed);
+        assert!(Twin::quiet(&out), "{out:?}");
+    }
 }
 
 #[test]

@@ -1,6 +1,5 @@
-//! Owner-level tests of the owner `Transfer`: closing, stray results, rejected writes, orphan aborts and the discard of a failed transfer.
+//! Owner-level tests of the owner `Transfer`: closing, stray results, rejected writes and orphan aborts.
 use super::transfer_harness::Twin;
-use crate::owners::write::outbox::OutboxOutcome;
 
 const KEY: &str = "Moment:r1:upload";
 
@@ -132,71 +131,5 @@ fn xfer_orphan_abort_refused_keeps_debt() {
         assert!(Twin::quiet(&out), "{status:?}: {out:?}");
         twin.online(false);
         assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()], "{status:?}: the debt is kept and resent");
-    }
-}
-
-fn failed_transfer_mutation(twin: &mut Twin) -> u64 {
-    let id = twin.mutating(KEY);
-    twin.mutation_outcome(KEY, OutboxOutcome::Failed { error: "error".into() });
-    twin.commit();
-    assert_eq!(twin.stage(id), crate::owners::write::transfer::TransferStage::Failed);
-    id
-}
-
-#[test]
-fn xfer_failed_discard_outcome() {
-    use crate::owners::write::outbox::Fault;
-    use crate::owners::write::transfer::{TransferAnswer, TransferInput, TransferStage};
-    for accepted in [false, true] {
-        let mut twin = Twin::new();
-        let id = failed_transfer_mutation(&mut twin);
-        let (reply, _) = twin.discard(KEY);
-        let result = if accepted { Ok(()) } else { Err(Fault::InFlight) };
-        let out = twin.post(TransferInput::DiscardOutcome { key: KEY.into(), result });
-        assert_eq!(twin.stage(id), TransferStage::Failed);
-        if accepted { assert!(Twin::quiet(&out)); }
-        else { assert_eq!((out.replies(reply), out.all_replies(), out.writes()), (vec![TransferAnswer::Err(Fault::InFlight)], 1, 0)); }
-    }
-}
-
-#[test]
-fn xfer_failed_discarded() {
-    use crate::owners::write::transfer::{TransferAnswer, TransferStage};
-    for cancel in [false, true] {
-        let mut twin = Twin::new();
-        let id = failed_transfer_mutation(&mut twin);
-        let (reply, _) = if cancel { twin.cancel(KEY) } else { twin.discard(KEY) };
-        let out = twin.mutation_outcome(KEY, OutboxOutcome::Discarded);
-        assert_eq!((twin.stage(id), out.removed(), out.rolled_back(), out.all_replies()), (TransferStage::Removing, vec![KEY.to_string()], Vec::<u64>::new(), 0));
-        let out = twin.commit();
-        let answer = if cancel { TransferAnswer::Cancelled(true) } else { TransferAnswer::Ok };
-        assert_eq!((twin.stage(id), out.replies(reply)), (TransferStage::Done, vec![answer]));
-    }
-}
-
-#[test]
-fn xfer_failed_confirmed_before_discard() {
-    use crate::owners::write::outbox::Fault;
-    use crate::owners::write::transfer::{TransferAnswer, TransferStage};
-    for cancel in [false, true] {
-        let mut twin = Twin::new();
-        let id = failed_transfer_mutation(&mut twin);
-        let (reply, _) = if cancel { twin.cancel(KEY) } else { twin.discard(KEY) };
-        let out = twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 7, result: None, row_id: None });
-        let answer = if cancel { TransferAnswer::Cancelled(false) } else { TransferAnswer::Err(Fault::NotFound) };
-        assert_eq!((twin.stage(id), out.replies(reply), out.removed()), (TransferStage::Removing, vec![answer], vec![KEY.to_string()]));
-    }
-}
-
-#[test]
-fn xfer_failed_outcome_failed_waiting() {
-    use crate::owners::write::transfer::TransferStage;
-    for outcome in [OutboxOutcome::Failed { error: "error".into() }, OutboxOutcome::Rejected { error: "error".into() }, OutboxOutcome::Ended(crate::owners::read::deliveries::EndCause::SessionEnded)] {
-        let mut twin = Twin::new();
-        let id = failed_transfer_mutation(&mut twin);
-        twin.discard(KEY);
-        let out = twin.mutation_outcome(KEY, outcome);
-        assert_eq!(twin.stage(id), TransferStage::Failed);
-        assert!(Twin::quiet(&out), "{out:?}");
     }
 }
