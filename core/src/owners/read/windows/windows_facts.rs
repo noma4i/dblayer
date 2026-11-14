@@ -435,9 +435,7 @@ impl Facts {
                 for (id, want) in std::mem::take(&mut self.waiters) {
                     self.answer(id, if matches!(want, Want::All) { WindowOutcome::PageLimit } else { loaded.clone() });
                 }
-                self.announce();
-                self.fresh = true;
-                return Transition(WinState::idle());
+                return self.land_end(ctx);
             }
             let finished: Vec<InterestId> = self.waiters.iter().filter(|(_, want)| !wants_next(want)).map(|(id, _)| *id).collect();
             for id in finished {
@@ -447,6 +445,10 @@ impl Facts {
             return self.begin(ctx, page + 1, false, true);
         }
         self.answer_all(&loaded);
+        self.land_end(ctx)
+    }
+
+    fn land_end(&mut self, ctx: &mut Ctx<'_>) -> Outcome<WinState> {
         if !self.reread_due {
             self.fresh = true;
             self.announce();

@@ -214,9 +214,9 @@ impl FeedState {
         models
     }
 
-    pub(super) fn stale_all(models: &[String], fx: &mut Vec<Fx>) {
+    pub(super) fn stale_all(models: &[String], revision: Option<i64>, fx: &mut Vec<Fx>) {
         for model in models {
-            fx.push(Fx::Stale { model: model.clone(), keys: StaleKeys::all(), cause: StaleCause::Change { revision: None } });
+            fx.push(Fx::Stale { model: model.clone(), keys: StaleKeys::all(), cause: StaleCause::Change { revision } });
         }
     }
 
@@ -287,9 +287,9 @@ impl FeedState {
         if let Some(models) = self.gap_landing.remove(&batch) {
             match rejected {
                 Some(RejectReason::Storage(_)) => self.gap_retry.push(models),
-                Some(RejectReason::Invalid(_)) => Self::stale_all(&models, fx),
+                Some(RejectReason::Invalid(_)) => Self::stale_all(&models, None, fx),
                 Some(RejectReason::NoSession | RejectReason::Closed) => self.end(false, fx),
-                None if !refused.is_empty() => Self::stale_all(&models, fx),
+                None if !refused.is_empty() => Self::stale_all(&models, revision, fx),
                 None => {}
             }
             return;
@@ -300,13 +300,13 @@ impl FeedState {
                 if !lost.is_empty() {
                     let lost: Vec<FeedEvent> = lost.into_iter().map(|(_, event)| event).collect();
                     let lost_models = self.mark_lost(&lost, fx);
-                    Self::stale_all(&lost_models, fx);
+                    Self::stale_all(&lost_models, revision, fx);
                 }
                 self.land(landed.into_iter().map(|(_, event)| event).collect(), revision, fx);
             }
             Some(RejectReason::Storage(_) | RejectReason::Invalid(_)) => {
                 let lost_models = self.mark_lost(&events, fx);
-                Self::stale_all(&lost_models, fx);
+                Self::stale_all(&lost_models, None, fx);
             }
             Some(RejectReason::NoSession | RejectReason::Closed) => {
                 self.end(false, fx);

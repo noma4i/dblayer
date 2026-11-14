@@ -69,3 +69,14 @@ fn xfer_status_quiet_on_other_rows() {
     assert_eq!(reads(Deliveries::step(&mut state, commit(&["r1"]), crate::runtime::Time(0))).len(), 1);
     assert_eq!(state.streams_examined(), 1);
 }
+
+/// D-457, P-DLV-17: the revision of a blob stream never goes back: a transfer state of an older revision than the last row read keeps the newer revision.
+#[test]
+fn a_blob_stream_revision_never_goes_back() {
+    let mut state = opened();
+    let asked = reads(Deliveries::step(&mut state, DeliveryInput::TransferStatus { stream: STREAM, revision: 3, blob: d::BlobStatus::of(&Shown::Queued { progress: 0 }) }, crate::runtime::Time(0)));
+    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 8, position: 0, relevant: Some((8, 0)), touching: Vec::new(), data: d::ReadData::Upload { wait_reason: None, local_url: None, processing: None } }, crate::runtime::Time(0));
+    Deliveries::step(&mut state, DeliveryInput::TransferStatus { stream: STREAM, revision: 6, blob: d::BlobStatus::of(&Shown::Uploading { progress: 40 }) }, crate::runtime::Time(0));
+    let shown = statuses(&state);
+    assert_eq!(shown.last().map(|(revision, blob)| (*revision, blob.state.as_str())), Some((8, "uploading")), "the new state shows at the newest revision seen: {shown:?}");
+}

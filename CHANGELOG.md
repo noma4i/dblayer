@@ -8,6 +8,8 @@
 - Read a row once after its event when a counter or list also shows it.
 - Return the receipt of an accepted write when the session ends before the call returns.
 - Show the loaded state when a window lands while the first read of its stream runs.
+- Reload a window that changed while its last allowed page was loading.
+- Keep the revision of an upload status from going back.
 
 ## 6.37.0 - 2026-11-14
 

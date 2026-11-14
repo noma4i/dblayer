@@ -639,3 +639,17 @@ fn feed_inputs_that_do_not_apply_change_nothing() {
         assert_eq!(twin.state().mode(), mode, "{name}");
     }
 }
+
+/// D-457, D-454: the `Stale` of an event the Store refused inside a committed batch carries the revision of that commit, so a window load pinned after the commit covers it and no second request goes out.
+#[test]
+fn feed_refused_event_stale_carries_the_commit_revision() {
+    let mut twin = live();
+    for payload in ["c1", "c2"] {
+        twin.step(chat(payload));
+    }
+    twin.step(Input::Tick);
+    let before = twin.history.len();
+    twin.step(Input::CommittedRefused(vec![1]));
+    let stale: Vec<&String> = twin.history[before..].iter().filter_map(|entry| match entry { Emitted::Send { input, .. } if input.starts_with("Stale") => Some(input), _ => None }).collect();
+    assert!(!stale.is_empty() && stale.iter().all(|input| input.contains("Change { revision: Some(1) }")), "every Stale of the committed batch names its revision: {stale:?}");
+}

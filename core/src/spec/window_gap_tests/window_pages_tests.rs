@@ -105,3 +105,16 @@ fn win_prop_direction_key() {
     let backward = crate::store::window_key("Moment:feed", PageDirection::Backward);
     assert_ne!(forward, backward, "the window of a stored key is told by its direction: the cursor and the membership of one never reach the other");
 }
+
+/// D-457, P-WIN-08 (window.md: the page limit counts `reread_due` like the end of the pages): a `Stale` during the load of the last allowed page gives one more load of the first page after the landing.
+#[test]
+fn win_page_limit_landing_keeps_the_reread() {
+    let mut twin = Twin::with_max_pages(2);
+    twin.watch();
+    twin.finish(Some(2));
+    twin.call(1, Goal::All);
+    twin.step(Input::Stale { in_keys: true });
+    twin.respond(Some(3));
+    let landed = twin.land();
+    assert_eq!(landed.iter().filter_map(|effect| match effect { Effect::Request { page, .. } => Some(*page), _ => None }).collect::<Vec<_>>(), [1], "the reread of the first page after the landing at the page limit");
+}
