@@ -11,14 +11,15 @@ const NOW: i64 = 1_000_000;
 
 use super::ref_window::Phase;
 use super::ref_window::{Effect, Failure, Goal, Input, Marker3, Read, Reject, Result3, PRELOAD};
-use crate::owners::contract::{Committed, EpochStarted, ErrorClass, Online, RejectReason, Rejected, RequestError};
+use crate::owners::contract::{EpochStarted, ErrorClass, Online, RejectReason, Rejected, RequestError};
 use crate::owners::contract::WindowPhase as OwnerPhase;
-use crate::spec::support::{new_log, number_after, snapshot, take, Discard, Emitted, Log, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
+use crate::spec::support::{new_log, sent_batches, snapshot, take, Discard, Emitted, Log, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
 use crate::owners::read::deliveries::Deliveries;
 use crate::owners::contract::BatchAuthor;
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter};
 use crate::owners::read::windows::{self as w, AnswerPage, StaleKeys, WindowEffect, WindowKey, WindowKind, WindowOutcome, WindowStage, Windows, WindowsEffect, WindowsPeers};
 use crate::runtime::{explore, Address, Back, Cause as Ended, DetScheduler, Effect as RuntimeEffect, EffectRunner, Effects, EpochStamp, Limits, Outbound, StateOwner, Time};
+use crate::spec::support::committed_at;
 
 const EPOCH: u64 = 1;
 /// Slots of the peers and of the owner: the Store, the Deliveries, then the Windows.
@@ -153,8 +154,10 @@ struct Twin {
     now: i64,
     held: HeldReads,
     hold: Arc<std::sync::atomic::AtomicBool>,
-    /// The text of the last batch the owner sent to the Store.
-    commit: String,
+    /// The last batch the owner sent to the Store.
+    commit: Option<StoreBatch>,
+    /// How many of the stored batches `window_batches` gave out.
+    given: std::sync::atomic::AtomicUsize,
     /// Every outcome the owner gave to a caller, in order.
     outcomes: Vec<(u32, Result3)>,
     /// The outcomes of the last step.
@@ -199,11 +202,18 @@ impl Twin {
         let (held, hold) = (reads.held.clone(), reads.hold.clone());
         let addr = add_windows(&mut det, &log, state, reads, pin);
         det.start_epoch(EPOCH);
-        Self { det, addr, log, flight: None, batch: None, revision: 10, pin_revision, stored, online_seq: 0, now: NOW, held, hold, commit: String::new(), outcomes: Vec::new(), last_outcomes: Vec::new() }
+        Self { det, addr, log, flight: None, batch: None, revision: 10, pin_revision, stored, online_seq: 0, now: NOW, held, hold, commit: None, given: std::sync::atomic::AtomicUsize::new(0), outcomes: Vec::new(), last_outcomes: Vec::new() }
     }
 
     /// The batches of the Window owner the Store received since the last call.
-    fn window_batches(&self) -> Vec<StoreBatch> { take(&self.stored).into_iter().filter(|batch| matches!(batch.author, BatchAuthor::Window)).collect() }
+    fn window_batches(&self) -> Vec<StoreBatch> {
+        let all = snapshot(&self.stored);
+        let from = self.given.swap(all.len(), Ordering::SeqCst);
+        all[from..].iter().filter(|batch| matches!(batch.author, BatchAuthor::Window)).cloned().collect()
+    }
+
+    /// The ops of the last batch the owner sent to the Store.
+    fn commit_ops(&self) -> &[StoreOp] { self.commit.as_ref().map_or(&[][..], |batch| batch.ops.as_slice()) }
 
     fn state(&self) -> &w::WindowsState { inner(&self.det, self.addr) }
 
@@ -255,7 +265,7 @@ impl Twin {
             }
             Input::Dropped { request, attempt } => self.post(w::WindowsInput::Dropped { request: *request, attempt: *attempt }),
             Input::Retry { request } => self.post(w::WindowsInput::RetryDue { request: *request }),
-            Input::Committed { request, revision } => self.post(w::WindowsInput::Committed(Committed { batch: *request, revision: *revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() })),
+            Input::Committed { request, revision } => self.post(w::WindowsInput::Committed(committed_at(*request, *revision, &[]))),
             Input::Rejected { request, reason } => {
                 let reason = match reason {
                     Reject::NoSession => RejectReason::NoSession,
@@ -304,7 +314,7 @@ impl Twin {
             }
         }
         let emitted = take(&self.log);
-        if let Some(Emitted::Send { input, .. }) = emitted.iter().rev().find(|entry| matches!(entry, Emitted::Send { to: STORE, input } if input.contains("author: Window"))) { self.commit.clone_from(input); }
+        if let Some(batch) = sent_batches(&emitted, &self.stored).into_iter().rev().find(|batch| batch.author == BatchAuthor::Window) { self.commit = Some(batch); }
         let (got, outcomes) = self.split(emitted);
         for effect in &got {
             match effect {
@@ -322,6 +332,7 @@ impl Twin {
     /// One `WindowState` effect stands for the sends to every stream of the interest.
     fn split(&self, emitted: Vec<Emitted<WindowsEffect>>) -> (Vec<Effect>, Vec<(u32, Result3)>) {
         let (mut modelled, mut outcomes) = (Vec::new(), Vec::new());
+        let mut batches = sent_batches(&emitted, &self.stored).into_iter();
         for entry in emitted {
             match entry {
                 Emitted::Run(WindowsEffect::Window { effect, .. }) => match effect {
@@ -335,7 +346,10 @@ impl Twin {
                 Emitted::Run(WindowsEffect::Drained(_)) => modelled.push(Effect::Drained),
                 Emitted::Run(WindowsEffect::SnapshotRequest { .. }) => {}
                 Emitted::Run(WindowsEffect::ReadWindow { .. }) => modelled.push(Effect::ReadWindow),
-                Emitted::Send { to: STORE, input } if input.contains("author: Window") => modelled.push(Effect::Commit { request: number_after(&input, "id: ").expect("the batch id"), replace_all: input.contains("replace_all: true") }),
+                Emitted::Send { to: STORE, input } if input.starts_with("Commit(") => {
+                    let batch = batches.next().expect("a batch for every Commit");
+                    if batch.author == BatchAuthor::Window { modelled.push(Effect::Commit { request: batch.id, replace_all: batch.ops.iter().any(|op| matches!(op, StoreOp::Window { replace_all: true, .. })) }); }
+                }
                 Emitted::Send { to: DELIVERIES, .. } if modelled.last() == Some(&Effect::WindowState) => {}
                 Emitted::Send { to: DELIVERIES, .. } => modelled.push(Effect::WindowState),
                 Emitted::Schedule { id, input, .. } if input.starts_with("RetryDue") => modelled.push(Effect::ScheduleRetry { request: id.0 }),

@@ -2,11 +2,12 @@
 
 mod vocab;
 pub use vocab::{author_of, Class, Credential as RefCredential, Effect as RefEffect, EndCause, Fail, Input, Kind, Operation, Outcome, Pending as RefPending, PubState, Reason, Secret, OUTBOX_AUTHOR, TRANSFER_AUTHOR};
-use crate::owners::contract::{Committed, EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected};
+use crate::owners::contract::{EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected};
 use crate::owners::session::{self as owner, AuthorOutcome, Credential, OperationClass, PendingCall, SecretState, SessionCalls, SessionEffect, SessionError, SessionInput, SessionState};
 use crate::spec::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
 use crate::transport::SessionCode;
+use crate::spec::support::committed_at;
 
 const EPOCH: u64 = 3;
 const CRED: u64 = 4;
@@ -227,7 +228,7 @@ impl Twin {
             Input::AnswerTooLarge { request_id, attempt_id, limit } => SessionInput::AnswerTooLarge { request_id, attempt_id, limit },
             Input::Dropped { request_id, attempt_id } => SessionInput::Dropped { request_id, attempt_id },
             Input::Unknown { request_id, attempt_id } => SessionInput::Dropped { request_id, attempt_id },
-            Input::Committed(batch) => SessionInput::Committed(Committed { batch: resolve(batch), revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }),
+            Input::Committed(batch) => SessionInput::Committed(committed_at(resolve(batch), 1, &[])),
             Input::Rejected(batch, reason) => SessionInput::Rejected(Rejected { batch: resolve(batch), reason: reject(reason) }),
             Input::Tick => SessionInput::Tick,
             Input::Online(online) => SessionInput::Online(Online(online)),

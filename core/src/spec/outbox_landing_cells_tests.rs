@@ -73,7 +73,7 @@ fn out_landing_committed() {
     assert_eq!(twin.stage(follower), Some(St::Queued), "the next operation of the row waits behind the sending one");
     let waited = twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, EPOCH), reply: WAITER, discard_on_failure: false });
     assert_eq!((twin.stage(id), waited.len()), (Some(St::Sending), 0));
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.respond(id);
     let effects = twin.committed(id);
     assert_eq!((twin.stage(id), twin.stage(follower), sends(&effects)), (Some(St::Done), Some(St::Sending), 1), "the operation is Done and the next one of the row starts");
     assert!(matches!(answers(&effects, WAITER).as_slice(), [OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. })]), "{effects:?}");
@@ -84,7 +84,7 @@ fn out_landing_committed_transfer() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, true);
     twin.waiter(id);
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.respond(id);
     let effects = twin.committed(id);
     assert_eq!(twin.stage(id), Some(St::Done));
     assert!(matches!(transfer_outcomes(&effects).as_slice(), [OutboxOutcome::Confirmed { .. }]), "the outcome reaches Transfer in the batch that removes the intent: {effects:?}");

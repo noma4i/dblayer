@@ -1,10 +1,11 @@
 //! Owner-level tests of the owner `Rounds`: the background round of the system job, the states of a job and the requests of the platform.
 
+use std::any::Any;
 use std::collections::BTreeSet;
 
 use crate::owners::contract::{EpochEnded, EpochStarted};
 use crate::owners::write::rounds::{Round, Rounds, RoundsEffect, RoundsInput, RoundsState};
-use crate::owners::write::transfer::Transfers;
+use crate::owners::write::transfer::{TransferInput, Transfers};
 use crate::runtime::{Address, Cause, Effect, StateOwner};
 
 fn state(epoch: u64) -> RoundsState {
@@ -16,14 +17,14 @@ fn state(epoch: u64) -> RoundsState {
 
 fn busy(state: &mut RoundsState, epoch: u64, ids: &[u64]) { state.active.insert(epoch, ids.iter().copied().collect::<BTreeSet<u64>>()); }
 
-/// The effects of one step: the runs, and the `Debug` form of the inputs sent to Transfer.
-fn step(state: &mut RoundsState, input: RoundsInput) -> (Vec<RoundsEffect>, Vec<String>) {
+/// The effects of one step: the runs, and the inputs sent to Transfer.
+fn step(state: &mut RoundsState, input: RoundsInput) -> (Vec<RoundsEffect>, Vec<TransferInput>) {
     let mut runs = Vec::new();
     let mut sends = Vec::new();
     for effect in Rounds::step(state, input, crate::runtime::Time(0)) {
         match effect {
             Effect::Run(run) => runs.push(run),
-            Effect::Send(outbound) => sends.push(format!("{:?}", outbound.payload)),
+            Effect::Send(outbound) => sends.push((&*outbound.payload as &dyn Any).downcast_ref::<TransferInput>().expect("a send to Transfer").clone()),
             other => panic!("an effect outside the table: {other:?}"),
         }
     }
@@ -106,7 +107,7 @@ fn xfer_round_refused() {
     let request_id = requested(&mut state, 1, &[10]);
     let (runs, sends) = step(&mut state, RoundsInput::RoundRefused { request_id, epoch: 1, reason: "denied".into() });
     assert_eq!((runs.len(), state.round), (0, Round::Refused { epoch: 1 }), "the transfers go on in the process");
-    assert!(sends.len() == 1 && sends[0].contains("RoundStatus") && sends[0].contains("denied") && sends[0].contains("10"), "{sends:?}");
+    assert!(matches!(sends.as_slice(), [TransferInput::RoundStatus { epoch: 1, transfer_ids, refused: Some(reason) }] if *transfer_ids == [10] && reason == "denied"), "{sends:?}");
 }
 
 #[test]
@@ -117,7 +118,7 @@ fn xfer_round_refused_resume() {
         step(&mut state, RoundsInput::RoundRefused { request_id, epoch: 1, reason: "denied".into() });
         let (runs, sends) = step(&mut state, resume);
         assert_eq!((jobs(&runs).len(), matches!(state.round, Round::Requested { epoch: 1, .. })), (1, true));
-        assert!(sends.len() == 1 && sends[0].contains("RoundStatus") && sends[0].contains("refused: None"), "the refusal is taken off: {sends:?}");
+        assert!(matches!(sends.as_slice(), [TransferInput::RoundStatus { refused: None, .. }]), "the refusal is taken off: {sends:?}");
     }
 }
 

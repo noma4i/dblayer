@@ -162,7 +162,7 @@ fn out_sending_response() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
     let request_id = twin.state().ops[&id].request_id;
-    let effects = twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    let effects = twin.respond(id);
     assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::Landing), vec![CommitKind::Land], 1));
     assert!(twin.store_ops.contains(&StoreOp::RemoveIntent { op_id: id }) && twin.store_ops.contains(&StoreOp::RemoveAnswer { request_id }), "{:?}", twin.store_ops);
     assert!(has_op!(twin, StoreOp::Rows { model, rows } if model == "Moment" && rows.iter().any(|row| row.values.contains("state"))), "{:?}", twin.store_ops);
@@ -172,7 +172,7 @@ fn out_sending_response() {
 fn out_landing_retry() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.respond(id);
     let effects = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: RETRY_REPLY });
     assert_eq!(twin.stage(id), Some(St::Landing));
     assert!(matches!(answers(&effects, RETRY_REPLY).as_slice(), [OutboxAnswer::Receipt(receipt)] if receipt.op_id == id));
@@ -181,7 +181,7 @@ fn out_landing_retry() {
         let mut twin = Twin::new();
         let id = sending(&mut twin, Policy::Rollback, false);
         twin.waiter(id);
-        twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+        twin.respond(id);
         if invalid_first { refuse(&mut twin, id, RejectReason::Invalid("bad row".into())); }
         let retried = retry(&mut twin);
         assert_eq!((twin.stage(id), sends(&retried)), (Some(St::Landing), 0), "invalid_first={invalid_first}: {retried:?}");
@@ -208,7 +208,7 @@ fn out_outcome_stale() {
 fn out_outcome_done() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.respond(id);
     twin.committed(id);
     let effects = twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, EPOCH), reply: WAITER , discard_on_failure: false});
     assert_eq!(twin.stage(id), Some(St::Done));
@@ -220,11 +220,11 @@ fn out_outcome_done() {
 fn out_done_refuses() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.respond(id);
     twin.committed(id);
     for input in [
         OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: RETRY_REPLY },
-        OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: RETRY_REPLY },
+        discard(Some("update"), RETRY_REPLY),
     ] {
         let effects = twin.post(input);
         assert_eq!((twin.stage(id), answers(&effects, RETRY_REPLY), effects.len()), (Some(St::Done), vec![OutboxAnswer::Err(Fault::NotFound)], 1));
@@ -245,7 +245,7 @@ fn out_failed_retry() {
 fn out_failed_discard() {
     let mut twin = Twin::new();
     let id = failed(&mut twin);
-    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY });
+    let effects = twin.post(discard(Some("update"), DISCARD_REPLY));
     assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::RollingBack(RWhy::Discarded)), vec![CommitKind::Rollback], 1));
     let request_id = twin.state().ops[&id].request_id;
     assert!(twin.store_ops.contains(&StoreOp::RollBack { op_id: id }), "{:?}", twin.store_ops);
@@ -268,7 +268,7 @@ fn out_unknown_operation() {
     let mut twin = Twin::new();
     for input in [
         OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: WAITER },
-        OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: WAITER },
+        discard(Some("update"), WAITER),
         OutboxInput::Outcome { receipt: twin.receipt(99, EPOCH), reply: WAITER , discard_on_failure: false},
     ] {
         let effects = twin.post(input);
@@ -294,10 +294,10 @@ fn out_rollback_discard() {
     twin.post(OutboxInput::Online(Online(false)));
     let id = twin.submit("r", Policy::Rollback, false);
     twin.committed(id);
-    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY });
+    let effects = twin.post(discard(Some("update"), DISCARD_REPLY));
     assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::RollingBack(RWhy::Discarded)), vec![CommitKind::Rollback], 1));
     assert!(has_op!(twin, StoreOp::RollBack { .. }) && has_op!(twin, StoreOp::RemoveIntent { .. }), "{:?}", twin.store_ops);
-    let effects = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: 803 });
+    let effects = twin.post(discard(Some("update"), 803));
     assert_eq!((twin.stage(id), effects.len()), (Some(St::RollingBack(RWhy::Discarded)), 0));
     let effects = twin.committed(id);
     assert_eq!(answers(&effects, DISCARD_REPLY), vec![OutboxAnswer::Ok]);
@@ -528,7 +528,7 @@ fn out_landing_committed_stale() {
 fn out_rollback_invalid() {
     let mut twin = Twin::new();
     let id = failed(&mut twin);
-    let started = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD_REPLY });
+    let started = twin.post(discard(None, DISCARD_REPLY));
     assert_eq!((twin.stage(id), kinds(&started)), (Some(St::RollingBack(RWhy::Discarded)), vec![CommitKind::Rollback]));
     let effects = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
@@ -616,14 +616,13 @@ fn out_closing_after_the_applied_answer_changes_nothing() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, true);
     twin.waiter(id);
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.respond(id);
     let landed = twin.committed(id);
     assert!(answers(&landed, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. }))), "the answer that arrived before Closing lands Confirmed first: {landed:?}");
     let after = input_of(&mut twin, id, &ready(), In::Closing);
     assert_eq!((twin.stage(id), answers(&after, WAITER), transfer_outcomes(&after)), (Some(St::Done), Vec::new(), Vec::new()), "Closing after the applied answer changes nothing: {after:?}");
 }
 
-fn response_of(op_id: OpId) -> OutboxInput { OutboxInput::Response { op_id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None } }
 
 /// An operation of the row `r` waiting for the answer of its own Store batch, and the kind of that batch.
 fn in_batch_stage(stage: St, transfer: bool) -> (Twin, OpId, CommitKind) {
@@ -664,10 +663,9 @@ fn out_batch_refused_without_a_session_ends_the_operation_for_the_waiter_and_tra
 
 #[test]
 fn out_discard_of_an_operation_in_flight_is_refused() {
-    let discard = || OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY };
     for stage in [St::Landing, St::Sending] {
         let mut twin = if stage == St::Sending { let mut twin = Twin::new(); sending(&mut twin, Policy::Rollback, false); twin } else { in_batch_stage(stage, false).0 };
-        let effects = twin.post(discard());
+        let effects = twin.post(discard(Some("update"), DISCARD_REPLY));
         assert_eq!((answers(&effects, DISCARD_REPLY), effects.len()), (vec![OutboxAnswer::Err(Fault::InFlight)], 1), "{stage:?}");
     }
     for stage in [St::RollingBack(RWhy::Rejected), St::MarkingFailed, St::MarkingRetry] {

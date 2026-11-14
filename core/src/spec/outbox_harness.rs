@@ -2,7 +2,7 @@
 
 use crate::schema::OnFailure;
 use std::collections::BTreeMap;
-use crate::owners::contract::{BatchId, Committed, Online, RejectReason, Rejected, ReplyId, RequestId};
+use crate::owners::contract::{BatchId, Online, RejectReason, Rejected, ReplyId, RequestId};
 use crate::owners::session::{SessionCalls, SessionInput};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter};
 use crate::spec::support::{new_log, Discard, Log, Sink};
@@ -11,6 +11,7 @@ use crate::owners::write::transfer::{TransferInput, Transfers};
 use crate::runtime::{Address, Cause, DetScheduler, Effect, Effects, Epoch, EpochStamp, StateOwner, Time};
 use std::any::Any;
 use std::sync::PoisonError;
+use crate::spec::support::committed_at;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RWhy { Rejected, Discarded }
 
@@ -238,6 +239,12 @@ pub(super) fn world(seed: u64) -> (DetScheduler, Log<Seen>, Address<OutboxSpy>) 
 /// The rows of a server answer.
 pub(super) fn server_rows() -> Vec<(String, Vec<crate::owners::store::RowValue>)> { vec![("Moment".into(), vec![crate::owners::store::RowValue { row_id: "r".into(), values: "{\"state\":\"server\"}".into() }])] }
 
+/// The answer of the server to the operation `op_id`: the server rows and nothing else.
+pub(super) fn response_of(op_id: OpId) -> OutboxInput { OutboxInput::Response { op_id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None } }
+
+/// The `Discard` of the row `r` of `Moment`, answered to `reply`.
+pub(super) fn discard(action: Option<&str>, reply: ReplyId) -> OutboxInput { OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: action.map(Into::into), reply } }
+
 pub(super) const EPOCH: u64 = 1;
 pub(super) const SUBMIT_REPLY: ReplyId = 1;
 pub(super) const DISCARD_REPLY: ReplyId = 800;
@@ -355,6 +362,9 @@ impl Twin {
         }
     }
 
+    /// The server answers the operation `op_id` with the server rows.
+    pub(super) fn respond(&mut self, op_id: OpId) -> Vec<OutboxEffect> { self.post(response_of(op_id)) }
+
     /// A call without an action waits for Transfer; the Transfer of the twin holds no transfer, so it names the smallest open operation of the row or none.
     pub(super) fn post(&mut self, input: OutboxInput) -> Vec<OutboxEffect> {
         let mut effects = self.post_input(input);
@@ -418,7 +428,7 @@ impl Twin {
 
     pub(super) fn commit_batch(&mut self, batch: BatchId) -> Vec<OutboxEffect> {
         self.revision += 1;
-        self.post(OutboxInput::Committed(Committed { batch, revision: self.revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }))
+        self.post(OutboxInput::Committed(committed_at(batch, self.revision, &["moments"])))
     }
 
     pub(super) fn rejected(&mut self, id: OpId, reason: RReason) -> Vec<OutboxEffect> { let batch = self.batches[&id]; self.reject_batch(batch, reason) }
@@ -482,7 +492,7 @@ pub(super) fn reach(state: St, ctx: &Ctx) -> (Twin, OpId) {
                 }
             }
             match state {
-                St::Landing => { twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None }); }
+                St::Landing => { twin.respond(id); }
                 St::RollingBack(RWhy::Rejected) => { twin.post(OutboxInput::TransportError { op_id: id, temporary: false }); }
                 St::PersistingAttempt => {
                     twin.post(OutboxInput::TransportError { op_id: id, temporary: true });
@@ -499,7 +509,7 @@ pub(super) fn reach(state: St, ctx: &Ctx) -> (Twin, OpId) {
                     twin.committed(id);
                 }
                 St::Done => {
-                    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+                    twin.respond(id);
                     twin.committed(id);
                 }
                 _ => {}

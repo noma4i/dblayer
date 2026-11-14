@@ -9,9 +9,10 @@ use super::delivery_words::{self as r, rows, Cause, Effect, Fetch, Input, Kind, 
 use crate::owners::contract::{Committed, Models, WindowPhase, WindowState};
 use crate::owners::read::deliveries::{self as d, DeliveryEffect, DeliveryPeers, Deliveries, PullAnswer, StreamEffect};
 use crate::owners::read::feed::Feed;
-use crate::owners::read::windows::{WindowKey, Windows};
-use crate::spec::support::{as_owner, new_log, snapshot, take, Discard, Emitted, Ender, EnderState, Log, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState};
+use crate::owners::read::windows::{WindowKey, Windows, WindowsInput};
+use crate::spec::support::{as_owner, new_log, Captured, snapshot, take, Discard, Emitted, Ender, EnderState, Log, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState};
 use crate::runtime::{explore, Address, Cause as Ended, DetScheduler, EpochStamp, Limits, Outcomes};
+use crate::spec::support::committed_at;
 
 mod delivery_changes_tests;
 mod delivery_debt_tests;
@@ -31,8 +32,8 @@ fn peers() -> DeliveryPeers { DeliveryPeers { windows: Address::<Windows>::new(W
 
 fn window() -> WindowKey { WindowKey { model: "Moment".into(), name: "list".into() } }
 
-fn add_deliveries(det: &mut DetScheduler, log: &Spied) -> Address<Spy<Deliveries>> {
-    det.add::<Sink<Windows>>("windows", new_log(), Discard);
+fn add_deliveries(det: &mut DetScheduler, log: &Spied, windows: &Log<WindowsInput>) -> Address<Spy<Deliveries>> {
+    det.add::<Captured<Windows>>("windows", windows.clone(), Discard);
     det.add::<Sink<Feed>>("feed", new_log(), Discard);
     det.add::<Spy<Deliveries>>("deliveries", SpyState::new(d::DeliveriesState::new(EPOCH, peers()), log), Discard)
 }
@@ -122,6 +123,8 @@ struct Twin {
     det: DetScheduler,
     addr: Address<Spy<Deliveries>>,
     log: Spied,
+    /// The inputs the Windows peer received.
+    windows: Log<WindowsInput>,
     answers: Outcomes<PullAnswer>,
     /// A `Pull` is parked until an `Answer` effect comes.
     parked: bool,
@@ -134,9 +137,10 @@ impl Twin {
     fn new() -> Self {
         let mut det = DetScheduler::new(7);
         let log = new_log();
-        let addr = add_deliveries(&mut det, &log);
+        let windows = new_log();
+        let addr = add_deliveries(&mut det, &log, &windows);
         det.start_epoch(EPOCH);
-        Self { det, addr, log, answers: Outcomes::new(), parked: false, total: None, pull: None }
+        Self { det, addr, log, windows, answers: Outcomes::new(), parked: false, total: None, pull: None }
     }
 
     fn run(&mut self) { self.det.run_until_quiet(10_000).expect("the owner is quiet"); }
@@ -155,8 +159,11 @@ impl Twin {
 
     fn read_id(&self) -> u64 { self.state().read_id(STREAM) }
 
-    fn modelled(entries: Vec<Emitted<DeliveryEffect>>) -> Vec<Effect> {
+    fn modelled(&self, entries: Vec<Emitted<DeliveryEffect>>) -> Vec<Effect> {
         let mut modelled = Vec::new();
+        let load_sends = entries.iter().filter(|entry| matches!(entry, Emitted::Send { to: WINDOWS, input } if input.starts_with("Load"))).count();
+        let forces = snapshot(&self.windows).into_iter().filter_map(|input| match input { WindowsInput::Load { force, .. } | WindowsInput::LoadNoWait { force, .. } => Some(force), _ => None }).collect::<Vec<_>>();
+        let mut forces = forces[forces.len() - load_sends..].to_vec().into_iter();
         for entry in entries {
             match entry {
                 Emitted::Run(DeliveryEffect::Drained(_)) => modelled.push(Effect::Drained),
@@ -177,7 +184,7 @@ impl Twin {
                 }
                 Emitted::Send { to: WINDOWS, input } if input.starts_with("InterestPlus") => modelled.push(Effect::InterestPlus),
                 Emitted::Send { to: WINDOWS, input } if input.starts_with("InterestPassive") => modelled.push(Effect::InterestPassive),
-                Emitted::Send { to: WINDOWS, input } if input.starts_with("Load") => modelled.push(Effect::Load { force: input.contains("force: true") }),
+                Emitted::Send { to: WINDOWS, input } if input.starts_with("Load") => modelled.push(Effect::Load { force: forces.next().expect("a Load for every send") }),
                 Emitted::Send { to: WINDOWS, .. } => modelled.push(Effect::InterestMinus),
                 Emitted::Run(DeliveryEffect::WantPlus { .. }) => modelled.push(Effect::WantPlus),
                 Emitted::Run(DeliveryEffect::WantMinus { .. }) => modelled.push(Effect::WantMinus),
@@ -206,12 +213,12 @@ impl Twin {
             }
             Input::Committed { revision, touches } => {
                 let table = if *touches { "moments" } else { "other" };
-                self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec![table.into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
+                self.post(d::DeliveryInput::Committed(Committed { tables: vec![table.into()], ..committed_at(0, *revision, &[]) }));
             }
             Input::Changed { revision, rows, reset } => {
                 let tables = rows.iter().map(|(table, _)| table.clone()).collect();
                 let changed = rows.iter().cloned().collect::<std::collections::BTreeSet<_>>();
-                self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables, rows: (!*reset).then_some(changed), models: if *reset { Models::All } else { Default::default() }, stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
+                self.post(d::DeliveryInput::Committed(Committed { tables, rows: (!*reset).then_some(changed), models: if *reset { Models::All } else { Default::default() }, ..committed_at(0, *revision, &[]) }));
             }
             Input::ReadDone { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, position: 0, relevant: Some((*revision, 0)), touching: Vec::new(), data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: self.total } }),
             Input::ReadRelevant { revision, position, relevant, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, position: *position, relevant: *relevant, touching: Vec::new(), data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: self.total } }),
@@ -266,7 +273,7 @@ impl Twin {
             }
             entries.extend(take(&self.log));
         }
-        let got = Self::modelled(entries);
+        let got = self.modelled(entries);
         let answered = got.iter().any(|effect| matches!(effect, Effect::Answer(_)));
         if answered { self.parked = false; } else if input == Input::Pull { self.parked = true; }
         got
@@ -344,7 +351,7 @@ fn dlv_wait_subscription_census() {
 }
 
 fn commit(twin: &mut Twin, revision: i64, table: String, position: u64) {
-    twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec![table], rows: None, models: Default::default(), stale_parents: Vec::new(), position, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
+    twin.post(d::DeliveryInput::Committed(Committed { tables: vec![table], position, ..committed_at(0, revision, &[]) }));
 }
 
 fn read_done(twin: &mut Twin, revision: i64, data: d::ReadData) {
@@ -501,7 +508,7 @@ fn dlv_open_rows_without_a_window_asks_for_nothing() {
     let mut twin = Twin::new();
     take(&twin.log);
     twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { remote: false, ..view(Kind::List) }, epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: None });
-    assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Read(0)]);
+    assert_eq!(twin.modelled(take(&twin.log)), [Effect::Read(0)]);
 }
 
 /// dlv_open_live: a read stream of a model that takes server events wants the subscription of the Feed and gives it back when it ends.
@@ -510,7 +517,7 @@ fn dlv_open_live() {
     let mut twin = Twin::new();
     take(&twin.log);
     twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { live: true, ..view(Kind::List) }, epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: None });
-    assert!(Twin::modelled(take(&twin.log)).contains(&Effect::WantPlus));
+    assert!(twin.modelled(take(&twin.log)).contains(&Effect::WantPlus));
 }
 
 /// D-254: a reset commit of `All` models reads no row stream.
@@ -518,8 +525,8 @@ fn dlv_open_live() {
 fn dlv_committed_reset_reads_no_row_stream() {
     let mut twin = open_rows();
     take(&twin.log);
-    twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: 2, tables: vec!["other".into()], rows: None, models: Models::All, stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
-    assert_eq!(Twin::modelled(take(&twin.log)), []);
+    twin.post(d::DeliveryInput::Committed(Committed { models: Models::All, ..committed_at(0, 2, &["other"]) }));
+    assert_eq!(twin.modelled(take(&twin.log)), []);
 }
 
 #[test]

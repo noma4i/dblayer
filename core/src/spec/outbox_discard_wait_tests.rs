@@ -6,8 +6,6 @@ use super::outbox_harness::{Policy, St};
 use crate::owners::contract::Online;
 use crate::owners::write::outbox::{Fault, OpId, OutboxAnswer, OutboxInput};
 
-fn discard() -> OutboxInput { OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("update".into()), reply: DISCARD_REPLY } }
-
 /// In each stage of an internal step `Discard` gets no answer; the exit of the stage runs it by the row of the stage it leaves to: the rollback and `Ok` for an unsent operation, `Err(InFlight)` once the request left.
 /// Observable: the answers and the sends. Catches: a `Discard` refused by the stage it met, a command lost at the exit, an answer twice.
 #[test]
@@ -20,7 +18,7 @@ fn out_discard_waits_for_the_stage() {
             St::MarkingFailed => marking_failed(&mut twin, false),
             _ => marking_retry(&mut twin),
         };
-        let waiting = twin.post(discard());
+        let waiting = twin.post(discard(Some("update"), DISCARD_REPLY));
         assert!(answers(&waiting, DISCARD_REPLY).is_empty() && waiting.is_empty(), "{stage:?}: the command waits");
         let mut effects = Vec::new();
         for _ in 0..4 {
@@ -42,7 +40,7 @@ fn out_prop_discard_at_any_point() {
         if point > 0 { effects.extend(twin.committed(id)); }
         if point > 1 { effects.extend(twin.post(OutboxInput::Online(Online(true)))); }
         if point > 2 { effects.extend(twin.committed(id)); }
-        effects.extend(twin.post(discard()));
+        effects.extend(twin.post(discard(Some("update"), DISCARD_REPLY)));
         for _ in 0..4 {
             if matches!(twin.stage(id), Some(St::Submitting | St::PersistingAttempt | St::RollingBack(_))) { effects.extend(twin.committed(id)); } else { break; }
         }

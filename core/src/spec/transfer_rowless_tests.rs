@@ -6,6 +6,7 @@ use super::transfer_harness::*;
 use crate::owners::store::StoreOp;
 use crate::owners::write::outbox::{Fault, OutboxInput, OutboxOutcome, ReserveTarget};
 use crate::owners::write::transfer::{Shown, TransferAnswer, TransferId, TransferInput, TransferStage};
+use crate::spec::support::committed_at;
 
 const KEY: &str = "CurrentUser:me:upload_photo";
 const OTHER: &str = "CurrentUser:other:upload_photo";
@@ -60,7 +61,7 @@ fn landed(id: &str) -> crate::store::Row {
 }
 
 fn committed_with(twin: &mut Twin, shown: Vec<Option<crate::store::Row>>) -> Out {
-    twin.answer(|batch| TransferInput::Committed(crate::owners::contract::Committed { batch, revision: 4, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown, files_removed: 0, refused: Vec::new() }))
+    twin.answer(|batch| TransferInput::Committed(crate::owners::contract::Committed { shown, ..committed_at(batch, 4, &[]) }))
 }
 
 #[test]

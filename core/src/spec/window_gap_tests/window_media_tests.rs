@@ -84,8 +84,9 @@ fn win_media_marker_same() {
     let mut twin = media_checking();
     let effects = answer_marker(&mut twin, SAVED);
     assert_eq!(commits(&effects), 1);
-    assert!(twin.commit.contains("WindowMarker") && !twin.commit.contains("Window {"), "the batch has the marker and no rows: {}", twin.commit);
-    assert!(twin.commit.contains(&format!("landed_at: Some({NOW})")), "{}", twin.commit);
+    let ops = twin.commit_ops();
+    assert!(ops.iter().any(|op| matches!(op, StoreOp::WindowMarker { .. })) && !ops.iter().any(|op| matches!(op, StoreOp::Window { .. })), "the batch has the marker and no rows: {ops:?}");
+    assert!(ops.iter().any(|op| matches!(op, StoreOp::WindowMarker { landed_at, .. } if *landed_at == Some(NOW))), "{ops:?}");
     twin.now = NOW + 500;
     twin.land();
     assert_eq!((twin.stage(), twin.phase()), (Some(WindowStage::Idle), Phase::Loaded));
@@ -148,7 +149,8 @@ fn win_media_confirm_of_the_chain() {
         full.respond(None);
         let effects = answer_marker(&mut full, marker(9, 1, 1));
         assert_eq!(commits(&effects), 1);
-        assert!(full.commit.contains("WindowMarker") && full.commit.contains("Window {"), "the rows and the marker are one batch: {}", full.commit);
+        let ops = full.commit_ops();
+        assert!(ops.iter().any(|op| matches!(op, StoreOp::WindowMarker { .. })) && ops.iter().any(|op| matches!(op, StoreOp::Window { .. })), "the rows and the marker are one batch: {ops:?}");
         full.land();
         assert_eq!((full.stage(), full.phase()), (Some(WindowStage::Idle), Phase::Loaded));
         let mut tail = media_tail();

@@ -1,4 +1,5 @@
 use super::*;
+use crate::spec::support::committed_at;
 
 #[test]
 fn dlv_count_temp_swap() {
@@ -16,17 +17,18 @@ fn dlv_count_temp_swap() {
     let rebound = real.clone();
     let deferred = d::Deferred { temps: vec![(temporary.model.clone(), "temp-00000000-0000-0000-0000-706172656e74".into())], rebind: d::Rebind::new(move || ready.load(Ordering::SeqCst).then(|| rebound.clone())) };
     twin.post(d::DeliveryInput::Open { stream: STREAM, view: temporary, epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: Some(deferred) });
-    let first = Twin::modelled(take(&twin.log));
+    let first = twin.modelled(take(&twin.log));
     assert!(!first.contains(&Effect::InterestPlus), "the temporary id must not open a window");
     twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision: 0, position: 0, relevant: Some((0, 0)), touching: Vec::new(), data: d::ReadData::Count(0) });
     take(&twin.log);
     resolved.store(true, Ordering::SeqCst);
-    twin.post(d::DeliveryInput::Committed(Committed { batch: 1, revision: 1, tables: vec!["moments".into()], rows: None, models: Models::default(), stale_parents: Vec::new(), position: 1, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
+    twin.post(d::DeliveryInput::Committed(Committed { position: 1, ..committed_at(1, 1, &["moments"]) }));
     let read_id = twin.read_id();
     take(&twin.log);
+    take(&twin.windows);
     twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 1, position: 0, relevant: Some((1, 0)), touching: Vec::new(), data: d::ReadData::Count(0) });
     let effects = take(&twin.log);
-    let interests = effects.iter().filter(|effect| matches!(effect, Emitted::Send { to: WINDOWS, input } if input.starts_with("InterestPlus") && input.contains("server-parent-window"))).count();
+    let interests = snapshot(&twin.windows).iter().filter(|input| matches!(input, WindowsInput::InterestPlus { key, .. } if key.name.contains("server-parent-window"))).count();
     assert_eq!(interests, 1, "the swap opens the real count window exactly once: {effects:?}");
     assert!(effects.iter().any(|effect| matches!(effect, Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Read { view, .. }, .. }) if view.subject == "server-parent")));
     twin.post(d::DeliveryInput::WindowState { stream: STREAM, state: WindowState::idle() });
@@ -38,13 +40,14 @@ fn dlv_count_temp_swap() {
 fn dlv_force_load_uses_committed_revision() {
     let mut det = DetScheduler::new(7);
     let log = new_log();
-    det.add::<Sink<Windows>>("windows", new_log(), Discard);
+    let windows = new_log();
+    det.add::<Captured<Windows>>("windows", windows.clone(), Discard);
     det.add::<Sink<Feed>>("feed", new_log(), Discard);
     let addr = det.add::<Spy<Deliveries>>("deliveries", SpyState::new(d::DeliveriesState::new(EPOCH, peers()), &log), Discard);
     det.start_epoch(EPOCH);
     det.post(addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::Entity(Fetch::Force)), epoch: EPOCH, identity: true, valid: true, revision: 37, deferred: None });
     det.run_until_quiet(100).unwrap();
-    assert_eq!(snapshot(&log).iter().filter(|entry| matches!(entry, Emitted::Send { to: WINDOWS, input } if input.starts_with("Load") && input.contains("store_revision: 37"))).count(), 1);
+    assert_eq!(snapshot(&windows).iter().filter(|input| matches!(input, WindowsInput::Load { store_revision: 37, .. } | WindowsInput::LoadNoWait { store_revision: 37, .. })).count(), 1);
 }
 
 fn resync(twin: &mut Twin) -> Vec<Effect> {
@@ -127,11 +130,11 @@ fn dlv_resync_read_failed_retries_then_ends() {
     twin.post(d::DeliveryInput::ReadFailed { stream: STREAM, read_id: first_id, revision: 1, error: "first".into() });
     let read_id = twin.read_id();
     assert!(read_id > first_id);
-    assert!(Twin::modelled(take(&twin.log)).contains(&Effect::Read(1)), "the first failure retries the read");
+    assert!(twin.modelled(take(&twin.log)).contains(&Effect::Read(1)), "the first failure retries the read");
     assert!(matches!(twin.state().journal(STREAM).as_slice(), [d::Value::State { state, .. }] if state.error.is_some()));
     twin.post(d::DeliveryInput::ReadFailed { stream: STREAM, read_id, revision: 1, error: "second".into() });
     assert!(matches!(twin.state().journal(STREAM).as_slice(), [d::Value::Ended(d::EndCause::Storage { error })] if error == "second"));
-    let effects = Twin::modelled(take(&twin.log));
+    let effects = twin.modelled(take(&twin.log));
     assert!(effects.contains(&Effect::InterestMinus));
     assert!(effects.contains(&Effect::CloseSink));
 }

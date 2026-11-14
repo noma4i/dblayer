@@ -5,13 +5,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::test_wait::orders_of;
 
-use crate::owners::contract::{Committed, Online};
+use crate::owners::contract::{Online};
 use crate::owners::read::deliveries::Deliveries;
 use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, FramedEvent, Outgoing, ScopedChannel};
 use crate::owners::read::windows::{StaleKeys, Windows};
 use crate::owners::store::StoreWriter;
 use crate::spec::support::{new_log, CapturedStore, number_after, take, text_after, Discard, Emitted, Log, Sink, Spy, SpyState};
 use crate::runtime::{Address, DetScheduler, EpochStamp};
+use crate::spec::support::committed_at;
 
 const EPOCH: u64 = 1;
 const STORE: usize = 0;
@@ -192,7 +193,7 @@ fn feed_live_rejected_invalid() {
     let first = rig.batches[0];
     let second = rig.batches[1];
     assert_eq!(rig.post(FeedInput::Rejected(Rejected { batch: second, reason: RejectReason::Invalid(String::new()) })), ["commit", "stale:Chat"]);
-    let emitted = rig.post(FeedInput::Committed(Committed { batch: first, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
+    let emitted = rig.post(FeedInput::Committed(committed_at(first, 1, &[])));
     assert_eq!(emitted, ["modelevent:1", "modellost:1"]);
     assert_eq!(rig.state().mode(), f::Mode::Live);
 }
@@ -420,7 +421,7 @@ fn feed_prop_chan_one_ledger() {
         assert_eq!(batches.len(), 3);
         let mut delivered = Vec::new();
         for batch in batches.iter().rev() {
-            let words = rig.post(FeedInput::Committed(Committed { batch: *batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
+            let words = rig.post(FeedInput::Committed(committed_at(*batch, 1, &[])));
             delivered.extend(words.into_iter().filter(|word| word.starts_with("modelevent")));
         }
         assert_eq!(delivered.len(), 3, "every event reaches the stream once, in one numbering");

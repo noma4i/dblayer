@@ -24,10 +24,6 @@ fn out_answer_releases_slot_before_decoding() {
     assert_eq!(sent_ids(&effects), vec![second], "the answer frees the slot before it is decoded");
 }
 
-fn respond(twin: &mut Twin, id: OpId) -> Vec<OutboxEffect> {
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None })
-}
-
 fn sent_ids(effects: &[OutboxEffect]) -> Vec<OpId> {
     effects.iter().filter_map(|effect| match effect { OutboxEffect::Send { op_id, .. } => Some(*op_id), _ => None }).collect()
 }
@@ -41,7 +37,7 @@ fn out_queued_drain_limit() {
     assert_eq!(started, DRAIN_LIMIT, "{DRAIN_LIMIT} Mutate go out, the next waits");
     let last = *ids.last().unwrap();
 
-    let freed = respond(&mut twin, ids[0]);
+    let freed = twin.respond(ids[0]);
     assert_eq!(sent_ids(&freed), vec![last], "the freed slot goes to the queued operation: {freed:?}");
 }
 
@@ -115,7 +111,7 @@ fn trace(seed: u64, rows: usize) -> Vec<OpId> {
                 None => Vec::new(),
             },
             6 | 7 => match pick(&[|stage| stage == Stage::Sending], &mut dice) {
-                Some(id) => respond(&mut twin, id),
+                Some(id) => twin.respond(id),
                 None => Vec::new(),
             },
             8 => match pick(&[|stage| stage == Stage::Sending], &mut dice) {
@@ -165,7 +161,7 @@ fn out_sending_tick_no_slot() {
     assert_eq!(sends(&twin.committed(second)), 1, "the waiting retry holds no slot");
     let due = tick(&mut twin, first);
     assert_eq!((sends(&due), kinds(&due)), (0, vec![crate::owners::write::outbox::CommitKind::Requeue]), "the operation waits in the queue and its column says pending: {due:?}");
-    let freed = respond(&mut twin, second);
+    let freed = twin.respond(second);
     assert_eq!((kinds(&freed), sends(&freed)), (vec![crate::owners::write::outbox::CommitKind::Land, crate::owners::write::outbox::CommitKind::Attempt], 0), "the freed slot gives the retry its next attempt");
 }
 
@@ -180,7 +176,7 @@ fn out_expiry_clock_at_select() {
         twin.committed(id);
         twin.waiter(id);
         twin.det.tick(Time(now_ms));
-        let mut effects = respond(&mut twin, blocker);
+        let mut effects = twin.respond(blocker);
         effects.extend(twin.committed(blocker));
         effects
     };
@@ -247,7 +243,7 @@ fn out_prop_operations_leave_in_submit_order() {
         }
         let mut answered = 0;
         while answered < left.len() {
-            let effects = respond(&mut twin, left[answered]);
+            let effects = twin.respond(left[answered]);
             answered += 1;
             left.extend(sent_ids(&effects));
         }

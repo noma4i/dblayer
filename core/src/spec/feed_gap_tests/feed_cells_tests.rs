@@ -504,7 +504,7 @@ fn feed_wait_subscription_census() {
 fn feed_changed_by_forms() {
     let node = WindowKey::relation("Chat", "node", &[(crate::schema::NODE_PARAM.to_string(), serde_json::json!("c1"))].into_iter().collect()).name;
     let forms: [(&str, Reread, Effect); 5] = [
-        ("feed_changed_by_node", Reread::Set(vec![node.clone()]), Effect::StaleSet { model: "Chat".into(), keys: vec![format!("{}\\", node.split('"').next().unwrap())] }),
+        ("feed_changed_by_node", Reread::Set(vec![node.clone()]), Effect::StaleSet { model: "Chat".into(), keys: vec![node.clone()] }),
         ("feed_changed_by_named", Reread::Set(names(&["byChat"])), Effect::StaleSet { model: "Chat".into(), keys: names(&["byChat"]) }),
         ("feed_changed_by_named_default_param", Reread::Set(names(&["byChat", "byAuthor"])), Effect::StaleSet { model: "Chat".into(), keys: names(&["byAuthor", "byChat"]) }),
         ("feed_changed_by_observed", Reread::All, Effect::Stale { model: "Chat".into(), all: true }),

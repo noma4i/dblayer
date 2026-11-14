@@ -1,4 +1,5 @@
 use super::*;
+use crate::spec::support::committed_at;
 
 // Rows of `window.md` for `Opening` and freshness by the time of the step: the read pool answers when the test says so.
 
@@ -124,7 +125,7 @@ fn win_landing_stamps_fresh_until_from_page_one() {
         twin.watch();
         let (request, attempt) = twin.ref_request();
         twin.step(Input::Response { request, attempt, cursor: None, rows: false });
-        assert!(twin.commit.contains(&format!("landed_at: {NOW}")), "{}", twin.commit);
+        assert!(twin.commit_ops().iter().any(|op| matches!(op, StoreOp::Window { landed_at, .. } if *landed_at == NOW)), "{:?}", twin.commit);
         twin.now = NOW + 500;
         twin.land();
         twin.now = NOW;
@@ -182,7 +183,7 @@ fn input_of(turn: Turn, flight: &Flight) -> w::WindowsInput {
         Turn::Unwatch => w::WindowsInput::InterestMinus { key: key(), id: u64::from(STREAM) },
         Turn::Call => w::WindowsInput::Load { key: key(), id: 1, goal: w::Goal::First, force: false, store_revision: 0 },
         Turn::Respond => w::WindowsInput::Response { request: flight.request, attempt: flight.attempt, page: AnswerPage::new(1, vec!["r1".into()], None) },
-        Turn::Land => w::WindowsInput::Committed(Committed { batch: flight.batch, revision: flight.revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }),
+        Turn::Land => w::WindowsInput::Committed(committed_at(flight.batch, flight.revision, &[])),
     }
 }
 
@@ -202,10 +203,7 @@ fn drive(plan: &Plan) -> Trace {
             _ => twin.post_call(input),
         }
         let emitted = take(&twin.log);
-        let commit = emitted.iter().find_map(|entry| match entry {
-            Emitted::Send { to: STORE, input } if input.contains("author: Window") => Some(input.clone()),
-            _ => None,
-        });
+        let commit = sent_batches(&emitted, &twin.stored).into_iter().find(|batch| batch.author == BatchAuthor::Window);
         let (effects, outcomes) = twin.split(emitted);
         for effect in &effects {
             match effect {

@@ -78,7 +78,7 @@ fn out_open_restores_transfer() {
     assert_eq!((twin.stage(7), sends(&restored)), (Some(St::Queued), 0), "a restored transfer operation classifies with no network before RestoreReady");
     let started = ready(&mut twin);
     assert_eq!((twin.stage(7), sends(&started)), (Some(St::Sending), 1), "the deferred network effect goes after RestoreReady");
-    twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.respond(7);
     let landed = twin.committed(7);
     assert!(matches!(transfer_outcomes(&landed).as_slice(), [OutboxOutcome::Confirmed { .. }]), "the outcome of the restored transfer operation goes to Transfer: {landed:?}");
 }
@@ -93,7 +93,7 @@ fn out_open_format_change() {
     let readied = ready(&mut twin);
     assert!(!has_op!(twin, StoreOp::Intent { effects, .. } | StoreOp::Effects { effects, .. } | StoreOp::Planned { effects } if !effects.rows.is_empty()) && !has_op!(twin, StoreOp::Rows { rows, .. } | StoreOp::LocalRows { rows, .. } if rows.iter().any(|row| row.values.contains("optimistic"))), "the optimistic row of a saved intent is not restored: {:?}", twin.store_ops);
     assert_eq!((kinds(&readied), sends(&readied)), (vec![], 1));
-    twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.respond(7);
     let (model, rows) = server_rows().remove(0);
     assert!(twin.store_ops.contains(&StoreOp::Rows { model, rows }), "the row comes from the server answer: {:?}", twin.store_ops);
 }
@@ -132,7 +132,7 @@ fn out_prop_attempt_counted_once_for_any_input_order() {
         ("d: a live repeat, offline between the attempt batch and its Committed", Start::Persisting, Box::new(|_| vec![offline(), Step::Drain, online(), Step::Drain]), (0, 1, 2)),
         ("e: a sent attempt fails offline, the repeat writes its own attempt", Start::Sending, Box::new(|id| vec![offline(), Step::In(OutboxInput::TransportError { op_id: id, temporary: true }), Step::Drain, online(), Step::Drain]), (1, 1, 2)),
         ("f: a new cycle of Retry, offline before its Committed", Start::MarkingRetry, Box::new(|_| vec![offline(), Step::Drain, online(), Step::Drain]), (0, 1, 1)),
-        ("g: the attempt batch committed while the row is busy, the row is freed", Start::BehindBlocker, Box::new(|id| vec![Step::In(OutboxInput::Response { op_id: id - 1, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None }), Step::Commit(id - 1), Step::Drain]), (0, 1, 1)),
+        ("g: the attempt batch committed while the row is busy, the row is freed", Start::BehindBlocker, Box::new(|id| vec![Step::In(response_of(id - 1)), Step::Commit(id - 1), Step::Drain]), (0, 1, 1)),
         ("h: a Transfer operation with the written attempt, no network and then the network", Start::ReservedOffline, Box::new(|_| vec![online(), Step::Drain]), (0, 1, 1)),
         ("i: open with a StoredOp of attempts 0 and no pair", Start::StoredFresh, Box::new(|_| vec![Step::In(OutboxInput::Restored { ops: vec![StoredOp { attempts: 0, ..stored(7, "r") }], pending_lost: false }), Step::In(OutboxInput::RestoreReady { epoch: EPOCH }), Step::Drain]), (1, 1, 1)),
     ];

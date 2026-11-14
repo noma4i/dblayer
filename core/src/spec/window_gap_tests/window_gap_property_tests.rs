@@ -1,4 +1,5 @@
 use super::*;
+use crate::spec::support::committed_at;
 
 
 /// On every explored order of two callers, a Stale and the network flip: a caller gets at most one outcome (exactly one once the window does not wait), Loaded only for a landed revision, at most one request in flight.
@@ -94,7 +95,7 @@ fn win_base_revision() {
     twin.post_call(w::WindowsInput::Load { key: key(), id: 1, goal: w::Goal::First, force: false, store_revision: 7 });
     twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None) });
     assert_eq!(base_revisions(&twin), [11], "the batch carries the revision from Pinned");
-    twin.post(w::WindowsInput::Committed(Committed { batch: 1, revision: 9, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
+    twin.post(w::WindowsInput::Committed(committed_at(1, 9, &[])));
     twin.pin_revision.store(13, Ordering::SeqCst);
     twin.post_call(w::WindowsInput::Load { key: key(), id: 2, goal: w::Goal::First, force: true, store_revision: 5 });
     twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None) });
@@ -155,7 +156,7 @@ fn win_windows_of_keys_are_independent() {
         det.run_until_quiet(100).expect("quiet");
         for (request, row, revision) in [(1, "r1", 5), (2, "c1", 9)] {
             det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Response { request, attempt: u32::try_from(request).expect("a small id"), page: AnswerPage::new(1, vec![row.into()], None) });
-            det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Committed(Committed { batch: request, revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
+            det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Committed(committed_at(request, revision, &[])));
         }
         det.run_until_quiet(100).expect("quiet");
         take(&log);
@@ -196,12 +197,12 @@ fn win_dictionary_and_online_belong_to_the_epoch() {
     assert_eq!(twin.stage(), Some(WindowStage::Loading));
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 struct WindowView {
     stage: Option<WindowStage>,
     interest: Vec<u64>,
     waiters: Vec<u64>,
-    commit: String,
+    commit: Option<StoreBatch>,
     outcomes: Vec<(u32, Result3)>,
     load: Option<crate::owners::contract::WindowState>,
 }

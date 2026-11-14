@@ -12,7 +12,7 @@ use crate::owners::write::outbox::{CommitKind, OpId, OutboxAnswer, OutboxInput, 
 fn landing(twin: &mut Twin) -> OpId {
     let id = sending(twin, Policy::Rollback, false);
     twin.waiter(id);
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.respond(id);
     id
 }
 
@@ -155,7 +155,7 @@ fn out_prop_landing_ended_answer_lands_at_open() {
             assert_eq!(reopened.stage(id), Some(St::Landing), "{reason:?}");
             assert_eq!(sends(&opened) + sends(&readied), 0, "no second request for the saved answer");
             reopened.waiter(id);
-            let landed = reopened.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+            let landed = reopened.respond(id);
             assert_eq!((kinds(&landed), sends(&landed)), (vec![CommitKind::Land], 0), "the rows of the saved answer land in one batch: {landed:?}");
             let done = reopened.committed(id);
             assert!(matches!(outcomes(&done).as_slice(), [OutboxOutcome::Confirmed { .. }]), "exactly one Confirmed after the reopening: {done:?}");

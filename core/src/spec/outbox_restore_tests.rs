@@ -2,11 +2,12 @@
 
 use super::outbox_harness::*;
 use super::outbox_harness::{Policy, St};
-use crate::owners::contract::{Committed, EpochStarted, Online, RejectReason, Rejected};
+use crate::owners::contract::{EpochStarted, Online, RejectReason, Rejected};
 use crate::owners::session::StoredAnswer;
 use crate::owners::store::StoreOp;
 use crate::owners::write::outbox::{CommitKind, Fault, OutboxAnswer, OutboxInput, OutboxOutcome, Phase, Receipt, StoredOp};
 use crate::runtime::Cause;
+use crate::spec::support::committed_at;
 
 #[test]
 fn out_restore_discards_only_orphaned_transfer_intents() {
@@ -42,7 +43,7 @@ fn submit(twin: &mut Twin, reply: u64) -> Vec<OutboxEffect> { twin.post(OutboxIn
 fn call_inputs() -> Vec<OutboxInput> {
     vec![
         OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 41 },
-        OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 42 },
+        discard(None, 42),
         OutboxInput::Outcome { receipt: Receipt { epoch: EPOCH, op_id: 99, cycle_id: 1, revision: 0, optimistic: None }, reply: 43 , discard_on_failure: false},
     ]
 }
@@ -106,7 +107,7 @@ fn out_restoring_foreign() {
     let mut twin = Twin::bare();
     let inputs = vec![
         OutboxInput::RetryDue { op_id: 1, cycle_id: 1 },
-        OutboxInput::Committed(Committed { batch: 1, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }),
+        OutboxInput::Committed(committed_at(1, 1, &[])),
         OutboxInput::Rejected(Rejected { batch: 1, reason: RejectReason::Storage("disk".into()) }),
         OutboxInput::Response { op_id: 1, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
         OutboxInput::TransportError { op_id: 1, temporary: true },
@@ -196,7 +197,7 @@ fn out_waiting_declaration_refuses() {
     let mut twin = Twin::bare();
     restore(&mut twin, vec![stored(7, "r")]);
     let retry = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: 41 });
-    let discard = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 42 });
+    let discard = twin.post(discard(None, 42));
     assert_eq!((answers(&retry, 41), answers(&discard, 42)), (vec![OutboxAnswer::Err(Fault::InFlight)], vec![OutboxAnswer::Err(Fault::InFlight)]));
 }
 
@@ -233,7 +234,7 @@ fn out_open_restores_answered() {
     assert!(kinds(&effects).is_empty() && sends(&effects) == 0, "the rows are read first: {effects:?}");
     effects.extend(ready(&mut twin));
     effects.extend(twin.post(OutboxInput::Online(Online(true))));
-    effects.extend(twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None }));
+    effects.extend(twin.respond(7));
     let requests_of_7 = effects.iter().filter(|effect| matches!(effect, OutboxEffect::Send { op_id: 7, .. })).count();
     assert_eq!((requests_of_7, kinds(&effects)), (0, vec![CommitKind::Land]), "an answer saved before the close lands once, without a request: {effects:?}");
 }
@@ -279,7 +280,7 @@ fn freed_row_twin(attempts: u32) -> Twin {
 }
 
 fn free_row(twin: &mut Twin) -> Vec<OutboxEffect> {
-    twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 42 });
+    twin.post(discard(None, 42));
     twin.committed(7)
 }
 

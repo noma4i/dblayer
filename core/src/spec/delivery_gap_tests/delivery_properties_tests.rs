@@ -1,4 +1,5 @@
 use super::*;
+use crate::spec::support::committed_at;
 
 fn delivered(log: &Spied) -> Vec<d::Value> {
     snapshot(log).into_iter().filter_map(|entry| match entry {
@@ -16,7 +17,7 @@ struct Rig {
 fn rig(kind: Kind) -> Rig {
     let mut det = DetScheduler::new(1);
     let log = new_log();
-    let deliveries = add_deliveries(&mut det, &log);
+    let deliveries = add_deliveries(&mut det, &log, &new_log());
     det.start_epoch(EPOCH);
     det.post(deliveries, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(kind), epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: None });
     if kind == Kind::Events {
@@ -45,7 +46,7 @@ fn rows_script(rev: &[(i64, &[&str])]) -> Vec<d::DeliveryInput> {
     let mut script = Vec::new();
     for (index, (revision, list)) in rev.iter().enumerate() {
         if index > 0 {
-            script.push(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
+            script.push(d::DeliveryInput::Committed(committed_at(0, *revision, &["moments"])));
         }
         let rows = list.iter().map(|id| d::StreamRow::new(id, 0)).collect();
         script.push(d::DeliveryInput::ReadDone { stream: STREAM, read_id: index as u64 + 1, revision: *revision, position: 0, relevant: Some((*revision, 0)), touching: Vec::new(), data: d::ReadData::Rows { rows, replaced: Vec::new(), total: None } });
@@ -387,7 +388,7 @@ fn replay(list: &mut Vec<String>, edits: &[d::Edit]) {
 fn dlv_prop_delta_order() {
     let mut det = DetScheduler::new(3);
     let log: Spied = new_log();
-    let addr = add_deliveries(&mut det, &log);
+    let addr = add_deliveries(&mut det, &log, &new_log());
     det.start_epoch(EPOCH);
     det.post(addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::List), epoch: EPOCH, identity: true, valid: true, revision: 0, deferred: None });
     det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::WindowState { stream: STREAM, state: window_state(&Ws::idle()) });
@@ -418,7 +419,7 @@ fn dlv_prop_delta_order() {
         let read_id = inner(&det, addr).read_id(STREAM);
         let rows: Vec<d::StreamRow> = list.iter().map(|id| d::StreamRow::new(id, if next(5) == 0 { revision } else { 0 })).collect();
         det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, position: 0, relevant: Some((revision, 0)), touching: Vec::new(), data: d::ReadData::Rows { rows, replaced, total: None } });
-        det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
+        det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::Committed(committed_at(0, revision, &["moments"])));
         if next(2) == 0 {
             det.post(addr, EpochStamp::Control, d::DeliveryInput::Pull { stream: STREAM, outcome: answers.register(EPOCH).id(), reader: 1 });
         }

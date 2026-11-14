@@ -20,7 +20,7 @@ fn dropped() -> Twin {
 #[test]
 fn out_discard_restore_failed_committed() {
     let mut twin = dropped();
-    let discarded = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD });
+    let discarded = twin.post(discard(None, DISCARD));
     assert_eq!(twin.stage(7), Some(St::RollingBack(super::outbox_harness::RWhy::Discarded)));
     assert!(answers(&discarded, DISCARD).is_empty(), "nothing is answered before the commit");
     assert!(twin.store_ops.contains(&StoreOp::DiscardRestoreFailed { table: "op".into(), key: "k1".into() }) && has_op!(twin, StoreOp::RemoveIntent { .. }), "{:?}", twin.store_ops);
@@ -30,7 +30,7 @@ fn out_discard_restore_failed_committed() {
     assert_eq!(answers(&effects, DISCARD), vec![OutboxAnswer::Ok]);
     let outcome = twin.post(OutboxInput::Outcome { receipt: twin.receipt(7, EPOCH), reply: WAITER , discard_on_failure: false});
     assert_eq!(answers(&outcome, WAITER), vec![OutboxAnswer::Outcome(OutboxOutcome::Discarded)]);
-    let again = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: API });
+    let again = twin.post(discard(None, API));
     assert_eq!(answers(&again, API), vec![OutboxAnswer::Err(Fault::NotFound)], "the operation and its element are gone");
 }
 

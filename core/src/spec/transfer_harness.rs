@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use std::sync::PoisonError;
 
 use crate::store::files::Location;
-use crate::owners::contract::{BatchId, Committed, Online, RejectReason, Rejected, ReplyId};
+use crate::owners::contract::{BatchId, Online, RejectReason, Rejected, ReplyId};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter, UploadKind, UploadRow};
 use crate::spec::support::{new_log, take, Discard, Emitted, Log, NoEffect, Silent, Spy, SpyState};
 use crate::owners::write::outbox::{Fault, NewOp, Outbox, OutboxEffect, OutboxInput, OutboxOutcome, OutboxPeers, OutboxState, OpSource, Receipt, ReserveTarget};
@@ -12,6 +12,7 @@ use crate::owners::write::rounds::{Rounds, RoundsInput};
 use crate::owners::write::transfer::{BatchItem, Joint, NextStep, Shown, Source, Steps, StoredTransfer, Transfer, TransferAnswer, TransferEffect as Run, TransferId, TransferInput, TransferPeers, TransferStage, TransferState, TransferTick, Transfers};
 use crate::runtime::{Address, Cause, DetScheduler, Effects, Epoch, EpochStamp, StateOwner, Time};
 use crate::schema::OnFailure;
+use crate::spec::support::committed_at;
 
 pub(super) const EPOCH: Epoch = 1;
 pub(super) const DAY: u64 = 86_400_000;
@@ -273,8 +274,8 @@ impl Twin {
         let (batch, _) = self.unanswered.remove(0);
         let (to_outbox, to_transfer) = match refused {
             None => (
-                OutboxInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }),
-                TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }),
+                OutboxInput::Committed(committed_at(batch, 1, &[])),
+                TransferInput::Committed(committed_at(batch, 1, &[])),
             ),
             Some(reason) => (OutboxInput::Rejected(Rejected { batch, reason: reason.clone() }), TransferInput::Rejected(Rejected { batch, reason })),
         };
@@ -455,10 +456,10 @@ impl Twin {
     }
 
     /// `Committed` for the oldest batch the Store has not answered.
-    pub fn commit(&mut self) -> Out { self.answer(|batch| TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() })) }
+    pub fn commit(&mut self) -> Out { self.answer(|batch| TransferInput::Committed(committed_at(batch, 1, &[]))) }
 
     /// `Committed` for a batch of shown values: the Store answers them apart from the batches the tests answer in order.
-    pub fn commit_shown(&mut self, batch: BatchId) -> Out { self.post_held(TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() })) }
+    pub fn commit_shown(&mut self, batch: BatchId) -> Out { self.post_held(TransferInput::Committed(committed_at(batch, 1, &[]))) }
 
     pub fn reject_shown(&mut self, batch: BatchId) -> Out { self.refuse_shown(batch, RejectReason::Storage("disk".into())) }
 

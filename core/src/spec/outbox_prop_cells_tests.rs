@@ -5,6 +5,7 @@ use super::outbox_harness::*;
 use super::outbox_harness::{Policy, RWhy, St};
 use crate::owners::contract::Committed;
 use crate::owners::write::outbox::{NewOp, OutboxAnswer, OutboxInput, Receipt};
+use crate::spec::support::committed_at;
 
 fn optimistic_row() -> crate::store::Row {
     std::sync::Arc::new(crate::store::Record { id: crate::identity::RowId::new("r").expect("the row id"), revision: 11, data: serde_json::Map::new(), sync: Default::default() })
@@ -13,7 +14,7 @@ fn optimistic_row() -> crate::store::Row {
 fn commit_shown(twin: &mut Twin, id: crate::owners::write::outbox::OpId, shown: Vec<Option<crate::store::Row>>) -> Vec<OutboxEffect> {
     let batch = twin.batches[&id];
     twin.revision += 1;
-    twin.post(OutboxInput::Committed(Committed { batch, revision: twin.revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown, files_removed: 0, refused: Vec::new() }))
+    twin.post(OutboxInput::Committed(Committed { shown, ..committed_at(batch, twin.revision, &["moments"]) }))
 }
 
 fn receipt_of(effects: &[OutboxEffect], reply: u64) -> Receipt {
@@ -29,7 +30,7 @@ fn out_prop_receipt_fast_confirm() {
     let committed = commit_shown(&mut twin, id, vec![Some(row.clone())]);
     let receipt = receipt_of(&committed, SUBMIT_REPLY);
     assert_eq!(receipt.optimistic, Some(row.clone()), "the receipt carries the optimistic row of the commit");
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.respond(id);
     twin.committed(id);
     assert_eq!(receipt.optimistic, Some(row), "the receipt is fixed, the fast confirm does not rewrite it");
 

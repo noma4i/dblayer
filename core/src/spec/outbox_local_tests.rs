@@ -2,17 +2,18 @@
 
 use super::outbox_harness::*;
 use super::outbox_harness::Policy;
-use crate::owners::contract::{Committed, Online, RejectReason, Rejected};
+use crate::owners::contract::{Online, RejectReason, Rejected};
 use crate::owners::store::{RowValue, StoreOp};
 use crate::owners::write::outbox::{CommitKind, Fault, LocalWriteKind, OutboxAnswer, OutboxInput, OutboxOutcome};
 use crate::runtime::{Cause, Time};
+use crate::spec::support::committed_at;
 
 const WRITE: u64 = 60;
 
 fn write(kind: LocalWriteKind) -> OutboxInput { OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: kind, row: "w".into(), values: "{}".into(), reply: WRITE } }
 
 fn commit_first(twin: &mut Twin) -> Vec<OutboxEffect> {
-    twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }))
+    twin.post(OutboxInput::Committed(committed_at(1, 11, &["moments"])))
 }
 
 fn close(twin: &mut Twin) -> Vec<OutboxEffect> {
@@ -86,8 +87,8 @@ fn out_prop_discard_outcome_once() {
     twin.post(OutboxInput::Online(Online(false)));
     let id = twin.submit("r", Policy::Rollback, true);
     twin.committed(id);
-    let first = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 801 });
-    let second = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: 802 });
+    let first = twin.post(discard(None, 801));
+    let second = twin.post(discard(None, 802));
     assert!(answers(&first, 801).is_empty() && answers(&second, 802).is_empty(), "the answers wait for the rollback");
     let done = twin.committed(id);
     let outcomes = done.iter().filter(|effect| matches!(effect, OutboxEffect::TransferOutcome { outcome: OutboxOutcome::Discarded, .. })).count();
@@ -107,7 +108,7 @@ fn out_local_write_memory_same() {
     assert_eq!(kinds(&again), vec![CommitKind::LocalWrite], "the same values commit again: the write renews the expiry");
     assert_eq!(twin.stores.len(), 1);
     assert_eq!(twin.store_ops, vec![StoreOp::EphemeralRows { model: "Moment".into(), rows: vec![RowValue { row_id: "w".into(), values: "{}".into() }] }]);
-    let committed = twin.post(OutboxInput::Committed(Committed { batch: 2, revision: 12, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
+    let committed = twin.post(OutboxInput::Committed(committed_at(2, 12, &["moments"])));
     assert_eq!(answers(&committed, WRITE + 1), vec![OutboxAnswer::Written { revision: 12, shown: None, files_removed: 0 }]);
     assert!(committed.iter().any(|effect| matches!(effect, OutboxEffect::Schedule)), "the new timer: {committed:?}");
     twin.det.tick(Time(110));
@@ -138,7 +139,7 @@ fn out_prop_landing_no_stale() {
 fn store_outcome(twin: &mut Twin, batch: u64, outcome: Option<RejectReason>) -> Vec<OutboxEffect> {
     take_fx(&twin.log, None);
     let input = match outcome {
-        None => OutboxInput::Committed(Committed { batch, revision: 11, tables: vec!["moments".into()], rows: None, shown: Vec::new(), files_removed: 0, models: Default::default(), stale_parents: Vec::new(), position: 0, refused: Vec::new() }),
+        None => OutboxInput::Committed(committed_at(batch, 11, &["moments"])),
         Some(reason) => OutboxInput::Rejected(Rejected { batch, reason }),
     };
     twin.det.post(crate::runtime::Address::<crate::owners::write::outbox::Outbox>::new(OUTBOX_AT), crate::runtime::EpochStamp::Control, input);

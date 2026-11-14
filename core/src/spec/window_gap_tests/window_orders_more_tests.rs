@@ -2,6 +2,7 @@ use super::window_fresh_tests::{opening_twin, saved, LIFE};
 use super::window_media_tests::{answer_marker, commits, marker};
 use super::window_orders_tests::{at, orders, outcomes_of, run, settle, Ev, Seen};
 use super::*;
+use crate::spec::support::committed_at;
 
 // Orders of the inputs of a window (P-WIN-*), second part: freshness, opening, power saving, media, epoch, keys, reconnect.
 
@@ -220,7 +221,7 @@ fn win_prop_generation() {
         twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH + 1), w::WindowsInput::Response { request, attempt, page: AnswerPage::new(1, vec!["new".into()], None) });
         twin.run();
         batches.extend(twin.window_batches().into_iter().filter(|batch| batch.stamp == EpochStamp::Epoch(EPOCH + 1)));
-        twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH + 1), w::WindowsInput::Committed(Committed { batch: request, revision: 30, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
+        twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH + 1), w::WindowsInput::Committed(committed_at(request, 30, &[])));
         twin.run();
         let done = runs(take(&twin.log));
         let loaded = done.iter().filter(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 9, outcome: WindowOutcome::Loaded { revision: 30, .. } }, .. })).count();
@@ -279,7 +280,7 @@ fn win_orders_direction_keys() {
                 }
                 2 => {
                     let (request, _) = asked[side].expect("the load asked");
-                    twin.post(w::WindowsInput::Committed(Committed { batch: request, revision: 20 + side as i64, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
+                    twin.post(w::WindowsInput::Committed(committed_at(request, 20 + side as i64, &[])));
                 }
                 _ => twin.post_call(w::WindowsInput::Load { key: key.clone(), id: side as u64 + 10, goal: w::Goal::Next, force: false, store_revision: 0 }),
             }

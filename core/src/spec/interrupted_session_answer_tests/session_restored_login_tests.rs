@@ -1,4 +1,5 @@
 use super::*;
+use crate::spec::support::committed_at;
 
 pub(super) fn restored_login(rig: &mut Rig) -> u64 {
     let pending = PendingCall { request_id: 11, sequence: 1, class: OperationClass::Login, operation: "login".into(), path: "/login".into(), body: "{}".into(), document: None, credential: Some(4), purpose: 0, author: None, owner: None, epoch: 3, reply: None };
@@ -8,7 +9,7 @@ pub(super) fn restored_login(rig: &mut Rig) -> u64 {
 
 pub(super) fn commit_landing(rig: &mut Rig, effects: &[SessionEffect]) -> Vec<SessionEffect> {
     let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).unwrap();
-    rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }))
+    rig.send(SessionInput::Committed(committed_at(batch, 1, &[])))
 }
 
 pub(super) fn login_response(rig: &mut Rig, attempt: u64) -> Vec<SessionEffect> {
@@ -34,7 +35,7 @@ pub(super) fn clearing_op(effects: &[SessionEffect]) -> u64 {
 
 fn finish_take(rig: &mut Rig, effects: Vec<SessionEffect>) -> Vec<SessionEffect> {
     let [SessionEffect::CommitResumeAnswer { batch, answer: None, .. }] = effects[..] else { panic!("the outcome must be removed: {effects:?}") };
-    rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }))
+    rig.send(SessionInput::Committed(committed_at(batch, 1, &[])))
 }
 
 #[test]

@@ -22,14 +22,12 @@ fn queued_after_answer(pending_retained: bool) -> (Twin, OpId, RequestId) {
     (twin, id, req_id)
 }
 
-fn discard(twin: &mut Twin) { twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: None, reply: DISCARD }); }
-
 fn releases(sends: &[SessionInput]) -> Vec<RequestId> { sends.iter().filter_map(|input| match input { SessionInput::Release { req_id } => Some(*req_id), _ => None }).collect() }
 
 #[test]
 fn out_discard_releases_pending() {
     let (mut twin, id, req_id) = queued_after_answer(true);
-    discard(&mut twin);
+    twin.post(discard(None, DISCARD));
     assert!(twin.store_ops.contains(&StoreOp::ReleasePendingOwner { request_id: req_id }), "the rollback batch hands the pair to Session: {:?}", twin.store_ops);
     assert_eq!(releases(&twin.session_sends), Vec::<RequestId>::new(), "Release waits for the commit of the rollback");
     twin.committed(id);
@@ -41,7 +39,7 @@ fn out_discard_releases_pending() {
 #[test]
 fn out_discard_without_pending_owner() {
     let (mut twin, id, _) = queued_after_answer(false);
-    discard(&mut twin);
+    twin.post(discard(None, DISCARD));
     assert!(!has_op!(twin, StoreOp::ReleasePendingOwner { .. }), "{:?}", twin.store_ops);
     twin.committed(id);
     assert_eq!(releases(&twin.session_sends), Vec::<RequestId>::new(), "no pending, nothing to release");
@@ -55,7 +53,7 @@ fn out_discard_pending_owner_crash() {
     let restored = StoredOp { answered: None, op_id: 7, op: model_op("r", Policy::Rollback, false), created_at: 0, error_mark: false, pending: Some((41, 42)), attempts: 1, cycle_id: 1, cause: None, restore_failed: None, restore_element: None, removed_rows: Vec::new() };
     twin.post(OutboxInput::Restored { ops: vec![restored], pending_lost: false });
     twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
-    discard(&mut twin);
+    twin.post(discard(None, DISCARD));
     assert!(twin.store_ops.contains(&StoreOp::ReleasePendingOwner { request_id: 41 }), "a pair restored from the base is released by the rollback batch: {:?}", twin.store_ops);
     twin.rejected(7, super::outbox_harness::RReason::Storage);
     assert!(twin.state().ops[&7].pending_owned, "a refused batch leaves the owner as it was");

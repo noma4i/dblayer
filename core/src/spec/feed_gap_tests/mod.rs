@@ -7,13 +7,14 @@ use std::rc::Rc;
 use std::sync::PoisonError;
 
 use super::feed_words::{Counter, Effect, Input, Kind, Obs, Reject, Reread, To};
-use crate::owners::contract::{BatchId, Committed, ConnectionId, EpochEnded, EpochStarted, Online, RejectReason, Rejected};
+use crate::owners::contract::{BatchAuthor, BatchId, Committed, ConnectionId, EpochEnded, EpochStarted, Online, RejectReason, Rejected};
 use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
 use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, Frame, FramedEvent, Outgoing, Protocol, ProtocolReason};
 use crate::owners::read::windows::{StaleCause, StaleKeys, WindowKey, Windows, WindowsInput};
 use crate::owners::store::{StoreBatch, StoreOp, StoreWriter};
-use crate::spec::support::{new_log, Captured, CapturedStore, number_after, snapshot, take, text_after, Discard, Emitted, Log, NoEffect, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
+use crate::spec::support::{new_log, sent_batches, Captured, CapturedStore, number_after, snapshot, take, text_after, Discard, Emitted, Log, NoEffect, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
 use crate::runtime::{explore, Address, Back, Cause as Ended, DetScheduler, Effects, EffectRunner, Epoch, EpochStamp, Limits, StateOwner, Time};
+use crate::spec::support::committed_at;
 
 const EPOCH: u64 = 1;
 const DEBOUNCE_MS: u64 = 50;
@@ -191,11 +192,11 @@ impl Twin {
             Input::HandshakeDeadline { to } => vec![FeedInput::HandshakeDeadline { connection_id: self.connection(*to) }],
             Input::Committed => {
                 let batch = self.batch();
-                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() })]
+                vec![FeedInput::Committed(committed_at(batch, 1, &[]))]
             }
             Input::CommittedAt(nth) => {
                 let batch = self.batch_at(*nth);
-                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, shown: Vec::new(), files_removed: 0, models: Default::default(), stale_parents: Vec::new(), position: 0, refused: Vec::new() })]
+                vec![FeedInput::Committed(committed_at(batch, 1, &[]))]
             }
             Input::RejectedAt(nth, reason) => {
                 let batch = self.batch_at(*nth);
@@ -207,11 +208,11 @@ impl Twin {
             }
             Input::StrayRepeat => {
                 let batch = self.used.last().copied().unwrap_or(9_999);
-                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, shown: Vec::new(), files_removed: 0, models: Default::default(), stale_parents: Vec::new(), position: 0, refused: Vec::new() })]
+                vec![FeedInput::Committed(committed_at(batch, 1, &[]))]
             }
             Input::CommittedStale(parents) => {
                 let batch = self.batch();
-                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: parents.clone(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() })]
+                vec![FeedInput::Committed(Committed { stale_parents: parents.clone(), ..committed_at(batch, 1, &[]) })]
             }
             Input::Rejected(reason) => {
                 let batch = self.batch();
@@ -220,9 +221,9 @@ impl Twin {
             Input::CommittedRefused(places) => {
                 let batch = self.batch();
                 let refused = places.iter().map(|place| (*place, RejectReason::Invalid(String::new()))).collect();
-                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused })]
+                vec![FeedInput::Committed(Committed { refused, ..committed_at(batch, 1, &[]) })]
             }
-            Input::StrayBatch => vec![FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() })],
+            Input::StrayBatch => vec![FeedInput::Committed(committed_at(9_999, 1, &[]))],
             Input::Tick => vec![FeedInput::Tick],
             Input::Online(on) => vec![FeedInput::Online { online: Online(*on), online_seq: u64::from(*on) }],
             Input::Drain { own } => vec![FeedInput::Drain { connection_id: self.connection(if *own { To::Draining } else { To::Stray }) }],
@@ -266,6 +267,10 @@ impl Twin {
     /// Shows the owner effects as the row tests write them: `Stale` per model, `Joined` and `ModelReady` per stream, the events as what a stream sees.
     fn split(&mut self, emitted: Vec<Emitted<FeedEffect>>) -> (Vec<Effect>, Vec<Obs>) {
         let (mut modelled, mut seen) = (Vec::new(), Vec::new());
+        let mut batches = sent_batches(&emitted, &self.stored).into_iter();
+        let stale_sends = emitted.iter().filter(|entry| matches!(entry, Emitted::Send { to: WINDOWS, input } if input.starts_with("Stale {"))).count();
+        let stales = snapshot(&self.staled).into_iter().filter(|input| matches!(input, WindowsInput::Stale { .. })).collect::<Vec<_>>();
+        let mut stales = stales[stales.len() - stale_sends..].to_vec().into_iter();
         for entry in emitted {
             match entry {
                 Emitted::Run(FeedEffect::Connect { .. }) => modelled.push(Effect::Connect),
@@ -296,14 +301,19 @@ impl Twin {
                     modelled.push(Effect::ScheduleDrain);
                 }
                 Emitted::Schedule { input, .. } if input.starts_with("Resubscribe") => modelled.push(Effect::ScheduleResubscribe),
-                Emitted::Send { to: STORE, input } => {
-                    assert!(input.contains("author: Feed"), "a batch of Feed names its author: {input}");
-                    self.batches.push_back(number_after(&input, "id: ").expect("the batch id"));
+                Emitted::Send { to: STORE, .. } => {
+                    let batch = batches.next().expect("a batch for every Commit");
+                    assert_eq!(batch.author, BatchAuthor::Feed, "a batch of Feed names its author");
+                    self.batches.push_back(batch.id);
                     modelled.push(Effect::Commit);
                 }
                 Emitted::Send { to: WINDOWS, input } if input.starts_with("Stale {") => {
-                    let model = text_after(&input, "model: ").expect("the model");
-                    modelled.push(if input.contains("keys: All") { Effect::Stale { model, all: true } } else { Effect::StaleSet { model, keys: input.split("name: \"").skip(1).filter_map(|rest| rest.split('"').next()).map(String::from).collect() } });
+                    let Some(WindowsInput::Stale { model, keys, .. }) = stales.next() else { panic!("a Stale for every send: {input}") };
+                    modelled.push(match keys {
+                        StaleKeys::AllBut(_) => Effect::Stale { model, all: true },
+                        StaleKeys::Set(keys) => Effect::StaleSet { model, keys: keys.into_iter().map(|key| key.name).collect() },
+                        StaleKeys::Relations(_) => panic!("the Feed stales by relation: {input}"),
+                    });
                 }
                 Emitted::Send { to: DELIVERIES, input } => {
                     let stream = number_after(&input, "stream: ").expect("the stream");

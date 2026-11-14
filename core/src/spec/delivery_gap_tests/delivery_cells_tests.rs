@@ -1,4 +1,5 @@
 use super::*;
+use crate::spec::support::committed_at;
 
 #[test]
 fn dlv_cancelling_pull_twice() {
@@ -8,7 +9,7 @@ fn dlv_cancelling_pull_twice() {
     let outcome = twin.answers.register(EPOCH).id();
     take(&twin.log);
     twin.call(d::DeliveryInput::Pull { stream: STREAM, outcome, reader: 1 });
-    assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Answer(Pulled::Value(Val::Ended(Cause::Invalid)))]);
+    assert_eq!(twin.modelled(take(&twin.log)), [Effect::Answer(Pulled::Value(Val::Ended(Cause::Invalid)))]);
     assert_eq!(twin.step(Input::SinkClosed), [Effect::Cancelled(7), Effect::Answer(Pulled::Value(Val::Ended(Cause::Cancelled)))], "delivery.md Cancelling x SinkClosed: cancels first, then the waiting Pull");
 }
 
@@ -301,8 +302,8 @@ fn dlv_value_revision_covers_every_changed_row() {
 #[test]
 fn dlv_prop_commit_during_read_is_delivered() {
     fn commit(twin: &mut Twin, revision: i64) -> Vec<Effect> {
-        twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
-        Twin::modelled(take(&twin.log))
+        twin.post(d::DeliveryInput::Committed(committed_at(0, revision, &["moments"])));
+        twin.modelled(take(&twin.log))
     }
     fn complete(twin: &mut Twin, read_id: u64, revision: i64, values: &[&str]) {
         twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, position: 0, relevant: Some((revision, 0)), touching: Vec::new(), data: d::ReadData::Rows { rows: rows_of(&rows(values)), replaced: Vec::new(), total: None } });
@@ -311,7 +312,7 @@ fn dlv_prop_commit_during_read_is_delivered() {
     fn pull(twin: &mut Twin) -> Val {
         let outcome = twin.answers.register(EPOCH).id();
         twin.call(d::DeliveryInput::Pull { stream: STREAM, outcome, reader: 1 });
-        Twin::modelled(take(&twin.log)).into_iter().find_map(|effect| match effect { Effect::Answer(Pulled::Value(value)) => Some(value), _ => None }).expect("a value is ready")
+        twin.modelled(take(&twin.log)).into_iter().find_map(|effect| match effect { Effect::Answer(Pulled::Value(value)) => Some(value), _ => None }).expect("a value is ready")
     }
     for commit_first in [false, true] {
         for first_snapshot in [5, 6] {
@@ -560,7 +561,7 @@ fn dlv_ended() {
     queue.call(d::DeliveryInput::SinkClosed { stream: STREAM });
     take(&queue.log);
     queue.post(d::DeliveryInput::ReadFailed { stream: STREAM, read_id, revision: 0, error: "late".into() });
-    assert!(Twin::modelled(take(&queue.log)).is_empty(), "a late queue read cannot publish after the end");
+    assert!(queue.modelled(take(&queue.log)).is_empty(), "a late queue read cannot publish after the end");
     assert!(matches!(queue.state().journal(STREAM).as_slice(), [d::Value::Ended(d::EndCause::Cancelled)]));
 }
 

@@ -49,6 +49,6 @@ fn out_destroy_failed_keeps_row_hidden() {
     assert_eq!(twin.stage(id), Some(St::Failed), "{last:?}");
     assert!(!kinds(&last).contains(&CommitKind::Rollback) && !kinds(&marked).contains(&CommitKind::Rollback), "a destroy without an answer does not bring the row back");
 
-    let discarded = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: Some("destroy".into()), reply: 23 });
+    let discarded = twin.post(discard(Some("destroy"), 23));
     assert!(kinds(&discarded).contains(&CommitKind::Rollback), "the discard brings the row back");
 }

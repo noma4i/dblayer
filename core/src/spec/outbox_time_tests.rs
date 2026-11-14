@@ -1,10 +1,11 @@
 //! P-OUT-59: the time of a Submit and of a local write is the time of the step; the time an input carries decides nothing.
 
 use super::outbox_harness::*;
-use crate::owners::contract::{Committed, Online};
+use crate::owners::contract::{Online};
 use crate::owners::write::outbox::{CommitKind, LocalWriteKind, NewOp, OutboxInput};
 use crate::runtime::Time;
 use std::time::Duration;
+use crate::spec::support::committed_at;
 
 const EXPIRES_MS: u64 = 10_000;
 const MEMORY_MS: u64 = 10;
@@ -35,7 +36,7 @@ fn selected(twin: &mut Twin, row: &str, reply: u64, at: u64, wait: u64) -> St {
     let stage = twin.stage(id).expect("the stage");
     match stage {
         St::Sending => {
-            twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+            twin.respond(id);
             twin.committed(id);
         }
         _ => {
@@ -55,7 +56,7 @@ fn written(at: u64, due: u64) -> Vec<CommitKind> {
     twin.det.tick(Time(at));
     let effects = twin.post(input_of(Turn::Write, "w", 60));
     let batch = effects.iter().find_map(|effect| match effect { OutboxEffect::Store { batch, .. } => Some(*batch), _ => None }).expect("the batch of the write");
-    twin.post(OutboxInput::Committed(Committed { batch, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }));
+    twin.post(OutboxInput::Committed(committed_at(batch, 11, &["moments"])));
     let expired = twin.post(OutboxInput::Expire { model: "Moment".into(), row: "w".into(), due: Time(due) });
     expired.iter().filter_map(|effect| match effect { OutboxEffect::Store { kind, .. } => Some(*kind), _ => None }).collect()
 }

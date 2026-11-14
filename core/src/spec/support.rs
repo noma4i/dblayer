@@ -17,6 +17,18 @@ pub(crate) fn take<E>(log: &Log<E>) -> Vec<E> { std::mem::take(&mut *log.lock().
 
 pub(crate) fn snapshot<E: Clone>(log: &Log<E>) -> Vec<E> { log.lock().unwrap_or_else(PoisonError::into_inner).clone() }
 
+/// The reply of the Store to the author of `batch`: no rows, no models, nothing shown or refused.
+pub(crate) fn committed_at(batch: BatchId, revision: i64, tables: &[&str]) -> Committed {
+    Committed { batch, revision, tables: tables.iter().map(|table| (*table).to_string()).collect(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() }
+}
+
+/// The typed batches behind the `Commit` sends of `emitted`: the last ones the captured Store received, in the order of the sends.
+pub(crate) fn sent_batches<E>(emitted: &[Emitted<E>], stored: &Log<StoreBatch>) -> Vec<StoreBatch> {
+    let sent = emitted.iter().filter(|entry| matches!(entry, Emitted::Send { input, .. } if input.starts_with("Commit("))).count();
+    let all = snapshot(stored);
+    all[all.len() - sent..].to_vec()
+}
+
 /// Runs no effect: it keeps them in the log.
 pub(crate) struct Recorder<O: StateOwner> {
     pub log: Log<O::Effect>,
@@ -290,7 +302,7 @@ impl<O: StateOwner> StateOwner for StoreStub<O> {
         let StoreInput::Commit(batch) = input else { return Vec::new() };
         state.revision += 1;
         (state.note)(Landing { batch: batch.id, revision: state.revision, rows: batch.rows.len() });
-        let committed = Committed { batch: batch.id, revision: state.revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() };
+        let committed = committed_at(batch.id, state.revision, &[]);
         vec![Effect::Send(Outbound::new(state.to, (state.committed)(committed)))]
     }
 
