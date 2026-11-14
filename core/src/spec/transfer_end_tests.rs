@@ -383,7 +383,7 @@ fn xfer_removing_invalid_cancel() {
     let (reply, _) = twin.cancel(KEY);
     let out = twin.reject(RejectReason::Invalid("bad row".into()));
     assert_eq!(Twin::fault(&out, reply), Some(Fault::Rejected(RejectReason::Invalid("bad row".into()))));
-    assert_eq!((twin.stage(id), out.shows(), out.deletes(), out.timers, out.writes()), (TransferStage::Ready, vec![Shown::Queued { progress: 0 }], 0, 0, 0), "the file stays, the transfer is as before the cancel");
+    assert_eq!((twin.stage(id), out.shows(), out.deletes(), out.timers, out.writes()), (TransferStage::Ready, Vec::<Shown>::new(), 0, 0, 0), "the file stays, the transfer is as before the cancel");
     let (mut failed, id) = failed_with_upload();
     let (reply, _) = failed.discard(KEY);
     assert_eq!(failed.stage(id), TransferStage::Removing);

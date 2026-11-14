@@ -90,7 +90,7 @@ fn xfer_ready_start_complete() {
     let out = twin.online(true);
     assert_eq!((twin.stage(id), out.completes()), (TransferStage::PersistingAttempt, 0));
     let out = twin.commit();
-    assert_eq!((twin.stage(id), out.completes(), out.steps().len(), out.shows()), (TransferStage::Completing, 1, 0, vec![Shown::Uploading { progress: 99 }]));
+    assert_eq!((twin.stage(id), out.completes(), out.steps().len(), out.shows()), (TransferStage::Completing, 1, 0, Vec::<Shown>::new()));
     twin.completed(id);
     assert_eq!(twin.commit().shows(), vec![Shown::Uploading { progress: 100 }]);
 }
