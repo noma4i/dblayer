@@ -76,6 +76,7 @@ impl Database {
 
     fn supplied_source(&self, model: &str, row: &crate::identity::RowId, action: &str, source: WireUploadSource, (shown, probed): (Map<String, Value>, Option<super::ProbeOutcome>)) -> Result<SuppliedSource, DbError> {
         self.checked_prepare(source.prepare.as_ref(), source.max_bytes)?;
+        let row = &self.db.resolve(model, row)?;
         let mut values = super::upload_wire::object(&source.values_json)?;
         let mut variables = super::upload_wire::object(&source.variables_json)?;
         values.extend(shown.clone());
@@ -259,7 +260,7 @@ impl Database {
                 Err(error) => Err(error.into()),
             }
         }).await?;
-        let mut item = this_db.single_upload((&model, row.as_str(), &action), single, &file, effects)?;
+        let mut item = this_db.single_upload((&model, row_id.as_str(), &action), single, &file, effects)?;
         item.probed = probed;
         let waiter = this_db.life.accept_upload(epoch, item);
         let TransferAnswer::Receipt(held) = this_db.transfer_answer(waiter, "upload").await? else { return Err(DbError::Internal { detail: "the owner answered an upload with no receipt".into() }) };
@@ -413,7 +414,7 @@ impl Database {
     /// `retry` of a transfer with a new source of a file that is gone.
     pub(super) async fn retry_transfer(&self, epoch: u64, model: String, row_id: String, action: String, source: Option<WireUploadSource>) -> Result<WireOperationReceipt, DbError> {
         self.account_call(epoch)?;
-        let row = self.resolved(epoch, &model, id(&row_id)?).await?;
+        let row = id(&row_id)?;
         let source = if let Some(source) = source {
             let database = self.me.upgrade().ok_or_else(super::command::closed)?;
             let measured = self.measured_supply(&model, &action, &source).await?;

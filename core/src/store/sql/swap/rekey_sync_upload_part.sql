@@ -1,0 +1,1 @@
+UPDATE sync_upload_part SET row_id = ?3 WHERE model = ?1 AND row_id = ?2

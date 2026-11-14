@@ -1,0 +1,1 @@
+UPDATE upload_orphan SET key = ?1 || ':' || ?3 || substr(key, length(?1) + length(?2) + 2) WHERE substr(key, 1, length(?1) + length(?2) + 2) = ?1 || ':' || ?2 || ':'

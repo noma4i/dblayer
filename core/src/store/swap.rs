@@ -113,8 +113,18 @@ pub(super) fn record_alias(writer: &super::row_write::RowWrite<'_>, model: &str,
     Ok(())
 }
 
+/// The transfer key of the row follows the swap in the transaction of the row: a transfer of the real id already stored refuses the batch.
+fn rekey_transfers(writer: &super::row_write::RowWrite<'_>, model: &str, temp: &str, real: &str) -> Result<(), StoreError> {
+    let params = rusqlite::params![model, temp, real];
+    writer.connection.execute(include_str!("sql/swap/rekey_sync_upload.sql"), params)?;
+    writer.connection.execute(include_str!("sql/swap/rekey_sync_upload_part.sql"), params)?;
+    writer.connection.execute(include_str!("sql/swap/rekey_upload_orphan.sql"), params)?;
+    Ok(())
+}
+
 pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, temp: &str, real: &str, closing: &[i64]) -> Result<crate::store::CommitResult, StoreError> {
     record_alias(writer, model, temp, real)?;
+    rekey_transfers(writer, model, temp, real)?;
     let temp = RowId::new(temp).map_err(|error| StoreError::Constraint(error.to_string()))?;
     let real = RowId::new(real).map_err(|error| StoreError::Constraint(error.to_string()))?;
     let held = writer.stored(model, temp.as_str())?.map(|stored| stored.row);

@@ -113,8 +113,7 @@ impl Database {
         }
         let transfer = action.is_some_and(|action| spec.upload_action(action).is_some());
         if upload && !transfer { return Err(DbError::Invalid { detail: format!("{model} declares no upload action") }); }
-        let row = self.resolved(epoch, model, id(row)?).await?;
-        Ok((row.to_string(), transfer))
+        Ok((id(row)?.to_string(), transfer))
     }
 
     pub(super) fn mutation_needs_transport(&self, model: &str, action: &str) -> Result<(), DbError> {
