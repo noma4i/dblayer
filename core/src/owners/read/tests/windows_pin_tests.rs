@@ -151,7 +151,7 @@ fn win_marked_load_keeps_its_mark_until_it_lands() {
             self.step(WindowsInput::Pinned { request_id: self.loading, base_revision: 1 });
             assert!(self.request.is_some(), "the pinned load asks the network");
         }
-        fn change(&mut self) { self.step(WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::all(), cause: StaleCause::Change }); }
+        fn change(&mut self) { self.step(WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::all(), cause: StaleCause::Change { revision: None } }); }
         fn network_down_once(&mut self) {
             let (request, attempt) = self.request.take().expect("a request is out");
             self.step(WindowsInput::Failure { request, attempt, error: RequestError { class: ErrorClass::Network, failure: DbError::Dropped { detail: "down".into() } } });

@@ -216,7 +216,7 @@ impl FeedState {
 
     pub(super) fn stale_all(models: &[String], fx: &mut Vec<Fx>) {
         for model in models {
-            fx.push(Fx::Stale { model: model.clone(), keys: StaleKeys::all(), cause: StaleCause::Change });
+            fx.push(Fx::Stale { model: model.clone(), keys: StaleKeys::all(), cause: StaleCause::Change { revision: None } });
         }
     }
 
@@ -226,7 +226,7 @@ impl FeedState {
     /// The held frames of a step of the break are lost: `Stale` of the models with the keys of the step.
     pub(super) fn stale_lost(&self, models: &[String], fx: &mut Vec<Fx>) {
         for model in models {
-            fx.push(Fx::Stale { model: model.clone(), keys: self.gap_keys(model), cause: StaleCause::Change });
+            fx.push(Fx::Stale { model: model.clone(), keys: self.gap_keys(model), cause: StaleCause::Change { revision: None } });
         }
     }
 
@@ -281,7 +281,7 @@ impl FeedState {
 
     /// `Committed` and `Rejected` of a batch of `landing`: delivered on `Committed`, lost on `Rejected`. `NoSession` and `Closed` end a `Live` feed.
     /// P-FEED-37: an event the Store refused alone (`refused`, by its place in the batch) is lost at its own position, the rest land.
-    pub(super) fn verdict(&mut self, batch: BatchId, rejected: Option<RejectReason>, refused: &[(usize, RejectReason)], fx: &mut Vec<Fx>) {
+    pub(super) fn verdict(&mut self, batch: BatchId, rejected: Option<RejectReason>, refused: &[(usize, RejectReason)], revision: Option<i64>, fx: &mut Vec<Fx>) {
         let Some(at) = self.landing.iter().position(|(id, _)| *id == batch) else { return };
         let events = self.landing.remove(at).1;
         if let Some(models) = self.gap_landing.remove(&batch) {
@@ -302,7 +302,7 @@ impl FeedState {
                     let lost_models = self.mark_lost(&lost, fx);
                     Self::stale_all(&lost_models, fx);
                 }
-                self.land(landed.into_iter().map(|(_, event)| event).collect(), fx);
+                self.land(landed.into_iter().map(|(_, event)| event).collect(), revision, fx);
             }
             Some(RejectReason::Storage(_) | RejectReason::Invalid(_)) => {
                 let lost_models = self.mark_lost(&events, fx);
@@ -314,7 +314,7 @@ impl FeedState {
         }
     }
 
-    pub(super) fn land(&mut self, events: Vec<FeedEvent>, fx: &mut Vec<Fx>) {
+    pub(super) fn land(&mut self, events: Vec<FeedEvent>, revision: Option<i64>, fx: &mut Vec<Fx>) {
         let mut models: Vec<String> = Vec::new();
         for event in &events {
             if let Some(ledger) = self.ledger.get_mut(&event.model) {
@@ -332,7 +332,7 @@ impl FeedState {
         for model in models {
             let keys = events.iter().filter(|event| event.model == model).fold(StaleKeys::none(), |keys, event| keys.union(event.reread.clone()));
             if !keys.is_empty() {
-                fx.push(Fx::Stale { model, keys, cause: StaleCause::Change });
+                fx.push(Fx::Stale { model, keys, cause: StaleCause::Change { revision } });
             }
         }
     }

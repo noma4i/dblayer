@@ -671,20 +671,43 @@ async fn feed_prop_node_event_rereads_the_shown_row() {
     }
 }
 
-/// feed_node_event_rereads_a_row_shown_by_a_list (count): a counter of the window with the row, event of the row: one node request, no list request.
+/// feed_node_event_rereads_a_row_shown_by_a_list (count, D-393): a counter of the window with the row, event of the row: one node request, no list request, whichever order the cancel of the old window, the first snapshot of the counter and the commit of the event take.
 #[tokio::test(flavor = "multi_thread")]
 async fn feed_node_event_rereads_a_row_counted_by_a_window() {
-    let world = World::new("server", "A", true);
-    let (database, transport, _shown, window, token) = debt_database(None, Arc::default(), &world).await;
-    window.cancel();
-    let count = Arc::new(crate::ffi::tape::Rows::default());
-    database.subscribe_reading(database.session_epoch(), ReadRequest::Count { query: crate::ffi::QuerySpec::json(SHOWN_LIST) }, count.clone());
-    crate::test_wait::settled(&database, "the counter shows the window", || count.last().is_some()).await;
-    let (lists, nodes) = (world.count("ChatList"), world.count("ChatNode"));
-    world.answer_with("ChatNode", json!({"data":{"node":debt_chat("c1", "after")}}));
-    node_event(&transport, &token, "c1");
-    crate::test_wait::settled_showing(&database, "the counted row is read through node", || format!(": requests {:?}, counter {:?}, {}", world.log().iter().map(|entry| entry.operation.clone()).collect::<Vec<_>>(), count.1.lock().unwrap().iter().map(|seen| (seen.revision, seen.size, seen.phase)).collect::<Vec<_>>(), transport.cable.counters()), || world.count("ChatNode") == nodes + 1).await;
-    crate::test_wait::settled(&database, "quiet", || true).await;
-    assert_eq!((world.count("ChatList"), world.count("ChatNode")), (lists, nodes + 1));
-    bound(database.close_database()).await.unwrap();
+    // (name, cancel first, first snapshot after the event commit, event before the counter opens, cancel after the counter shows)
+    let orders = [
+        ("cancel, open, event", true, false, false, false),
+        ("open, cancel, event", false, false, false, true),
+        ("cancel, open, event lands, first snapshot", true, true, false, false),
+        ("cancel, event, open", true, false, true, false),
+    ];
+    for (name, cancel_first, hold, event_first, cancel_late) in orders {
+        let world = World::new("server", "A", true);
+        let (database, transport, _shown, window, token) = debt_database(None, Arc::default(), &world).await;
+        let events = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
+        assert!(matches!(bound(events.pull_next()).await, Some(ReadValue::Ready)), "{name}");
+        let (lists, nodes) = (world.count("ChatList"), world.count("ChatNode"));
+        world.answer_with("ChatNode", json!({"data":{"node":debt_chat("c1", "after")}}));
+        let gate = hold.then(|| Arc::new(crate::test_wait::Flag::default()));
+        *database.db.view_gate.lock().unwrap() = gate.clone();
+        if cancel_first { window.cancel(); }
+        let count = Arc::new(crate::ffi::tape::Rows::default());
+        let open = || database.subscribe_reading(database.session_epoch(), ReadRequest::Count { query: crate::ffi::QuerySpec::json(SHOWN_LIST) }, count.clone());
+        if event_first {
+            node_event(&transport, &token, "c1");
+            assert!(matches!(bound(events.pull_next()).await, Some(ReadValue::Event { id, .. }) if id == "c1"), "{name}: the event landed");
+            open();
+        } else {
+            open();
+            if !hold { crate::test_wait::settled(&database, "the counter shows the window", || count.last().is_some()).await; }
+            if cancel_late { window.cancel(); }
+            node_event(&transport, &token, "c1");
+            assert!(matches!(bound(events.pull_next()).await, Some(ReadValue::Event { id, .. }) if id == "c1"), "{name}: the event landed");
+        }
+        if let Some(gate) = &gate { gate.set(); }
+        crate::test_wait::settled_showing(&database, "the counted row is read through node", || format!(" in order '{name}': requests {:?}, counter {:?}, {}", world.log().iter().map(|entry| entry.operation.clone()).collect::<Vec<_>>(), count.1.lock().unwrap().iter().map(|seen| (seen.revision, seen.size, seen.phase)).collect::<Vec<_>>(), transport.cable.counters()), || world.count("ChatNode") == nodes + 1).await;
+        crate::test_wait::settled(&database, "quiet", || true).await;
+        assert_eq!((world.count("ChatList"), world.count("ChatNode")), (lists, nodes + 1), "{name}");
+        bound(database.close_database()).await.unwrap();
+    }
 }

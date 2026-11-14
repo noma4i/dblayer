@@ -85,14 +85,23 @@ impl Facts {
 
     #[state(exit_action = "return_mark")]
     fn loading(&mut self, context: &mut Ctx<'_>, load: &mut Load, event: &Ev) -> Outcome<WinState> {
+        self.answer_marked.set(true);
         self.env(event);
         let mine = |got: &RequestId, got_attempt: &u32| *got == load.step && *got_attempt == load.attempt && !load.retry;
         match event {
             Ev::Pinned { request: got, base_revision } if *got == load.request && load.pinning => {
-                self.request_base.set(i64::try_from(*base_revision).unwrap_or(i64::MAX));
+                let base = i64::try_from(*base_revision).unwrap_or(i64::MAX);
+                self.request_base.set(base);
+                let covering = self.answer_base.get() == i64::MAX;
+                self.answer_base.set(if covering { base } else { -1 });
                 load.pinning = false;
                 let effect = self.request_effect(load);
                 self.push_fx(effect);
+                if covering && self.change_due > base {
+                    self.reread_due = true;
+                    self.stale_marked.set(true);
+                    if self.reads_node { self.reread_by_event.set(true); }
+                }
                 Handled
             }
             Ev::InterestPassive { id } => {
@@ -130,6 +139,7 @@ impl Facts {
                     return Handled;
                 }
                 self.fresh = false;
+                self.answer_base.set(-1);
                 self.push_fx(WindowEffect::Cancel { request: load.step, attempt: load.attempt });
                 self.emit(Emit::CancelRetry { request: load.request });
                 Transition(WinState::idle())
@@ -174,7 +184,10 @@ impl Facts {
                 self.emit(Emit::CancelRetry { request: load.request });
                 Transition(WinState::waiting(load.force, load.page))
             }
-            Ev::Stale { cause } if self.covers(*cause) => Handled,
+            Ev::Stale { cause } if self.covers(*cause) => {
+                if self.reads_node && !load.pinning && matches!(cause, StaleCause::Change { .. }) { load.marked = true; }
+                Handled
+            }
             Ev::Stale { .. } => {
                 self.reread_due = true;
                 Handled
@@ -193,6 +206,7 @@ impl Facts {
 
     #[state]
     fn landing(&mut self, context: &mut Ctx<'_>, landing: &mut Landing, event: &Ev) -> Outcome<WinState> {
+        self.answer_marked.set(landing.marked);
         self.env(event);
         match event {
             Ev::Committed { request: got, revision } if *got == landing.request => self.landed(context, landing.page, landing.cursor.clone(), landing.rows, &landing.models, *revision),
@@ -251,6 +265,7 @@ impl Facts {
 
     #[state]
     fn waiting(&mut self, context: &mut Ctx<'_>, force: &mut bool, page: &mut u32, event: &Ev) -> Outcome<WinState> {
+        self.answer_base.set(-1);
         self.env(event);
         match event {
             Ev::Online { online: true, .. } if self.deferred() => Handled,

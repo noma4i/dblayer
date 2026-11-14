@@ -251,7 +251,7 @@ impl Twin {
             }
             Input::Stale { in_keys } => {
                 let keys = if *in_keys { StaleKeys::all() } else { StaleKeys::Set(BTreeSet::new()) };
-                self.post(w::WindowsInput::Stale { model: "Moment".into(), keys, cause: w::StaleCause::Change });
+                self.post(w::WindowsInput::Stale { model: "Moment".into(), keys, cause: w::StaleCause::Change { revision: None } });
             }
             Input::StaleGap => self.post(w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::all(), cause: w::StaleCause::Gap { online_seq: self.online_seq } }),
             Input::Foreground { seq } => self.post(w::WindowsInput::Foreground { seq: *seq, online_seq: 0 }),
@@ -441,3 +441,4 @@ mod window_pages_tests;
 mod window_media_tests;
 mod window_orders_tests;
 mod window_orders_more_tests;
+mod window_stale_revision_tests;

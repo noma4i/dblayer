@@ -34,6 +34,12 @@ pub(super) struct Facts {
     pub(super) cursor_reset_used: bool,
     pub(super) replace_all: bool,
     pub(super) reread_due: bool,
+    /// The largest Store revision of a commit that changed rows of this window (D-454).
+    pub(super) change_due: i64,
+    /// The Store base of the load that rereads every row (page 1, not media) and answers the window or answered it last: -1 none, `i64::MAX` its pin is pending (D-454).
+    pub(super) answer_base: std::cell::Cell<i64>,
+    /// That load carries (or will take) the `node` mark (D-454).
+    pub(super) answer_marked: std::cell::Cell<bool>,
     pub(super) has_rows: bool,
     /// How the last load of the interest now held ended: the phase, `settled` and `error` of the value come from it.
     pub(super) outcome: LastLoad,
@@ -93,8 +99,9 @@ impl Facts {
                 self.members = saved.members;
             }
             Ev::Stale { cause } => {
+                if let StaleCause::Change { revision: Some(revision) } = cause { self.change_due = self.change_due.max(*revision); }
                 if !self.covers(*cause) { self.stale_marked.set(true) }
-                if *cause == StaleCause::Change && self.reads_node { self.reread_by_event.set(true); }
+                if matches!(cause, StaleCause::Change { .. }) && self.reads_node && (!self.covers(*cause) || self.answer_base.get() == i64::MAX) { self.reread_by_event.set(true); }
             }
             Ev::Load { store_revision, .. } => self.store_seen = self.store_seen.max(*store_revision),
             Ev::StoreSeen { revision } => self.store_seen = self.store_seen.max(*revision),
@@ -107,7 +114,13 @@ impl Facts {
 
     pub(super) fn page_source(marked: bool) -> crate::schema::RowSource { if marked { crate::schema::RowSource::NodeReread } else { crate::schema::RowSource::Page } }
 
-    pub(super) fn covers(&self, cause: StaleCause) -> bool { matches!(cause, StaleCause::Gap { online_seq } if online_seq > 0 && self.load_seq.get() >= online_seq) }
+    pub(super) fn covers(&self, cause: StaleCause) -> bool {
+        match cause {
+            StaleCause::Gap { online_seq } => online_seq > 0 && self.load_seq.get() >= online_seq,
+            StaleCause::Change { revision: Some(revision) } => self.answer_base.get() >= revision && (!self.reads_node || self.answer_marked.get()),
+            _ => false,
+        }
+    }
 
     /// Only the preload watches the window.
     pub(super) fn preload_only(&self) -> bool { self.waiters.is_empty() && self.interest.len() == 1 && self.interest.contains(&PRELOAD) }
@@ -206,6 +219,7 @@ impl Facts {
     /// A load of the first page of a media window starts with a check of its marker; every other load asks for a page.
     pub(super) fn issue(&self, request: RequestId, attempt: u32, page: u32, force: bool) -> Load {
         self.load_seq.set(self.online_seq);
+        self.answer_base.set(if page == 1 && !self.media { i64::MAX } else { -1 });
         let load = Load::issued(request, attempt, page, force);
         if !(self.media && page == 1) { return load; }
         let up_to = self.marker.as_ref().map_or(0, |marker| marker.sequence);
@@ -317,6 +331,7 @@ impl Facts {
 
     pub(super) fn fail(&mut self, failure: crate::ffi::DbError) -> Outcome<WinState> {
         self.landing_marker = None;
+        self.answer_base.set(-1);
         self.fresh = false;
         self.reread_due = false;
         self.outcome = LastLoad::Failed(failure.clone());

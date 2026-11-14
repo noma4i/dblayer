@@ -272,8 +272,12 @@ impl Database {
     }
 
     pub(crate) async fn send_create(&self, model: &str, values_json: &str) -> super::WireOperationReceipt {
-        let request = crate::ffi::CommandRequest { epoch: self.session_epoch(), model: model.into(), values_json: values_json.into(), args_json: "{}".into(), upload: None };
-        self.send(request).await.unwrap()
+        let epoch = self.session_epoch();
+        let request = crate::ffi::CommandRequest { epoch, model: model.into(), values_json: values_json.into(), args_json: "{}".into(), upload: None };
+        match self.send(request).await {
+            Ok(receipt) => receipt,
+            Err(error) => panic!("the send in epoch {epoch} was refused: {error:?}; published now {:?}, faults {:?}", self.life.published(), self.life.faults()),
+        }
     }
 
     pub(crate) async fn refusal_of(&self, receipt: super::WireOperationReceipt) -> super::WireFailure {
