@@ -10,6 +10,7 @@
 ### Fixed
 
 - End a refresh with a runtime error when reading the saved window fails by a panic.
+- Refuse a server row whose field value does not decode instead of dropping the field.
 - Give a list value the revision of the commit that changed its rows.
 - Read a row once after its event when a counter or list also shows it.
 - Return the receipt of an accepted write when the session ends before the call returns.

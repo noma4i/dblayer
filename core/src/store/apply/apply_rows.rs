@@ -166,7 +166,7 @@ pub(super) fn apply_upsert(
     };
     let old_row = existing.as_ref().map(|stored| &stored.row);
     let mut next = without_nulls(info, row);
-    canonicalize(info, &mut next);
+    canonicalize(info, &mut next)?;
     if envelope.source != crate::schema::RowSource::Derived {
         for field in info.spec.fields.iter().filter(|field| field.derived) {
             match old_row.and_then(|old| old.get(&field.name)) {
@@ -220,7 +220,7 @@ pub(super) fn apply_upsert(
     Ok(())
 }
 
-pub(super) fn canonicalize(info: &ModelInfo, row: &mut Map<String, Value>) {
+pub(super) fn canonicalize(info: &ModelInfo, row: &mut Map<String, Value>) -> Result<(), StoreError> {
     for plan in &info.layout.fields {
         let Some(value) = row.get(plan.field()) else { continue };
         let canonical = match plan {
@@ -228,11 +228,10 @@ pub(super) fn canonicalize(info: &ModelInfo, row: &mut Map<String, Value>) {
             FieldPlan::Typed { member, .. } => normalize(member, &info.layout, value),
             FieldPlan::Rest { .. } => continue,
         };
-        match canonical {
-            Some(canonical) => row.insert(plan.field().to_string(), canonical),
-            None => row.remove(plan.field()),
-        };
+        let canonical = canonical.ok_or_else(|| StoreError::Invalid(format!("{} has a value of another type", plan.field())))?;
+        row.insert(plan.field().to_string(), canonical);
     }
+    Ok(())
 }
 
 pub(super) struct RowRevisions<'a> {

@@ -229,7 +229,7 @@ pub(crate) fn read_path<'a>(input: &'a Map<String, Value>, path: &str) -> Option
     Some(current)
 }
 
-fn is_file_descriptor(value: &Value) -> bool {
+pub(super) fn is_file_descriptor(value: &Value) -> bool {
     value.as_object().is_some_and(|object| object.get("id").is_some_and(Value::is_string) && object.get("size").is_some_and(Value::is_u64))
 }
 

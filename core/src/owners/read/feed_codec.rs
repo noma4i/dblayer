@@ -107,11 +107,12 @@ impl SchemaFeedCodec {
             return event(model, json!({"op":"reread", "model":model, "id":event_id.as_str()}), self.reread_keys(spec, read, event_id));
         }
         let Some(node) = root_value(change, path).and_then(Value::as_object) else { return invalid(model, format!("missing full payload {model}.{path}")) };
-        if let Err(error) = self.specs().find(|spec| spec.key.as_str() == model).ok_or_else(|| format!("unknown model {model}")).and_then(|spec| spec.normalize(node).map_err(|error| error.to_string())) {
-            return invalid(model, error);
-        }
+        let Some(spec) = self.specs().find(|spec| spec.key.as_str() == model) else { return invalid(model, format!("unknown model {model}")) };
         match self.upsert(model, node.clone(), &Map::new()) {
-            Ok(Some(payload)) => event(model, payload, StaleKeys::none()),
+            Ok(Some(payload)) => match payload["row"].as_object().and_then(|row| spec.missing_field(row)) {
+                Some(name) => invalid(model, format!("{name} is required")),
+                None => event(model, payload, StaleKeys::none()),
+            },
             Ok(None) => invalid(model, "payload without id"),
             Err(error) => invalid(model, error),
         }

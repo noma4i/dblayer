@@ -19,7 +19,7 @@ mod ephemeral;
 pub(crate) mod keyed;
 mod local;
 mod merge;
-mod nested_decode;
+mod server_decode;
 mod newer;
 mod reserved;
 mod search;
