@@ -154,10 +154,13 @@ pub(super) fn mutation(key: &str) -> NewOp {
     let mut parts = key.splitn(3, ':');
     let (model, row, action) = (parts.next().unwrap_or("Moment"), parts.next().unwrap_or("r"), parts.next().unwrap_or("upload"));
     let effects = crate::owners::store::IntentEffects { rows: vec![crate::owners::store::EffectRow { model: model.into(), row_id: row.into(), values: "{}".into() }], ..Default::default() };
-    NewOp { model: model.into(), row_id: row.into(), action: action.into(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: "/moments".into(), body: String::new(), effects, expires_after: None }
+    NewOp { model: model.into(), row_id: row.into(), action: action.into(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: "/moments".into(), body: "{}".into(), effects, expires_after: None }
 }
 
-pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.into(), held: false, fields: Default::default(), urgent: false, source: Some(Source { path: format!("/src/{key}"), parts }), prepare: None, mutation: mutation(key), steps: Some(Steps { path: "/upload".into(), body: String::new() }), probed: None, dimensions: None, max_bytes: None } }
+/// The body the Transfer owner writes for the steps of an upload.
+pub(super) fn steps_body() -> String { crate::owners::write::upload_codec::StepsBody { multipart: false, name: "clip.mp4".into(), mime: "video/mp4".into(), signed_variable: "signedId".into(), item: "id".into() }.steps().body }
+
+pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.into(), held: false, fields: Default::default(), urgent: false, source: Some(Source { path: format!("/src/{key}"), parts }), prepare: None, mutation: mutation(key), steps: Some(Steps { path: "/upload".into(), body: steps_body() }), probed: None, dimensions: None, max_bytes: None } }
 
 /// The batch of the tests: two to ten elements go in one mutation.
 pub(super) fn joint() -> Joint { Joint { minimum: 2, maximum: 10, items_key: "items".into(), mutation: mutation("Batch:r:upload"), renumber: None } }
@@ -195,7 +198,7 @@ pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
         has_intent: false,
         has_operation: true,
         mutation: mutation(key),
-        steps: Some(Steps { path: "/upload".into(), body: String::new() }),
+        steps: Some(Steps { path: "/upload".into(), body: steps_body() }),
         staged: false,
         failed_at: None,
         blob_created_at: None, held: false,
@@ -589,7 +592,7 @@ impl Twin {
 
     pub fn retry(&mut self, key: &str, source: Option<Source>) -> (ReplyId, Out) {
         let reply = self.reply();
-        let source = source.map(|source| crate::owners::write::transfer::SuppliedSource { source, prepare: None, steps: Steps { path: "/upload".into(), body: String::new() }, values: Default::default(), local: String::new(), variables: Default::default(), wrap: None, max_bytes: None, probed: None });
+        let source = source.map(|source| crate::owners::write::transfer::SuppliedSource { source, prepare: None, steps: Steps { path: "/upload".into(), body: steps_body() }, values: Default::default(), local: String::new(), variables: Default::default(), wrap: None, max_bytes: None, probed: None });
         (reply, self.post(TransferInput::Retry { key: key.into(), source, reply }))
     }
 

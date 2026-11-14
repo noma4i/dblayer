@@ -77,7 +77,7 @@ struct World {
 }
 
 fn mutation() -> NewOp {
-    NewOp { model: "Moment".into(), row_id: "r1".into(), action: "upload".into(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: "/moments/r1".into(), body: String::new(), effects: Default::default(), expires_after: None }
+    NewOp { model: "Moment".into(), row_id: "r1".into(), action: "upload".into(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: "/moments/r1".into(), body: "{}".into(), effects: Default::default(), expires_after: None }
 }
 
 fn world() -> World {
@@ -126,7 +126,7 @@ impl World {
     }
 
     fn accept_input(&self, key: &str, path: PathBuf, parts: u32) -> TransferInput {
-        TransferInput::Accept { epoch: EPOCH, item: Box::new(BatchItem { key: key.into(), held: false, fields: Default::default(), urgent: false, source: Some(Source { path: path.to_string_lossy().into_owned(), parts }), prepare: None, mutation: mutation(), steps: Some(Steps { path: "/upload".into(), body: String::new() }), probed: None, dimensions: None, max_bytes: None }), reply: 1 }
+        TransferInput::Accept { epoch: EPOCH, item: Box::new(BatchItem { key: key.into(), held: false, fields: Default::default(), urgent: false, source: Some(Source { path: path.to_string_lossy().into_owned(), parts }), prepare: None, mutation: mutation(), steps: Some(Steps { path: "/upload".into(), body: super::upload_codec::StepsBody { multipart: false, name: "clip.mp4".into(), mime: "video/mp4".into(), signed_variable: "signedId".into(), item: "id".into() }.steps().body }), probed: None, dimensions: None, max_bytes: None }), reply: 1 }
     }
 
     fn post(&mut self, input: TransferInput) {

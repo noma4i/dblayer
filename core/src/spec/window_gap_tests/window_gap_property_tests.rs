@@ -177,8 +177,8 @@ fn win_nodes_key_keeps_the_boundaries_of_the_ids() {
     let joined = WindowKey::nodes("Moment", &["a,b"]);
     let split = WindowKey::nodes("Moment", &["a", "b"]);
     assert_ne!(joined, split);
-    assert_eq!(joined.kind(), WindowKind::Nodes { ids: vec!["a,b".to_string()] });
-    assert_eq!(split.kind(), WindowKind::Nodes { ids: vec!["a".to_string(), "b".to_string()] });
+    assert_eq!(joined.kind(), Ok(WindowKind::Nodes { ids: vec!["a,b".to_string()] }));
+    assert_eq!(split.kind(), Ok(WindowKind::Nodes { ids: vec!["a".to_string(), "b".to_string()] }));
 }
 
 /// win_created, P-WIN-12: the dictionary lives for one epoch. The key of the old epoch is gone and the first request of the new epoch waits for the addressed `Online`.
