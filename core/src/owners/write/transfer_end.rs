@@ -460,7 +460,7 @@ impl TransferState {
 
     pub(super) fn interest_plus(&mut self, key: Key, stream_id: StreamId, fx: &mut Fx) {
         let (shown, revision) = self.published_by_key(&key);
-        self.subscribers.entry(key.clone()).or_default().insert(stream_id);
+        self.subscribers.entry(key.clone()).or_default().insert(stream_id, (shown.clone(), revision));
         run(fx, TransferEffect::Status { stream_id, key, shown, revision });
     }
 

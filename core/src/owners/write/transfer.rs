@@ -159,7 +159,10 @@ impl TransferState {
 
     fn publish_shown(&mut self, key: &str, shown: Shown, revision: i64, fx: &mut Fx) {
         if shown == Shown::Gone { self.published.remove(key); } else { self.published.insert(key.to_string(), (shown.clone(), revision)); }
-        for stream_id in self.subscribers.get(key).into_iter().flatten() {
+        let sent = (shown.clone(), revision);
+        for (stream_id, last) in self.subscribers.get_mut(key).into_iter().flatten() {
+            if *last == sent { continue; }
+            *last = sent.clone();
             run(fx, TransferEffect::Status { stream_id: *stream_id, key: key.to_string(), shown: shown.clone(), revision });
         }
     }

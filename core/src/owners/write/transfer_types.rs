@@ -705,7 +705,8 @@ pub struct TransferState {
     pub(super) removal_pending: BTreeSet<TransferId>,
     pub(super) pending: BTreeMap<BatchId, Pending>,
     pub(super) replacements: BTreeMap<TransferId, (TransferId, Option<super::outbox::ReplacementOperation>)>,
-    pub(super) subscribers: BTreeMap<Key, BTreeSet<StreamId>>,
+    /// Per key, the value each Blob stream got last with its revision: a stream gets a value only when it differs.
+    pub(super) subscribers: BTreeMap<Key, BTreeMap<StreamId, (Shown, i64)>>,
     /// The value row readers and Blob streams got last for a key, with the revision of the batch that wrote it: what a joining reader gets. A key without one shows `Gone`.
     pub(super) published: BTreeMap<Key, (Shown, i64)>,
     pub(super) declarations: BTreeSet<(String, String)>,
