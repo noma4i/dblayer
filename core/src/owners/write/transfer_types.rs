@@ -74,6 +74,7 @@ pub struct Source {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct SuppliedSource {
     pub source: Source,
     pub prepare: Option<crate::ffi::upload_wire::WirePrepare>,
@@ -88,6 +89,7 @@ pub struct SuppliedSource {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct ActiveSource {
     pub request: SuppliedSource,
     pub body: String,
@@ -245,6 +247,7 @@ pub struct BatchItem {
 
 /// What `Commit` gives a held transfer: the effects of the new row and the variables the final mutation gets.
 #[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct CommitRequest {
     pub effects: crate::owners::store::IntentEffects,
     pub variables: serde_json::Map<String, serde_json::Value>,
@@ -255,6 +258,7 @@ pub struct CommitRequest {
 
 /// The `Commit` the Store has not confirmed: the effects and the body of the final mutation that the batch writes.
 #[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct CommitPlan {
     pub effects: crate::owners::store::IntentEffects,
     pub body: String,
@@ -513,6 +517,7 @@ pub enum PreparePhase {
 
 /// The prepare step of a transfer: its phase, the plan of the run and what the platform answered.
 #[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct PrepareRun {
     pub phase: PreparePhase,
     pub plan: Option<crate::ffi::PreparePlan>,
@@ -523,6 +528,7 @@ pub struct PrepareRun {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct Transfer {
     pub held: bool,
     /// The file was staged: it goes multipart whatever its size, also after `Commit` (D-372).

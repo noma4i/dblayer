@@ -158,11 +158,11 @@ fn xfer_accept_key_open() {
         };
         assert_eq!(twin.stage(id), stage);
         let count = twin.state().transfers.len();
-        let before = format!("{:?}", twin.t(id));
+        let before = twin.t(id).clone();
         let out = twin.post(accept_input(KEY, 90));
         assert_eq!(Twin::fault(&out, 90), Some(Fault::InFlight), "{stage:?}");
         assert_eq!((out.writes(), out.outbox.len(), twin.state().transfers.len()), (0, 0, count), "{stage:?}");
-        assert_eq!(format!("{:?}", twin.t(id)), before, "{stage:?}");
+        assert_eq!(*twin.t(id), before, "{stage:?}");
         if stage != TransferStage::CopyReady {
             let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item("Message:m2:send", 2), item(KEY, 2)], reply: 91 });
             assert_eq!(Twin::fault(&out, 91), Some(Fault::InFlight), "{stage:?}");
