@@ -98,10 +98,10 @@ fn the_variables_line_names_the_document_variable_of_an_enum_param() {
 
 #[test]
 fn joins_events_needs_columns_to_join_by() {
-    let model = MODEL.replace("scope :list do", "scope :list, insert_on: [:event, :response] do");
+    let model = MODEL.replace("scope :list do", "scope :list, insert_on: :server do");
     let errors = compile(&model, OPERATIONS, Some(SCHEMA)).unwrap_err();
-    assert!(errors.iter().any(|text| text.contains("insert_on: [:event, :response]") && text.contains("`where`")), "{errors:?}");
-    let strings = "model Chat do\n  attribute :title, :string\n  scope :search, insert_on: [:event, :response] do\n    parameter :query, :string\n    query \"chats\"\n    response from: \"chats\"\n    paginate size: 25, direction: :forward\n  end\nend\n";
+    assert!(errors.iter().any(|text| text.contains("insert_on: :server") && text.contains("`where`")), "{errors:?}");
+    let strings = "model Chat do\n  attribute :title, :string\n  scope :search, insert_on: :server do\n    parameter :query, :string\n    query \"chats\"\n    response from: \"chats\"\n    paginate size: 25, direction: :forward\n  end\nend\n";
     let errors = compile(strings, OPERATIONS, None).unwrap_err();
-    assert!(errors.iter().any(|text| text.contains("insert_on: [:event, :response]") && text.contains("`where`")), "{errors:?}");
+    assert!(errors.iter().any(|text| text.contains("insert_on: :server") && text.contains("`where`")), "{errors:?}");
 }

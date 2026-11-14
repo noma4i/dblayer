@@ -64,7 +64,7 @@ impl<'a> Run<'a> {
     fn require_membership_fields(&mut self, model: &'a ModelDecl, spot: Spot, operation: &str, root: &str, starts: &[&'a Select]) {
         let prefix: Vec<&str> = root.split('.').collect();
         let fields: BTreeSet<&str> = model.scopes.iter()
-            .filter(|scope| scope.insert_on.as_ref().is_some_and(|insert| insert.item.contains(&crate::decl::InsertOn::Response)))
+            .filter(|scope| scope.insert_on.as_ref().is_some_and(|insert| insert.item == crate::decl::InsertOn::Server))
             .flat_map(|scope| scope.membership.iter())
             .map(|(_, rule, _)| match rule { dblayer::schema::Membership::Contains(field) | dblayer::schema::Membership::Equals(field) => field.as_str() })
             .collect();

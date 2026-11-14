@@ -45,7 +45,7 @@ model Record do
     where containerId: :containerId
     order createdAt: :asc
   end
-  scope :thread, insert_on: [:event, :response], stable_order: true do
+  scope :thread, insert_on: :server, stable_order: true do
     parameter :containerId, :id
     where containerId: :containerId
     order sequenceNumber: :asc_nulls_last, createdAt: :asc
@@ -89,7 +89,7 @@ model Record do
     paginate size: 30, direction: :backward
     freshness expires_in: 1.minute, empty_in: 10.seconds
   end
-  scope :recent_media, insert_on: [:event, :response], refresh_on_foreground: true do
+  scope :recent_media, insert_on: :server, refresh_on_foreground: true do
     parameter :containerId, :id
     where containerId: :containerId
     query "RecentMedia"

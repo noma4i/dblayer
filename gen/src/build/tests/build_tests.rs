@@ -221,15 +221,30 @@ fn refetch_names_a_scope_of_another_model_with_its_model() {
 }
 
 #[test]
-fn insert_on_event_and_response_joins_events() {
-    let model = build_one("  scope :mine, insert_on: [:event, :response] do\n    parameter :ownerId, :id\n    where ownerId: :ownerId\n    query \"Mine\"\n  end\n  scope :other, insert_on: [:create] do\n    query \"Other\"\n  end");
+fn insert_on_server_joins_events() {
+    let model = build_one("  scope :mine, insert_on: :server do\n    parameter :ownerId, :id\n    where ownerId: :ownerId\n    query \"Mine\"\n  end\n  scope :other, insert_on: :create do\n    query \"Other\"\n  end");
     let flags: Vec<(bool, bool)> = model.relations.iter().map(|relation| (relation.joins_events, relation.joins_created)).collect();
     assert_eq!(flags, [(true, false), (false, true)]);
 }
 
 #[test]
+fn insert_on_server_joins_node_only_with_the_node_read_and_a_node_change() {
+    let node = "  scope :node, node: :one do\n    parameter :id, :id\n    query \"SampleNode\"\n    variables id: :id\n  end\n";
+    let list = "  scope :mine, insert_on: :server do\n    parameter :ownerId, :id\n    where ownerId: :ownerId\n    query \"Mine\"\n  end\n";
+    let changed = "  changes \"SampleEvents\", from: \"sampleEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n  changed_by \"SAMPLE\", via: :node\n";
+    let flags = |body: String| {
+        let model = build_one(&body);
+        let relation = model.relations.iter().find(|relation| relation.name == "mine").unwrap();
+        (relation.joins_events, relation.joins_node)
+    };
+    assert_eq!(flags(format!("{node}{list}{changed}")), (true, true));
+    assert_eq!(flags(format!("{node}{list}")), (true, false));
+    assert_eq!(flags(format!("{list}")), (true, false));
+}
+
+#[test]
 fn insert_on_create_marks_only_the_relation_that_names_it() {
-    let model = build_one("  scope :mine, insert_on: [:create] do\n    query \"Mine\"\n  end\n  scope :other do\n    query \"Other\"\n  end");
+    let model = build_one("  scope :mine, insert_on: :create do\n    query \"Mine\"\n  end\n  scope :other do\n    query \"Other\"\n  end");
     let flags: Vec<(bool, bool)> = model.relations.iter().map(|relation| (relation.joins_created, relation.joins_events)).collect();
     assert_eq!(flags, [(true, false), (false, false)]);
 }

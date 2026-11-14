@@ -17,7 +17,7 @@ iOS 17, macOS 14, or Android 13 (API 33) or newer.
 - **Local first.** Data lives in SQLite. Reads never wait for the network, and writes are applied locally at once.
 - Repeat `local` in a create operation to fill attributes from different singleton models.
 - Filter subscription applications with value lists or `not`. Model declarations share one incoming stream.
-- Use `membership list: { contains: :lists }` and `insert_on: [:event, :response, :node]` for event-driven node membership.
+- Use `membership list: { contains: :lists }` and `insert_on: :server` for event-driven node membership.
 - **Partial child updates.** Parent fields copied through `sets` keep their values when the child omits those fields. Explicit null clears them.
 - **Sync state on every record.** Each record knows if the server has seen it: `synced`, `pending`, `sending` or `failed`. Build spinners, retry buttons and unsent banners on it, and query by it.
 - **Offline writes.** Create, update and destroy are applied optimistically and queued. The queue survives restarts, is sent in order, rolled back on a final failure and replaces temporary ids with server ids.

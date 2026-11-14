@@ -8,13 +8,13 @@ model Chat do
     query "ChatNode"
     variables id: :id
   end
-  scope :list, insert_on: [:event, :response, :node] do
+  scope :list, insert_on: :server do
     parameter :list, :string
     membership list: { contains: :lists }
     query "ChatList"
     response from: "chats", shape: :list
   end
-  scope :pinned, insert_on: [:event, :response, :node], keep_on_gap: true do
+  scope :pinned, insert_on: :server, keep_on_gap: true do
     parameter :list, :string
     membership list: { contains: :lists }
     query "ChatList"

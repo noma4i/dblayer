@@ -22,7 +22,7 @@ model Container do
   scope :recent do
     order lastRecordAt: :desc
   end
-  scope :shelf, insert_on: [:event, :response, :node] do
+  scope :shelf, insert_on: :server do
     parameter :shelf, ContainerShelf
     membership shelf: { contains: :shelves }
     query "ContainerShelfQuery"

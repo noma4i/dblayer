@@ -81,7 +81,7 @@ fn declarations_reject_values_that_would_be_discarded() {
     for body in [
         "scope :all do\n where \"ignored\"\n end",
         "scope :all do\n order :ignored\n end",
-        "scope :all, insert_on: [:bogus] do\n query \"All\"\n end",
+        "scope :all, insert_on: :bogus do\n query \"All\"\n end",
         "scope :all do\n query \"All\"\n paginate size: 5, cursor: { parameter: \"after\" }\n end",
         "scope :all do\n query \"All\"\n paginate size: 5, cursor: { parameter: \"after\", from: \"a.b\", type: :bogus }\n end",
         "scope :all do\n parameter :q, :string, default: \"x\"\n query \"All\"\n end",

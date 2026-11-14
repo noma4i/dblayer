@@ -141,34 +141,16 @@ pub(super) fn response(cx: &mut Cx, call: &Call) -> Option<ResponseDecl> {
 }
 
 
-pub(super) fn insert_on(cx: &mut Cx, pair: &Pair) -> Option<Spanned<Vec<InsertOn>>> {
-    let Value::Array(items) = &pair.value.item else {
-        cx.fail(at(&pair.value), "`insert_on` must be a list like `[:event, :response]`");
-        return None;
-    };
-    let mut found: Vec<InsertOn> = Vec::new();
-    for item in items {
-        let source = match &item.item {
-            Value::Symbol(name) if name == "create" => InsertOn::Create,
-            Value::Symbol(name) if name == "event" => InsertOn::Event,
-            Value::Symbol(name) if name == "response" => InsertOn::Response,
-            Value::Symbol(name) if name == "node" => InsertOn::Node,
-            _ => {
-                cx.fail(at(item), "`insert_on` takes `:create`, `:event` and `:response`");
-                continue;
-            }
-        };
-        if found.contains(&source) {
-            cx.fail(at(item), "`insert_on` names a source twice");
-        } else {
-            found.push(source);
+pub(super) fn insert_on(cx: &mut Cx, pair: &Pair) -> Option<Spanned<InsertOn>> {
+    let source = match &pair.value.item {
+        Value::Symbol(name) if name == "server" => InsertOn::Server,
+        Value::Symbol(name) if name == "create" => InsertOn::Create,
+        _ => {
+            cx.fail(at(&pair.value), "`insert_on` takes one value, `:server` or `:create`, the list form was removed");
+            return None;
         }
-    }
-    if found.is_empty() {
-        cx.fail(at(&pair.value), "`insert_on` needs at least 1 source");
-        return None;
-    }
-    Some(Spanned::new(found, at(&pair.value)))
+    };
+    Some(Spanned::new(source, at(&pair.value)))
 }
 
 pub(super) fn scope(cx: &mut Cx, call: &Call) -> Option<ScopeDecl> {

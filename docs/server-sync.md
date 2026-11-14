@@ -575,12 +575,12 @@ The core drops a server row whose revision is lower than its stored revision. Eq
 The same comparison covers payloads, node responses and pages. The integer remains exact through SQLite, Swift and Kotlin.
 Payloads from a subscription's previous database generation are discarded after reset.
 Remove manual Chat rereads and list refetches after MESSAGE when these payload declarations supply both rows.
-Events of the plain transport with a full row save that row directly. `insert_on: [:event, :response]` adds such a row to loaded selections that match its `where` columns, and does the same for rows from operation responses (`upsert`), including cached rows absent from matching loaded windows. Existing members keep their places.
+Events of the plain transport with a full row save that row directly. `insert_on: :server` adds such a row to loaded selections that match its `where` columns, and does the same for rows from operation responses (`upsert`), including cached rows absent from matching loaded windows. Existing members keep their places.
 A scope parameter without `where` needs explicit `membership` to accept event rows.
 `matches mediaKind: { in: [...] }`, `matches kind: { equals: "GIFT" }` and `matches sequenceNumber: { greater_than: :afterSequence }` select loaded windows by row fields. A row from an event, an operation response or a node reread joins every loaded window whose `where` columns and `matches` tests it satisfies. A row with a null tested field joins none. A member that stops matching leaves the window.
 Constant `variables` keep a scope out of automatic insertion unless a `matches` rule describes the answer.
 `membership list: { contains: :lists }` selects windows whose list parameter occurs in the row array.
-`insert_on: [:event, :response, :node]` also admits rows from `changed_by` node rereads.
+`insert_on: :server` also admits rows from `changed_by` node rereads when the model has a `node` scope that `changed_by` names with `via:`.
 Missing members join loaded windows at the head. Existing members keep their places. Manual node reads do not insert members.
 After a reconnect, Cable rereads the observed selections of models with `changed_by`.
 `via: :observed` uses this reread for each event. Each event also reaches `scope.events(Model)` with the row before and after the reread, see [Models](models.md).
@@ -844,7 +844,7 @@ end
 
 - An event changes only the attributes it carries. Attributes it does not select keep their stored values. The read of the stored row and the write happen in one transaction, so a local edit made at the same moment is never overwritten by an older copy.
 - A delete event removes the same rows as a local `destroy`: the row and its `dependent: :destroy` children, in one commit.
-- Events preserve fields owned by unconfirmed local edits. Loaded windows with `insert_on: [:event, :response]` accept matching rows.
+- Events preserve fields owned by unconfirmed local edits. Loaded windows with `insert_on: :server` accept matching rows.
 - If the first connection fails, the library retries it with the same growing delay and the same offline rule as a reconnect. `subscribe` does not throw for a refused connection.
 - The subscription starts when the first reader connects, is shared by all readers and closes after the last reader leaves.
 - After a dropped connection, the library reconnects and rereads once the watched relations of the models that lost events, fresh or not. Offline, it waits without attempts. Returning online reconnects at once. The reconnect delay runs on the database clock: a test clock that does not move never reconnects an online subscription, so a test advances it. A scope declared with `keep_on_gap: true` is not reread after the break, see [models](models.md#scopes).

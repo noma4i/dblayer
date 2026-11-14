@@ -149,27 +149,25 @@ fn freshness_is_one_declaration_with_durations() {
 }
 
 #[test]
-fn insert_on_is_a_closed_set_of_sources() {
+fn insert_on_is_one_closed_value() {
     let joined = |options: &str, lines: &str| scope(options, &format!("{lines}    query \"S\"\n"));
     let node_read = |options: &str| format!("  scope :node, node: :one do\n    parameter :id, :id\n    query \"N\"\n    variables id: :id\n  end\n{}", joined(options, BY_OWNER));
+    const ONE_VALUE: &str = "`insert_on` takes one value, `:server` or `:create`";
     run(&[
-        ("create", &joined(", insert_on: [:create]", ""), None),
-        ("event and response", &joined(", insert_on: [:event, :response]", BY_OWNER), None),
-        ("event node", &node_read(", insert_on: [:event, :response, :node]"), None),
-        ("node", &node_read(", insert_on: [:node]"), None),
-        ("node without the node read of the model", &joined(", insert_on: [:node]", BY_OWNER), Some("`insert_on` with `:node` needs the `node` scope of the model")),
-        ("event node without the node read of the model", &joined(", insert_on: [:event, :response, :node]", BY_OWNER), Some("`insert_on` with `:node` needs the `node` scope of the model")),
-        ("order does not matter", &joined(", insert_on: [:response, :event]", BY_OWNER), None),
-        ("unknown source", &joined(", insert_on: [:bogus]", BY_OWNER), Some("`insert_on` takes `:create`, `:event` and `:response`")),
-        ("empty list", &joined(", insert_on: []", BY_OWNER), Some("`insert_on` needs at least 1 source")),
-        ("a source twice", &joined(", insert_on: [:event, :event]", BY_OWNER), Some("`insert_on` names a source twice")),
-        ("not a list", &joined(", insert_on: :event", BY_OWNER), Some("`insert_on` must be a list")),
+        ("create", &joined(", insert_on: :create", ""), None),
+        ("server", &joined(", insert_on: :server", BY_OWNER), None),
+        ("server with the node read of the model", &node_read(", insert_on: :server"), None),
+        ("old list of events and response", &joined(", insert_on: [:event, :response]", BY_OWNER), Some(ONE_VALUE)),
+        ("old list with node", &node_read(", insert_on: [:event, :response, :node]"), Some(ONE_VALUE)),
+        ("old node list", &node_read(", insert_on: [:node]"), Some(ONE_VALUE)),
+        ("old create list", &joined(", insert_on: [:create]", ""), Some(ONE_VALUE)),
+        ("old event value", &joined(", insert_on: :event", BY_OWNER), Some(ONE_VALUE)),
+        ("old node value", &node_read(", insert_on: :node"), Some(ONE_VALUE)),
+        ("unknown value", &joined(", insert_on: :bogus", BY_OWNER), Some(ONE_VALUE)),
         ("old joins", &joined(", joins: :events", BY_OWNER), Some("unknown key `joins` for `scope`")),
-        ("event alone is not a supported set", &joined(", insert_on: [:event]", BY_OWNER), Some("`insert_on` is `[:create]` or `[:event, :response]`")),
-        ("create with event", &joined(", insert_on: [:create, :event]", BY_OWNER), Some("`insert_on` is `[:create]` or `[:event, :response]`")),
-        ("events need where", &joined(", insert_on: [:event, :response]", ""), Some("needs `where`")),
-        ("events with a server-only parameter", &joined(", insert_on: [:event, :response]", &format!("{BY_OWNER}    parameter :q, :string\n")), Some("server-only parameters has none")),
-        ("create with a server-only parameter", &joined(", insert_on: [:create]", "    parameter :q, :string\n"), None),
+        ("server needs where", &joined(", insert_on: :server", ""), Some("needs `where`")),
+        ("server with a server-only parameter", &joined(", insert_on: :server", &format!("{BY_OWNER}    parameter :q, :string\n")), Some("server-only parameters has none")),
+        ("create with a server-only parameter", &joined(", insert_on: :create", "    parameter :q, :string\n"), None),
     ]);
 }
 
@@ -206,7 +204,7 @@ fn membership_checks_parameter_fields_types_and_conflicts() {
         ("membership list: { other: :lists }", Some("exactly one")),
         ("where status: :list\n    membership list: { contains: :lists }", Some("conflicts with where")),
     ] {
-        let source = format!("model Chat do\n  attribute :status, :enum, values: [\"PRIMARY\",\"SECONDARY\"], as: Kind\n  attribute :lists, [:enum], values: [\"PRIMARY\",\"SECONDARY\"], as: Kind\n  index :status\n  scope :node, node: :one do\n    parameter :id, :id\n    query \"ChatNode\"\n    variables id: :id\n  end\n  scope :list, insert_on: [:event, :response, :node] do\n    parameter :list, Kind\n    {rule}\n    query \"Chats\"\n    response shape: :list\n  end\nend");
+        let source = format!("model Chat do\n  attribute :status, :enum, values: [\"PRIMARY\",\"SECONDARY\"], as: Kind\n  attribute :lists, [:enum], values: [\"PRIMARY\",\"SECONDARY\"], as: Kind\n  index :status\n  scope :node, node: :one do\n    parameter :id, :id\n    query \"ChatNode\"\n    variables id: :id\n  end\n  scope :list, insert_on: :server do\n    parameter :list, Kind\n    {rule}\n    query \"Chats\"\n    response shape: :list\n  end\nend");
         let directory = tempfile::tempdir().unwrap();
         let file = directory.path().join("chat.dbl");
         std::fs::write(&file, source).unwrap();
@@ -297,7 +295,7 @@ fn preload_lists_the_values_of_every_parameter_of_a_remote_scope() {
 
 #[test]
 fn matches_checks_fields_literals_and_the_threshold_parameter() {
-    let remote = |rule: &str| scope(", insert_on: [:event, :response]", &format!("{BY_OWNER}    parameter :after, :int\n    {rule}\n    query \"S\"\n"));
+    let remote = |rule: &str| scope(", insert_on: :server", &format!("{BY_OWNER}    parameter :after, :int\n    {rule}\n    query \"S\"\n"));
     run(&[
         ("literal set and threshold", &remote("matches name: { in: [\"a\", \"b\"] }, count: { greater_than: :after }"), None),
         ("literal equality", &remote("matches name: { equals: \"a\" }, count: { greater_than: :after }"), None),

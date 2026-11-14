@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- insert_on takes one value: :server or :create.
+
 ### Fixed
 
 - Hold an operation on a temporary row until its create or upload lands.

@@ -76,7 +76,8 @@ fn build_model(node: &ModelDecl) -> ModelSpec {
     model.indexes = node.indexes.iter().map(|index| index.columns.clone()).collect();
     model.ephemeral = node.ephemeral.iter().flat_map(|group| &group.attributes).map(|attribute| EphemeralSpec { field: build_field(attribute, &node.name), reset_after: attribute.reset_after.clone() }).collect();
     model.associations = node.associations.iter().map(|association| build_association(association, &node.name)).collect();
-    model.relations = node.scopes.iter().map(build_scope).collect();
+    let reads_node = node.changed_by.iter().any(|change| node.scopes.iter().any(|scope| scope.node == Some(NodeRead::One) && scope.name == change.via));
+    model.relations = node.scopes.iter().map(|scope| build_scope(scope, reads_node)).collect();
     model.listens = node.subscriptions.iter().map(updates_spec).collect();
     model.removed_by = node.removed_by.iter().map(|removal| dblayer::schema::RemovedBy { model: removal.model.clone(), matches: removal.matches.iter().cloned().collect() }).collect();
     model.change_feed = node.changes.first().map(|feed| dblayer::schema::ChangeFeed {
@@ -194,10 +195,10 @@ fn build_association(association: &AssociationDecl, owner: &str) -> AssociationS
 }
 
 pub(crate) fn scope_is_singleton(scope: &ScopeDecl) -> bool {
-    build_scope(scope).is_singleton()
+    build_scope(scope, false).is_singleton()
 }
 
-fn build_scope(scope: &ScopeDecl) -> RelationSpec {
+fn build_scope(scope: &ScopeDecl, reads_node: bool) -> RelationSpec {
     let columns: Vec<&str> = scope.where_.iter().flat_map(|clause| clause.pairs.iter().map(|(column, _)| column.item.as_str())).collect();
     let mut relation = RelationSpec::new(&scope.name, &columns);
     relation.updates = scope.subscriptions.iter().map(updates_spec).collect();
@@ -225,9 +226,9 @@ fn build_scope(scope: &ScopeDecl) -> RelationSpec {
     }
     relation.is_global = columns.is_empty() && relation.text_params.is_empty();
     if let Some(insert) = &scope.insert_on {
-        relation.joins_created = insert.item.contains(&InsertOn::Create);
-        relation.joins_events = insert.item.contains(&InsertOn::Event);
-        relation.joins_node = insert.item.contains(&InsertOn::Node);
+        relation.joins_created = insert.item == InsertOn::Create;
+        relation.joins_events = insert.item == InsertOn::Server;
+        relation.joins_node = reads_node && insert.item == InsertOn::Server;
     }
     relation.order_stable = scope.stable_order.is_some();
     relation.refresh_on_foreground = scope.refresh_on_foreground.is_some();

@@ -462,7 +462,7 @@ Duration counts that overflow milliseconds are rejected.
 
 When a response row has no value for a column the relation groups by, the param fills it. A response without an id becomes a row keyed by the param.
 
-A `query "Operation"` line connects a scope to the server. A scope that depends on columns binds them: `where userId: :userId` loads and lists the rows whose `userId` equals the parameter. `order createdAt: :desc` sorts the rows locally, otherwise the server order is kept. A row whose param column changes (a message moving to another `groupId`) leaves the list of the old value and joins the head of the list of the new value in the same commit, for relations that list every row of their params. `insert_on: [:create]` on a scope without parameters makes the list take the rows this device creates, at its head; `insert_on: [:event, :response]` makes it take rows from its subscription events and from operation responses.
+A `query "Operation"` line connects a scope to the server. A scope that depends on columns binds them: `where userId: :userId` loads and lists the rows whose `userId` equals the parameter. `order createdAt: :desc` sorts the rows locally, otherwise the server order is kept. A row whose param column changes (a message moving to another `groupId`) leaves the list of the old value and joins the head of the list of the new value in the same commit, for relations that list every row of their params. `insert_on: :create` on a scope without parameters makes the list take the rows this device creates, at its head; `insert_on: :server` makes it take rows from its subscription events and from operation responses.
 
 `where` accepts scalar and enum columns. A param passed as `nil` is a value of its own: `Moment.by_user(nil)` is the unfiltered list and has its own window. A parameter bound to a column gives the row one owner list: a row that belongs to several lists at once (a moment in the default feed and in a vibe feed) needs one scope per list, and the vibe id is a `parameter` without `where`, not a column parameter. A parameter without `where`, such as a search string, is sent as a variable and each value gets its own window: `parameter :query, :string` in `scope :search` generates `Model.search("cats")`.
 
@@ -521,7 +521,7 @@ model Note do
   attribute :groupId, :id
   attribute :sequenceNumber, :int, null: true
   attribute :createdAt, :date
-  scope :thread, insert_on: [:event, :response], stable_order: true do
+  scope :thread, insert_on: :server, stable_order: true do
     parameter :groupId, :id
     where groupId: :groupId
     order sequenceNumber: :asc_nulls_last, createdAt: :asc
@@ -532,8 +532,8 @@ model Note do
 end
 ```
 
-`insert_on: [:event, :response]` adds event and operation response rows to matching loaded windows, including cached rows absent from those windows.
-Add `:node` to include node rereads started by `changed_by`; the model then declares its `node` scope. A manual node read does not acquire this insertion intent.
+`insert_on: :server` adds server rows (events and operation responses) to matching loaded windows, including cached rows absent from those windows. When the model has a `node` scope and a `changed_by` that names it with `via:`, node rereads started by `changed_by` join too. A manual node read does not acquire this insertion intent.
+`insert_on` takes one value, `:server` or `:create`. The list form is a generator error.
 Every parameter needs `where`, `membership`, or a `greater_than` match. Hidden server parameters still prohibit automatic insertion.
 Use `membership list: { contains: :lists }` when a row belongs to several lists.
 Use `membership list: { equals: :status }` for scalar membership.
@@ -544,13 +544,13 @@ Each field takes one test, literals are strings, numbers or booleans of the fiel
 A member that stops matching after a row change leaves the window, like a member that loses its list.
 Membership rules require `query`. Local scopes read their `where` columns.
 When a nullable `where` column has a default, an explicit null selects its own window.
-A row from an event, or from a node read started by `changed_by`, must carry the membership field after merging the stored row; without it the write is refused as invalid data. An operation response row without the field is written and enters no list. A `null` removes the field and counts as missing. An empty array removes previous membership. When a scope with membership lists `:response` in `insert_on`, generation fails for an operation that lands a row whose response selection does not carry the membership field under its path (`response from:`, `upsert ... from:` or the default root).
+A row from an event, or from a node read started by `changed_by`, must carry the membership field after merging the stored row; without it the write is refused as invalid data. An operation response row without the field is written and enters no list. A `null` removes the field and counts as missing. An empty array removes previous membership. When a scope with membership declares `insert_on: :server`, generation fails for an operation that lands a row whose response selection does not carry the membership field under its path (`response from:`, `upsert ... from:` or the default root).
 Missing members join the head once. Existing members keep their places. Unloaded windows are not created.
 Membership and row changes share one commit. Pages retain their server membership, cursors and revision protection.
 When an event joins an active manual node request, that request also inserts the row into matching loaded windows.
 
 ```ruby
-scope :list, insert_on: [:event, :response, :node] do
+scope :list, insert_on: :server do
   parameter :list, ChatList
   membership list: { contains: :lists }
   query "Chats"
@@ -558,7 +558,7 @@ end
 ```
 
 ```ruby
-scope :audio_since, insert_on: [:event, :response, :node] do
+scope :audio_since, insert_on: :server do
   parameter :chatId, :id
   parameter :afterSequence, :int
   where chatId: :chatId
@@ -777,7 +777,7 @@ model Chat do
   end
   changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
   changed_by "MESSAGE", via: :node, payload: "chat"
-  scope :list, insert_on: [:event, :response, :node] do
+  scope :list, insert_on: :server do
     parameter :list, :string
     membership list: { contains: :lists }
     query "ChatList"

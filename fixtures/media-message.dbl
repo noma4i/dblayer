@@ -9,7 +9,7 @@ model MediaMessage do
     query "MediaMessageNode"
     variables id: :id
   end
-  scope :visual_media, insert_on: [:event, :response, :node] do
+  scope :visual_media, insert_on: :server do
     parameter :chatId, :id
     where chatId: :chatId
     matches mediaKind: { in: ["IMAGE", "VIDEO"] }
@@ -19,7 +19,7 @@ model MediaMessage do
     response from: "node.messages"
     paginate size: 30, direction: :forward
   end
-  scope :audio_media, insert_on: [:event, :response, :node] do
+  scope :audio_media, insert_on: :server do
     parameter :chatId, :id
     where chatId: :chatId
     matches mediaKind: { equals: "AUDIO" }
@@ -29,7 +29,7 @@ model MediaMessage do
     response from: "node.messages"
     paginate size: 30, direction: :forward
   end
-  scope :gift_media, insert_on: [:event, :response, :node] do
+  scope :gift_media, insert_on: :server do
     parameter :chatId, :id
     where chatId: :chatId
     matches kind: { equals: "GIFT" }
@@ -39,7 +39,7 @@ model MediaMessage do
     response from: "node.messages"
     paginate size: 30, direction: :forward
   end
-  scope :visual_since, insert_on: [:event, :response, :node] do
+  scope :visual_since, insert_on: :server do
     parameter :chatId, :id
     parameter :afterSequence, :int
     where chatId: :chatId
@@ -50,7 +50,7 @@ model MediaMessage do
     response from: "node.messages"
     paginate size: 50, direction: :forward
   end
-  scope :audio_since, insert_on: [:event, :response, :node] do
+  scope :audio_since, insert_on: :server do
     parameter :chatId, :id
     parameter :afterSequence, :int
     where chatId: :chatId
@@ -61,7 +61,7 @@ model MediaMessage do
     response from: "node.messages"
     paginate size: 50, direction: :forward
   end
-  scope :gifts_since, insert_on: [:event, :response, :node] do
+  scope :gifts_since, insert_on: :server do
     parameter :chatId, :id
     parameter :afterSequence, :int
     where chatId: :chatId

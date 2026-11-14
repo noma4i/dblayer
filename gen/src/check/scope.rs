@@ -113,7 +113,7 @@ pub(super) fn check_scope(node: &ModelDecl, all: &[ModelDecl], scope: &ScopeDecl
     if scope.members_complete && (scope.paginate.is_none() || scope.paginate.as_ref().is_some_and(|page| page.max_pages.is_some())) {
         report(scope.pos, "`members_complete` needs pagination without `max_pages`".into());
     }
-    check_remote_scope(node, scope, report);
+    check_remote_scope(scope, report);
 }
 
 pub(super) fn check_preload(scope: &ScopeDecl, preload: &PreloadDecl, all: &[ModelDecl], report: &mut impl FnMut(Pos, String)) {
@@ -258,7 +258,7 @@ pub(super) fn check_row_rules(node: &ModelDecl, scope: &ScopeDecl, linked: &[&st
     }
 }
 
-pub(super) fn check_remote_scope(node: &ModelDecl, scope: &ScopeDecl, report: &mut impl FnMut(Pos, String)) {
+pub(super) fn check_remote_scope(scope: &ScopeDecl, report: &mut impl FnMut(Pos, String)) {
     let name = &scope.name;
     let paginated = scope.paginate.is_some();
     let listed = scope.response.as_ref().is_some_and(|read| read.shape == Some(ResponseShape::List));
@@ -272,21 +272,11 @@ pub(super) fn check_remote_scope(node: &ModelDecl, scope: &ScopeDecl, report: &m
     }
     let linked = scope.where_.is_some() || !scope.membership.is_empty();
     let server_only = scope.parameters.iter().any(|parameter| !scope.where_.iter().flat_map(|clause| &clause.pairs).any(|(_, linked)| linked.item == parameter.name) && !scope.membership.iter().any(|(name, _, _)| name == &parameter.name) && !scope.row_rules.iter().any(|(rule, _)| matches!(&rule.test, dblayer::schema::RowTest::GreaterThan { parameter: name } if name == &parameter.name)));
-    if let Some(insert) = &scope.insert_on {
-        let mut sorted: Vec<_> = insert.item.iter().map(|source| *source as u8).collect();
-        sorted.sort_unstable();
-        let create = crate::decl::InsertOn::Create as u8;
-        let events = [crate::decl::InsertOn::Event as u8, crate::decl::InsertOn::Response as u8];
-        let automatic = !sorted.contains(&create);
-        let without_node: Vec<_> = sorted.iter().copied().filter(|value| *value != crate::decl::InsertOn::Node as u8).collect();
-        if sorted != [create] && (!automatic || (!without_node.is_empty() && without_node != events)) {
-            report(insert.pos, format!("scope `{name}`: `insert_on` is `[:create]` or `[:event, :response]`, with optional `:node`, or `[:node]`"));
-        } else if insert.item.contains(&crate::decl::InsertOn::Node) && !node.scopes.iter().any(|candidate| candidate.node == Some(NodeRead::One)) {
-            report(insert.pos, format!("scope `{name}`: `insert_on` with `:node` needs the `node` scope of the model"));
-        } else if automatic && !linked {
-            report(insert.pos, format!("scope `{name}`: `insert_on: [:event, :response]` joins rows by their `where` columns and needs `where`"));
-        } else if automatic && server_only {
-            report(insert.pos, format!("scope `{name}`: `insert_on: [:event, :response]` joins rows by their `where` columns and a scope with server-only parameters has none, remove `insert_on:` and the server answer decides the members"));
+    if let Some(insert) = scope.insert_on.as_ref().filter(|insert| insert.item == crate::decl::InsertOn::Server) {
+        if !linked {
+            report(insert.pos, format!("scope `{name}`: `insert_on: :server` joins rows by their `where` columns and needs `where`"));
+        } else if server_only {
+            report(insert.pos, format!("scope `{name}`: `insert_on: :server` joins rows by their `where` columns and a scope with server-only parameters has none, remove `insert_on:` and the server answer decides the members"));
         }
     }
     if let Some(pos) = scope.stable_order {

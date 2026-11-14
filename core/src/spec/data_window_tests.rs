@@ -485,7 +485,7 @@ fn data_membership_by_source_matrix() {
     assert!(red.is_empty(), "cells against P-DATA-100:\n{}", red.join("\n"));
 }
 
-/// P-DATA-84: an event `upsert` for a window with `insert_on: [:event, :response]` puts the row at the head when the row passes `matches` or the `membership` of the window, once for a repeated event; a member keeps its place.
+/// P-DATA-84: an event `upsert` for a window with `insert_on: :server` puts the row at the head when the row passes `matches` or the `membership` of the window, once for a repeated event; a member keeps its place.
 #[test]
 fn data_event_join_goes_through_membership() {
     use by_source::*;

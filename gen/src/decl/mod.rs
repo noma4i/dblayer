@@ -160,10 +160,8 @@ pub struct VariableBinding {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InsertOn {
+    Server,
     Create,
-    Event,
-    Response,
-    Node,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -296,7 +294,7 @@ pub struct ScopeDecl {
     pub pos: Pos,
     pub name: String,
     pub node: Option<NodeRead>,
-    pub insert_on: Option<Spanned<Vec<InsertOn>>>,
+    pub insert_on: Option<Spanned<InsertOn>>,
     pub stable_order: Option<Pos>,
     pub refresh_on_foreground: Option<Pos>,
     pub keep_on_gap: Option<Pos>,
