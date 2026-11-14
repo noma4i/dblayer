@@ -66,3 +66,16 @@ fn win_change_not_covered_by_a_partial_load() {
         assert_eq!(run(Some(0), media), run(None, media), "{name}: a change of a commit older than the pin acts as an uncommitted change");
     }
 }
+
+/// P-WIN-08 (one extra load per uncovered `Stale`, only after the landing of the load it met): a load left by its last reader takes its pending reread with it; the next load reads the window once.
+#[test]
+fn win_left_load_drops_its_reread() {
+    let mut twin = Twin::new();
+    twin.watch();
+    twin.step(Input::Stale { in_keys: true });
+    twin.step(Input::InterestMinus { id: STREAM });
+    let asked = requests(&twin.watch());
+    assert_eq!(asked, 1, "the window is not fresh: the next reader loads it");
+    twin.respond(None);
+    assert_eq!(requests(&twin.land()), 0, "the landing of the new load asks nothing more");
+}

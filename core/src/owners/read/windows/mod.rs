@@ -139,6 +139,7 @@ impl Facts {
                     return Handled;
                 }
                 self.fresh = false;
+                self.reread_due = false;
                 self.answer_base.set(-1);
                 self.push_fx(WindowEffect::Cancel { request: load.step, attempt: load.attempt });
                 self.emit(Emit::CancelRetry { request: load.request });
