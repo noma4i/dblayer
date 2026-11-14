@@ -6,11 +6,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::test_wait::orders_of;
 
 use crate::owners::contract::{Online};
-use crate::owners::read::deliveries::Deliveries;
+use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
 use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, FramedEvent, Outgoing, ScopedChannel};
 use crate::owners::read::windows::{StaleCause, StaleKeys, Windows, WindowsInput};
-use crate::owners::store::StoreWriter;
-use crate::spec::support::{new_log, Captured, CapturedStore, number_after, take, Discard, Emitted, Log, Sink, Spy, SpyState};
+use crate::owners::store::{StoreInput, StoreWriter};
+use crate::spec::support::{new_log, Captured, CapturedStore, take, Discard, Emitted, Log, Sink, Spy, SpyState};
 use crate::runtime::{Address, DetScheduler, EpochStamp};
 use crate::spec::support::committed_at;
 
@@ -76,14 +76,22 @@ impl Rig {
                 Emitted::Run(FeedEffect::Seal { frame: Outgoing::Unsubscribe { channel }, .. }) => words.push(format!("unsubscribe:{channel}")),
                 Emitted::Run(FeedEffect::Close { .. }) => words.push("close".to_string()),
                 Emitted::Schedule { input: FeedInput::ChannelResubscribe { .. }, .. } => words.push("schedule:channel".to_string()),
-                Emitted::Send { to: STORE, input } => {
-                    self.batches.push(number_after(&input, "id: ").expect("the batch id"));
+                Emitted::Send { to: STORE, payload, .. } => {
+                    let Some(StoreInput::Commit(batch)) = payload.typed::<StoreInput>() else { panic!("a Commit to the Store") };
+                    self.batches.push(batch.id);
                     words.push("commit".to_string());
                 }
-                Emitted::Send { to: DELIVERIES, input } => {
-                    let stream = number_after(&input, "stream: ").expect("the stream");
-                    let kind = input.split([' ', '{']).next().unwrap_or("");
-                    words.push(format!("{}:{stream}", kind.to_lowercase()));
+                Emitted::Send { to: DELIVERIES, payload, .. } => {
+                    let (kind, stream) = match payload.typed::<DeliveryInput>().expect("a Delivery input") {
+                        DeliveryInput::Joined { stream, .. } => ("joined", stream),
+                        DeliveryInput::ModelReady { stream } => ("modelready", stream),
+                        DeliveryInput::ModelEvent { stream, .. } => ("modelevent", stream),
+                        DeliveryInput::ModelLost { stream, .. } => ("modellost", stream),
+                        DeliveryInput::ModelGap { stream } => ("modelgap", stream),
+                        DeliveryInput::ModelInvalid { stream } => ("modelinvalid", stream),
+                        other => panic!("a Delivery input the Feed does not send: {other:?}"),
+                    };
+                    words.push(format!("{kind}:{stream}"));
                 }
                 _ => {}
             }

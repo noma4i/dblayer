@@ -390,7 +390,7 @@ impl Twin {
                 Emitted::Run(WindowsEffect::Drained(_)) => modelled.push(Effect::Drained),
                 Emitted::Run(WindowsEffect::SnapshotRequest { .. }) => {}
                 Emitted::Run(WindowsEffect::ReadWindow { .. }) => modelled.push(Effect::ReadWindow),
-                Emitted::Send { to: STORE, input } if input.starts_with("Commit(") => {
+                Emitted::Send { to: STORE, payload, .. } if payload.is::<crate::owners::store::StoreInput>(|input| matches!(input, crate::owners::store::StoreInput::Commit(_))) => {
                     let batch = batches.next().expect("a batch for every Commit");
                     if batch.author == BatchAuthor::Window && !marks_only(&batch) { modelled.push(Effect::Commit { request: batch.id, replace_all: batch.ops.iter().any(|op| matches!(op, StoreOp::Window { replace_all: true, .. })) }); }
                 }

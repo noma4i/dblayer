@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use crate::owners::contract::{BatchId, Committed, RejectReason};
 use crate::owners::store::{StoreBatch, StoreInput};
+use crate::runtime::Typed;
 use crate::runtime::{Address, Back, Cause, Control, Effect, EffectRunner, Effects, Epoch, EpochStamp, Outbound, ScheduleId, StateOwner};
 
 pub(crate) type Log<E> = Arc<Mutex<Vec<E>>>;
@@ -24,7 +25,7 @@ pub(crate) fn committed_at(batch: BatchId, revision: i64, tables: &[&str]) -> Co
 
 /// The typed batches behind the `Commit` sends of `emitted`: the last ones the captured Store received, in the order of the sends.
 pub(crate) fn sent_batches<E, I>(emitted: &[Emitted<E, I>], stored: &Log<StoreBatch>) -> Vec<StoreBatch> {
-    let sent = emitted.iter().filter(|entry| matches!(entry, Emitted::Send { input, .. } if input.starts_with("Commit("))).count();
+    let sent = emitted.iter().filter(|entry| matches!(entry, Emitted::Send { payload, .. } if payload.is::<StoreInput>(|input| matches!(input, StoreInput::Commit(_))))).count();
     let all = snapshot(stored);
     all[all.len() - sent..].to_vec()
 }
@@ -118,7 +119,7 @@ impl StateOwner for Ender {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Emitted<E, I> {
     Run(E),
-    Send { to: usize, input: String },
+    Send { to: usize, input: String, payload: Typed },
     Schedule { id: ScheduleId, after: Duration, input: I },
     Cancel(ScheduleId),
     Broadcast(Control),
@@ -159,7 +160,7 @@ where
                     if let Some(StoreInput::Commit(batch)) = (&*outbound.payload as &dyn Any).downcast_ref::<StoreInput>() {
                         state.store_batches.lock().unwrap_or_else(PoisonError::into_inner).push(batch.clone());
                     }
-                    seen.push(Emitted::Send { to: outbound.to, input: format!("{:?}", outbound.payload) });
+                    seen.push(Emitted::Send { to: outbound.to, input: format!("{:?}", outbound.payload), payload: outbound.payload.typed() });
                     Effect::Send(outbound)
                 }
                 Effect::Schedule { id, after, input } => {
@@ -311,20 +312,6 @@ impl<O: StateOwner> StateOwner for StoreStub<O> {
     fn epoch_ended(_epoch: Epoch, _cause: Cause) -> StoreInput { StoreInput::Idle }
 
     fn closing() -> StoreInput { StoreInput::Idle }
-}
-
-/// The number after `field` in a `Debug` string: `id: 7,` gives 7.
-pub(crate) fn number_after(text: &str, field: &str) -> Option<u64> {
-    let start = text.find(field)? + field.len();
-    let digits: String = text[start..].chars().take_while(char::is_ascii_digit).collect();
-    digits.parse().ok()
-}
-
-/// The text inside the quotes after `field` in a `Debug` string: `payload: "c1"` gives `c1`.
-pub(crate) fn text_after(text: &str, field: &str) -> Option<String> {
-    let start = text.find(field)? + field.len();
-    let rest = text[start..].strip_prefix('"')?;
-    Some(rest[..rest.find('"')?].to_string())
 }
 
 pub(crate) fn refusal_of(reason: RejectReason) -> crate::owners::write::outbox_types::Fault {

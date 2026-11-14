@@ -161,7 +161,7 @@ impl Twin {
 
     fn modelled(&self, entries: Vec<Emitted<DeliveryEffect, DeliveryInput>>) -> Vec<Effect> {
         let mut modelled = Vec::new();
-        let load_sends = entries.iter().filter(|entry| matches!(entry, Emitted::Send { to: WINDOWS, input } if input.starts_with("Load"))).count();
+        let load_sends = entries.iter().filter(|entry| matches!(entry, Emitted::Send { to: WINDOWS, payload, .. } if payload.is::<WindowsInput>(|input| matches!(input, WindowsInput::Load { .. } | WindowsInput::LoadNoWait { .. })))).count();
         let forces = snapshot(&self.windows).into_iter().filter_map(|input| match input { WindowsInput::Load { force, .. } | WindowsInput::LoadNoWait { force, .. } => Some(force), _ => None }).collect::<Vec<_>>();
         let mut forces = forces[forces.len() - load_sends..].to_vec().into_iter();
         for entry in entries {
@@ -182,9 +182,9 @@ impl Twin {
                         StreamEffect::StatusInterest { plus, .. } => Effect::StatusInterest(plus),
                     });
                 }
-                Emitted::Send { to: WINDOWS, input } if input.starts_with("InterestPlus") => modelled.push(Effect::InterestPlus),
-                Emitted::Send { to: WINDOWS, input } if input.starts_with("InterestPassive") => modelled.push(Effect::InterestPassive),
-                Emitted::Send { to: WINDOWS, input } if input.starts_with("Load") => modelled.push(Effect::Load { force: forces.next().expect("a Load for every send") }),
+                Emitted::Send { to: WINDOWS, payload, .. } if payload.is::<WindowsInput>(|input| matches!(input, WindowsInput::InterestPlus { .. })) => modelled.push(Effect::InterestPlus),
+                Emitted::Send { to: WINDOWS, payload, .. } if payload.is::<WindowsInput>(|input| matches!(input, WindowsInput::InterestPassive { .. })) => modelled.push(Effect::InterestPassive),
+                Emitted::Send { to: WINDOWS, payload, .. } if payload.is::<WindowsInput>(|input| matches!(input, WindowsInput::Load { .. } | WindowsInput::LoadNoWait { .. })) => modelled.push(Effect::Load { force: forces.next().expect("a Load for every send") }),
                 Emitted::Send { to: WINDOWS, .. } => modelled.push(Effect::InterestMinus),
                 Emitted::Run(DeliveryEffect::WantPlus { .. }) => modelled.push(Effect::WantPlus),
                 Emitted::Run(DeliveryEffect::WantMinus { .. }) => modelled.push(Effect::WantMinus),

@@ -67,10 +67,11 @@ fn feed_prop_joined_first() {
     twin.step(Input::HandshakeDone);
     twin.step(chat("c1"));
     twin.step(Input::Committed);
-    let index = |prefix: &str| twin.history.iter().position(|entry| matches!(entry, Emitted::Send { to: DELIVERIES, input } if input.starts_with(prefix)));
-    let joins = twin.history.iter().filter(|entry| matches!(entry, Emitted::Send { to: DELIVERIES, input } if input.starts_with("Joined"))).count();
+    let index = |kind: fn(&DeliveryInput) -> bool| twin.history.iter().position(|entry| matches!(entry, Emitted::Send { to: DELIVERIES, payload, .. } if payload.is::<DeliveryInput>(kind)));
+    let joined = |input: &DeliveryInput| matches!(input, DeliveryInput::Joined { .. });
+    let joins = twin.history.iter().filter(|entry| matches!(entry, Emitted::Send { to: DELIVERIES, payload, .. } if payload.is::<DeliveryInput>(joined))).count();
     assert_eq!(joins, 1, "one Joined for one Want+");
-    assert!(index("Joined") < index("ModelReady") && index("ModelReady") < index("ModelEvent") && index("ModelEvent").is_some(), "Joined, then ModelReady, then the first ModelEvent");
+    assert!(index(|input| matches!(input, DeliveryInput::Joined { .. })) < index(|input| matches!(input, DeliveryInput::ModelReady { .. })) && index(|input| matches!(input, DeliveryInput::ModelReady { .. })) < index(|input| matches!(input, DeliveryInput::ModelEvent { .. })) && index(|input| matches!(input, DeliveryInput::ModelEvent { .. })).is_some(), "Joined, then ModelReady, then the first ModelEvent");
 }
 
 /// P-FEED-09: frames apply from one connection at any time, an event never sits twice.

@@ -12,7 +12,7 @@ use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
 use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, Frame, FramedEvent, Outgoing, Protocol, ProtocolReason};
 use crate::owners::read::windows::{StaleCause, StaleKeys, WindowKey, Windows, WindowsInput};
 use crate::owners::store::{StoreBatch, StoreOp, StoreWriter};
-use crate::spec::support::{new_log, sent_batches, Captured, CapturedStore, number_after, snapshot, take, text_after, Discard, Emitted, Log, NoEffect, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
+use crate::spec::support::{new_log, sent_batches, Captured, CapturedStore, snapshot, take, Discard, Emitted, Log, NoEffect, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreStub, StoreStubState};
 use crate::runtime::{explore, Address, Back, Cause as Ended, DetScheduler, Effects, EffectRunner, Epoch, EpochStamp, Limits, StateOwner, Time};
 use crate::spec::support::committed_at;
 
@@ -268,7 +268,7 @@ impl Twin {
     fn split(&mut self, emitted: Vec<Emitted<FeedEffect, FeedInput>>) -> (Vec<Effect>, Vec<Obs>) {
         let (mut modelled, mut seen) = (Vec::new(), Vec::new());
         let mut batches = sent_batches(&emitted, &self.stored).into_iter();
-        let stale_sends = emitted.iter().filter(|entry| matches!(entry, Emitted::Send { to: WINDOWS, input } if input.starts_with("Stale {"))).count();
+        let stale_sends = emitted.iter().filter(|entry| matches!(entry, Emitted::Send { to: WINDOWS, payload, .. } if payload.is::<WindowsInput>(|input| matches!(input, WindowsInput::Stale { .. })))).count();
         let stales = snapshot(&self.staled).into_iter().filter(|input| matches!(input, WindowsInput::Stale { .. })).collect::<Vec<_>>();
         let mut stales = stales[stales.len() - stale_sends..].to_vec().into_iter();
         for entry in emitted {
@@ -307,7 +307,7 @@ impl Twin {
                     self.batches.push_back(batch.id);
                     modelled.push(Effect::Commit);
                 }
-                Emitted::Send { to: WINDOWS, input } if input.starts_with("Stale {") => {
+                Emitted::Send { to: WINDOWS, input, payload } if payload.is::<WindowsInput>(|input| matches!(input, WindowsInput::Stale { .. })) => {
                     let Some(WindowsInput::Stale { model, keys, .. }) = stales.next() else { panic!("a Stale for every send: {input}") };
                     modelled.push(match keys {
                         StaleKeys::AllBut(_) => Effect::Stale { model, all: true },
@@ -315,20 +315,14 @@ impl Twin {
                         StaleKeys::Relations(_) => panic!("the Feed stales by relation: {input}"),
                     });
                 }
-                Emitted::Send { to: DELIVERIES, input } => {
-                    let stream = number_after(&input, "stream: ").expect("the stream");
-                    if input.starts_with("Joined") {
-                        modelled.push(Effect::Joined(stream));
-                    } else if input.starts_with("ModelReady") {
-                        modelled.push(Effect::ModelReady(stream));
-                    } else if input.starts_with("ModelEvent") {
-                        seen.push(Obs::Event { stream, position: number_after(&input, "position: ").expect("the position"), payload: text_after(&input, "payload: ").expect("the payload") });
-                    } else if input.starts_with("ModelLost") {
-                        seen.push(Obs::Lost { stream, first: number_after(&input, "first: ").expect("first"), last: number_after(&input, "last: ").expect("last") });
-                    } else if input.starts_with("ModelGap") {
-                        seen.push(Obs::Gap { stream });
-                    }
-                }
+                Emitted::Send { to: DELIVERIES, payload, .. } => match payload.typed::<DeliveryInput>().expect("a Delivery input") {
+                    DeliveryInput::Joined { stream, .. } => modelled.push(Effect::Joined(stream)),
+                    DeliveryInput::ModelReady { stream } => modelled.push(Effect::ModelReady(stream)),
+                    DeliveryInput::ModelEvent { stream, position, payload } => seen.push(Obs::Event { stream, position, payload }),
+                    DeliveryInput::ModelLost { stream, first, last } => seen.push(Obs::Lost { stream, first, last }),
+                    DeliveryInput::ModelGap { stream } => seen.push(Obs::Gap { stream }),
+                    _ => {}
+                },
                 Emitted::Cancel(id) if f::is_drain_schedule(id) => modelled.push(Effect::CancelDrain),
                 Emitted::Send { .. } | Emitted::Schedule { .. } | Emitted::Cancel(_) | Emitted::Broadcast(_) => {}
             }
