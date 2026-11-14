@@ -322,9 +322,13 @@ impl<F: std::future::Future> std::future::Future for Counted<F> {
         let previous = RUNNING.replace(Some(gate.router.clone()));
         let polled = self.work.as_mut().poll(&mut std::task::Context::from_waker(&waker));
         RUNNING.set(previous);
-        if polled.is_ready() || !gate.woken.load(Ordering::SeqCst) {
+        if polled.is_ready() {
             gate.disarm();
-            if polled.is_pending() && gate.woken.load(Ordering::SeqCst) { gate.arm(); }
+        } else if !gate.woken.load(Ordering::SeqCst) {
+            gate.router.inflight.add();
+            gate.disarm();
+            if gate.woken.load(Ordering::SeqCst) { gate.arm(); }
+            gate.router.inflight.done(1);
         }
         polled
     }
