@@ -354,5 +354,5 @@ async fn call_prop_mutation_against_end_any_order_resolved() {
             rig.database.close_now();
         }));
     }
-    for case in cases { bound(case).await.unwrap(); }
+    for case in cases { case.await.unwrap(); }
 }
