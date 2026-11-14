@@ -30,7 +30,7 @@ async fn a_file_cut_around_the_retry_of_a_kept_refusal_sends_only_after_the_retr
     assert!(matches!(refusal, Err(DbError::Rejected { kept: true, .. })), "{refusal:?}");
     let rows = watched(&database, "Moment", &temporary);
     crate::test_wait::settled(&database, "the refusal is shown", || shows(&rows, WireSyncState::Failed)).await;
-    rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    super::crash_image_support::checkpoint_live(&database, &live).await;
     let base = Capture::begin(&live);
     stand.script.data("CreateMoment", LANDED);
     bound(database.retry(epoch, "Moment".into(), temporary.clone(), None, None)).await.unwrap();

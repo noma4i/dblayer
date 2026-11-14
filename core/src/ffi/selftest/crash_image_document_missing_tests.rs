@@ -155,7 +155,7 @@ async fn sess_held_pair_author_moves_it_after_restart() {
     let created = bound(database.send(plain("Moment", r#"{"text":"first"}"#, epoch))).await.unwrap();
     bound(database.confirmed(created, false)).await.unwrap();
     advancing(&clock, drained(&database)).await;
-    rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    super::crash_image_support::checkpoint_live(&database, &live).await;
     let base = Capture::begin(&live);
     let hold = Arc::new(Hold::default());
     stand.script.enqueue("UpdateMoment", Answer::Held(hold.clone(), Box::new(Answer::Lost)));

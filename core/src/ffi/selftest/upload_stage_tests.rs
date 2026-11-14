@@ -142,7 +142,7 @@ async fn crash_image_held() {
     let source = file_of(directory.path(), 11 * MEBIBYTE);
     let stand = Stand::new();
     let database = stand.open(Some(&live), &OPERATIONS).await;
-    rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    super::crash_image_support::checkpoint_live(&database, &live).await;
     let base = Capture::begin(&live);
     answers(&stand);
     let staged = staged(&database, &source).await;

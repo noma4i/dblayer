@@ -23,7 +23,7 @@ async fn xfer_saved_upload_without_its_operation_fails_and_goes_after_declaring_
     let sent = bound(database.send(clip("Moment", r#"{"text":"A"}"#, "upload_clip", &file, epoch))).await.unwrap();
     let temporary = sent.optimistic_value.as_ref().unwrap().id.clone();
     crate::ffi::settled(&database).await.unwrap();
-    rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    super::crash_image_support::checkpoint_live(&database, &live).await;
     let image = directory.path().join("image.sqlite");
     super::crash_image_call_tests::copy_image(&live, &image);
     let secret = stand.rig.credentials.inner.value().unwrap();

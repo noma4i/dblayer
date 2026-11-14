@@ -21,7 +21,7 @@ async fn a_file_cut_at_any_commit_of_the_end_of_a_session_opens_whole_or_ended()
     let created = bound(database.send(plain("Moment", r#"{"text":"offline"}"#, epoch))).await.unwrap();
     let temporary = created.optimistic_value.as_ref().unwrap().id.clone();
     assert_eq!(queue_now(&database).await, 1, "the offline create waits in the queue");
-    rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    super::crash_image_support::checkpoint_live(&database, &live).await;
     let base = Capture::begin(&live);
     bound(database.session_reset()).await.unwrap();
     assert_eq!(database.session_status().unwrap().phase, SessionStanding::None);

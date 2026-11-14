@@ -17,7 +17,7 @@ async fn xfer_restored_step_fails_when_session_lost() {
     let sent = bound(database.send(clip("Moment", r#"{"text":"A"}"#, "upload_clip", &file, epoch))).await.unwrap();
     let temporary = sent.optimistic_value.as_ref().unwrap().id.clone();
     held.entered().await;
-    rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    super::crash_image_support::checkpoint_live(&database, &live).await;
     let image = directory.path().join("image.sqlite");
     super::crash_image_call_tests::copy_image(&live, &image);
     assert!(saved_pair(&image).is_some(), "the image holds the pair of the step");

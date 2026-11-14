@@ -22,7 +22,7 @@ async fn a_file_cut_at_any_commit_of_a_row_update_finishes_it_once_or_finds_it_n
         let created = bound(database.send(plain("Moment", r#"{"text":"first"}"#, epoch))).await.unwrap();
         bound(database.confirmed(created, false)).await.unwrap();
         drained(&database).await;
-        rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+        super::crash_image_support::checkpoint_live(&database, &live).await;
         let before = database.peek_row(epoch, "Moment".into(), "m77".into()).await.unwrap().unwrap().cells;
         let base = Capture::begin(&live);
         stand.script.data("UpdateMoment", reply);

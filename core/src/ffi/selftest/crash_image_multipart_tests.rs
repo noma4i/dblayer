@@ -33,7 +33,7 @@ async fn a_file_cut_at_any_commit_of_a_multipart_upload_reopens_with_the_upload_
     let operations = [CREATE_MOMENT];
     let database = stand.open(Some(&live), &operations).await;
     let epoch = database.session_epoch();
-    rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    super::crash_image_support::checkpoint_live(&database, &live).await;
     let base = Capture::begin(&live);
     script(&stand);
     let held = stand.puts.hold_next();

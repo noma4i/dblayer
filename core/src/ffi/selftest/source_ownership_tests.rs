@@ -29,7 +29,7 @@ async fn source_file_of_the_caller_is_not_read_after_the_receipt() {
     let operations = [CREATE_MOMENT];
     let database = stand.open(Some(&live), &operations).await;
     let epoch = database.session_epoch();
-    rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    super::crash_image_support::checkpoint_live(&database, &live).await;
     let base = Capture::begin(&live);
     let run_hold = preparer.hold_next();
     stand.script.data("CreateBlob", BLOB);
@@ -79,7 +79,7 @@ async fn source_unaccepted_copy_is_removed_at_the_open() {
         let operations: Vec<(&str, &str)> = if batch { OPERATIONS.to_vec() } else { vec![CREATE_MOMENT] };
         let database = stand.open(Some(&live), &operations).await;
         let epoch = database.session_epoch();
-        rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+        super::crash_image_support::checkpoint_live(&database, &live).await;
         let base = Capture::begin(&live);
         let kept_files = directory.path().join("kept.files");
         if batch {

@@ -15,7 +15,7 @@ async fn a_file_cut_at_any_commit_of_a_sign_in_with_a_refused_secret_opens_as_no
     let directory = tempfile::tempdir().unwrap();
     let live = directory.path().join("live.sqlite");
     let database = stand.open(Some(&live), &OPERATIONS).await;
-    rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    super::crash_image_support::checkpoint_live(&database, &live).await;
     let base = Capture::begin(&live);
     stand.rig.credentials.fail_next_set.store(true, Ordering::SeqCst);
     let refused = bound(database.session_call("social".into(), SOCIAL_BODY.into())).await;

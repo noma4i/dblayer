@@ -125,8 +125,7 @@ async fn out_failed_held_pair_restart_frees_the_queue() {
     let temporary = first.optimistic_value.as_ref().unwrap().id.clone();
     advancing(&clock, until_failed(&database)).await;
     released.entered().await;
-    crate::ffi::owners_drained(&database).await.unwrap();
-    rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    super::crash_image_support::checkpoint_live(&database, &live).await;
     let image = directory.path().join("image.sqlite");
     super::crash_image_call_tests::copy_image(&live, &image);
     assert!(super::crash_image_support::saved_pair(&image).is_some(), "the image holds the pair of the failed operation");

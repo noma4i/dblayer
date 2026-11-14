@@ -21,7 +21,7 @@ async fn a_file_cut_after_a_refused_create_ends_the_upload_on_its_row_without_a_
     let operations = [CREATE_MOMENT];
     let database = stand.open(Some(&live), &operations).await;
     let epoch = database.session_epoch();
-    rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    super::crash_image_support::checkpoint_live(&database, &live).await;
     let base = Capture::begin(&live);
     stand.script.data("CreateBlob", BLOB);
     let refused = stand.script.hold("CreateMoment", REFUSED);

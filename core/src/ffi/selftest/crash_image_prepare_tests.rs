@@ -23,7 +23,7 @@ async fn crash_image_prepare() {
     let operations = [CREATE_MOMENT];
     let database = stand.open(Some(&live), &operations).await;
     let epoch = database.session_epoch();
-    rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    super::crash_image_support::checkpoint_live(&database, &live).await;
     let base = Capture::begin(&live);
     let run_hold = preparer.hold_next();
     let put_hold = stand.puts.hold_next();
@@ -85,7 +85,7 @@ async fn xfer_too_large_after_restart() {
         let stand = if prepared { Stand::new().with_preparer(preparer.clone()) } else { Stand::new() };
         let operations = [CREATE_MOMENT];
         let database = stand.open(Some(&live), &operations).await;
-        rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+        super::crash_image_support::checkpoint_live(&database, &live).await;
         let base = Capture::begin(&live);
         let run_hold = prepared.then(|| preparer.hold_next());
         let (prepare, limit) = if prepared { (Some(shrink()), PREPARED.len() as u64 - 1) } else { (None, SOURCE.len() as u64 - 1) };

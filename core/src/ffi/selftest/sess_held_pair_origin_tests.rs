@@ -60,8 +60,7 @@ async fn image_of(origin: Holder, directory: &Path, stand: &Stand, clock: &Arc<T
             presign.dropped().await;
             bound(database.discard(epoch, "Moment".into(), id, Some("upload_clip".into()))).await.unwrap();
             presign.release();
-            crate::ffi::owners_drained(&database).await.unwrap();
-            rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+            super::crash_image_support::checkpoint_live(&database, &live).await;
             let owed = directory.join("owed.sqlite");
             copy_image(&live, &owed);
             database.close_now();
@@ -71,8 +70,7 @@ async fn image_of(origin: Holder, directory: &Path, stand: &Stand, clock: &Arc<T
             abort.entered().await;
             let epoch = reopened.session_epoch();
             bound(reopened.send(plain("Moment", r#"{"text":"B"}"#, epoch))).await.unwrap();
-            crate::ffi::owners_drained(&reopened).await.unwrap();
-            rusqlite::Connection::open(&owed).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+            super::crash_image_support::checkpoint_live(&reopened, &owed).await;
             let image = directory.join("image.sqlite");
             copy_image(&owed, &image);
             reopened.close_now();
@@ -86,8 +84,7 @@ async fn image_of(origin: Holder, directory: &Path, stand: &Stand, clock: &Arc<T
             released.entered().await;
         }
     }
-    crate::ffi::owners_drained(&database).await.unwrap();
-    rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    super::crash_image_support::checkpoint_live(&database, &live).await;
     let image = directory.join("image.sqlite");
     copy_image(&live, &image);
     database.close_now();

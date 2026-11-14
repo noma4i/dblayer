@@ -18,7 +18,7 @@ async fn a_file_cut_at_any_commit_of_a_group_upload_reopens_with_the_group_finis
     let live = directory.path().join("live.sqlite");
     let sources = tempfile::tempdir().unwrap();
     let database = stand.open(Some(&live), &OPERATIONS).await;
-    rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    super::crash_image_support::checkpoint_live(&database, &live).await;
     let base = Capture::begin(&live);
     for index in 0..3 { stand.script.data("CreateBlob", &blob(index)); }
     let held = stand.script.hold("CreateAssets", ASSETS);

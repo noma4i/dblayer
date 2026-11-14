@@ -199,7 +199,7 @@ async fn at_every_commit(exchange: Exchange) {
     let credentials = Arc::new(WatchedHeld::default());
     let database = open(&live_file, recording.clone(), credentials.clone(), clock.clone()).await;
     quiet(&database, &clock).await;
-    rusqlite::Connection::open(&live_file).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    super::crash_image_support::checkpoint_live(&database, &live_file).await;
     let kept = recording.wires.lock().unwrap().len();
     let base = Capture::begin(&live_file);
     let live = Live { database: database.clone(), server: server.clone(), clock: clock.clone(), directory: directory.path().to_path_buf() };

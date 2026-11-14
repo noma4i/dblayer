@@ -51,7 +51,7 @@ async fn xfer_progress_is_true_and_never_goes_back() {
     let operations = [CREATE_MOMENT];
     let database = stand.open_with(Some(&live), &operations, Some(clock.clone())).await;
     let epoch = database.session_epoch();
-    rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    super::crash_image_support::checkpoint_live(&database, &live).await;
     let base = Capture::begin(&live);
     answers(&stand);
     let complete = stand.script.hold("CompleteMultipart", COMPLETE);

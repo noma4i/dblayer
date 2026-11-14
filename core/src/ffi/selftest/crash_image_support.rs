@@ -50,6 +50,14 @@ impl Capture {
     }
 }
 
+/// The file of a live database folded into one, after its owners went idle.
+pub(super) async fn checkpoint_live(database: &crate::ffi::Database, live: &Path) {
+    crate::ffi::owners_drained(database).await.unwrap();
+    let connection = rusqlite::Connection::open(live).unwrap();
+    connection.busy_timeout(crate::store::ddl::LOCK_WAIT).unwrap();
+    connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+}
+
 /// The length of the log of a live database now.
 pub(super) fn wal_length(live: &Path) -> u64 { std::fs::metadata(wal_of(live)).map_or(0, |meta| meta.len()) }
 

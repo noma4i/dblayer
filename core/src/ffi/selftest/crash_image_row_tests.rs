@@ -15,9 +15,7 @@ async fn a_file_cut_with_the_saved_create_answer_reopens_with_the_row_landed() {
     let live = directory.path().join("live.sqlite");
     let operations = [OPERATIONS[0], OPERATIONS[1], OPERATIONS[2], CREATE_MOMENT];
     let database = stand.open(Some(&live), &operations).await;
-    let connection = rusqlite::Connection::open(&live).unwrap();
-    connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
-    drop(connection);
+    super::crash_image_support::checkpoint_live(&database, &live).await;
     let base = Capture::begin(&live);
     stand.script.data("CreateMoment", CREATED);
     let epoch = database.session_epoch();

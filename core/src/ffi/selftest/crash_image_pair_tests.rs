@@ -17,7 +17,7 @@ async fn pair_held_at_every_commit(fault: fn() -> Answer) {
     database.set_online(false).await.unwrap();
     bound(database.send(plain("Moment", r#"{"text":"first"}"#, epoch))).await.unwrap();
     crate::ffi::settled(&database).await.unwrap();
-    rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+    super::crash_image_support::checkpoint_live(&database, &live).await;
     let base = Capture::begin(&live);
     stand.script.enqueue("CreateMoment", fault());
     stand.script.data("CreateMoment", LANDED);

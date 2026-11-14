@@ -36,14 +36,14 @@ async fn a_file_cut_at_any_commit_of_a_single_upload_finishes_it_once_or_keeps_i
             temporary = sent.optimistic_value.as_ref().unwrap().id.clone();
             let _ = bound(database.confirmed(sent, false)).await;
             crate::test_wait::settled(&database, "the refusal is shown", || status(&database, &temporary) == Some(WireUploadStatus::Failed)).await;
-            rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+            super::crash_image_support::checkpoint_live(&database, &live).await;
             copy_tree(&files_of(&live), &kept_files);
             base = Capture::begin(&live);
             stand.script.data("CreateBlob", BLOB);
             stand.script.data("CreateMoment", LANDED);
             bound(database.retry(epoch, "Moment".into(), temporary.clone(), Some("upload_clip".into()), None)).await.unwrap();
         } else {
-            rusqlite::Connection::open(&live).unwrap().query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).unwrap();
+            super::crash_image_support::checkpoint_live(&database, &live).await;
             base = Capture::begin(&live);
             let held = stand.script.hold("CreateBlob", BLOB);
             stand.script.data("CreateMoment", LANDED);
