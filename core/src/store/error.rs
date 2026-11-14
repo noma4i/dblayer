@@ -2,9 +2,17 @@ use crate::owners::contract::RejectReason;
 use crate::store::PlanFault;
 use crate::store::ddl::DdlError;
 
+/// The extended result code of a SQLite failure, which tells a busy lock (recovery, snapshot, timeout) from another.
+fn extended_code(error: &rusqlite::Error) -> String {
+    match error {
+        rusqlite::Error::SqliteFailure(failure, _) => format!(" (code {})", failure.extended_code),
+        _ => String::new(),
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
-    #[error("sqlite: {0}")]
+    #[error("sqlite: {0}{code}", code = extended_code(.0))]
     Sqlite(rusqlite::Error),
     #[error(transparent)]
     Ddl(#[from] DdlError),
