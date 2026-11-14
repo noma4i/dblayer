@@ -69,7 +69,6 @@ impl CallKind {
 pub enum CallPhase {
     /// `releasing`: a mutation whose `Deadline` found no answer of Session yet, `Release` is out and the verdict comes from the answer to it.
     Sending { request_id: RequestId, kind: CallKind, generation: u64, releasing: bool },
-    Done,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -156,12 +155,11 @@ impl CallsState {
     fn releasing(&self, call_id: CallId) -> bool { matches!(self.phase(call_id), Some(CallPhase::Sending { releasing: true, .. })) }
 
     fn finish(&mut self, call_id: CallId, answer: CallAnswer, fx: &mut Vec<CallsEffect>, finished: &mut Vec<CallId>) {
-        if let Some((phase, reply)) = self.calls.get_mut(&call_id) {
-            *phase = CallPhase::Done;
-            self.by_reply.remove(reply);
+        if let Some((_, reply)) = self.calls.remove(&call_id) {
+            self.by_reply.remove(&reply);
             self.attempts.remove(&call_id);
             finished.push(call_id);
-            fx.push(CallsEffect::Reply { id: *reply, answer });
+            fx.push(CallsEffect::Reply { id: reply, answer });
         }
     }
 
@@ -191,9 +189,8 @@ impl CallsState {
             finished.push(id);
         }
         self.awaiting_by_id.clear();
-        let sending: Vec<(CallId, RequestId, CallKind)> = self.calls.iter().filter_map(|(id, (phase, _))| match phase {
-            CallPhase::Sending { request_id, kind, .. } => Some((*id, *request_id, *kind)),
-            CallPhase::Done => None,
+        let sending: Vec<(CallId, RequestId, CallKind)> = self.calls.iter().map(|(id, (phase, _))| match phase {
+            CallPhase::Sending { request_id, kind, .. } => (*id, *request_id, *kind),
         }).collect();
         for (call_id, request_id, kind) in sending {
             self.finish(call_id, Err(end.clone()), fx, finished);
@@ -304,14 +301,13 @@ impl StateOwner for Calls {
             CallsInput::CallerCancel { reply } => {
                 if let Some((id, _, _, _, _)) = state.awaiting.remove(&reply) { state.awaiting_by_id.remove(&id); finished.push(id); }
                 if let Some((call_id, phase)) = state.by_reply.remove(&reply).and_then(|id| state.phase(id).map(|phase| (id, phase))) {
-                    state.calls.insert(call_id, (CallPhase::Done, reply));
+                    state.calls.remove(&call_id);
                     state.attempts.remove(&call_id);
                     finished.push(call_id);
                     match phase {
                         CallPhase::Sending { request_id, kind: CallKind::Query, .. } => fx.push(CallsEffect::Cancel { request_id, kind: CallKind::Query }),
                         CallPhase::Sending { request_id, kind: CallKind::Mutate, releasing: false, .. } => fx.push(CallsEffect::Release { request_id }),
                         CallPhase::Sending { releasing: true, .. } => {}
-                        CallPhase::Done => {}
                     }
                 }
             }

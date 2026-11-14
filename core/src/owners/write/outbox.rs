@@ -57,7 +57,7 @@ pub struct OutboxState {
     pub(super) next_sequence: u64,
     pub(super) next_schedule: u64,
     pub(super) batches: BTreeMap<BatchId, Batch>,
-    pub(super) selection_versions: BTreeMap<(String, String), u64>,
+    pub(crate) selection_versions: BTreeMap<(String, String), u64>,
     pub(super) selection_clock: u64,
     pub(super) selections: BTreeMap<ReplyId, (String, String, SelectKind)>,
     pub(super) member_removals: BTreeMap<OpId, MemberRemoval>,
@@ -732,7 +732,8 @@ impl OutboxState {
                 None => Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)),
             };
         };
-        let version = self.selection_version(&model, &row_id);
+        let key = self.selection_key(&model, &row_id);
+        let version = *self.selection_versions.entry(key).or_insert(0);
         self.selections.insert(reply, (model.clone(), row_id.clone(), kind));
         let rows = std::iter::once(row_id).chain(resolved).collect();
         fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::SelectRow { model, rows, outbox_min, kind, reply, version })));
@@ -743,14 +744,25 @@ impl OutboxState {
         for row in rows { self.bump_selection_row(&op.model, &row); }
     }
 
+    /// Only a row with a selection in flight has a version: the entry goes when its last selection settles.
     pub(super) fn bump_selection_row(&mut self, model: &str, row: &str) {
-        self.selection_clock += 1;
-        self.selection_versions.insert((model.into(), row.into()), self.selection_clock);
+        for key in [(model.to_string(), row.to_string()), self.selection_key(model, row)] {
+            if let Some(version) = self.selection_versions.get_mut(&key) {
+                self.selection_clock += 1;
+                *version = self.selection_clock;
+            }
+        }
     }
 
-    fn selection_version(&self, model: &str, row: &str) -> u64 {
-        let row = self.aliases.get(&(model.into(), row.into())).map_or(row, String::as_str);
-        self.selection_versions.get(&(model.into(), row.into())).copied().unwrap_or(0)
+    fn selection_key(&self, model: &str, row: &str) -> (String, String) {
+        (model.to_string(), self.aliases.get(&(model.to_string(), row.to_string())).cloned().unwrap_or_else(|| row.to_string()))
+    }
+
+    fn selection_version(&self, model: &str, row: &str) -> u64 { self.selection_versions.get(&self.selection_key(model, row)).copied().unwrap_or(0) }
+
+    fn forget_selection_versions(&mut self) {
+        let live: BTreeSet<(String, String)> = self.selections.values().map(|(model, row, _)| self.selection_key(model, row)).collect();
+        self.selection_versions.retain(|key, _| live.contains(key));
     }
 
     fn selection_current(&mut self, reply: ReplyId, version: u64, fx: &mut Effects<Outbox>) -> bool {
@@ -760,6 +772,7 @@ impl OutboxState {
             return false;
         }
         self.selections.remove(&reply);
+        self.forget_selection_versions();
         true
     }
 

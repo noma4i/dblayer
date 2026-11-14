@@ -191,7 +191,7 @@ impl TransferState {
             }
             Some(OutboxOutcome::Ended(cause)) => {
                 self.completed.entry(id).or_default().insert(row.cycle_id.max(1), OutboxOutcome::Ended(cause.clone()));
-                self.set(id, TransferStage::Done);
+                self.drop_transfer(id, fx);
             }
             None => {
                 if row.has_intent {
@@ -229,6 +229,8 @@ impl TransferState {
             }
             self.classify(now, row, &outcomes, fx);
         }
+        let emptied: Vec<u64> = self.open_groups.iter().copied().filter(|group| self.groups.get(group).is_some_and(|entry| entry.ids.is_empty())).collect();
+        for group in emptied { self.groups.remove(&group); }
         self.phase = Phase::Classified;
         run(fx, TransferEffect::RestoreClassified { epoch: self.epoch });
         self.replay_held_accepts(now, fx);

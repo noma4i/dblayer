@@ -242,7 +242,7 @@ impl TransferState {
                 let own = ids.first().and_then(|id| self.transfers.get_mut(id)).and_then(|transfer| transfer.accept_reply.take());
                 for member in ids {
                     self.restore_replaced(member, fx);
-                    self.set(member, TransferStage::Done);
+                    self.drop_transfer(member, fx);
                 }
                 if let Some(rep) = own.or(group_reply) {
                     reply(fx, rep, TransferAnswer::Err(fault));
@@ -299,8 +299,8 @@ impl TransferState {
             if let Some(rep) = transfer.accept_reply.take().or(group_reply) {
                 reply(fx, rep, TransferAnswer::Err(fault.clone()));
             }
-            transfer.stage = TransferStage::Done;
         }
+        for &id in ids { self.drop_transfer(id, fx); }
     }
 
     fn group_of(&self, id: TransferId) -> Option<u64> { self.transfers.get(&id).and_then(|transfer| transfer.batch_id) }

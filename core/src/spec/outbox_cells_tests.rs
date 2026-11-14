@@ -490,12 +490,14 @@ fn out_persisting_attempt_invalid() {
 #[test]
 fn out_landing_committed_swap() {
     let mut twin = Twin::new();
-    let created = sending(&mut twin, Policy::Rollback, false);
-    let follower = submit_op(&mut twin, NewOp { body: "{\"row\":\"r\"}".into(), ..model_op("r", Policy::Rollback, false) }, 23);
+    const TEMP: &str = "temp-00000000-0000-0000-0000-000000000001";
+    let created = submit_op(&mut twin, NewOp { action: "create".into(), body: "{}".into(), ..model_op(TEMP, Policy::Rollback, false) }, 22);
+    twin.committed(created);
+    let follower = submit_op(&mut twin, NewOp { body: format!("{{\"row\":\"{TEMP}\"}}"), ..model_op(TEMP, Policy::Rollback, false) }, 23);
     twin.committed(follower);
     twin.waiter(created);
-    twin.post(OutboxInput::Response { op_id: created, rows: server_rows(), swaps: vec![("r".into(), "R".into())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
-    assert!(has_op!(twin, StoreOp::Swap { temp, real, .. } if temp == "r" && real == "R"), "the landing batch swaps the row: {:?}", twin.store_ops);
+    twin.post(OutboxInput::Response { op_id: created, rows: server_rows(), swaps: vec![(TEMP.into(), "R".into())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    assert!(has_op!(twin, StoreOp::Swap { temp, real, .. } if temp == TEMP && real == "R"), "the landing batch swaps the row: {:?}", twin.store_ops);
     let effects = twin.committed(created);
     assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. }))), "{effects:?}");
     let next = &twin.state().ops[&follower];

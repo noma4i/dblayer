@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use super::outbox::{Fault, OutboxInput, OutboxOutcome, Receipt};
+use super::outbox_types::Phase;
 use super::transfer::{reply, run, Fx, TransferState};
 use super::transfer_types::*;
 use crate::owners::contract::{RejectReason, ReplyId};
@@ -364,17 +365,21 @@ impl TransferState {
             }
             self.finish(id, fx);
             self.batch_after_removal(id, fx);
-            if let Some(transfer) = self.transfers.remove(&id) {
-                if transfer.prepare.is_some() { self.free_prepare_slot(fx); }
-                if !transfer.outcomes.is_empty() { self.completed.insert(id, transfer.outcomes); }
-                if let Some(group_id) = transfer.batch_id {
-                    if let Some(group) = self.groups.get_mut(&group_id) { group.ids.retain(|member| *member != id); }
-                    if self.groups.get(&group_id).is_some_and(|group| group.ids.is_empty()) { self.groups.remove(&group_id); }
-                }
-            }
+            self.drop_transfer(id, fx);
         }
         self.send_orphans(false, fx);
         self.start_in_order(now, fx);
+    }
+
+    /// A transfer in its terminal stage leaves the table in the step that ended it: its outcomes stay in `completed`.
+    pub(super) fn drop_transfer(&mut self, id: TransferId, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.remove(&id) else { return };
+        if transfer.prepare.is_some() { self.free_prepare_slot(fx); }
+        if !transfer.outcomes.is_empty() { self.completed.entry(id).or_default().extend(transfer.outcomes); }
+        if let Some(group_id) = transfer.batch_id {
+            if let Some(group) = self.groups.get_mut(&group_id) { group.ids.retain(|member| *member != id); }
+            if self.phase != Phase::Restoring && self.groups.get(&group_id).is_some_and(|group| group.ids.is_empty()) { self.groups.remove(&group_id); }
+        }
     }
 
     pub(super) fn removing_rejected(&mut self, now: crate::runtime::Time, kind: StoreKind, ids: &[TransferId], reason: RejectReason, fx: &mut Fx) {

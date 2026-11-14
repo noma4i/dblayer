@@ -104,7 +104,12 @@ impl CallsRunner {
             };
             back.reply(EpochStamp::Control, calls_input(call_id, &root, result));
         }));
-        self.running.insert(request_id, task.abort_handle());
+        self.track(request_id, task.abort_handle());
+    }
+
+    fn track(&mut self, request_id: RequestId, handle: AbortHandle) {
+        self.running.retain(|_, running| !running.is_finished());
+        self.running.insert(request_id, handle);
     }
 
     fn forget(&mut self, request_id: RequestId) {
@@ -124,7 +129,7 @@ impl CallsRunner {
         let task = crate::task::spawn_on(&self.executor, crate::runtime::counted(None, async move {
             if let crate::runtime::Outcome::Value(outcome) = waiter.wait().await { back.reply(EpochStamp::Control, answer_input(call_id, &root, outcome)); }
         }));
-        self.running.insert(request_id, task.abort_handle());
+        self.track(request_id, task.abort_handle());
         self.wiring.to_session(mutate_input(request_id, epoch, client.graphql_path().to_string(), body.to_string()));
     }
 }

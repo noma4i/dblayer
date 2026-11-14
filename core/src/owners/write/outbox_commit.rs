@@ -214,10 +214,10 @@ impl OutboxState {
             if let Some(real) = aliases.get(&(model.to_string(), row.clone())) { *row = real.clone(); }
         };
         resolve(&op.model, &mut op.row_id);
-        if aliases.keys().any(|(_, temp)| op.body.contains(temp.as_str())) {
+        if !aliases.is_empty() && op.body.contains(crate::identity::TEMP_ID_PREFIX) {
             if let Ok(mut body) = serde_json::from_str::<serde_json::Value>(&op.body) {
                 let mut changed = false;
-                crate::identity::walk_strings(&mut body, &mut |text| {
+                crate::identity::walk_temp_ids(&mut body, &mut |text| {
                     if let Some((_, real)) = aliases.iter().find(|((_, temp), _)| temp == text) { text.clone_from(real); changed = true; }
                 });
                 if changed { op.body = body.to_string(); }

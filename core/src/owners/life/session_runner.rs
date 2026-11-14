@@ -293,11 +293,18 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 if let Some(crate::transport::RequestOwner::Operation { seq }) = pending.owner { self.operations.insert(pending.request_id, seq); }
                 self.commit(batch, epoch, ops);
             }
-            SessionEffect::CommitLanding { batch, epoch, digest, sequence, answer, resume_answer, erase_session, end_journal } => {
+            SessionEffect::CommitLanding { batch, request_id, epoch, digest, sequence, answer, resume_answer, erase_session, end_journal } => {
+                let identity = digest;
                 let digest = match digest.map(|identity| self.digests.get(&identity).cloned().ok_or(identity)).transpose() {
                     Ok(digest) => digest,
                     Err(identity) => return back.reply(control, SessionInput::Rejected(Rejected { batch, reason: RejectReason::Storage(format!("no digest for the identity {identity}")) })),
                 };
+                self.sent.remove(&request_id);
+                match identity {
+                    Some(identity) => self.digests.retain(|current, _| *current == identity),
+                    None if erase_session => self.digests.clear(),
+                    None => {}
+                }
                 let mut ops = if erase_session { session_erasure_ops(true, end_journal) } else if digest.is_none() && sequence.is_none() { vec![StoreOp::RemovePending] } else { vec![StoreOp::Session { digest, sequence }, StoreOp::RemovePending] };
                 ops.extend(answer.and_then(|(request_id, answer)| Some(StoreOp::Answer { request_id, operation: self.operations.get(&request_id).copied(), result: stored_answer(&answer)? })));
                 ops.extend(resume_answer.map(|answer| StoreOp::ResumeAnswer { answer }));
@@ -348,6 +355,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                         Err(_) => SessionInput::GateClosed { request_id, attempt_id },
                     });
                 }));
+                self.running.retain(|_, running| !running.is_finished());
                 if let Some(previous) = self.running.insert(attempt_id, task.abort_handle()) {
                     crate::lock::effect(|| previous.abort());
                 }
