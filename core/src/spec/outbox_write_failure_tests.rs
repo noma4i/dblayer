@@ -55,7 +55,7 @@ fn out_landing_invalid_create_alias_written() {
     let follower = twin.submit("r", Policy::Rollback, false);
     twin.committed(follower);
     twin.waiter(created);
-    twin.post(OutboxInput::Response { op_id: created, rows: server_rows(), swaps: vec![("r".into(), "R".into())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.post(response_with(created, server_rows(), vec![("r".into(), "R".into())]));
     assert!(has_op!(twin, StoreOp::Swap { .. }), "the first landing batch swaps: {:?}", twin.store_ops);
     let refused = refuse(&mut twin, created, RejectReason::Invalid("bad row".into()));
     assert!(!has_op!(twin, StoreOp::Swap { .. }) && !has_op!(twin, StoreOp::Rows { model, .. } if model == "Moment") && has_op!(twin, StoreOp::RemoveIntent { .. }), "the batch without rows has no swap: {:?}", twin.store_ops);

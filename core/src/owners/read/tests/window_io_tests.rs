@@ -270,7 +270,7 @@ fn win_change_after_commit_marks_the_next_load() {
                 }
                 Commit => {
                     let batch = rig.batches.all().last().expect("a landing batch").id;
-                    let committed = crate::owners::contract::Committed { batch, revision: 5, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() };
+                    let committed = crate::spec::support::committed_at(batch, 5, &[]);
                     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Committed(committed));
                 }
             }

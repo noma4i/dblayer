@@ -376,7 +376,7 @@ fn out_queued_exhausted() {
 fn out_sending_response_temporary() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
-    let effects = twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: Some(true) });
+    let effects = twin.post(response_errors(id, true));
     assert_eq!((twin.stage(id), timers(&effects), sends(&effects)), (Some(St::Sending), 1, 0), "as a temporary TransportError: the backoff timer");
 }
 
@@ -384,11 +384,11 @@ fn out_sending_response_temporary() {
 fn out_sending_response_errors() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
-    let effects = twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: Some(false) });
+    let effects = twin.post(response_errors(id, false));
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::RollingBack(RWhy::Rejected)), vec![CommitKind::Rollback]), "as a permanent TransportError by on_failure");
     let mut keeping = Twin::new();
     let kept = sending(&mut keeping, Policy::Keep, false);
-    let effects = keeping.post(OutboxInput::Response { op_id: kept, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: Some(false) });
+    let effects = keeping.post(response_errors(kept, false));
     assert_eq!((keeping.stage(kept), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
 }
 
@@ -498,7 +498,7 @@ fn out_landing_committed_swap() {
     let follower = submit_op(&mut twin, NewOp { body: format!("{{\"row\":\"{TEMP}\"}}"), ..model_op(TEMP, Policy::Rollback, false) }, 23);
     twin.committed(follower);
     twin.waiter(created);
-    twin.post(OutboxInput::Response { op_id: created, rows: server_rows(), swaps: vec![(TEMP.into(), "R".into())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.post(response_with(created, server_rows(), vec![(TEMP.into(), "R".into())]));
     assert!(has_op!(twin, StoreOp::Swap { temp, real, .. } if temp == TEMP && real == "R"), "the landing batch swaps the row: {:?}", twin.store_ops);
     let effects = twin.committed(created);
     assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. }))), "{effects:?}");

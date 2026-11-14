@@ -109,7 +109,7 @@ fn out_restoring_foreign() {
         OutboxInput::RetryDue { op_id: 1, cycle_id: 1 },
         OutboxInput::Committed(committed_at(1, 1, &[])),
         OutboxInput::Rejected(Rejected { batch: 1, reason: RejectReason::Storage("disk".into()) }),
-        OutboxInput::Response { op_id: 1, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
+        response_with(1, Vec::new(), Vec::new()),
         OutboxInput::TransportError { op_id: 1, temporary: true },
         OutboxInput::Dropped { op_id: 1 },
     ];

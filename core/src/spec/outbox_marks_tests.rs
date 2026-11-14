@@ -74,7 +74,7 @@ fn out_sending_response_ignore() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
     twin.waiter(id);
-    twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.post(response_with(id, Vec::new(), Vec::new()));
     assert!(has_op!(twin, StoreOp::RemoveIntent { .. }) && !has_op!(twin, StoreOp::Rows { .. } | StoreOp::LocalRows { .. } | StoreOp::EphemeralRows { .. } | StoreOp::RemoveRows { .. } | StoreOp::RemoveServerRows { .. }), "the intent goes, the optimistic fields stay, no row of the answer: {:?}", twin.store_ops);
     let request_id = twin.state().ops[&id].request_id;
     assert!(twin.store_ops.contains(&StoreOp::RemoveAnswer { request_id }), "{:?}", twin.store_ops);
@@ -89,7 +89,7 @@ fn out_sending_refused_without_effects() {
     let id = submit_op(&mut twin, op, 31);
     twin.committed(id);
     twin.waiter(id);
-    twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: Some(false) });
+    twin.post(response_errors(id, false));
     let request_id = twin.state().ops[&id].request_id;
     assert_eq!(twin.stores.len(), 1);
     assert!(twin.store_ops.contains(&StoreOp::RemoveIntent { op_id: id }) && twin.store_ops.contains(&StoreOp::RemoveAnswer { request_id }), "{:?}", twin.store_ops);
@@ -105,7 +105,7 @@ fn out_landing_committed_root_row() {
     let id = sending(&mut twin, Policy::Rollback, false);
     twin.waiter(id);
     let other = vec![("Other".to_string(), vec![crate::owners::store::RowValue { row_id: "z".into(), values: "{\"id\":\"z\"}".into() }])];
-    twin.post(OutboxInput::Response { op_id: id, rows: other, swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.post(response_with(id, other, Vec::new()));
     let effects = twin.committed(id);
     assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. }))) && twin.stage(id).is_none_or(|stage| stage == St::Done), "{effects:?}");
     assert!(!has_op!(twin, StoreOp::Swap { .. }), "no swap for a root of another model");

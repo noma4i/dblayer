@@ -243,7 +243,11 @@ pub(super) fn world(seed: u64) -> (DetScheduler, Log<Seen>, Address<OutboxSpy>) 
 pub(super) fn server_rows() -> Vec<(String, Vec<crate::owners::store::RowValue>)> { vec![("Moment".into(), vec![crate::owners::store::RowValue { row_id: "r".into(), values: "{\"state\":\"server\"}".into() }])] }
 
 /// The answer of the server to the operation `op_id`: the server rows and nothing else.
-pub(super) fn response_of(op_id: OpId) -> OutboxInput { OutboxInput::Response { op_id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None } }
+pub(super) fn response_of(op_id: OpId) -> OutboxInput { response_with(op_id, server_rows(), Vec::new()) }
+
+pub(super) fn response_with(op_id: OpId, rows: Vec<(String, Vec<crate::owners::store::RowValue>)>, swaps: Vec<(String, String)>) -> OutboxInput { OutboxInput::Response { op_id, rows, swaps, stale: Vec::new(), result: None, missing: Vec::new(), errors: None } }
+
+pub(super) fn response_errors(op_id: OpId, temporary: bool) -> OutboxInput { OutboxInput::Response { op_id, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: Some(temporary) } }
 
 /// The `Discard` of the row `r` of `Moment`, answered to `reply`.
 pub(super) fn discard(action: Option<&str>, reply: ReplyId) -> OutboxInput { OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), action: action.map(Into::into), reply } }

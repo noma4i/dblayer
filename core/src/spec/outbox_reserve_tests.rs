@@ -149,7 +149,7 @@ fn out_sending_response_batch_items_batch() {
     let op = crate::owners::write::outbox::NewOp { origin: OpSource::TransferGroup { batch_id: 9, members }, ..model_op("a", Policy::Rollback, false) };
     raw(&mut twin, OutboxInput::SubmitReserved { epoch: EPOCH, op_id: 4, op, created_at: 0 });
     let rows = vec![("Moment".into(), vec![RowValue { row_id: "A".into(), values: "{}".into() }, RowValue { row_id: "B".into(), values: "{}".into() }])];
-    let (sends, _) = raw(&mut twin, OutboxInput::Response { op_id: 4, rows, swaps: vec![("a".into(), "A".into()), ("b".into(), "B".into())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    let (sends, _) = raw(&mut twin, response_with(4, rows, vec![("a".into(), "A".into()), ("b".into(), "B".into())]));
     let written = batches(&sends);
     assert_eq!(written.len(), 1);
     let batch = &written[0];
@@ -199,7 +199,7 @@ fn out_group_failed_outcome_and_retry_preserves_cycles() {
     raw(&mut twin, OutboxInput::RetryTransfer { model: "Moment".into(), row_id: "a".into(), reply: 2, uploads: vec![upload(11, 2), upload(12, 2)] });
     let (sends, _) = raw(&mut twin, OutboxInput::Committed(committed_at(3, 21, &[])));
     assert!(retry_outcomes(&sends).iter().any(|(cycles, result)| cycles.contains(&(11, 2)) && cycles.contains(&(12, 2)) && matches!(result, Ok(21))), "{sends:?}");
-    let (sends, _) = raw(&mut twin, OutboxInput::Response { op_id: 4, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    let (sends, _) = raw(&mut twin, response_with(4, Vec::new(), Vec::new()));
     let store = batches(&sends).swap_remove(0);
     assert!(transfer_outcome_op(&store, 11, 2) && transfer_outcome_op(&store, 12, 2), "{store:?}");
 }
@@ -273,7 +273,7 @@ fn out_selector_group_member_swapped() {
     let mut twin = Twin::new();
     let created = twin.submit("tb", Policy::Rollback, false);
     twin.committed(created);
-    twin.post(OutboxInput::Response { op_id: created, rows: Vec::new(), swaps: vec![("tb".to_string(), "rb".to_string())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.post(response_with(created, Vec::new(), vec![("tb".to_string(), "rb".to_string())]));
     twin.committed(created);
     assert_eq!(twin.stage(created), Some(St::Done), "the create of tb landed as rb");
     twin.post(OutboxInput::Online(Online(false)));
@@ -301,7 +301,7 @@ fn out_group_member_removed_keeps_group() {
     twin.commit_batch(batch);
     assert_eq!(twin.stage(group), Some(St::Sending), "after Committed the group still waits for the pair");
     let rows = vec![("Moment".to_string(), ["a", "b"].into_iter().map(|row| crate::owners::store::RowValue { row_id: row.into(), values: format!("{{\"m\":\"{row}\"}}") }).collect())];
-    twin.post(OutboxInput::Response { op_id: group, rows, swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.post(response_with(group, rows, Vec::new()));
     assert_eq!(
         (has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 11, cycle_id: 1, outcome: OutboxOutcome::Confirmed { .. }, .. }), has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 12, .. })),
         (true, false),
@@ -347,7 +347,7 @@ fn out_group_member_removal_invalid_is_not_retried() {
         (0, 0, vec![crate::owners::write::outbox_types::OutboxOutcome::Discarded], Some(St::Sending)),
         "the refused removal is not written again, the member 12 ends Discarded, the group waits for the pair: {refused:?}");
     let rows = vec![("Moment".to_string(), ["a", "b"].into_iter().map(|row| crate::owners::store::RowValue { row_id: row.into(), values: format!("{{\"m\":\"{row}\"}}") }).collect())];
-    twin.post(OutboxInput::Response { op_id: group, rows, swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.post(response_with(group, rows, Vec::new()));
     assert_eq!(
         (twin.stores.len(), has_op!(twin, StoreOp::IntentOrigin { .. }), has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 11, cycle_id: 1, outcome: OutboxOutcome::Confirmed { .. }, .. }), has_op!(twin, StoreOp::Outcome { owner: crate::owners::store::OutcomeOwner::Transfer, id: 12, .. })),
         (1, false, true, false),
@@ -508,7 +508,7 @@ fn out_landing_swaps_all() {
     let mut twin = Twin::new();
     let id = twin.submit("a", Policy::Rollback, false);
     twin.committed(id);
-    twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swaps: vec![("a".into(), "real_a".into()), ("b".into(), "real_b".into())], stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    twin.post(response_with(id, Vec::new(), vec![("a".into(), "real_a".into()), ("b".into(), "real_b".into())]));
     assert_eq!(twin.stores.len(), 1, "all swaps must land in one batch");
     let batch = &twin.stores[0].1;
     assert!(batch.contains(&StoreOp::Swap { model: "Moment".into(), temp: "a".into(), real: "real_a".into() }) && batch.contains(&StoreOp::Swap { model: "Moment".into(), temp: "b".into(), real: "real_b".into() }), "{batch:?}");

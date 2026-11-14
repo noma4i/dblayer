@@ -231,7 +231,7 @@ fn landed_window(mut state: WindowsState) -> (WindowsState, Vec<StoreInput>) {
     let _ = Windows::step(&mut state, WindowsInput::InterestPlus { key, id: 2 }, crate::runtime::Time(0));
     let _ = Windows::step(&mut state, WindowsInput::Pinned { request_id: 1, base_revision: 1 }, crate::runtime::Time(0));
     let _ = Windows::step(&mut state, WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec![], None) }, crate::runtime::Time(0));
-    let committed = crate::owners::contract::Committed { batch: 1, revision: 2, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() };
+    let committed = crate::spec::support::committed_at(1, 2, &[]);
     let landed = Windows::step(&mut state, WindowsInput::Committed(committed), crate::runtime::Time(0));
     (state, store_inputs(landed))
 }
