@@ -221,3 +221,40 @@ fn a_commit_of_an_unrelated_model_steps_no_window() {
     let _ = Windows::step(&mut state, WindowsInput::StoreCommitted { models: vec!["Other".into()], revision: 9 }, crate::runtime::Time(0));
     assert_eq!(state.window_steps(), before);
 }
+
+fn landed_window(mut state: WindowsState) -> (WindowsState, Vec<StoreInput>) {
+    let _ = load(&mut state);
+    let key = WindowKey { model: "Item".into(), name: "items".into() };
+    let _ = Windows::step(&mut state, WindowsInput::InterestPlus { key, id: 2 }, crate::runtime::Time(0));
+    let _ = Windows::step(&mut state, WindowsInput::Pinned { request_id: 1, base_revision: 1 }, crate::runtime::Time(0));
+    let _ = Windows::step(&mut state, WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec![], None) }, crate::runtime::Time(0));
+    let committed = crate::owners::contract::Committed { batch: 1, revision: 2, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: Vec::new(), files_removed: 0, refused: Vec::new() };
+    let landed = Windows::step(&mut state, WindowsInput::Committed(committed), crate::runtime::Time(0));
+    (state, store_inputs(landed))
+}
+
+fn leave(state: &mut WindowsState) {
+    let key = WindowKey { model: "Item".into(), name: "items".into() };
+    let _ = Windows::step(state, WindowsInput::InterestMinus { key, id: 2 }, crate::runtime::Time(0));
+}
+
+/// win_idle_unwatched_window_leaves_memory (D-467): the owner holds no machine for a landed window nobody watches, and its pin is released.
+#[test]
+fn an_unwatched_idle_window_leaves_memory_with_its_pin_released() {
+    let (mut state, landing) = landed_window(state());
+    assert!(landing.iter().any(|input| matches!(input, StoreInput::Unpin { request_id: 1 })), "the landing releases the pin");
+    assert_eq!(state.windows(), 1, "a watched window stays");
+    leave(&mut state);
+    assert_eq!(state.windows(), 0);
+}
+
+/// D-467: a preload key and a RowsOf source stay in memory with no interest.
+#[test]
+fn a_preload_key_and_a_source_window_stay_in_memory_without_interest() {
+    let key = WindowKey { model: "Item".into(), name: "items".into() };
+    for state in [state().with_preload(vec![key.clone()]), state().with_sources(vec![key.clone()])] {
+        let (mut state, _) = landed_window(state);
+        leave(&mut state);
+        assert_eq!(state.windows(), 1);
+    }
+}

@@ -640,3 +640,37 @@ async fn win_prop_temp_id_never_asked() {
     gate.release();
     rig.database.close_now();
 }
+
+/// D-467: a window whose last reader left is read back from the saved window: fresh rows show with no request, an expired window asks once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_window_whose_reader_left_is_served_from_the_saved_window_while_fresh() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let (values, args) = group("friends");
+    let creation = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+    let created = bound(rig.database.confirmed(creation, false)).await.unwrap().value.expect("the group was not confirmed");
+    rig.world.set_members("JOINED", &["u1", "u2"]);
+    let query = json!({"model":"Member", "relation":"group_members", "params":{"groupId":created.id,"order":"JOINED"}}).to_string();
+    let watch = || {
+        let reader = Reader::open();
+        let stream = rig.database.subscribe_reading(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(query.clone()) }, reader.clone());
+        (reader, stream)
+    };
+    let (_first, stream) = watch();
+    bound(rig.database.loaded(stream)).await.unwrap();
+    rig.database.cancel_stream(stream);
+    bound(rig.settle()).await;
+    let before = rig.world.count("GroupMembers");
+    let (second, stream) = watch();
+    bound(rig.database.loaded(stream)).await.unwrap();
+    assert_eq!(rig.world.count("GroupMembers"), before, "a re-watch inside the lifetime asks nothing");
+    assert_eq!(second.rows().iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["u1", "u2"]);
+    rig.database.cancel_stream(stream);
+    bound(rig.settle()).await;
+    rig.clock.advance(3_600_000);
+    let (_third, stream) = watch();
+    bound(rig.database.loaded(stream)).await.unwrap();
+    assert_eq!(rig.world.count("GroupMembers"), before + 1, "a re-watch after the lifetime asks once");
+    rig.database.close_now();
+}
