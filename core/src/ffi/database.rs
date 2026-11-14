@@ -129,9 +129,9 @@ pub(super) async fn on_core<T: Send + 'static>(scope: Scope, work: impl std::fut
         let output = std::future::poll_fn(|cx| {
             #[cfg(test)]
             CALLER.set(Some(caller));
-            let polled = crate::runtime::polling_place(place.as_ref(), || std::future::Future::poll(work.as_mut(), cx));
             #[cfg(test)]
-            CALLER.set(None);
+            let _caller = crate::runtime::OnExit::new(|| CALLER.set(None));
+            let polled = crate::runtime::polling_place(place.as_ref(), || std::future::Future::poll(work.as_mut(), cx));
             let stop = std::mem::take(&mut first) && polled.is_pending() && seen.cancelled.load(std::sync::atomic::Ordering::SeqCst);
             if stop { std::task::Poll::Ready(None) } else { polled.map(Some) }
         }).await;

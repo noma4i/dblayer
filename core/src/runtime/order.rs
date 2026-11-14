@@ -116,9 +116,8 @@ impl DropPlace {
 /// Polls `poll` with `place` as the place of the call that enters an owner from this thread.
 pub fn polling_place<R>(place: Option<&Arc<Place>>, poll: impl FnOnce() -> R) -> R {
     let previous = ENTERING.replace(place.cloned());
-    let result = poll();
-    ENTERING.set(previous);
-    result
+    let _restore = super::OnExit::new(|| ENTERING.set(previous));
+    poll()
 }
 
 /// The call polled on this thread sent its first input to an owner.

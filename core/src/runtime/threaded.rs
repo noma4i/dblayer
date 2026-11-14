@@ -229,11 +229,21 @@ pub fn running_launch() -> Option<Launch> {
     })
 }
 
+/// Runs `restore` when it leaves scope, also while a panic unwinds.
+pub struct OnExit<F: FnOnce()>(Option<F>);
+
+impl<F: FnOnce()> OnExit<F> {
+    pub fn new(restore: F) -> Self { Self(Some(restore)) }
+}
+
+impl<F: FnOnce()> Drop for OnExit<F> {
+    fn drop(&mut self) { if let Some(restore) = self.0.take() { restore(); } }
+}
+
 pub fn polling<R>(holds: &Arc<Holds>, poll: impl FnOnce() -> R) -> R {
     let previous = POLLED.replace(Some(holds.clone()));
-    let result = poll();
-    POLLED.set(previous);
-    result
+    let _restore = OnExit::new(|| POLLED.set(previous));
+    poll()
 }
 
 pub fn release_holds() {
@@ -324,8 +334,9 @@ impl<F: std::future::Future> std::future::Future for Counted<F> {
         gate.arm();
         let waker = std::task::Waker::from(Arc::new(GateWake { gate: gate.clone(), waker: cx.waker().clone() }));
         let previous = RUNNING.replace(Some(gate.router.clone()));
+        let restore = OnExit::new(|| RUNNING.set(previous));
         let polled = self.work.as_mut().poll(&mut std::task::Context::from_waker(&waker));
-        RUNNING.set(previous);
+        drop(restore);
         if polled.is_ready() {
             gate.disarm();
         } else if !gate.woken.load(Ordering::SeqCst) {

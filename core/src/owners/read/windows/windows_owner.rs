@@ -87,7 +87,7 @@ impl Window {
                     let cause = if let Ev::EpochEnded { cause } = &event { cause.clone() } else { EndCause::Closed };
                     let held = std::mem::take(&mut opening.held);
                     self.opening = None;
-                    let mut effects: Vec<Emit> = held.iter().filter_map(|held| if let Ev::Load { id, .. } = held { Some(Emit::Run(WindowEffect::Outcome { id: *id, outcome: WindowOutcome::Ended { cause: cause.clone() } })) } else { None }).collect();
+                    let mut effects = Self::end_loads(&held, &WindowOutcome::Ended { cause });
                     effects.extend(self.run(event, ids, now));
                     return effects;
                 }
@@ -102,13 +102,23 @@ impl Window {
         self.run(event, ids, now)
     }
 
+    fn end_loads(held: &[Ev], outcome: &WindowOutcome) -> Vec<Emit> {
+        held.iter().filter_map(|held| if let Ev::Load { id, .. } = held { Some(Emit::Run(WindowEffect::Outcome { id: *id, outcome: outcome.clone() })) } else { None }).collect()
+    }
+
     /// The saved window arrived: the machine takes it if its generation matches, then runs the held inputs in order.
-    pub(super) fn opened(&mut self, saved: Option<SavedWindow>, (ids, store_seen): ((&mut RequestIds, &mut u32), i64), now: i64) -> Vec<Emit> {
+    pub(super) fn opened(&mut self, saved: Option<SavedWindow>, ids: ((&mut RequestIds, &mut u32), i64), now: i64) -> Vec<Emit> { self.open_with(saved, None, ids, now) }
+
+    /// The task that read the saved window failed: the window is not fresh, the held `Load` calls end with the failure and the other held inputs run in order.
+    pub(super) fn open_failed(&mut self, failure: crate::ffi::DbError, ids: ((&mut RequestIds, &mut u32), i64), now: i64) -> Vec<Emit> { self.open_with(None, Some(WindowOutcome::Failed { failure }), ids, now) }
+
+    fn open_with(&mut self, saved: Option<SavedWindow>, loads: Option<WindowOutcome>, (ids, store_seen): ((&mut RequestIds, &mut u32), i64), now: i64) -> Vec<Emit> {
         let Some(opening) = self.opening.take() else { return Vec::new() };
         let saved = saved.filter(|saved| saved.generation == opening.generation);
         let (request_ids, next_attempt) = ids;
-        let mut effects = self.run(Ev::Saved(saved, store_seen), (&mut *request_ids, &mut *next_attempt), now);
-        for held in opening.held {
+        let mut effects = loads.as_ref().map(|outcome| Self::end_loads(&opening.held, outcome)).unwrap_or_default();
+        effects.extend(self.run(Ev::Saved(saved, store_seen), (&mut *request_ids, &mut *next_attempt), now));
+        for held in opening.held.into_iter().filter(|held| loads.is_none() || !matches!(held, Ev::Load { .. })) {
             effects.extend(self.run(held, (&mut *request_ids, &mut *next_attempt), now));
         }
         effects
@@ -714,7 +724,11 @@ impl StateOwner for Windows {
             WindowsInput::TaskFailed { id } => {
                 let read_id = id & !READ_TASK;
                 let Some(key) = state.windows.iter().find(|(_, window)| window.reading(read_id)).map(|(key, _)| key.clone()) else { return out };
-                return Self::step(state, WindowsInput::WindowRead { key, read_id, result: Err("the read task failed".into()) }, turn);
+                let Some(window) = state.windows.get_mut(&key) else { return out };
+                let emits = window.open_failed(crate::ffi::DbError::Runtime { detail: "the read task failed".into() }, ((&mut state.request_ids, &mut state.next_attempt), state.store_seen), now);
+                Self::emitted(state, &key, emits, &mut out);
+                Self::derive_source(state, &key, now, &mut out);
+                Self::release_unwatched(state, &key, &mut out);
             }
             WindowsInput::EpochStarted(started) => {
                 state.epoch = started.epoch;
