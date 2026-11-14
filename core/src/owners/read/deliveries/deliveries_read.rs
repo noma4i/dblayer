@@ -307,8 +307,7 @@ impl Delivery {
                 self.revision = revision;
                 self.stage = DeliveryStage::Live;
                 self.settle_debts(fx);
-                let snapshot = self.snapshot(revision, rows, &[], state);
-                self.push(snapshot, fx);
+                self.push_snapshot(revision, rows, &[], state, fx);
                 if missing {
                     fx.push(Emit::Load { force: false });
                 }
@@ -341,8 +340,7 @@ impl Delivery {
                 let state = self.state_at(revision);
                 self.revision = value.0;
                 self.settle_debts(fx);
-                let snapshot = self.snapshot(value.0, rows, &replaced, state);
-                self.push(snapshot, fx);
+                self.push_snapshot(value.0, rows, &replaced, state, fx);
             }
             (DeliveryStage::Live, Whole::Rows { rows, replaced, total }) if self.view.kind != Kind::Count => self.live_rows(revision, value.0, rows, replaced, total, fx),
             (DeliveryStage::Live, Whole::Count(now)) if self.view.kind == Kind::Count => {
@@ -382,16 +380,13 @@ impl Delivery {
         self.settle_debts(fx);
         let unread_snapshot = self.journal.iter().any(|kept| matches!(kept, Value::Snapshot { .. }));
         let Some(base) = self.acknowledged.filter(|_| !unread_snapshot) else {
-            let snapshot = self.snapshot(revision, rows, &replaced, state);
-            self.push(snapshot, fx);
+            self.push_snapshot(revision, rows, &replaced, state, fx);
             return;
         };
         match self.delta(base, revision, &rows, &replaced, state.clone()) {
-            Some(delta) => self.push(Value::Delta(delta), fx),
-            None => {
-                let snapshot = self.snapshot(revision, rows, &replaced, state);
-                self.push(snapshot, fx);
-            }
+            Ok(Some(delta)) => self.push(Value::Delta(delta), fx),
+            Ok(None) => self.push_snapshot(revision, rows, &replaced, state, fx),
+            Err(detail) => self.finish(EndCause::Internal { detail }, false, fx),
         }
     }
 

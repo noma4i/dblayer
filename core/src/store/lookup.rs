@@ -292,7 +292,7 @@ impl Store {
                 return Err(CoreError::Internal(format!("the snapshot at revision {seen} lost {} of {} rows of {model}", wanted.len() - rows.len(), wanted.len())));
             }
             self.rows_read.fetch_add(rows.len(), std::sync::atomic::Ordering::Relaxed);
-            let total = match window.map(crate::owners::read::windows::WindowKey::kind) {
+            let total = match window.map(crate::owners::read::windows::WindowKey::kind).transpose().map_err(crate::store::StoreError::Constraint)? {
                 Some(crate::owners::read::windows::WindowKind::Relation { relation, params }) => {
                     let spec = self.spec(model)?;
                     let remote = spec.relations.iter().find(|declared| declared.name == relation).and_then(|declared| declared.remote.as_ref());

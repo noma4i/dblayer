@@ -80,7 +80,7 @@ pub(crate) fn window_identity(spec: &crate::schema::ModelSpec, model: &str, rela
 pub(super) fn query_window_keys(models: &BTreeMap<String, super::ModelInfo>, names: &[(String, String)]) -> Result<Vec<String>, StoreError> {
     let mut keys = Vec::new();
     for (model, name) in names {
-        let crate::owners::read::windows::WindowKind::Relation { relation, params } = (crate::owners::read::windows::WindowKey { model: model.clone(), name: name.clone() }).kind() else { continue };
+        let crate::owners::read::windows::WindowKind::Relation { relation, params } = (crate::owners::read::windows::WindowKey { model: model.clone(), name: name.clone() }).kind().map_err(StoreError::Constraint)? else { continue };
         let Some(info) = models.get(model) else { continue };
         let Some(remote) = info.spec.relations.iter().find(|declared| declared.name == relation).and_then(|declared| declared.remote.as_ref()) else { continue };
         keys.push(window_identity(&info.spec, model, &relation, remote, &params).map_err(|error| StoreError::Constraint(error.to_string()))?.1);

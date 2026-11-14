@@ -623,7 +623,14 @@ impl StateOwner for Windows {
             WindowsInput::InterestMinus { key, id } => Self::on(state, &key, Ev::InterestMinus { id }, now, &mut out),
             WindowsInput::Load { key, id, goal, force, store_revision } => Self::load(state, key, (id, now), (goal, force, store_revision), &mut out),
             WindowsInput::LoadNoWait { key, id, verb, .. } if state.online != Some(true) => {
-                let WindowKind::Relation { relation, .. } = key.kind() else { return out };
+                let relation = match key.kind() {
+                    Ok(WindowKind::Relation { relation, .. }) => relation,
+                    Ok(WindowKind::Nodes { .. }) => return out,
+                    Err(detail) => {
+                        out.push(Effect::Run(WindowsEffect::Window { key, effect: WindowEffect::Outcome { id, outcome: WindowOutcome::Failed { failure: crate::ffi::DbError::Invalid { detail } } } }));
+                        return out;
+                    }
+                };
                 let message = format!("{}.{relation} {verb} needs the network", key.model);
                 out = Self::step(state, WindowsInput::OfflineRefused { key: key.clone(), message: message.clone() }, turn);
                 out.push(Effect::Run(WindowsEffect::Window { key, effect: WindowEffect::Outcome { id, outcome: WindowOutcome::Offline { message } } }));

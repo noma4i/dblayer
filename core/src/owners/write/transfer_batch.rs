@@ -58,15 +58,15 @@ impl TransferState {
     pub(super) fn phase_of(&self, group: u64) -> Option<BatchPhase> { self.groups.get(&group).map(|entry| entry.phase) }
 
     /// `PersistingComplete x Committed` of an element: it waits for the others.
-    pub(super) fn batch_ready(&mut self, id: TransferId, group: u64, fx: &mut Fx) {
+    pub(super) fn batch_ready(&mut self, now: crate::runtime::Time, id: TransferId, group: u64, fx: &mut Fx) {
         self.set(id, TransferStage::BatchReady);
         self.show(id, Shown::Uploading { progress: 100 }, fx);
         self.rounds_idle(id, fx);
-        self.batch_release(group, fx);
+        self.batch_release(now, group, fx);
     }
 
     /// The mutation goes out when every remaining element is in `BatchReady`.
-    pub(super) fn batch_release(&mut self, group: u64, fx: &mut Fx) {
+    pub(super) fn batch_release(&mut self, now: crate::runtime::Time, group: u64, fx: &mut Fx) {
         let Some(entry) = self.groups.get(&group) else { return };
         if entry.phase != BatchPhase::Collecting {
             return;
@@ -77,7 +77,7 @@ impl TransferState {
             return;
         }
         if remaining.len() >= minimum {
-            self.submit_joint(group, &remaining, fx);
+            self.submit_joint(now, group, &remaining, fx);
         } else {
             if let Some(entry) = self.groups.get_mut(&group) {
                 entry.phase = BatchPhase::Singles;
@@ -86,10 +86,16 @@ impl TransferState {
         }
     }
 
-    fn submit_joint(&mut self, group: u64, remaining: &[TransferId], fx: &mut Fx) {
+    fn submit_joint(&mut self, now: crate::runtime::Time, group: u64, remaining: &[TransferId], fx: &mut Fx) {
         let Some(entry) = self.groups.get(&group) else { return };
         let joint = entry.joint.clone();
-        let mut body: Value = serde_json::from_str(&joint.mutation.body).unwrap_or(Value::Object(Map::new()));
+        let mut body: Value = match serde_json::from_str(&joint.mutation.body) {
+            Ok(body) => body,
+            Err(error) => {
+                for &id in remaining { self.mark_failure(now, id, format!("Internal(Invalid): the joint mutation body is not JSON: {error}"), fx); }
+                return self.store(remaining, StoreKind::Failed, fx);
+            }
+        };
         let items: Vec<Value> = remaining.iter().filter_map(|id| self.transfers.get(id)).map(|transfer| with_signed_id(&transfer.fields, transfer.signed_id.as_deref().unwrap_or_default())).collect();
         set_path(&mut body, &format!("variables.{}", joint.items_key), Value::Array(items));
         let first = self.transfers.get(&remaining[0]).map(|transfer| (transfer.mutation.model.clone(), transfer.mutation.row_id.clone())).unwrap_or_default();
@@ -185,10 +191,10 @@ impl TransferState {
     }
 
     /// After an element left: the others may be ready now, or the next single goes.
-    pub(super) fn batch_after_removal(&mut self, id: TransferId, fx: &mut Fx) {
+    pub(super) fn batch_after_removal(&mut self, now: crate::runtime::Time, id: TransferId, fx: &mut Fx) {
         let Some(group) = self.group_entry(id) else { return };
         match self.phase_of(group) {
-            Some(BatchPhase::Collecting) => self.batch_release(group, fx),
+            Some(BatchPhase::Collecting) => self.batch_release(now, group, fx),
             Some(BatchPhase::Singles) => self.single_next(group, fx),
             _ => {}
         }

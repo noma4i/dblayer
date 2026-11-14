@@ -253,7 +253,7 @@ impl TransferState {
         }
     }
 
-    pub(super) fn failure_committed(&mut self, id: TransferId, fx: &mut Fx) {
+    pub(super) fn failure_committed(&mut self, now: crate::runtime::Time, id: TransferId, fx: &mut Fx) {
         self.leave_retry(id, fx);
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if transfer.failure_abort {
@@ -272,7 +272,7 @@ impl TransferState {
         self.show(id, Shown::Failed { error: error.clone() }, fx);
         self.settle(id, OutboxOutcome::Failed { error }, fx);
         if had_source { self.rounds_idle(id, fx); }
-        self.batch_after_removal(id, fx);
+        self.batch_after_removal(now, id, fx);
         self.send_orphans(false, fx);
     }
 
@@ -350,7 +350,7 @@ impl TransferState {
                 self.delete_copy(id, fx);
             }
             self.finish(id, fx);
-            self.batch_after_removal(id, fx);
+            self.batch_after_removal(now, id, fx);
             self.drop_transfer(id, fx);
         }
         self.send_orphans(false, fx);
@@ -413,7 +413,7 @@ impl TransferState {
         }
         for id in answered {
             self.finish(id, fx);
-            self.batch_after_removal(id, fx);
+            self.batch_after_removal(now, id, fx);
         }
         self.start_in_order(now, fx);
     }

@@ -14,9 +14,9 @@ impl WindowKey {
     pub fn nodes(model: &str, ids: &[&str]) -> Self { Self { model: model.into(), name: format!("{}{}", Self::NODES, serde_json::to_string(ids).unwrap_or_default()) } }
 
     /// A `node` read: a relation keyed by the param `NODE_PARAM`.
-    pub(super) fn reads_node(&self) -> bool { matches!(self.kind(), WindowKind::Relation { params, .. } if params.contains_key(crate::schema::NODE_PARAM)) }
+    pub(super) fn reads_node(&self) -> bool { matches!(self.kind(), Ok(WindowKind::Relation { params, .. }) if params.contains_key(crate::schema::NODE_PARAM)) }
 
-    pub(super) fn is_empty_nodes(&self) -> bool { matches!(self.kind(), WindowKind::Nodes { ids } if ids.is_empty()) }
+    pub(super) fn is_empty_nodes(&self) -> bool { matches!(self.kind(), Ok(WindowKind::Nodes { ids }) if ids.is_empty()) }
 
     /// The key `(model, relation, params)`: `params` in the canonical form, keys in alphabetical order.
     pub fn relation(model: &str, relation: &str, params: &serde_json::Map<String, serde_json::Value>) -> Self {
@@ -24,13 +24,15 @@ impl WindowKey {
         Self { model: model.into(), name: format!("{relation}|{}", serde_json::to_string(&canonical).unwrap_or_default()) }
     }
 
-    pub fn kind(&self) -> WindowKind {
+    /// The window a key names; a key whose text does not parse is refused with the reason.
+    pub fn kind(&self) -> Result<WindowKind, String> {
         if let Some(ids) = self.name.strip_prefix(Self::NODES) {
-            return WindowKind::Nodes { ids: serde_json::from_str(ids).unwrap_or_default() };
+            let ids = serde_json::from_str(ids).map_err(|error| format!("the window key {} does not name a list of ids: {error}", self.name))?;
+            return Ok(WindowKind::Nodes { ids });
         }
         let (relation, params) = self.name.split_once('|').unwrap_or((self.name.as_str(), "{}"));
-        let params = serde_json::from_str(params).unwrap_or_default();
-        WindowKind::Relation { relation: relation.to_string(), params }
+        let params = serde_json::from_str(params).map_err(|error| format!("the window key {} does not name params: {error}", self.name))?;
+        Ok(WindowKind::Relation { relation: relation.to_string(), params })
     }
 }
 
@@ -211,9 +213,9 @@ impl StaleKeys {
 
     pub(super) fn names(&self, key: &WindowKey) -> bool {
         match self {
-            Self::AllBut(kept) => !matches!(key.kind(), WindowKind::Relation { relation, .. } if kept.contains(&relation)),
+            Self::AllBut(kept) => !matches!(key.kind(), Ok(WindowKind::Relation { relation, .. }) if kept.contains(&relation)),
             Self::Set(set) => set.contains(key),
-            Self::Relations(relations) => matches!(key.kind(), WindowKind::Relation { relation, .. } if relations.contains(&relation)),
+            Self::Relations(relations) => matches!(key.kind(), Ok(WindowKind::Relation { relation, .. }) if relations.contains(&relation)),
         }
     }
 

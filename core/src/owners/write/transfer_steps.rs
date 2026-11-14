@@ -360,7 +360,7 @@ impl TransferState {
 
     pub(super) fn complete_committed(&mut self, now: crate::runtime::Time, id: TransferId, fx: &mut Fx) {
         if let Some(group) = self.group_entry(id) {
-            self.batch_ready(id, group, fx);
+            self.batch_ready(now, id, group, fx);
             return self.start_in_order(now, fx);
         }
         self.set(id, TransferStage::Mutating);
@@ -374,7 +374,7 @@ impl TransferState {
     pub(super) fn invalid_write(&mut self, now: crate::runtime::Time, ids: &[TransferId], marking: bool, detail: &str, fx: &mut Fx) {
         for &id in ids {
             if marking {
-                self.failure_committed(id, fx);
+                self.failure_committed(now, id, fx);
             } else {
                 self.begin_failure(now, id, format!("Internal(Invalid): {detail}"), false, fx);
             }

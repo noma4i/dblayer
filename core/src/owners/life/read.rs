@@ -97,7 +97,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
         });
     }));
     builder.install(windows_at, "windows", state, {
-        let io = windows_io.reading(Arc::new(move |key| match key.kind() {
+        let io = windows_io.reading(Arc::new(move |key| match key.kind()? {
             crate::owners::read::windows::WindowKind::Relation { relation, params } => read_db.window_saved(&key.model, &relation, &params).map_err(|error| error.to_string()),
             crate::owners::read::windows::WindowKind::Nodes { .. } => Ok(None),
         })).counted_by(handle.clone());

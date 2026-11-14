@@ -2,19 +2,20 @@ use super::*;
 
 impl Delivery {
     /// The steps from the rows of the last value the reader took to `rows`.
-    fn steps(&self, rows: &[StreamRow], replaced: &[(String, String)]) -> Option<Steps> {
-        let old: Vec<Entry> = self.acked_rows.iter().map(entry).collect::<Result<_, _>>().ok()?;
-        let new: Vec<Entry> = rows.iter().map(entry).collect::<Result<_, _>>().ok()?;
-        let pairs: Vec<(RowId, RowId)> = replaced.iter().map(|(from, to)| Ok((RowId::new(from).map_err(|e| e.to_string())?, RowId::new(to).map_err(|e| e.to_string())?))).collect::<Result<_, String>>().ok()?;
+    fn steps(&self, rows: &[StreamRow], replaced: &[(String, String)]) -> Result<Steps, String> {
+        let old: Vec<Entry> = self.acked_rows.iter().map(entry).collect::<Result<_, _>>()?;
+        let new: Vec<Entry> = rows.iter().map(entry).collect::<Result<_, _>>()?;
+        let pairs: Vec<(RowId, RowId)> = replaced.iter().map(|(from, to)| Ok((RowId::new(from).map_err(|e| e.to_string())?, RowId::new(to).map_err(|e| e.to_string())?))).collect::<Result<_, String>>()?;
         let diff = Diff::between(&old[..], &new[..], &pairs);
         let (temporary, forgotten) = self.temporary_ids(&diff);
         let edits = edits(&self.acked_rows, rows, &diff, &temporary.iter().cloned().collect());
-        Some(Steps { edits, temporary, forgotten, touched: diff.at.len() + diff.removed.len() })
+        Ok(Steps { edits, temporary, forgotten, touched: diff.at.len() + diff.removed.len() })
     }
 
-    pub(super) fn delta(&self, base: i64, revision: i64, rows: &[StreamRow], replaced: &[(String, String)], state: WindowState) -> Option<Delta> {
-        let steps = self.steps(rows, replaced).filter(|steps| steps.touched <= DELTA_LIMIT)?;
-        Some(Delta {
+    pub(super) fn delta(&self, base: i64, revision: i64, rows: &[StreamRow], replaced: &[(String, String)], state: WindowState) -> Result<Option<Delta>, String> {
+        let steps = self.steps(rows, replaced)?;
+        if steps.touched > DELTA_LIMIT { return Ok(None); }
+        Ok(Some(Delta {
             base,
             revision,
             size: u32::try_from(rows.len()).unwrap_or(u32::MAX),
@@ -22,12 +23,15 @@ impl Delivery {
             temporary: steps.temporary,
             forgotten: steps.forgotten,
             state,
-        })
+        }))
     }
 
-    pub(super) fn snapshot(&self, revision: i64, rows: Vec<StreamRow>, replaced: &[(String, String)], state: WindowState) -> Value {
-        let steps = self.steps(&rows, replaced).unwrap_or_default();
-        Value::Snapshot { revision, rows, edits: steps.edits, temporary: steps.temporary, forgotten: steps.forgotten, state }
+    /// The snapshot of `rows` goes to the journal; steps that do not parse end the stream `Internal`.
+    pub(super) fn push_snapshot(&mut self, revision: i64, rows: Vec<StreamRow>, replaced: &[(String, String)], state: WindowState, fx: &mut Vec<Emit>) {
+        match self.steps(&rows, replaced) {
+            Ok(steps) => self.push(Value::Snapshot { revision, rows, edits: steps.edits, temporary: steps.temporary, forgotten: steps.forgotten, state }, fx),
+            Err(detail) => self.finish(EndCause::Internal { detail }, false, fx),
+        }
     }
 
     fn temporary_ids(&self, diff: &Diff) -> (Vec<(String, String)>, Vec<String>) {
@@ -80,8 +84,7 @@ impl Delivery {
                     self.count = Some(0);
                     self.push(Value::Count { revision, count: 0, state }, fx);
                 } else {
-                    let snapshot = self.snapshot(revision, Vec::new(), &[], state);
-                    self.push(snapshot, fx);
+                    self.push_snapshot(revision, Vec::new(), &[], state, fx);
                 }
             }
             DeliveryStage::Live => {
@@ -393,7 +396,6 @@ impl Delivery {
     pub(super) fn settled(&self) -> bool { self.stage == DeliveryStage::Ended && self.sink_closed }
 }
 
-#[derive(Default)]
 struct Steps {
     edits: Vec<Edit>,
     temporary: Vec<(String, String)>,

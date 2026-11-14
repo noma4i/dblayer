@@ -383,7 +383,7 @@ impl Feed {
                 StaleKeys::AllBut(_) => { models.insert(event.model.clone()); }
                 StaleKeys::Set(keys) => for key in keys {
                     match key.kind() {
-                        WindowKind::Relation { relation, params } if params.contains_key(crate::schema::NODE_PARAM) => {
+                        Ok(WindowKind::Relation { relation, params }) if params.contains_key(crate::schema::NODE_PARAM) => {
                             if let Some(id) = params.get(crate::schema::NODE_PARAM).and_then(serde_json::Value::as_str) { owed.insert((key.model.clone(), id.to_string(), relation)); }
                         }
                         _ => { windows.insert((key.model.clone(), key.name.clone())); }

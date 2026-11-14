@@ -57,7 +57,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
     let accepted = admitted_rows(writer, model, &roots, page.base_revision)?;
     let mut envelope = BatchPlan::new();
     envelope.request_base = Some(page.base_revision);
-    let WindowKind::Relation { relation, params } = page.key.kind() else {
+    let WindowKind::Relation { relation, params } = page.key.kind().map_err(StoreError::Constraint)? else {
         envelope.entity_ops = related_rows(writer, &related, &BTreeSet::new(), page.base_revision)?;
         for row in accepted {
             if let Some(id) = row.get("id").and_then(read_id) { envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row }); }
@@ -137,7 +137,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
 /// The marker of a media window replaces the stored one in the same transaction as the rows of its chain; the window lands now and no debt stays.
 pub(super) fn mark(writer: &mut RowWrite<'_>, key: &crate::owners::read::windows::WindowKey, marker: &WindowMarker, landed_at: Option<i64>) -> Result<CommitResult, StoreError> {
     let model = key.model.as_str();
-    let WindowKind::Relation { relation, params } = key.kind() else { return Err(fault("a marker belongs to a relation window")) };
+    let WindowKind::Relation { relation, params } = key.kind().map_err(StoreError::Constraint)? else { return Err(fault("a marker belongs to a relation window")) };
     let spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
     let declared = spec.relations.iter().find(|item| item.name == relation).ok_or_else(|| fault(format!("{model} has no relation {relation}")))?;
     let remote = declared.remote.as_ref().ok_or_else(|| fault(format!("{model}.{relation} is not remote")))?;

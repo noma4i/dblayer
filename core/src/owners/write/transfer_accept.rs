@@ -448,7 +448,7 @@ impl TransferState {
     }
 
     /// The file of the transfer is ready: a file the server holds already goes to the mutation, any other waits for its first part.
-    pub(super) fn enter_upload(&mut self, id: TransferId, fx: &mut Fx) {
+    pub(super) fn enter_upload(&mut self, now: crate::runtime::Time, id: TransferId, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let (cached, batch) = (transfer.from_cache, transfer.batch_id);
         if cached && batch.is_none() { transfer.has_operation = true; }
@@ -456,7 +456,7 @@ impl TransferState {
         transfer.intent_live = cached && batch.is_none();
         if cached && batch.is_some() {
             self.show(id, Shown::Uploading { progress: 100 }, fx);
-            if let Some(group) = batch { self.batch_release(group, fx); }
+            if let Some(group) = batch { self.batch_release(now, group, fx); }
         } else if cached {
             self.show(id, Shown::Uploading { progress: 100 }, fx);
             self.submit_mutation(id, fx);
@@ -502,7 +502,7 @@ impl TransferState {
             if let (Some(back), Some(rep)) = (supplied, supply_reply) {
                 reply(fx, rep, if back == TransferStage::Failed { TransferAnswer::Receipt(self.receipt(id)) } else { TransferAnswer::Ok });
             }
-            if preparing { self.queue_prepare(id, fx); } else if limited { self.fail_too_large(now, id, fx); } else { self.enter_upload(id, fx); }
+            if preparing { self.queue_prepare(id, fx); } else if limited { self.fail_too_large(now, id, fx); } else { self.enter_upload(now, id, fx); }
         }
         for (position, &id) in ids.iter().enumerate() {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };

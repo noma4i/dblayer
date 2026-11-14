@@ -108,7 +108,7 @@ fn page_rows(normalized: Normalized, total: Option<i64>) -> (Vec<String>, PageRo
 
 impl WindowCodec for SchemaWindowCodec {
     fn request(&self, key: &WindowKey, _page: u32, cursor: Option<&str>, kind: RequestKind) -> Result<GraphQLRequest, String> {
-        match key.kind() {
+        match key.kind()? {
             WindowKind::Relation { relation, params } => {
                 let spec = self.db.spec(&key.model).map_err(|error| error.to_string())?;
                 let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| format!("{} has no relation {relation}", key.model))?;
@@ -154,7 +154,7 @@ impl WindowCodec for SchemaWindowCodec {
         if matches!(kind, RequestKind::Marker { .. }) {
             return marker_answer(spec, key, &data).map(AnswerPage::marked);
         }
-        let (declared, params, shape, root, total_from) = match key.kind() {
+        let (declared, params, shape, root, total_from) = match key.kind()? {
             WindowKind::Relation { relation, params } => {
                 let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| format!("{model} has no relation {relation}"))?;
                 let remote = declared.remote.as_ref().ok_or_else(|| format!("{model}.{relation} is no remote relation"))?;
@@ -191,7 +191,7 @@ fn media_integer(value: &Value, field: &str) -> Result<i64, String> {
 
 /// The marker of a media window from the answer of its marker operation: the newest sequence and the counts the fields name.
 fn marker_answer(spec: &crate::schema::ModelSpec, key: &WindowKey, data: &Value) -> Result<Marker, String> {
-    let WindowKind::Relation { relation, .. } = key.kind() else { return Err("a marker belongs to a relation window".into()) };
+    let WindowKind::Relation { relation, .. } = key.kind()? else { return Err("a marker belongs to a relation window".into()) };
     let media = spec.relations.iter().find(|candidate| candidate.name == relation).and_then(|declared| declared.media.as_ref()).ok_or("the relation declares no media")?;
     let row = root_value(data, &media.from).and_then(Value::as_object).ok_or_else(|| format!("marker {} is not an object", media.from))?;
     let get = |name: &str| media_integer(row.get(name).ok_or_else(|| format!("marker has no {name}"))?, name);
@@ -204,15 +204,15 @@ fn marker_answer(spec: &crate::schema::ModelSpec, key: &WindowKey, data: &Value)
 /// The keys of the relations the `.dbl` declares with `media`.
 pub fn has_media(db: std::sync::Arc<Store>) -> HasMedia {
     Arc::new(move |key| match key.kind() {
-        WindowKind::Relation { relation, .. } => db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).is_some_and(|declared| declared.media.is_some()),
-        WindowKind::Nodes { .. } => false,
+        Ok(WindowKind::Relation { relation, .. }) => db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).is_some_and(|declared| declared.media.is_some()),
+        Ok(WindowKind::Nodes { .. }) | Err(_) => false,
     })
 }
 
 /// How many pages a key may land at most: `max_pages` of the connection in the `.dbl`.
 pub fn max_pages(db: std::sync::Arc<Store>) -> MaxPages {
     Arc::new(move |key| match key.kind() {
-        WindowKind::Relation { relation, .. } => db
+        Ok(WindowKind::Relation { relation, .. }) => db
             .spec(&key.model)
             .ok()
             .and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation))
@@ -222,7 +222,7 @@ pub fn max_pages(db: std::sync::Arc<Store>) -> MaxPages {
                 _ => None,
             })
             .unwrap_or(u32::MAX),
-        WindowKind::Nodes { .. } => 1,
+        Ok(WindowKind::Nodes { .. }) | Err(_) => 1,
     })
 }
 
@@ -231,7 +231,7 @@ pub fn lifetimes(db: std::sync::Arc<Store>) -> Lifetimes {
     Arc::new(move |key| {
         let never = i64::MAX / 4;
         let millis = |text: &str| crate::runtime::parse_duration(text).map_or(never, |window| i64::try_from(window.as_millis()).unwrap_or(never));
-        let WindowKind::Relation { relation, .. } = key.kind() else { return (never, never) };
+        let Ok(WindowKind::Relation { relation, .. }) = key.kind() else { return (never, never) };
         let Some(remote) = db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).and_then(|declared| declared.remote.as_ref()) else { return (never, never) };
         let expires = millis(&remote.stale_time);
         (expires, remote.empty_stale_time.as_deref().map_or(expires, millis))
@@ -241,23 +241,23 @@ pub fn lifetimes(db: std::sync::Arc<Store>) -> Lifetimes {
 /// The keys of the relations the `.dbl` declares `members_complete`.
 pub fn members_complete(db: std::sync::Arc<Store>) -> MembersComplete {
     Arc::new(move |key| match key.kind() {
-        WindowKind::Relation { relation, .. } => db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).is_some_and(|declared| declared.members_complete),
-        WindowKind::Nodes { .. } => false,
+        Ok(WindowKind::Relation { relation, .. }) => db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).is_some_and(|declared| declared.members_complete),
+        Ok(WindowKind::Nodes { .. }) | Err(_) => false,
     })
 }
 
 pub fn has_local_order(db: std::sync::Arc<Store>) -> HasLocalOrder {
     Arc::new(move |key| match key.kind() {
-        WindowKind::Relation { relation, .. } => db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).is_some_and(|declared| matches!(declared.sort, crate::schema::Sort::Fields(_))),
-        WindowKind::Nodes { .. } => false,
+        Ok(WindowKind::Relation { relation, .. }) => db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).is_some_and(|declared| matches!(declared.sort, crate::schema::Sort::Fields(_))),
+        Ok(WindowKind::Nodes { .. }) | Err(_) => false,
     })
 }
 
 /// The keys of the relations the `.dbl` declares `refresh: foreground`.
 pub fn refreshes_on_foreground(db: std::sync::Arc<Store>) -> OnForeground {
     Arc::new(move |key| match key.kind() {
-        WindowKind::Relation { relation, .. } => db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).is_some_and(|declared| declared.refresh_on_foreground),
-        WindowKind::Nodes { .. } => false,
+        Ok(WindowKind::Relation { relation, .. }) => db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).is_some_and(|declared| declared.refresh_on_foreground),
+        Ok(WindowKind::Nodes { .. }) | Err(_) => false,
     })
 }
 

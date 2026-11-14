@@ -185,22 +185,22 @@ impl OutboxState {
     }
 
     /// The temp ids the operation waits for: its own row when it acts on one, every temp id of the body except the row it creates.
-    fn awaited_temps(operation: &QueuedOperation) -> Vec<String> {
+    fn awaited_temps(operation: &QueuedOperation) -> Result<Vec<String>, String> {
         let creates_own = operation.op.action == "create" || matches!(operation.op.origin, OpSource::TransferGroup { .. });
         let mut temps = Vec::new();
         if !creates_own && operation.cancels.is_none() && crate::identity::is_temp_id(&operation.op.row_id) { temps.push(operation.op.row_id.clone()); }
         if operation.op.body.contains(crate::identity::TEMP_ID_PREFIX) {
-            if let Ok(mut body) = serde_json::from_str::<serde_json::Value>(&operation.op.body) {
-                crate::identity::walk_temp_ids(&mut body, &mut |temp| if !(creates_own && Self::addresses_row(operation, &operation.op.model, temp)) { temps.push(temp.clone()); });
-            }
+            let mut body = serde_json::from_str::<serde_json::Value>(&operation.op.body).map_err(|error| format!("the body of {}.{} is not JSON: {error}", operation.op.model, operation.op.action))?;
+            crate::identity::walk_temp_ids(&mut body, &mut |temp| if !(creates_own && Self::addresses_row(operation, &operation.op.model, temp)) { temps.push(temp.clone()); });
         }
-        temps
+        Ok(temps)
     }
 
     /// Open while the fate of a temp id the operation waits for is unknown: the cache has neither a real id nor an end for it.
     fn temp_dependency(&self, operation: &QueuedOperation) -> TempDependency {
         let holds = |temp: &String| matches!(operation.op.origin, OpSource::Transfer { .. }) && &operation.op.row_id == temp;
-        let unknown = Self::awaited_temps(operation).iter().any(|temp| !holds(temp) && !self.ended_creates.contains(temp) && !self.aliases.keys().any(|(_, aliased)| aliased == temp));
+        let Ok(awaited) = Self::awaited_temps(operation) else { return TempDependency::Open };
+        let unknown = awaited.iter().any(|temp| !holds(temp) && !self.ended_creates.contains(temp) && !self.aliases.keys().any(|(_, aliased)| aliased == temp));
         if unknown { TempDependency::Open } else { TempDependency::Clear }
     }
 
@@ -210,7 +210,7 @@ impl OutboxState {
             OpSource::Transfer { .. } => vec![holder.op.row_id.clone()],
             _ => Self::created_temps(holder),
         };
-        Self::awaited_temps(waiter).iter().any(|temp| held.contains(temp))
+        Self::awaited_temps(waiter).is_ok_and(|awaited| awaited.iter().any(|temp| held.contains(temp)))
     }
 
     /// The temp ids of the rows the operation creates.
@@ -229,7 +229,7 @@ impl OutboxState {
 
     /// The operation waits for a temp id whose `create` ended without a real id.
     fn awaits_ended_create(&self, operation: &QueuedOperation) -> bool {
-        Self::awaited_temps(operation).iter().any(|temp| self.ended_creates.contains(temp))
+        Self::awaited_temps(operation).is_ok_and(|awaited| awaited.iter().any(|temp| self.ended_creates.contains(temp)))
     }
 
     /// The Queued operations that wait for the rows the ended `create` made (and for the rows of those operations in turn), the latest first.
@@ -239,7 +239,7 @@ impl OutboxState {
         if ended.is_empty() { return Vec::new(); }
         let mut found: Vec<&QueuedOperation> = Vec::new();
         loop {
-            let next = self.ops.values().find(|other| other.op_id != create && other.stage == Stage::Queued && other.sequence > first.sequence && !found.iter().any(|seen| seen.op_id == other.op_id) && Self::awaited_temps(other).iter().any(|temp| ended.contains(temp)));
+            let next = self.ops.values().find(|other| other.op_id != create && other.stage == Stage::Queued && other.sequence > first.sequence && !found.iter().any(|seen| seen.op_id == other.op_id) && Self::awaited_temps(other).is_ok_and(|awaited| awaited.iter().any(|temp| ended.contains(temp))));
             let Some(next) = next else { break };
             ended.extend(Self::created_temps(next));
             found.push(next);
@@ -621,6 +621,9 @@ impl OutboxState {
         let Some(operation) = self.ops.get(&op_id) else { return };
         if operation.stage != Stage::Queued || !self.is_online() {
             return;
+        }
+        if let Err(detail) = Self::awaited_temps(operation) {
+            return self.fail_with(op_id, format!("Internal(Invalid): {detail}"), fx);
         }
         let ended = self.awaits_ended_create(operation);
         if !ended && self.waits_for_turn(op_id) {

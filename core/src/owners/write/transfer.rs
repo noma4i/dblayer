@@ -774,7 +774,7 @@ impl TransferState {
             for &id in &pending.ids {
                 match self.stage_of(id) {
                     Some(TransferStage::Removing) => self.removing_committed(now, &[id], fx),
-                    Some(TransferStage::PersistingFailure) => self.failure_committed(id, fx),
+                    Some(TransferStage::PersistingFailure) => self.failure_committed(now, id, fx),
                     _ => {}
                 }
             }
@@ -805,7 +805,7 @@ impl TransferState {
             Some(TransferStage::PersistingRetry) => self.retry_committed(now, pending.ids[0], fx),
             Some(TransferStage::PersistingFailure) => {
                 for &id in &pending.ids {
-                    self.failure_committed(id, fx);
+                    self.failure_committed(now, id, fx);
                 }
             }
             Some(TransferStage::Removing) => self.removing_committed(now, &pending.ids, fx),

@@ -151,7 +151,7 @@ impl TransferState {
         transfer.prepare = None;
         transfer.prep = None;
         self.send_batch(vec![StoreOp::RemovePrepare { key }], fx);
-        self.enter_upload(id, fx);
+        self.enter_upload(now, id, fx);
         self.free_prepare_slot(fx);
         self.start_in_order(now, fx);
     }
@@ -203,6 +203,10 @@ impl TransferState {
         if !self.current(id, attempt_id, &[TransferStage::Measuring], fx) { return; }
         let sizing = self.sizing;
         if self.transfers.get(&id).is_some_and(|transfer| transfer.over_limit(copy.size)) { return self.fail_too_large(now, id, fx); }
+        let steps = match self.transfers.get(&id).and_then(|transfer| transfer.steps.as_ref()).map(|steps| serde_json::from_str::<super::upload_codec::StepsBody>(&steps.body)).transpose() {
+            Ok(steps) => steps,
+            Err(error) => return self.fail_prepare(now, id, PrepareReason::Failed, format!("Internal(Invalid): the steps body is not readable: {error}"), fx),
+        };
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let mut before = transfer.clone();
         before.previous = None;
@@ -220,7 +224,7 @@ impl TransferState {
         let (parts, multipart) = sizing.of(size, transfer.multipart_forced);
         if let Some(source) = transfer.source.as_mut() { source.parts = parts; }
         let (name, mime) = transfer.prep.as_ref().map_or((None, None), |prep| (prep.name.clone(), prep.mime.clone()));
-        if let Some(steps) = transfer.steps.as_ref().and_then(|steps| serde_json::from_str::<super::upload_codec::StepsBody>(&steps.body).ok()) {
+        if let Some(steps) = steps {
             let steps = super::upload_codec::StepsBody { multipart, name: name.unwrap_or(steps.name.clone()), mime: mime.unwrap_or(steps.mime.clone()), ..steps };
             transfer.steps = Some(steps.steps());
         }
@@ -247,7 +251,7 @@ impl TransferState {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.prepare = None;
         transfer.prep = None;
-        self.enter_upload(id, fx);
+        self.enter_upload(now, id, fx);
         self.free_prepare_slot(fx);
         self.start_in_order(now, fx);
     }

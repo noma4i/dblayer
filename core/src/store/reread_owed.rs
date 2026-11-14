@@ -102,7 +102,7 @@ impl super::Store {
         let spec = self.spec(model)?;
         let shown = match view.kind {
             Kind::Entity { .. } => Shown::Row(view.subject.clone()),
-            Kind::List | Kind::Count if view.remote => match view.window.kind() {
+            Kind::List | Kind::Count if view.remote => match view.window.kind().map_err(StoreError::Constraint)? {
                 WindowKind::Relation { relation, params } => {
                     let remote = spec.relations.iter().find(|declared| declared.name == relation).and_then(|declared| declared.remote.as_ref());
                     match remote {
