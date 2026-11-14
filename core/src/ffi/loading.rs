@@ -40,6 +40,20 @@ impl Drop for ReleaseBarrier {
     }
 }
 
+/// Held by the task of a load: while the task panics, the waiters get `Runtime` and the database closes.
+struct LoadPanic {
+    answer: Arc<tokio::sync::watch::Sender<Option<Result<(), DbError>>>>,
+    life: Arc<crate::owners::life::Life>,
+}
+
+impl Drop for LoadPanic {
+    fn drop(&mut self) {
+        if !std::thread::panicking() { return; }
+        crate::lock::effect(|| self.answer.send_if_modified(|seen| seen.is_none().then(|| *seen = Some(Err(DbError::Runtime { detail: "the load task failed".into() }))).is_some()));
+        self.life.executor_failed("load");
+    }
+}
+
 fn load_cancelled() -> DbError { super::cause_error(&super::EndCause::Cancelled) }
 
 #[uniffi::export]
@@ -237,8 +251,10 @@ impl Database {
         self.order.enter(move || { life.send_reservation(epoch, id); let _ = crate::lock::effect(|| reserved.send(())); });
         let dropping: Arc<Mutex<Option<crate::runtime::Launch>>> = Arc::default();
         let release = ReleaseBarrier(dropping.clone());
+        let panic = LoadPanic { answer: answer.clone(), life: self.life.clone() };
         let task = crate::task::spawn_on(&handle, crate::runtime::counted(Some(launch), async move {
             let _release = release;
+            let _panic = panic;
             let sender = sender;
             let _ = sent.await;
             let this = this;

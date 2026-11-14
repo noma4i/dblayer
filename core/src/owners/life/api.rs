@@ -185,4 +185,7 @@ impl Life {
         self.wiring.to_lifecycle(LifecycleInput::Close { reply: waiter.id().raw() });
         waiter
     }
+
+    /// A task of the bridge that no owner started died: the database closes as for a dead executor of an owner.
+    pub fn executor_failed(&self, executor: &str) { self.wiring.to_lifecycle(LifecycleInput::ExecutorFailed { executor: executor.into() }); }
 }

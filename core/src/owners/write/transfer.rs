@@ -1031,6 +1031,7 @@ impl TransferState {
             TransferInput::PutStarted { transfer_id, attempt_id } => self.put_started(transfer_id, attempt_id, fx),
             TransferInput::PutProgress { transfer_id, attempt_id, sent } => self.put_progress(transfer_id, attempt_id, sent, fx),
             TransferInput::Prepared { transfer_id, attempt_id, outcome } => self.prepared(now, transfer_id, attempt_id, outcome, fx),
+            TransferInput::TaskFailed { id } => self.task_failed(now, id, fx),
             TransferInput::Online(Online(on)) => self.network_changed(now, Some(on), None, fx),
             TransferInput::PowerSaving(saving) => self.network_changed(now, None, Some(saving), fx),
             TransferInput::EpochStarted(started) => { self.epoch = started.epoch; },
@@ -1185,6 +1186,8 @@ impl StateOwner for Transfers {
     fn epoch_ended(epoch: Epoch, cause: Cause) -> TransferInput { TransferInput::EpochEnded(EpochEnded { epoch, cause }) }
 
     fn closing() -> TransferInput { TransferInput::Closing }
+
+    fn executor_failed(_executor: &str, pending: Vec<crate::runtime::EffectId>) -> Vec<TransferInput> { pending.into_iter().map(|id| TransferInput::TaskFailed { id }).collect() }
 }
 
 pub(super) fn upload_kind(kind: StoreKind) -> UploadKind {

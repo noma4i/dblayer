@@ -11,7 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::failure;
-use super::transfer::{file_id, prepared_file_id, staged_file_id, AbortFault, CachedBlob, StatusSink, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
+use super::transfer::{file_id, prepared_file_id, staged_file_id, task_id, AbortFault, CachedBlob, StatusSink, Source, Steps, TaskKind, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers, DETACHED_TASK};
 use super::wire::{Flights, Running, Wire};
 use crate::store::files::{CopiedSource, FileDirectories};
 use crate::owners::contract::{Drained, ReplyId};
@@ -184,6 +184,8 @@ pub(crate) struct TransferExecutor {
     cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>,
     doomed: Vec<String>,
     answers: Vec<(ReplyId, TransferAnswer)>,
+    /// The owner's way back, kept by the first effect: `finish_files` runs when the step is over, with no effect in hand.
+    back: Option<Back<Transfers>>,
 }
 
 /// Where the executor reports to.
@@ -198,7 +200,7 @@ pub struct TransferSinks {
 impl TransferExecutor {
     pub fn new(wire: Wire, codec: Arc<dyn StepCodec>, files: Arc<FileDirectories>, sinks: TransferSinks, cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>) -> Self {
         let TransferSinks { read_outcome, settle, status, drained, signal } = sinks;
-        Self { wire, codec, files, settle, read_outcome, status, drained, signal, copies: Flights::default(), steps: Flights::default(), prepares: Flights::default(), preparer: Arc::default(), cache, doomed: Vec::new(), answers: Vec::new() }
+        Self { wire, codec, files, settle, read_outcome, status, drained, signal, copies: Flights::default(), steps: Flights::default(), prepares: Flights::default(), preparer: Arc::default(), cache, doomed: Vec::new(), answers: Vec::new(), back: None }
     }
 
     pub fn with_preparer(mut self, preparer: Arc<std::sync::OnceLock<Arc<dyn crate::ffi::Preparer>>>) -> Self {
@@ -218,7 +220,7 @@ impl TransferExecutor {
     fn copy_into(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), source: Source, (staged, consume): (bool, Option<String>)) {
         let cancelled = Arc::new(AtomicBool::new(false));
         let (files, copies, back, flag, id, cache) = (self.files.clone(), self.copies.clone(), back.clone(), cancelled.clone(), if staged { staged_file_id(transfer_id) } else { file_id(transfer_id) }, self.cache.clone());
-        let running = self.wire.tasks.start_blocking(Box::new(move || {
+        let running = self.wire.tasks.start_blocking(back.watch(task_id(TaskKind::Copy, transfer_id)), Box::new(move || {
             let result = files.copy_source(&id, std::path::Path::new(&source.path));
             if let Some(consumed) = &consume { let _ = files.discard(std::slice::from_ref(consumed)); }
             let input = if flag.load(Ordering::SeqCst) {
@@ -255,7 +257,7 @@ impl TransferExecutor {
         };
         let (path, prepares, back, cancelled) = (self.copy_path(transfer_id), self.prepares.clone(), back.clone(), Arc::new(AtomicBool::new(false)));
         let flag = cancelled.clone();
-        let _ = self.wire.tasks.start(Box::pin(async move {
+        let _ = self.wire.tasks.start(back.watch(task_id(TaskKind::Probe, transfer_id)), Box::pin(async move {
             let outcome = preparer.probe(path, kind).await;
             prepares.done(&transfer_id);
             if !flag.load(Ordering::SeqCst) { back.reply(stamp, TransferInput::Probed { transfer_id, attempt_id, outcome }); }
@@ -275,7 +277,7 @@ impl TransferExecutor {
         let progress = { let back = back.clone(); Arc::new(crate::ffi::PrepareProgress::new(move |fraction| back.reply(stamp, TransferInput::PrepareProgress { transfer_id, attempt_id, percent: (fraction.clamp(0.0, 1.0) * 100.0).floor() as u32 }))) };
         let (files, prepares, back, cancelled) = (self.files.clone(), self.prepares.clone(), back.clone(), Arc::new(AtomicBool::new(false)));
         let flag = cancelled.clone();
-        let _ = self.wire.tasks.start(Box::pin(async move {
+        let _ = self.wire.tasks.start(back.watch(task_id(TaskKind::Prepare, transfer_id)), Box::pin(async move {
             let outcome = preparer.run(job, progress).await;
             prepares.done(&transfer_id);
             if flag.load(Ordering::SeqCst) { let _ = files.discard(&[prepared]); } else { back.reply(stamp, TransferInput::Prepared { transfer_id, attempt_id, outcome }); }
@@ -285,7 +287,7 @@ impl TransferExecutor {
 
     fn clear_prepare(&self, stamp: EpochStamp, back: &Back<Transfers>, transfer_id: TransferId, clear_id: u64) {
         let (files, back) = (self.files.clone(), back.clone());
-        let _ = self.wire.tasks.start_blocking(Box::new(move || {
+        let _ = self.wire.tasks.start_blocking(back.watch(DETACHED_TASK), Box::new(move || {
             let _ = files.discard(&[prepared_file_id(transfer_id), staged_file_id(transfer_id)]);
             back.reply(stamp, TransferInput::PrepareCleared { transfer_id, clear_id });
         }));
@@ -317,7 +319,7 @@ impl TransferExecutor {
         &self,
         stamp: EpochStamp,
         back: &Back<Transfers>,
-        transfer_id: TransferId,
+        (kind, transfer_id): (TaskKind, TransferId),
         no_link: TransferInput,
         call: impl FnOnce(Arc<dyn StepCodec>, Link) -> Call<T> + Send + 'static,
         into_input: impl FnOnce(Result<T, TransportError>) -> Option<TransferInput> + Send + 'static,
@@ -328,7 +330,7 @@ impl TransferExecutor {
         };
         let cancel = link.cancel.clone();
         let (codec, steps, back) = (self.codec.clone(), self.steps.clone(), back.clone());
-        let running = self.wire.tasks.start(Box::pin(async move {
+        let running = self.wire.tasks.start(back.watch(task_id(kind, transfer_id)), Box::pin(async move {
             let result = call(codec, link).await;
             steps.done(&transfer_id);
             if let Some(input) = into_input(result) { back.reply(stamp, input); }
@@ -347,7 +349,7 @@ impl TransferExecutor {
         self.task(
             stamp,
             back,
-            transfer_id,
+            (TaskKind::Step, transfer_id),
             TransferInput::StepError { transfer_id, attempt_id, temporary: true, error: failure::no_link() },
             move |codec, mut link| {
                 link.minted = Some(Arc::new(report));
@@ -368,7 +370,7 @@ impl TransferExecutor {
         self.task(
             stamp,
             back,
-            transfer_id,
+            (TaskKind::Complete, transfer_id),
             TransferInput::CompleteError { transfer_id, attempt_id, temporary: true, error: failure::no_link() },
             move |codec, mut link| {
                 link.seeded = seeded_response(seeded);
@@ -383,10 +385,10 @@ impl TransferExecutor {
     }
 
     /// The owner has no input for the end of an abort: the result is not reported.
-    fn drop_upload(&self, upload_id: String) {
+    fn drop_upload(&self, back: &Back<Transfers>, upload_id: String) {
         let Some(link) = self.link(EpochStamp::Control) else { return };
         let codec = self.codec.clone();
-        let _ = self.wire.tasks.start(Box::pin(async move {
+        let _ = self.wire.tasks.start(back.watch(DETACHED_TASK), Box::pin(async move {
             let _ = codec.discard_upload(&link, Some(&upload_id)).await;
         }));
     }
@@ -397,7 +399,7 @@ impl TransferExecutor {
             return;
         };
         let (codec, back) = (self.codec.clone(), back.clone());
-        let _ = self.wire.tasks.start(Box::pin(async move {
+        let _ = self.wire.tasks.start(back.watch(DETACHED_TASK), Box::pin(async move {
             let result = abort_result(&codec.discard_upload(&link, Some(&upload_id)).await);
             back.reply(stamp, TransferInput::AbortDone { upload_id, result });
         }));
@@ -413,7 +415,8 @@ impl TransferExecutor {
         }
         let files = self.files.clone();
         let replies = FileReplies { settle: self.settle.clone(), answers };
-        let _ = self.wire.tasks.start_blocking(Box::new(move || {
+        let Some(back) = self.back.as_ref() else { return };
+        let _ = self.wire.tasks.start_blocking(back.watch(DETACHED_TASK), Box::new(move || {
             for path in doomed {
                 let _ = files.discard(&[path]);
             }
@@ -448,6 +451,7 @@ impl EffectRunner<Transfers> for TransferExecutor {
     fn step_done(&mut self) { self.finish_files(); }
 
     fn run(&mut self, stamp: EpochStamp, effect: TransferEffect, back: &Back<Transfers>) {
+        self.back.get_or_insert_with(|| back.clone());
         match effect {
             TransferEffect::Copy { transfer_id, attempt_id, source, staged, .. } => self.copy(stamp, back, (transfer_id, attempt_id), source, staged),
             TransferEffect::PromoteStaged { transfer_id } => {
@@ -466,7 +470,7 @@ impl EffectRunner<Transfers> for TransferExecutor {
                 self.step(stamp, back, (transfer_id, attempt_id), StepAsk { cycle_id, operation, part, upload_id, source, steps, key, seeded });
             }
             TransferEffect::Complete { transfer_id, attempt_id, cycle_id, key, upload_id, parts, seeded, .. } => self.complete(stamp, back, (transfer_id, attempt_id, cycle_id), key, (upload_id, parts), seeded),
-            TransferEffect::Abort { upload_id, .. } => self.drop_upload(upload_id),
+            TransferEffect::Abort { upload_id, .. } => self.drop_upload(back, upload_id),
             TransferEffect::AbortOrphan { upload_id, .. } => self.abort_orphan(stamp, back, upload_id),
             TransferEffect::CancelStep { transfer_id } => self.steps.cancel(&transfer_id),
             TransferEffect::ReleaseStep { request_id } => (self.signal)(LifeSignal::ReleaseStep(request_id)),

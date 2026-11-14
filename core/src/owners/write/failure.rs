@@ -71,6 +71,9 @@ pub fn of_cause(kind: FailureKind) -> String {
     }
 }
 
+/// The task of an effect panicked: the effect failed for good.
+pub fn task_panicked(effect: &str) -> String { text(&OperationFailure::new(FailureKind::Rejected, format!("the {effect} task failed"))) }
+
 /// The step had no live connection to run on.
 pub fn no_link() -> String { text(&OperationFailure::new(FailureKind::Network, "the transfer has no connection")) }
 

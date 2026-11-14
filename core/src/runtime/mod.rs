@@ -44,7 +44,7 @@ pub use explore::{explore, Limits, Report, Violation};
 #[cfg(test)]
 pub use tests::property_tests::{Exhaustive, Manifest, Property};
 pub use outcomes::{Outcome, OutcomeId, Outcomes, Waiter};
-pub use owner::{Address, Back, Cause, Control, Effect, Effects, Epoch, Message, Outbound, StateOwner, ScheduleId, EpochStamp, Time, EffectId};
+pub use owner::{Address, Back, Cause, Control, Effect, Effects, Epoch, Message, Outbound, StateOwner, ScheduleId, EpochStamp, Time, EffectId, FailureWatch};
 #[cfg(test)]
 pub use owner::Typed;
 #[cfg(test)]

@@ -365,4 +365,8 @@ impl StateOwner for Calls {
     fn epoch_ended(_epoch: Epoch, cause: Cause) -> CallsInput { CallsInput::EpochEnded(cause) }
 
     fn closing() -> CallsInput { CallsInput::Closing }
+
+    fn executor_failed(_executor: &str, pending: Vec<crate::runtime::EffectId>) -> Vec<CallsInput> {
+        pending.into_iter().map(|call_id| CallsInput::TransportError { call_id, error: CallError::Failed(crate::ffi::DbError::Runtime { detail: "the call task failed".into() }) }).collect()
+    }
 }

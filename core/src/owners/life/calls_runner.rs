@@ -93,6 +93,7 @@ impl CallsRunner {
         #[cfg(test)]
         let flight = crate::owners::read::InFlight::start(&self.wiring.flights);
         let task = crate::task::spawn_on(&self.executor, crate::runtime::counted(Some(launch), async move {
+            let _watch = back.watch(call_id);
             #[cfg(test)]
             let _flight = flight;
             let variables: Value = serde_json::from_str(&variables).unwrap_or(Value::Null);
@@ -127,6 +128,7 @@ impl CallsRunner {
         let waiter = self.wiring.calls_answers.register_as(request_id, epoch);
         let back = back.clone();
         let task = crate::task::spawn_on(&self.executor, crate::runtime::counted(None, async move {
+            let _watch = back.watch(call_id);
             if let crate::runtime::Outcome::Value(outcome) = waiter.wait().await { back.reply(EpochStamp::Control, answer_input(call_id, &root, outcome)); }
         }));
         self.track(request_id, task.abort_handle());

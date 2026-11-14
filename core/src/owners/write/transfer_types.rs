@@ -9,7 +9,7 @@ use super::rounds::Rounds;
 use crate::store::files::Location;
 use crate::owners::contract::{BatchId, Committed, Drained, EpochEnded, EpochStarted, Online, Rejected, ReplyId};
 use crate::owners::store::{StoreWriter, UploadRow};
-use crate::runtime::{Address, Effect, Effects, Epoch, Time};
+use crate::runtime::{Address, Effect, EffectId, Effects, Epoch, Time};
 use crate::transport::NetworkPurpose;
 
 /// The reply id of the final mutation Transfer hands to Outbox: Transfer waits for `MutationOutcome`, not for a reply.
@@ -43,6 +43,35 @@ pub fn staged_file_id(transfer_id: TransferId) -> String { format!("{}.staged", 
 
 /// The file the platform writes the result of the prepare step to: the measure step reads it, then it goes.
 pub fn prepared_file_id(transfer_id: TransferId) -> String { format!("{}.prepared", file_id(transfer_id)) }
+
+/// The task of an effect of a transfer: its panic is the failure of the effect of the kind, for the transfer in the low bits of the id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskKind {
+    Copy = 1,
+    Probe,
+    Prepare,
+    Step,
+    Complete,
+}
+
+/// The id of the task of an effect with no answer to wait for (clear, discard, abort of a debt, delete of files): its panic closes the database and nothing else.
+pub const DETACHED_TASK: EffectId = 0;
+
+const TASK_ID_BITS: u32 = 56;
+
+pub fn task_id(kind: TaskKind, transfer_id: TransferId) -> EffectId { (kind as u64) << TASK_ID_BITS | (transfer_id & ((1 << TASK_ID_BITS) - 1)) }
+
+pub(super) fn task_of(id: EffectId) -> Option<(TaskKind, TransferId)> {
+    let kind = match id >> TASK_ID_BITS {
+        1 => TaskKind::Copy,
+        2 => TaskKind::Probe,
+        3 => TaskKind::Prepare,
+        4 => TaskKind::Step,
+        5 => TaskKind::Complete,
+        _ => return None,
+    };
+    Some((kind, id & ((1 << TASK_ID_BITS) - 1)))
+}
 
 /// The request the codec of the executor builds the steps of a file from.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -334,6 +363,8 @@ pub enum TransferInput {
     PrepareProgress { transfer_id: TransferId, attempt_id: AttemptId, percent: u32 },
     PutProgress { transfer_id: TransferId, attempt_id: AttemptId, sent: u64 },
     Prepared { transfer_id: TransferId, attempt_id: AttemptId, outcome: crate::ffi::PrepareOutcome },
+    /// The task of the effect `id` panicked.
+    TaskFailed { id: EffectId },
     Online(Online),
     PowerSaving(bool),
     EpochStarted(EpochStarted),

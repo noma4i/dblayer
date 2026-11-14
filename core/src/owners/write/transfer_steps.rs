@@ -252,6 +252,19 @@ impl TransferState {
         self.start_in_order(now, fx);
     }
 
+    /// The task of an effect panicked: the transfer takes it as the permanent failure of that effect of its current attempt (rows `CopyFailed`, `Probed(Err)`, `Prepared(Failed)`, `StepError`, `CompleteError`).
+    pub(super) fn task_failed(&mut self, now: crate::runtime::Time, id: crate::runtime::EffectId, fx: &mut Fx) {
+        let Some((kind, transfer_id)) = super::transfer_types::task_of(id) else { return };
+        let Some(attempt_id) = self.transfers.get(&transfer_id).map(|transfer| transfer.attempt_id) else { return };
+        match kind {
+            super::transfer_types::TaskKind::Copy => self.copy_failed(now, transfer_id, attempt_id, "the copy task failed".into(), fx),
+            super::transfer_types::TaskKind::Probe => self.probed(now, transfer_id, attempt_id, crate::ffi::ProbeOutcome::Failed { message: "the probe task failed".into() }, fx),
+            super::transfer_types::TaskKind::Prepare => self.prepared(now, transfer_id, attempt_id, crate::ffi::PrepareOutcome::Failed { message: "the prepare task failed".into() }, fx),
+            super::transfer_types::TaskKind::Step => self.step_error(now, transfer_id, attempt_id, (false, super::failure::task_panicked("step")), fx),
+            super::transfer_types::TaskKind::Complete => self.complete_error(now, transfer_id, attempt_id, (false, super::failure::task_panicked("complete")), fx),
+        }
+    }
+
     pub(super) fn tick(&mut self, now: crate::runtime::Time, kind: TransferTick, fx: &mut Fx) {
         match kind {
             TransferTick::Expire => self.expire(now, fx),

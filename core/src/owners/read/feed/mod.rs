@@ -559,4 +559,6 @@ impl StateOwner for Feed {
     fn epoch_ended(epoch: Epoch, cause: Cause) -> FeedInput { FeedInput::EpochEnded(EpochEnded { epoch, cause }) }
 
     fn closing() -> FeedInput { FeedInput::Closing }
+
+    fn executor_failed(_executor: &str, pending: Vec<crate::runtime::EffectId>) -> Vec<FeedInput> { pending.into_iter().map(|connection_id| FeedInput::Dropped { connection_id }).collect() }
 }

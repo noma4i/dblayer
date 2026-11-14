@@ -84,7 +84,7 @@ impl FeedIo {
         let (lines, codec, back, gate) = (self.lines.clone(), self.codec.clone(), back.clone(), self.gate.clone());
         let epoch = match stamp { EpochStamp::Epoch(epoch) => Some(epoch), EpochStamp::Control => None };
         let token = cancel.clone();
-        let report = back.clone();
+        let (report, watch) = (back.clone(), back.watch(connection));
         let reply = move |input: FeedInput| {
             if !token.is_cancelled() {
                 back.reply(stamp, input);
@@ -92,6 +92,7 @@ impl FeedIo {
         };
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         spawn_on(&self.handle, crate::runtime::counted(launch, async move {
+            let _watch = watch;
             let ended = cancel.clone();
             Self::run((lines, codec), (gate, epoch), connection, (cancel, closing), queued, (reply, move |event| report.reply(stamp, FeedInput::CableClosed(event))), reason).await;
             ended.cancel();

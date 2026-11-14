@@ -8,12 +8,14 @@ use std::sync::Arc;
 
 pub type Task = Pin<Box<dyn Future<Output = ()> + Send>>;
 
-pub use crate::runtime::{Flights, Running};
+pub use crate::runtime::{FailureWatch, Flights, Running};
+use super::transfer::Transfers;
 
 pub trait Tasks: Send + Sync {
-    fn start(&self, task: Task) -> Running;
+    /// The task holds `watch` for its whole life: a panic of the task is the failure of its effect.
+    fn start(&self, watch: FailureWatch<Transfers>, task: Task) -> Running;
     /// Blocking IO (file copy) off the owner thread.
-    fn start_blocking(&self, job: Box<dyn FnOnce() + Send>) -> Running;
+    fn start_blocking(&self, watch: FailureWatch<Transfers>, job: Box<dyn FnOnce() + Send>) -> Running;
 }
 
 /// Production tasks: a tokio runtime, through `crate::task`.
@@ -21,16 +23,20 @@ pub trait Tasks: Send + Sync {
 pub struct TokioTasks(pub tokio::runtime::Handle, pub Option<crate::runtime::Handle>);
 
 impl Tasks for TokioTasks {
-    fn start(&self, task: Task) -> Running {
+    fn start(&self, watch: FailureWatch<Transfers>, task: Task) -> Running {
         let launch = self.1.as_ref().map(crate::runtime::Handle::launch);
-        let handle = crate::task::spawn_on(&self.0, crate::runtime::counted(launch, task));
+        let handle = crate::task::spawn_on(&self.0, crate::runtime::counted(launch, async move {
+            let _watch = watch;
+            task.await;
+        }));
         Running::new(move || crate::lock::effect(|| handle.abort()))
     }
 
-    fn start_blocking(&self, job: Box<dyn FnOnce() + Send>) -> Running {
+    fn start_blocking(&self, watch: FailureWatch<Transfers>, job: Box<dyn FnOnce() + Send>) -> Running {
         let launch = self.1.as_ref().map(crate::runtime::Handle::launch);
         let handle = crate::task::spawn_blocking_on(&self.0, launch, move || {
-            job()
+            let _watch = watch;
+            job();
         });
         Running::new(move || crate::lock::effect(|| handle.abort()))
     }
