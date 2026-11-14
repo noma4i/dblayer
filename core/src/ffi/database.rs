@@ -343,14 +343,14 @@ impl Database {
         this_db.admit_now(epoch)?;
         this_db.wire(&model)?;
         let row_id = id(&row_id)?;
-        let found = this_db.read_in_epoch(epoch, "peek row", move |this| this.read_wire_row(&model, &row_id)).await?;
+        let found = this_db.read_in_epoch(epoch, move |this| this.read_wire_row(&model, &row_id)).await?;
         this_db.admit_now(epoch)?;
         Ok(found)
     }).await? }
     pub async fn edge_values(&self, epoch: u64, model: String, relation: Option<String>, params_json: String, row_ids: Vec<String>) -> Result<Vec<EdgeRow>, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
         let relation = super::loading::relation_named(&model, relation)?;
-        this_db.read_in_epoch(epoch, "edge values", move |database| {
+        this_db.read_in_epoch(epoch, move |database| {
             let params = parse_json(&params_json)?;
             Ok(database.db.edge_values(&model, &relation, &params, &row_ids)?.into_iter().map(|(id, values)| EdgeRow {
                 id,
@@ -380,11 +380,11 @@ impl Database {
     }).await? }
     pub async fn file(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<super::wire::WireFile>, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         let row_id = this_db.file_row(epoch, &model, &row_id, &field, false).await?;
-        this_db.read_in_epoch(epoch, "file", move |database| Ok(database.db.file(&model, &row_id, &field)?.map(Into::into))).await
+        this_db.read_in_epoch(epoch, move |database| Ok(database.db.file(&model, &row_id, &field)?.map(Into::into))).await
     }).await? }
     pub async fn url(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         let row_id = this_db.file_row(epoch, &model, &row_id, &field, false).await?;
-        this_db.read_in_epoch(epoch, "file url", move |database| Ok(database.db.url(&model, &row_id, &field)?.map(|path| path.to_string_lossy().into_owned()))).await
+        this_db.read_in_epoch(epoch, move |database| Ok(database.db.url(&model, &row_id, &field)?.map(|path| path.to_string_lossy().into_owned()))).await
     }).await? }
     pub async fn register_operations(&self, defs_json: String) -> Result<(), DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move { this_db.declare(defs_json, true).await }).await? }
 

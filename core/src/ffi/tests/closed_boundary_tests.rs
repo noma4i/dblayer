@@ -59,7 +59,7 @@ async fn call_refusal_order_table() {
 async fn boundary_resolved_error_survives_epoch_end() {
     let (database, _transport) = with_transport(Arc::new(ManualClock::new(std::time::Duration::from_secs(1)))).await;
     let epoch = database.session_epoch();
-    let resolved = database.in_epoch::<()>(epoch, "test", async {
+    let resolved = database.in_epoch::<()>(epoch, async {
         database.session_reset().await.unwrap();
         Err(DbError::Storage { detail: "disk full".into() })
     }).await;

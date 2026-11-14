@@ -99,7 +99,7 @@ impl Database {
         let row = self.resolved(epoch, model, id(row)?).await?;
         if required {
             let (model, row) = (model.to_string(), row.clone());
-            self.read_in_epoch(epoch, "file target", move |database| row_present(database, &model, &row)).await?;
+            self.read_in_epoch(epoch, move |database| row_present(database, &model, &row)).await?;
         }
         Ok(row)
     }

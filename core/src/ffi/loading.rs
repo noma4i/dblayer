@@ -184,13 +184,13 @@ impl Database {
         let id = this_db.resolved(epoch, &model, id).await?;
         let wire = this_db.wire(&model)?.clone();
         if id.is_temp() {
-            let row = this_db.read_in_epoch(epoch, "node", move |database| Ok(database.db.find(&model, &id)?)).await?;
+            let row = this_db.read_in_epoch(epoch, move |database| Ok(database.db.find(&model, &id)?)).await?;
             return Ok(row.map(|row| wire.row(&row)));
         }
         let params = Map::from_iter([(NODE_PARAM.to_string(), json!(id.as_str()))]);
         let Some(call) = this_db.start_load(epoch, &model, &relation, &Value::Object(params.clone()).to_string(), (Goal::First, force), force.then_some("node")).await? else { return Ok(None) };
         this_db.finish_load(call).await?;
-        let row = this_db.read_in_epoch(epoch, "node", move |database| Ok(if database.db.window_member(&model, &relation, &params, id.as_str())? { database.db.find(&model, &id)? } else { None })).await?;
+        let row = this_db.read_in_epoch(epoch, move |database| Ok(if database.db.window_member(&model, &relation, &params, id.as_str())? { database.db.find(&model, &id)? } else { None })).await?;
         Ok(row.map(|row| wire.row(&row)))
     }).await? }
 
@@ -210,7 +210,7 @@ impl Database {
         let name = key.name.clone();
         let call = this_db.start_window(epoch, this_db.reserve_load(epoch), key, (Goal::First, true), None)?;
         this_db.finish_load(call).await?;
-        let rows = this_db.read_in_epoch(epoch, "nodes", move |database| {
+        let rows = this_db.read_in_epoch(epoch, move |database| {
             let mut rows = Vec::with_capacity(ids.len());
             for id in database.db.nodes_answered(&model, &name, &ids)? {
                 rows.extend(database.db.find(&model, &id)?);
