@@ -6,7 +6,6 @@ gen/src/build/mod.rs	stale_time: scope.freshness.as_ref().map_or(DEFAULT_FRESHNE
 gen/src/check/enums.rs	errors.push(at(node.file, site_pos(node, site).unwrap_or(node.pos), message));	M55
 gen/src/check/scope.rs	report(scope.paginate.as_ref().map_or(scope.pos, |paginate| paginate.pos), format!("scope `{name}`: `paginate` and `response shape: :list` cannot be used together"));	M55
 gen/src/decl/lower/fields.rs	decl.block = AttributeBlock::Fields(children.iter().filter_map(|child| attribute(cx, child, nested_site, owner)).collect());	M55
-gen/src/decl/lower/fields.rs	decl.optional = line.opt(cx, "optional").and_then(|pair| boolean(cx, &pair.value, "`optional`")).unwrap_or(false);	M48
 gen/src/decl/lower/fields.rs	let fields = child.block.as_ref().map(|block| block.iter().filter_map(|inner| attribute(cx, inner, Site::Nested, &Owner(owner.0.as_ref().map(|_| type_name.clone())))).collect());	M55
 gen/src/decl/lower/fields.rs	let fields: Vec<AttributeDecl> = block.iter().filter_map(|inner| attribute(cx, inner, Site::Nested, owner)).collect();	M55
 gen/src/decl/lower/fields.rs	let local = line.opt(cx, "local").and_then(|pair| boolean(cx, &pair.value, "`local`")).unwrap_or(false);	M48

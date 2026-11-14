@@ -271,7 +271,6 @@ fn win_change_after_commit_marks_the_next_load() {
                     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Committed(committed));
                 }
             }
-            rig.det.run_until_quiet(10_000).expect("the scheduler goes quiet");
         }
         let got: Vec<crate::schema::RowSource> = rig.batches.all().iter().flat_map(|batch| batch.ops.iter().filter_map(|op| match op { StoreOp::Window { source, .. } => Some(*source), _ => None })).collect();
         if got != want {

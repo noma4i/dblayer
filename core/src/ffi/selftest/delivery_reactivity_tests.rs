@@ -21,7 +21,7 @@ impl FeedTransport {
     #[track_caller]
     pub(super) fn subscribed(&self) -> impl std::future::Future<Output = ()> {
         let (opened, cable) = (self.opened.clone(), self.cable.clone());
-        let waiting = tokio::spawn(bound(async move { opened.notified().await }));
+        let waiting = tokio::spawn(async move { bound(opened.notified()).await });
         async move {
             if let Err(failure) = waiting.await {
                 let message = failure.try_into_panic().ok().and_then(|payload| payload.downcast_ref::<String>().cloned()).unwrap_or_default();
