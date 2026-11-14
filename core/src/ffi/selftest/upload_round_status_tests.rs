@@ -43,6 +43,7 @@ async fn a_refused_round_shows_its_reason_on_the_upload_until_the_next_round_is_
     settled(&database, "the row shows the refusal", || refusal(&rows).is_some_and(|message| message.contains("while the app was not visible"))).await;
     let sink = crate::ffi::OnlineSink::of_life(&database.life);
     let registration = sink.register_foreground();
+    sink.enter_background(registration);
     sink.enter_foreground(registration);
     settled(&database, "the next round clears the refusal", || refusal(&rows).is_none()).await;
     let rounds = jobs.rounds.lock().unwrap().clone();
@@ -116,6 +117,7 @@ async fn round_old_epoch_after_reopen_cannot_refuse_restored_upload() {
     settled(&reopened, "the current job refusal reaches the same upload", || refusal(&rows).is_some()).await;
     let sink = crate::ffi::OnlineSink::of_life(&reopened.life);
     let registration = sink.register_foreground();
+    sink.enter_background(registration);
     sink.enter_foreground(registration);
     settled(&reopened, "a new job is scheduled", || jobs.asked.lock().unwrap().len() == 2).await;
     let current_request = jobs.asked.lock().unwrap()[1].0;
@@ -123,10 +125,12 @@ async fn round_old_epoch_after_reopen_cannot_refuse_restored_upload() {
     reopened.round_started(current_request, current_round, new_epoch);
     bound(crate::ffi::settled(&reopened)).await.unwrap();
     reopened.round_ended(current_round, old_epoch);
+    sink.enter_background(registration);
     sink.enter_foreground(registration);
     bound(crate::ffi::settled(&reopened)).await.unwrap();
     assert_eq!(jobs.asked.lock().unwrap().len(), 2, "the old epoch must not stop the current round");
     reopened.round_ended(current_round, new_epoch);
+    sink.enter_background(registration);
     sink.enter_foreground(registration);
     settled(&reopened, "the current epoch can end the job", || jobs.asked.lock().unwrap().len() == 3).await;
     bound(reopened.close_database()).await.unwrap();

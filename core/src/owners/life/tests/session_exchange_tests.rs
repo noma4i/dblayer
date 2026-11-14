@@ -534,6 +534,7 @@ async fn a_locked_secret_waits_for_the_foreground_and_a_foreign_secret_ends_the_
     assert!(!waiting.is_finished(), "a locked store gives the author no answer");
     assert_eq!(world.server.seen().len(), sent, "and no request leaves the device");
     slot.fail_get.store(false, std::sync::atomic::Ordering::SeqCst);
+    drop(life.background());
     drop(life.foreground());
     let reply = crate::test_wait::within(waiting).await.unwrap();
     assert!(matches!(reply, LifeReply::Mutated(AuthorOutcome::Response { .. })), "{reply:?}");

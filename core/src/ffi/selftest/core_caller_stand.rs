@@ -35,6 +35,7 @@ impl Hold {
                 gate.wait_blocking("release the owner Network");
             }
         });
+        drop(database.life.background());
         drop(database.life.foreground());
         readers.wait("both readers of the pool are held").await;
         writer.wait("the writer holds its lock").await;

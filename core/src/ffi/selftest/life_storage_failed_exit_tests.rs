@@ -26,6 +26,7 @@ async fn life_storage_failed_exits_on_foreground_and_not_on_online() {
     assert!(matches!(online, Err(DbError::Storage { .. })), "the disk still refuses: {online:?}");
 
     database.db.lock().connection.execute_batch("DROP TRIGGER refuse_publication").unwrap();
+    let _background = database.life.background();
     let _foreground = database.life.foreground();
     bound(crate::ffi::settled(database)).await.unwrap();
     refused().await.unwrap();

@@ -212,3 +212,12 @@ fn win_marked_load_keeps_its_mark_until_it_lands() {
     }
     assert!(wrong.is_empty(), "{} wrong cases:\n{}", wrong.len(), wrong.join("\n"));
 }
+
+#[test]
+fn a_commit_of_an_unrelated_model_steps_no_window() {
+    let mut state = state();
+    let _ = load(&mut state);
+    let before = state.window_steps();
+    let _ = Windows::step(&mut state, WindowsInput::StoreCommitted { models: vec!["Other".into()], revision: 9 }, crate::runtime::Time(0));
+    assert_eq!(state.window_steps(), before);
+}

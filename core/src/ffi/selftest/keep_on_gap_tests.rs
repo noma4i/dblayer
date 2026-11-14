@@ -136,6 +136,9 @@ async fn net_background_return_loads_each_window_once() {
 
     let sink = crate::ffi::OnlineSink::of_life(&database.life);
     let registration = sink.register_foreground();
+    sink.enter_foreground(registration);
+    settled(&database, "the foreground without a background reached the owners", || true).await;
+    assert_eq!((requests(&world, "PRIMARY") - before.0, requests(&world, "SECONDARY") - before.1), (0, 0), "a foreground without a prior background sends no request");
     sink.enter_background(registration);
     settled(&database, "the background reached the owners", || true).await;
     sink.enter_foreground(registration);

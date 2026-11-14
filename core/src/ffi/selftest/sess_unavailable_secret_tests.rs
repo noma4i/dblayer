@@ -51,6 +51,7 @@ async fn sess_unavailable_write_waits_for_the_secret() {
     let waiting = queue().await;
     assert_eq!((waiting.len(), waiting.iter().all(|item| item.status != OperationQueueStatus::Failed && item.error.is_none()), stand.script.count("CreateMoment")), (1, true, 0), "the write waits without an error: {waiting:?}");
     locked.down.store(false, Ordering::SeqCst);
+    let _background = database.life.background();
     let _foreground = database.life.foreground();
     advancing(&clock, crate::test_wait::settled(&database, "the write landed", || database.peek_row_now(epoch, "Moment".into(), "m77".into()).unwrap().is_some())).await;
     assert_eq!(stand.script.count("CreateMoment"), 1, "the write went once");

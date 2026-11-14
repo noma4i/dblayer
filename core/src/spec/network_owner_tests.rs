@@ -69,8 +69,19 @@ fn net_open_before_first_value() {
 #[test]
 fn net_foreground_numbers_every_call() {
     let mut twin = Twin::new();
+    assert!(twin.feed(foreground()).is_empty(), "the owner opens in the foreground");
+    twin.feed(NetworkInput::Background { reply: 1 });
     assert_eq!(twin.feed(foreground()), vec![NetworkEffect::Foreground { seq: 1, online_seq: 0 }]);
+    twin.feed(NetworkInput::Background { reply: 1 });
     assert_eq!(twin.feed(foreground()), vec![NetworkEffect::Foreground { seq: 2, online_seq: 0 }]);
+}
+
+#[test]
+fn net_foreground_while_foreground_changes_nothing() {
+    let mut twin = Twin::new();
+    assert!(twin.feed(foreground()).is_empty(), "no broadcast while already foreground");
+    twin.feed(NetworkInput::Background { reply: 1 });
+    assert_eq!(twin.feed(foreground()), vec![NetworkEffect::Foreground { seq: 1, online_seq: 0 }], "the ignored input did not move the seq");
 }
 
 #[test]

@@ -373,9 +373,11 @@ async fn network_events_reach_the_listeners_with_the_snapshot_of_the_epoch() {
         let heard = heard.clone();
         life.on_network(owner, move |event| heard.lock().unwrap().push((owner, event)));
     }
+    assert_eq!(answer(life.background()).await, Reply::Online { closed: false });
     assert_eq!(answer(life.foreground()).await, Reply::Online { closed: false });
     assert_eq!(answer(life.set_power_saving(true)).await, Reply::Online { closed: false });
     assert_eq!(answer(life.set_power_saving(true)).await, Reply::Online { closed: false });
+    assert_eq!(answer(life.background()).await, Reply::Online { closed: false });
     assert_eq!(answer(life.foreground()).await, Reply::Online { closed: false });
     assert_eq!(
         *heard.lock().unwrap(),

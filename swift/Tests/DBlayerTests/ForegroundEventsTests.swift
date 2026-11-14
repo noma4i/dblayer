@@ -22,7 +22,7 @@ private final class FakeOs: PlatformObserver, @unchecked Sendable {
   func start(sink: OnlineSink) {
     sink.setOnline(online: true)
     let registration = sink.registerForeground()
-    let stop = ForegroundEvents.observe(name: name, active: { false }) { sink.enterForeground(token: registration) }
+    let stop = ForegroundEvents.observe(name: name, inBackground: { true }, { sink.enterForeground(token: registration) }, background: { sink.enterBackground(token: registration) })
     lock.withLock { held = (sink, registration); stopObserving = stop }
   }
 
@@ -79,7 +79,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func anActiveAppDeliversForegroundAtRegistration() async {
     let (events, continuation) = AsyncStream<Void>.makeStream()
-    let stop = ForegroundEvents.observe(name: Notification.Name("DBlayerTestRegistration"), active: { true }) { continuation.yield() }
+    let stop = ForegroundEvents.observe(name: Notification.Name("DBlayerTestRegistration"), inBackground: { false }) { continuation.yield() }
     #expect(await Cursor(events).next("foreground at registration") != nil)
     stop()
   }
@@ -88,10 +88,23 @@ extension BridgeProbeTests {
   func aMoveToTheBackgroundIsDelivered() async {
     let (events, continuation) = AsyncStream<Void>.makeStream()
     let name = Notification.Name("DBlayerTestBackground")
-    let stop = ForegroundEvents.observe(name: Notification.Name("DBlayerTestBackgroundForeground"), active: { false }, backgroundName: name, {}, background: { continuation.yield() })
+    let stop = ForegroundEvents.observe(name: Notification.Name("DBlayerTestBackgroundForeground"), inBackground: { false }, backgroundName: name, {}, background: { continuation.yield() })
     NotificationCenter.default.post(name: name, object: nil)
     #expect(await Cursor(events).next("background delivery") != nil)
     stop()
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func registrationReportsTheStateOfTheOsWithOneInput() async {
+    for active in [true, false] {
+      let delivered = Delivered()
+      let backgrounded = Delivered()
+      let stop = ForegroundEvents.observe(name: Notification.Name("DBlayerTestReport\(active)"), inBackground: { !active }, backgroundName: nil, { delivered.add() }, background: { backgrounded.add() })
+      await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+      #expect((delivered.count, backgrounded.count) == (active ? 1 : 0, active ? 0 : 1), "active \(active): (deliver, background)")
+      stop()
+    }
   }
 
   /// boundary_observer_stop_orders (P-BND-09): a first call queued on the main queue and stopped before it ran never delivers.
@@ -99,7 +112,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aStopBeforeTheQueuedFirstCallDropsIt() async {
     let delivered = Delivered()
-    let stop = ForegroundEvents.observe(name: Notification.Name("DBlayerTestStop"), active: { true }) { delivered.add() }
+    let stop = ForegroundEvents.observe(name: Notification.Name("DBlayerTestStop"), inBackground: { false }) { delivered.add() }
     stop()
     await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
     #expect(delivered.count == 0)

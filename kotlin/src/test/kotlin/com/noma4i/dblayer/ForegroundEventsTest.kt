@@ -34,7 +34,7 @@ class ForegroundEventsTest {
             this.sink = sink
             sink.setOnline(true)
             registration = sink.registerForeground()
-            stopObserving = ForegroundEvents.observe(owner.lifecycle, post = { queue.put(it) }) { sink.enterForeground(registration) }
+            stopObserving = ForegroundEvents.observe(owner.lifecycle, post = { queue.put(it) }, background = { sink.enterBackground(registration) }) { sink.enterForeground(registration) }
         }
 
         override fun stop() = stopObserving()
@@ -101,6 +101,22 @@ class ForegroundEventsTest {
         owner.lifecycle.currentState = Lifecycle.State.CREATED
         assertEquals(1, backgrounds.get())
         stop()
+    }
+
+    @Test
+    fun registrationReportsTheStateOfTheOsWithOneInput() {
+        for (started in listOf(true, false)) {
+            val registered = object : LifecycleOwner {
+                override val lifecycle: LifecycleRegistry = LifecycleRegistry.createUnsafe(this)
+            }
+            val lifecycle = registered.lifecycle
+            lifecycle.currentState = if (started) Lifecycle.State.STARTED else Lifecycle.State.CREATED
+            val delivered = java.util.concurrent.atomic.AtomicInteger()
+            val backgrounds = java.util.concurrent.atomic.AtomicInteger()
+            val stop = ForegroundEvents.observe(lifecycle, post = { it() }, background = { backgrounds.incrementAndGet() }) { delivered.incrementAndGet() }
+            assertEquals("started $started: (deliver, background)", if (started) 1 to 0 else 0 to 1, delivered.get() to backgrounds.get())
+            stop()
+        }
     }
 
     /** boundary_observer_stop_orders (P-BND-09, D-177): a registration queued on the main thread and stopped before it ran never delivers, and the stop needs no main thread. */
