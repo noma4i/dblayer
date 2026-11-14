@@ -20,7 +20,10 @@ impl Events {
         let token = tokio::sync::watch::channel(None).0;
         let seen = token.clone();
         let peer = CablePeer::observed(crate::transport::encrypted::tests::protocol_tests::config(), move |event| {
-            if let PeerEvent::Subscribed(subscribed) = event { crate::lock::effect(|| seen.send_replace(Some(subscribed))); }
+            match event {
+                PeerEvent::Subscribed(subscribed) => crate::lock::effect(|| { seen.send_replace(Some(subscribed)); }),
+                PeerEvent::Closed(closed) => crate::lock::effect(|| { seen.send_if_modified(|token| { let live = token.as_deref() == Some(closed.as_str()); if live { *token = None; } live }); }),
+            }
         });
         Events { peer, token, streams: tokio::sync::Mutex::new(BTreeMap::new()) }
     }
@@ -51,6 +54,13 @@ impl Rig {
     pub(super) async fn land_unsettled(&self, model: &str, row: Value) -> ReadValue { self.frame(model, row).await }
 
     pub(super) async fn land_removed(&self, model: &str, id: &str) { self.land(model, json!({"id": id, "deleted": true})).await; }
+
+    /// After a lost connection the cable resubscribes by itself when an event stream is open: the caller waits for that socket.
+    pub(super) async fn await_subscribed(&self) {
+        let events = &self.switch.events;
+        if events.streams.lock().await.is_empty() { return; }
+        bound(events.token.subscribe().wait_for(|token| token.is_some())).await.unwrap();
+    }
 
     async fn frame(&self, model: &str, row: Value) -> ReadValue {
         let (stream, reader) = self.event_stream(model).await;

@@ -57,6 +57,7 @@ impl PlatformSocket for PeerLink {
     }
 
     fn close(&self, _: u16, _: String) {
+        if let Some(connection) = self.peer.connection(&self.token) { *connection.subscription.lock().unwrap() = None; }
         self.peer.observe(PeerEvent::Closed(self.token.clone()));
     }
 

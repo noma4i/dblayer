@@ -315,6 +315,7 @@ impl Run {
                 self.rig.database.set_online(false).await.unwrap();
                 self.rig.settle().await;
                 self.rig.database.set_online(true).await.unwrap();
+                self.rig.await_subscribed().await;
                 ("the connection is lost and comes back".into(), false)
             }
             other => unreachable!("{other}"),
