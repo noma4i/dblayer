@@ -32,12 +32,12 @@ steps=(
   "swift|ios-slices|600|swift/|$slot bash-step bash scripts/build_ios.sh --check"
   "swift|swift-test|300|swift/|$slot swift-step swift test --package-path swift --no-parallel --enable-code-coverage -Xswiftc -Xllvm -Xswiftc -instrprof-atomic-counter-update-all"
   "swift|ios-sim-compile|600|swift/|cd swift && $slot xcodebuild-step xcodebuild build -scheme DBlayer -destination 'generic/platform=iOS Simulator' ARCHS=arm64 -derivedDataPath ../target/dd-swift.noindex -quiet"
+  "swift|ios-device-check|600|-|bash scripts/native_source_hash.sh --fresh target/ios-device-check.SOURCE_HASH ios-device-check aarch64-apple-ios || { PATH=/opt/homebrew/opt/rustup/bin:\$PATH $slot ios-check cargo check --manifest-path core/Cargo.toml --target aarch64-apple-ios && bash scripts/native_source_hash.sh ios-device-check aarch64-apple-ios > target/ios-device-check.SOURCE_HASH; }"
+  "kotlin|android-abis|900|-|$slot bash-step bash scripts/build_kotlin.sh --release && bash scripts/check_android_artifacts.sh --release"
   "kotlin|kotlin-bindings|600|kotlin/|$slot bash-step bash scripts/build_kotlin.sh --host"
   "kotlin|gradle-r8|300|kotlin/|$slot gradle-step $gradle -p kotlin/r8-check probe --console=plain --no-watch-fs -Dorg.gradle.jvmargs=\"-Xmx1g -XX:MaxMetaspaceSize=768m\" -Pkotlin.compiler.execution.strategy=in-process"
   "kotlin|gradle-test|300|kotlin/ gen/ fixtures/|$slot gradle-step $gradle -p kotlin testDebugUnitTest :fixture-models-check:compileDebugKotlin --rerun createDebugUnitTestCoverageReport --console=plain --no-watch-fs -Dorg.gradle.daemon.idletimeout=600000 -Dorg.gradle.jvmargs=\"-Xmx1g -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError -XX:ErrorFile=/tmp/check-owner-\$CHECK_OWNER_ID-%p.log\" -Pkotlin.compiler.execution.strategy=in-process"
   "final|coverage|120|-|bash scripts/check_coverage.sh"
-  "ship|android-abis|900|-|$slot bash-step bash scripts/build_kotlin.sh --release && bash scripts/check_android_artifacts.sh --release"
-  "ship|ios-device-check|600|-|bash scripts/native_source_hash.sh --fresh target/ios-device-check.SOURCE_HASH ios-device-check aarch64-apple-ios || { PATH=/opt/homebrew/opt/rustup/bin:\$PATH $slot ios-check cargo check --manifest-path core/Cargo.toml --target aarch64-apple-ios && bash scripts/native_source_hash.sh ios-device-check aarch64-apple-ios > target/ios-device-check.SOURCE_HASH; }"
 )
 
 step_artifacts() {

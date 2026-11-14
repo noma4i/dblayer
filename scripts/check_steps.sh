@@ -82,8 +82,8 @@ run_bounded() {
 # Step table engine. A step with a build slot gets its limit inside the slot ({limit} in the command, see check_bounded.sh)
 # and the limit plus CHECK_QUEUE_ALLOWANCE (3600 s) outside, so the wait for a slot never counts as test time.
 # The library script defines `steps` (lines "lane|name|limit seconds|paths|command"), then calls
-# run_checks "$@". Order: every lane except ship and final at the same time (cheap included) (steps of one lane run one after another and each takes its own build slot),
-# then ship, then final. A red lane does not stop the other lanes of its group, ship and final run only when every earlier lane passed.
+# run_checks "$@". Order: every lane except final at the same time (cheap included) (steps of one lane run one after another and each takes its own build slot),
+# then final. A red lane does not stop the other lanes of its group, final runs only when every earlier lane passed.
 # The output of a lane group is printed after the group ends, lanes in table order.
 # --fast keeps the steps whose paths prefix a changed file ("*" always): the same commands, a subset of the full run.
 # Lane "final" runs last, only when every lane passed (checks of their outputs). --list prints the selected steps. --only <lane> runs one lane.
@@ -285,10 +285,10 @@ run_checks() {
   sampler=$!
   while IFS= read -r lane; do lanes+=("$lane"); done < <(printf '%s\n' "${selected[@]}" | cut -d'|' -f1 | awk '!seen[$0]++')
   for lane in "${lanes[@]}"; do
-    case "$lane" in ship | final) ;; *) parallel+=("$lane") ;; esac
+    case "$lane" in final) ;; *) parallel+=("$lane") ;; esac
   done
   { run_lane_group ${parallel[@]+"${parallel[@]}"}; } || failed=1
-  [ "$failed" -ne 0 ] || { run_lane_group ship && run_lane_group final; } || failed=1
+  [ "$failed" -ne 0 ] || run_lane_group final || failed=1
   times > "$logdir/times.txt"
   cpu_children="$(tail -1 "$logdir/times.txt" | tr 'ms' '  ' | awk '{printf "%d", $1 * 60 + $2 + $3 * 60 + $4}')"
   kill "$sampler" 2> /dev/null; wait "$sampler" 2> /dev/null

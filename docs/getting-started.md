@@ -54,7 +54,7 @@ export PATH=/opt/homebrew/opt/rustup/bin:$PATH
 bash scripts/check_dblayer.sh
 ```
 
-It runs cheap checks first, including build modes, and stops on failure. The lanes except ship and final run at the same time, and the steps inside a lane run in order. Android release builds contain arm64-v8a and armeabi-v7a. Swift tests use macOS and arm64 simulator slices. Every step has a time limit.
+It runs cheap checks first, including build modes, and stops on failure. The lanes except final run at the same time, and the steps inside a lane run in order. Android release builds contain arm64-v8a and armeabi-v7a. Swift tests use macOS and arm64 simulator slices. Every step has a time limit.
 
 The workspace release profile uses optimization level 3, no LTO, one codegen unit, symbol stripping and panic unwinding.
 It applies to Android and iOS builds. Panic unwinding remains enabled for UniFFI.
