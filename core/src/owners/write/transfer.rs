@@ -501,8 +501,8 @@ impl TransferState {
 
     pub(super) fn rounds_idle(&mut self, id: TransferId, fx: &mut Fx) {
         if let Some(rounds) = self.peers.rounds {
+            if !self.round_active.remove(&id) { return; }
             fx.push(Effect::Send(Outbound::new(rounds, RoundsInput::Idle { epoch: self.epoch, transfer_id: id })));
-            self.round_active.remove(&id);
             if self.round_active.is_empty() { self.round_sent = None; } else { self.round_progress(fx); }
         }
     }
