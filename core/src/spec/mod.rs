@@ -32,6 +32,7 @@ mod outbox_discard_tests;
 mod outbox_discard_wait_tests;
 mod data_rig_tests;
 mod data_lands_tests;
+mod data_server_decode_tests;
 mod data_window_tests;
 mod outbox_plan_tests;
 mod outbox_cells_tests;
