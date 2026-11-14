@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Confirm a mutation whose answer rows do not decode instead of failing it.
 - End a refresh with a runtime error when reading the saved window fails by a panic.
 - Refuse a server row whose field value does not decode instead of dropping the field.
 - Give a list value the revision of the commit that changed its rows.

@@ -21,6 +21,7 @@ pub(super) struct Answered {
     pub result: Option<String>,
     pub missing: Vec<String>,
     pub missing_destroy: bool,
+    pub unreadable: bool,
 }
 
 impl OutboxState {
@@ -34,7 +35,7 @@ impl OutboxState {
 
     pub(super) fn on_response(&mut self, now: u64, op_id: OpId, answer: Answered, errors: Option<bool>, fx: &mut Effects<Outbox>) {
         if self.removed.contains(&op_id) { return; }
-        let Answered { rows, swaps, stale, result, missing, missing_destroy } = answer;
+        let Answered { rows, swaps, stale, result, missing, missing_destroy, unreadable } = answer;
         self.rows_arrived(op_id);
         if self.stage_of(op_id) != Some(Stage::Sending) {
             return;
@@ -53,7 +54,7 @@ impl OutboxState {
             operation.stale = stale;
             operation.result = result;
         }
-        self.store(op_id, CommitKind::Land, fx);
+        if unreadable { self.without_rows(op_id, CommitKind::Land, fx) } else { self.store(op_id, CommitKind::Land, fx) }
         self.drain(now, fx);
     }
 

@@ -59,6 +59,7 @@ impl EffectRunner<Outbox> for OutboxExecutor {
                     let input = match decode(&job) {
                         Decoded::MissingDestroy { stale } => OutboxInput::MissingDestroy { op_id: job.op_id, stale },
                         Decoded::Land { rows, swaps, stale, result, missing } => OutboxInput::Response { op_id: job.op_id, rows, swaps, stale, result, missing, errors: None },
+                        Decoded::Unreadable { stale } => OutboxInput::Unreadable { op_id: job.op_id, stale },
                         Decoded::Refused { temporary, detail } => OutboxInput::Refused { op_id: job.op_id, temporary, detail },
                     };
                     back.reply(stamp, input);

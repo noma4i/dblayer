@@ -145,6 +145,6 @@ fn connection_items(value: &Value) -> Vec<&Value> {
 
 pub(crate) fn normalize_node(db: &Store, model: &str, node: &Map<String, Value>, related: &mut Related) -> Result<Option<Map<String, Value>>, CodecError> {
     let input = nested_input(db, model, node, related)?;
-    let patch = db.spec(model).map_err(|_| CodecError::UnknownModel(model.to_string()))?.decode_server(&input).map_err(crate::store::StoreError::Invalid)?;
+    let patch = db.spec(model).map_err(|_| CodecError::UnknownModel(model.to_string()))?.decode_server(&input).map_err(CodecError::Malformed)?;
     Ok(patch.get("id").and_then(read_id).is_some().then_some(patch))
 }

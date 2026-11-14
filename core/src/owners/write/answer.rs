@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::store::Store;
 use crate::identity::ModelKey;
-use crate::owners::read::codec::{extract, normalize_nodes, root_value};
+use crate::owners::read::codec::{extract, normalize_nodes, root_value, CodecError};
 use crate::owners::store::RowValue;
 use crate::schema::{Coverage, RemoteShape};
 use crate::value::read_id;
@@ -30,6 +30,8 @@ pub enum Decoded {
     MissingDestroy { stale: Vec<(String, String)> },
     /// The rows of the answer by model and the pair of a swap.
     Land { rows: Vec<(String, Vec<RowValue>)>, swaps: Vec<(String, String)>, stale: Vec<(String, String)>, result: Option<String>, missing: Vec<String> },
+    /// The server accepted the mutation, the rows of its answer do not decode: Outbox lands the answer without rows.
+    Unreadable { stale: Vec<(String, String)> },
     /// The server refused or the answer cannot be read. A temporary refusal is sent again.
     Refused { temporary: bool, detail: String },
 }
@@ -59,6 +61,14 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
     let Ok(spec) = db.spec(&job.model) else { return refused(format!("unknown model {}", job.model)) };
     let declared = spec.actions.iter().find(|declared| declared.name == job.action);
     let stale: Vec<(String, String)> = declared.iter().flat_map(|declared| &declared.refetch).map(|name| name.split_once('.').map_or_else(|| (job.model.clone(), name.clone()), |(model, relation)| (model.to_string(), relation.to_string()))).collect();
+    let unreadable = || {
+        let mut families = stale.clone();
+        for model in std::iter::once(&job.model).chain(declared.iter().flat_map(|declared| declared.lands.iter().map(|landing| &landing.model))) {
+            let family = (model.clone(), String::new());
+            if !families.contains(&family) { families.push(family); }
+        }
+        Decoded::Unreadable { stale: families }
+    };
     if job.action == "destroy" || declared.is_some_and(|declared| declared.ignore_response) {
         return Decoded::Land { rows: Vec::new(), swaps: Vec::new(), stale, result: None, missing: Vec::new() };
     }
@@ -69,7 +79,7 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
         if root_value(&data, root).is_none_or(Value::is_null) {
             let result = match returns_of(&data, default_root_of(declared.mutation.as_deref().and_then(root_of), root), returns) {
                 Ok(result) => result,
-                Err(detail) => return refused(detail),
+                Err(_) => return unreadable(),
             };
             return Decoded::Land { rows: Vec::new(), swaps: Vec::new(), stale, result: Some(result), missing: Vec::new() };
         }
@@ -78,14 +88,15 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
         return refused(format!("{root}: the answer has no row"));
     }
     let read = |model: &str, root: &str, shape: &RemoteShape| {
-        let extracted = extract(&data, root, shape, None).map_err(|error| format!("{error:?}"))?;
-        normalize_nodes(db, model, &extracted.nodes).map_err(|error| format!("{error:?}"))
+        let extracted = extract(&data, root, shape, None)?;
+        normalize_nodes(db, model, &extracted.nodes)
     };
     let batch = declared.is_some_and(|declared| declared.batch.is_some());
     let shape = if batch { RemoteShape::List { coverage: Coverage::Complete } } else { RemoteShape::Single };
     let mut normalized = match read(&job.model, root, &shape) {
         Ok(normalized) => normalized,
-        Err(detail) => return refused(detail),
+        Err(CodecError::Malformed(_)) => return unreadable(),
+        Err(error) => return refused(format!("{error:?}")),
     };
     for landing in declared.iter().flat_map(|declared| &declared.lands) {
         let shape = if root_value(&data, &landing.root).is_some_and(Value::is_array) { RemoteShape::List { coverage: Coverage::Complete } } else { RemoteShape::Single };
@@ -95,7 +106,8 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
                 normalized.related.extend(landed.roots.into_iter().map(|row| (model.clone(), row)));
                 normalized.related.extend(landed.related);
             }
-            Err(detail) => return refused(detail),
+            Err(CodecError::Malformed(_)) => return unreadable(),
+            Err(error) => return refused(format!("{error:?}")),
         }
     }
     normalized.coalesce(&job.model);
@@ -103,13 +115,13 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
     let swaps = if batch {
         match batch_swaps(db, &job.model, declared, job, &normalized.roots) {
             Ok((swaps, absent)) => { missing = absent; swaps }
-            Err(detail) => return refused(detail),
+            Err(_) => return unreadable(),
         }
     } else {
         let real = normalized.roots.first().and_then(|row| row.get("id")).and_then(read_id);
         match (&job.temp, real) {
             (Some(temp), Some(real)) if normalized.roots.len() == 1 && real.as_str() != temp => vec![(temp.clone(), real.to_string())],
-            (Some(_), _) => return refused("the answer does not name the created row"),
+            (Some(_), _) => return unreadable(),
             (None, _) => Vec::new(),
         }
     };
@@ -122,7 +134,7 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
     }
     let result = match declared.and_then(|declared| declared.returns.as_ref().map(|returns| returns_of(&data, default_root_of(declared.mutation.as_deref().and_then(root_of), root), returns))).transpose() {
         Ok(result) => result,
-        Err(detail) => return refused(detail),
+        Err(_) => return unreadable(),
     };
     Decoded::Land { rows: by_model.into_iter().collect(), swaps, stale, result, missing }
 }

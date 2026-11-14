@@ -220,6 +220,8 @@ pub enum OutboxInput {
     /// `errors = Some(temporary)`: the answer carries errors, the codec classified them.
     Response { op_id: OpId, rows: Vec<(String, Vec<RowValue>)>, swaps: Vec<(String, String)>, stale: Vec<(String, String)>, result: Option<String>, missing: Vec<String>, errors: Option<bool> },
     MissingDestroy { op_id: OpId, stale: Vec<(String, String)> },
+    /// The server accepted the mutation but the rows of its answer do not decode: the answer lands without rows (D-470).
+    Unreadable { op_id: OpId, stale: Vec<(String, String)> },
     TransportError { op_id: OpId, temporary: bool },
     /// The answer of Session to the `Mutate` with `req_id`: Outbox finds its operation and has the answer read.
     Answered { req_id: RequestId, outcome: crate::owners::session::AuthorOutcome },

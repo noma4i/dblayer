@@ -389,11 +389,11 @@ impl OutboxState {
                 },
             }],
             CommitKind::Attempt => vec![attempt],
-            CommitKind::Land => operation
-                .swaps
-                .iter()
+            CommitKind::Land => (operation.answer_rows_dropped && operation.swaps.is_empty() && !Self::created_temps(operation).is_empty()).then_some(StoreOp::RollBack { op_id })
+                .into_iter()
+                .chain(operation.swaps.iter()
                 .filter(|_| !operation.answer_rows_dropped)
-                .map(|(temp, real)| StoreOp::Swap { model: operation.op.model.clone(), temp: temp.clone(), real: real.clone() })
+                .map(|(temp, real)| StoreOp::Swap { model: operation.op.model.clone(), temp: temp.clone(), real: real.clone() }))
                 .chain(operation.landing.iter().map(|(model, rows)| StoreOp::Rows { model: model.clone(), rows: rows.clone() }))
                 .chain(operation.missing_destroy.then(|| StoreOp::RemoveServerRows { model: operation.op.model.clone(), ids: vec![operation.op.row_id.clone()] }))
                 .chain((!operation.stale.is_empty()).then(|| StoreOp::StaleFamilies { families: operation.stale.clone() }))
@@ -847,7 +847,7 @@ impl OutboxState {
 
     pub(super) fn handle(&mut self, now: u64, input: OutboxInput, fx: &mut Effects<Outbox>) {
         let answered = match &input {
-            OutboxInput::Response { op_id, .. } | OutboxInput::MissingDestroy { op_id, .. } | OutboxInput::TransportError { op_id, .. } | OutboxInput::Dropped { op_id } | OutboxInput::Refused { op_id, .. } => Some(*op_id),
+            OutboxInput::Response { op_id, .. } | OutboxInput::MissingDestroy { op_id, .. } | OutboxInput::Unreadable { op_id, .. } | OutboxInput::TransportError { op_id, .. } | OutboxInput::Dropped { op_id } | OutboxInput::Refused { op_id, .. } => Some(*op_id),
             OutboxInput::Answered { req_id, .. } => self.ops.values().find(|operation| operation.request_id == *req_id).map(|operation| operation.op_id),
             _ => None,
         };
@@ -893,8 +893,9 @@ impl OutboxState {
             OutboxInput::RegisterOperations { declarations, complete } => self.register(now, declarations, complete, fx),
             OutboxInput::Committed(committed) => self.committed(now, committed, fx),
             OutboxInput::Rejected(rejected) => self.rejected(now, rejected, fx),
-            OutboxInput::Response { op_id, rows, swaps, stale, result, missing, errors } => self.on_response(now, op_id, super::outbox_flow::Answered { rows, swaps, stale, result, missing, missing_destroy: false }, errors, fx),
-            OutboxInput::MissingDestroy { op_id, stale } => self.on_response(now, op_id, super::outbox_flow::Answered { rows: Vec::new(), swaps: Vec::new(), stale, result: None, missing: Vec::new(), missing_destroy: true }, None, fx),
+            OutboxInput::Response { op_id, rows, swaps, stale, result, missing, errors } => self.on_response(now, op_id, super::outbox_flow::Answered { rows, swaps, stale, result, missing, missing_destroy: false, unreadable: false }, errors, fx),
+            OutboxInput::MissingDestroy { op_id, stale } => self.on_response(now, op_id, super::outbox_flow::Answered { rows: Vec::new(), swaps: Vec::new(), stale, result: None, missing: Vec::new(), missing_destroy: true, unreadable: false }, None, fx),
+            OutboxInput::Unreadable { op_id, stale } => self.on_response(now, op_id, super::outbox_flow::Answered { rows: Vec::new(), swaps: Vec::new(), stale, result: None, missing: Vec::new(), missing_destroy: false, unreadable: true }, None, fx),
             OutboxInput::TransportError { op_id, temporary } => self.transport_failed(now, op_id, temporary, None, fx),
             OutboxInput::Dropped { op_id } => self.transport_failed(now, op_id, true, None, fx),
             OutboxInput::Answered { req_id, outcome } => self.answered(now, req_id, outcome, fx),

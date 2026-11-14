@@ -372,7 +372,7 @@ impl OutboxState {
 
     fn rows_dropped(&self, op_id: OpId) -> bool { self.ops.get(&op_id).is_some_and(|operation| operation.answer_rows_dropped) }
 
-    fn without_rows(&mut self, op_id: OpId, kind: CommitKind, fx: &mut Effects<Outbox>) {
+    pub(super) fn without_rows(&mut self, op_id: OpId, kind: CommitKind, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get_mut(&op_id) else { return };
         operation.answer_rows_dropped = true;
         if kind == CommitKind::Land {
