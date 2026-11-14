@@ -41,7 +41,7 @@ PATH="$host_path" bash "$root/scripts/build_bindgen.sh"
 /bin/rm -rf "$build" "$bridge/DBlayerFFI.xcframework"
 mkdir -p "$build/headers" "$bridge/Sources/DBlayer"
 
-(cd -- "$root/core" && "$root/target/debug/uniffi-bindgen" generate \
+(cd -- "$root/core" && "$root/target/bindgen-bin/uniffi-bindgen" generate \
   --library "$root/target/${targets[0]}/release/libdblayer.a" --language swift --out-dir "$build/swift")
 
 cp "$build/swift/dblayerFFI.h" "$build/headers/"

@@ -26,7 +26,7 @@ steps=(
   "cheap|reclaim-selftest|120|*|bash scripts/reclaim_target_test.sh"
   "cargo|cargo-test-core|300|core/ Cargo.|$slot cargo-step cargo test -p dblayer"
   "cargo|cargo-test-gen|300|gen/ Cargo.|$slot cargo-step cargo test -p dblayer-gen"
-  "cargo|cargo-test-bindgen|300|bindgen/ Cargo.|$slot cargo-step cargo test -p dblayer-bindgen"
+  "cargo|cargo-test-bindgen|300|bindgen/ Cargo.|$slot cargo-step lockf -k target/bindgen.lock cargo test -p dblayer-bindgen"
   "cargo|fixtures|120|core/ gen/ Cargo. fixtures/|bash scripts/gen_fixtures.sh --check"
   "cargo|fixtures-args|120|core/ gen/ Cargo. fixtures/|bash scripts/gen_fixtures_test.sh"
   "swift|ios-slices|600|swift/|$slot bash-step bash scripts/build_ios.sh --check"

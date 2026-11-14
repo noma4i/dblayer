@@ -93,6 +93,6 @@ if [ "$part" != --host ]; then
   library="$root/target/aarch64-linux-android/release/libdblayer.a"
 fi
 
-bash "$root/scripts/generate_kotlin_bindings.sh" --bindgen "$root/target/debug/uniffi-bindgen" \
+bash "$root/scripts/generate_kotlin_bindings.sh" --bindgen "$root/target/bindgen-bin/uniffi-bindgen" \
   --library "$library" --config "$root/core/uniffi.toml" --out "$module/src/main/kotlin"
 printf '%s\n' "$hash" > "$stamp"
