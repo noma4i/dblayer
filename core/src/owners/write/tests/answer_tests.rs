@@ -23,7 +23,7 @@ fn the_returns_block_is_read_from_the_root_of_the_answer() {
 fn the_returns_block_of_an_answer_is_typed() {
     let Decoded::Land { result, .. } = decoded(r#"{"data":{"starMoment":{"moment":{"id":"m1"},"successMessage":"Starred","copies":"3"}}}"#) else { panic!("the answer lands") };
     assert_eq!(serde_json::from_str::<serde_json::Value>(&result.unwrap()).unwrap(), serde_json::json!({"successMessage": "Starred", "copies": 3}));
-    assert!(matches!(decoded(r#"{"data":{"starMoment":{"moment":{"id":"m1"},"successMessage":"Starred","copies":"many"}}}"#), Decoded::Refused { .. }));
+    assert!(matches!(decoded(r#"{"data":{"starMoment":{"moment":{"id":"m1"},"successMessage":"Starred","copies":"many"}}}"#), Decoded::Unreadable { .. }));
 }
 
 fn object(text: &str) -> serde_json::Map<String, serde_json::Value> { serde_json::from_str(text).unwrap() }
