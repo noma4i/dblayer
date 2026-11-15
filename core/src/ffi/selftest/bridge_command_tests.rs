@@ -211,6 +211,7 @@ async fn a_refresh_and_a_load_more_fail_at_once_offline_and_the_entity_stream_sh
     let stream = rig.database.subscribe_reading(epoch, ReadRequest::Entity { model: "User".into(), id: "user".into(), fetch: crate::ffi::ReadFetch::Force }, entity.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
     let hits = rig.world.log().len();
+    rig.clock.advance(1_000);
     rig.database.set_online(false).await.unwrap();
     let refreshed = bound(rig.database.refresh_stream(stream)).await;
     assert!(matches!(refreshed, Err(DbError::Offline { .. })), "refresh of a stream offline: {refreshed:?}");

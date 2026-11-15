@@ -161,6 +161,7 @@ async fn close_ends_every_pending_stream_wait_of_a_held_handle() {
     let held = Held::open(&rig.database);
     held.shows(&rig, "A").await;
     held.lists_show(&rig, "A").await;
+    rig.clock.advance(1_000);
     let gate = rig.world.hold_next("Users");
     let _late = { let database = rig.database.clone(); let epoch = database.session_epoch(); rig.spawn(async move { database.refresh(epoch, "User".into(), Some("all".into()), "{}".into()).await }) };
     gate.entered().await;

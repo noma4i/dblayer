@@ -84,6 +84,7 @@ async fn a_window_at_its_page_limit_shows_no_more_and_load_more_ends() {
     let third = bound(more()).await.unwrap();
     assert!(matches!(third, LoadMoreResult::NoMore), "{third:?}");
     assert_eq!(pages.queries.load(Ordering::SeqCst), requests, "the call at the limit asked the server");
+    pages.clock.advance(1_000);
     let all = bound(database.load_all(database.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into(), false)).await;
     assert!(matches!(all, Err(DbError::Invalid { .. })), "{all:?}");
     live.cancel();

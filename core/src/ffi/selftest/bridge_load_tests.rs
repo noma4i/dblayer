@@ -534,6 +534,7 @@ async fn a_stream_request_whose_caller_left_ends_with_its_epoch_and_holds_nothin
     let reader = Reader::open();
     let stream = rig.database.subscribe_reading(epoch, users(), reader.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
+    rig.clock.advance(1_000);
     let gate = rig.world.hold_next("Users").as_account("A");
     let refresh = { let database = rig.database.clone(); rig.spawn(async move { database.refresh_stream(stream).await }) };
     gate.entered().await;
