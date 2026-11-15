@@ -62,6 +62,18 @@ impl Rig {
         bound(events.token.subscribe().wait_for(|token| token.is_some())).await.unwrap();
     }
 
+    /// The server closes the live cable with a code and a reason; the number of sockets the client opened so far comes back.
+    pub(super) async fn close_cable(&self, code: u16, reason: &str) -> usize {
+        let events = &self.switch.events;
+        let token = bound(events.token.subscribe().wait_for(|token| token.is_some())).await.unwrap().clone().unwrap();
+        let opened = events.peer.connects();
+        assert!(events.peer.close_with(&token, code, reason), "the cable is open");
+        opened
+    }
+
+    /// The number of sockets the client opened.
+    pub(super) fn cable_connects(&self) -> usize { self.switch.events.peer.connects() }
+
     async fn frame(&self, model: &str, row: Value) -> ReadValue {
         let (stream, reader) = self.event_stream(model).await;
         let token = bound(self.switch.events.token.subscribe().wait_for(|token| token.is_some())).await.unwrap().clone().unwrap();

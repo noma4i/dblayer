@@ -189,4 +189,11 @@ impl CablePeer {
         connection.events.ended(Some(1006), Some("dropped".into()), None);
         true
     }
+
+    /// The server closes the socket with a code and a reason.
+    pub(crate) fn close_with(&self, token: &str, code: u16, reason: &str) -> bool {
+        let Some(connection) = self.connection(token) else { return false };
+        connection.events.ended(Some(code), Some(reason.into()), None);
+        true
+    }
 }
