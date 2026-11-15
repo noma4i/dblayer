@@ -47,6 +47,11 @@ pub fn refusal_name(body: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+/// The pause of a `RATE_LIMITED` answer: its `retryAfter` seconds, at least 1.
+pub fn rate_limit_pause(body: &Value) -> Option<u64> {
+    (refusal(body) == Some(Refusal::Session(SessionCode::RateLimited))).then(|| body.get("retryAfter").and_then(Value::as_u64)).flatten().filter(|after| *after >= 1)
+}
+
 pub fn refusal(body: &Value) -> Option<Refusal> {
     refusal_name(body).map(refusal_code)
 }

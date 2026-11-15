@@ -85,7 +85,7 @@ impl EpochGate {
     pub(crate) fn note_rate_limit(&self, body: &str) {
         let Some(clock) = self.clock.get() else { return };
         let Ok(body) = serde_json::from_str::<serde_json::Value>(body) else { return };
-        let Some(after) = body.get("retryAfter").and_then(serde_json::Value::as_u64).filter(|after| *after >= 1 && body.get("error").and_then(serde_json::Value::as_str) == Some("RATE_LIMITED")) else { return };
+        let Some(after) = crate::transport::rate_limit_pause(&body) else { return };
         let deadline = clock.now().saturating_add(Duration::from_secs(after));
         let mut pause = crate::lock::lock(&self.pause);
         *pause = Some(pause.map_or(deadline, |held| held.max(deadline)));
