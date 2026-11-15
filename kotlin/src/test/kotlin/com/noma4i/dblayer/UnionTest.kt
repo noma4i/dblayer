@@ -25,6 +25,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
+@OptIn(DBlayerTestingApi::class)
 class UnionTest {
     private fun comparableJson(value: JsonElement): JsonElement = when (value) {
         is JsonObject -> JsonObject(value.filterValues { it != JsonNull }.mapValues { comparableJson(it.value) })
@@ -84,8 +85,7 @@ class UnionTest {
     fun aServerAnswerCarriesEveryVariantAndLaterAnswersReplaceTheVariant() = bounded {
         val transport = MockTransport()
         transport.enqueue("ContainerThread", threadReply(nodes))
-        open(transport)
-        registerStandOperations(DBlayer.database, JsonArray(listOf(buildJsonObject { put("name", JsonPrimitive("ContainerThread")); put("document", JsonPrimitive(threadDocument)) })).toString())
+        val clock = openSignedClocked(modelsJSON, transport, JsonArray(listOf(buildJsonObject { put("name", JsonPrimitive("ContainerThread")); put("document", JsonPrimitive(threadDocument)) })).toString())
         val thread = Record.thread("c1")
         thread.load()
 
@@ -103,6 +103,7 @@ class UnionTest {
             "m6" to """{"__typename":"ReactionAttachment","body":"late"}""",
         )
         transport.enqueue("ContainerThread", threadReply(changed))
+        clock.advance(1000)
         thread.refresh()
 
         assertEquals(RecordAttachment.Reaction(ReactionAttachment(body = "now")), attachmentOf("m1"))

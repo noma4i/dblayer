@@ -81,17 +81,18 @@ class LifecycleSessionTest {
         User.profile.refresh()
     }
 
-    private suspend fun openSession() {
+    private suspend fun openSession(): TestClock {
         try {
             closeForCleanup()
         } catch (_: DbException.Closed) {
         }
         val encrypted = EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("login_link" to EncryptedSessionOperation("/api/auth/login_link", EncryptedOperationClass.AUTHENTICATED))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel")
-        DBlayer.openTesting(MockTransport(), withRawCalls(modelsJSON), encrypted = encrypted, credentials = LifecycleCredential(), http = server)
+        val clock = DBlayer.openTesting(MockTransport(), withRawCalls(modelsJSON), encrypted = encrypted, credentials = LifecycleCredential(), http = server)
         DBlayer.database.setOnline(true)
         val fixtureOperations = """[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"}]"""
         server.registerDocuments(fixtureOperations)
         registerStandOperations(DBlayer.database, fixtureOperations)
+        return clock
     }
 
     /** The real exit of the app: the confirmed logout call, the session reset, the data clear, then the next login. No read follows the exit and account A never shows after it. */
@@ -117,9 +118,10 @@ class LifecycleSessionTest {
     @Test
     fun closeEndsACallThatTheServerNeverAnswers() = bounded {
         try {
-            openSession()
+            val clock = openSession()
             startSession("A")
             server.hold("UserProfile")
+            clock.advance(1000)
             val ended = async(start = CoroutineStart.UNDISPATCHED) { runCatching { User.profile.refresh() } }
             eventually("the request waits at the server") { server.parkedCount > 0 }
             closeForCleanup()

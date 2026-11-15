@@ -9,6 +9,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
+@OptIn(DBlayerTestingApi::class)
 class EdgeValueTest {
     private val document = "query MomentsFeed(\$first: Int, \$after: String) { feed(first: \$first, after: \$after) { edges { impressionScore impressionUuid rank node { id uuid likedByMe media createdAt } } pageInfo { hasNextPage endCursor } } }"
 
@@ -22,8 +23,7 @@ class EdgeValueTest {
     @Test
     fun edgeCallsDecodeNullableFieldsAliasesAndEnums() = bounded {
         val transport = MockTransport()
-        openSigned(Config(null), modelsJSON, transport)
-        registerStandOperations(DBlayer.database, """[{"name":"MomentsFeed","document":"$document"}]""")
+        val clock = openSignedClocked(modelsJSON, transport, """[{"name":"MomentsFeed","document":"$document"}]""")
         transport.enqueue("MomentsFeed", reply("imp-1", 5))
         Moment.feed.refresh()
         assertEquals(MomentFeedEdge("imp-1", 5L), Moment.feedEdge("1"))
@@ -34,6 +34,7 @@ class EdgeValueTest {
         Moment.vibeFeed("v1").refresh()
         assertEquals(MomentVibeFeedEdge(null), Moment.vibeFeedEdge("v1", "1"))
 
+        clock.advance(1000)
         transport.enqueue("MomentsFeed", rankedReply)
         Moment.vibeFeed("v1").refresh()
         val ranked = Moment.vibeFeedEdge("v1", "1")

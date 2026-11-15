@@ -9,6 +9,7 @@ import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
+@OptIn(DBlayerTestingApi::class)
 class NodeReadTest {
     private val documents = listOf(
         "ContainerNode" to "query ContainerNode(\$id: ID!) { node(id: \$id) { ... on Container { id title shareUrl isPublic } } }",
@@ -16,25 +17,25 @@ class NodeReadTest {
         "MomentTranscodeStatus" to "query MomentTranscodeStatus(\$momentId: ID!) { node(id: \$momentId) { ... on Moment { id uuid createdAt media } } }",
     )
 
-    private suspend fun open(): MockTransport {
+    private suspend fun open(): Pair<MockTransport, TestClock> {
         val transport = MockTransport()
-        openSigned(Config(null), modelsJSON, transport)
         val defs = documents.map { (name, document) -> buildJsonObject { put("name", JsonPrimitive(name)); put("document", JsonPrimitive(document)) } }
-        registerStandOperations(DBlayer.database, JsonArray(defs).toString())
-        return transport
+        val clock = openSignedClocked(modelsJSON, transport, JsonArray(defs).toString())
+        return transport to clock
     }
 
     private fun MockTransport.callsOf(operation: String) = calls.filter { it.operationName == operation }
 
     @Test
     fun nodePassesItsIdAndForceAndDecodesTheTypedRow() = bounded {
-        val transport = open()
+        val (transport, clock) = open()
         transport.enqueue("ContainerNode", """{"data":{"node":{"id":"c1","title":"one","shareUrl":"u","isPublic":true}}}""")
         transport.enqueue("ContainerNode", """{"data":{"node":{"id":"c1","title":"two","shareUrl":"v","isPublic":false}}}""")
 
         val first = Container.node("c1")
         assertEquals(Triple("one", "u", true), Triple(first?.title, first?.shareUrl, first?.isPublic))
         assertEquals("""{"id":"c1"}""", transport.callsOf("ContainerNode").first().variablesJson)
+        clock.advance(1000)
         val rereads = Container.node("c1", force = true)
         assertEquals("two", rereads?.title)
         assertEquals(2, transport.callsOf("ContainerNode").size)
@@ -42,7 +43,7 @@ class NodeReadTest {
 
     @Test
     fun theVariableNameOfANodeReadFollowsTheDeclaration() = bounded {
-        val transport = open()
+        val (transport, _) = open()
         transport.enqueue("MomentTranscodeStatus", """{"data":{"node":{"id":"mo1","uuid":"u","createdAt":"2026-10-01T00:00:00.000Z","media":{"kind":"VIDEO"}}}}""")
         assertEquals("mo1", Moment.transcodeStatus("mo1")?.id)
         assertEquals("""{"momentId":"mo1"}""", transport.callsOf("MomentTranscodeStatus").first().variablesJson)
@@ -50,11 +51,11 @@ class NodeReadTest {
 
     @Test
     fun nodesPassesIdsAndDecodesTypedRows() = bounded {
-        val transport = open()
+        val (transport, _) = open()
         transport.enqueue("ContainersByIds", """{"data":{"nodes":[{"id":"c2","title":"b"},{"id":"c1","title":"a"}]}}""")
         assertEquals(mapOf("c2" to "b", "c1" to "a"), Container.nodes(listOf("c2", "c1")).associate { it.id to it.title })
         assertEquals(1, transport.callsOf("ContainersByIds").size)
-        assertEquals("""{"ids":["c2","c1"]}""", transport.callsOf("ContainersByIds").first().variablesJson)
+        assertEquals("""{"ids":["c1","c2"]}""", transport.callsOf("ContainersByIds").first().variablesJson)
     }
 
 }

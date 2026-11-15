@@ -35,6 +35,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+@OptIn(DBlayerTestingApi::class)
 class InterfaceTest {
     private val document = "query SampleNode(\$id: ID!) { node(id: \$id) { ... on InterfaceRecord { id slug spec { root " +
         "elements { __typename id children press { __typename ... on SampleNavigateAction { slug title } ... on SampleOpenRecordAction { recordId } ... on SampleOpenExternalAction { url } ... on SampleOpenProfileAction { userId } } " +
@@ -59,16 +60,15 @@ class InterfaceTest {
     private fun reply(elements: String, state: String = """[{"path":"user.name","value":{"__typename":"SampleTextLiteral","text":"Ada"}},{"path":"n","value":{"__typename":"SampleNumberLiteral","number":3}}]""") =
         """{"data":{"node":{"__typename":"InterfaceRecord","id":"s1","slug":"main","spec":{"root":"root","elements":$elements,"state":$state}}}}"""
 
-    private suspend fun openRig(): MockTransport {
+    private suspend fun openRig(): Pair<MockTransport, TestClock> {
         val transport = MockTransport()
-        openSigned(Config(null), modelsJSON, transport)
-        registerStandOperations(DBlayer.database, JsonArray(listOf(buildJsonObject { put("name", JsonPrimitive("SampleNode")); put("document", JsonPrimitive(document)) })).toString())
-        return transport
+        val clock = openSignedClocked(modelsJSON, transport, JsonArray(listOf(buildJsonObject { put("name", JsonPrimitive("SampleNode")); put("document", JsonPrimitive(document)) })).toString())
+        return transport to clock
     }
 
     @Test
     fun aServerAnswerCarriesEveryElementVariantAndALaterAnswerReplacesTheList() = bounded {
-        val transport = openRig()
+        val (transport, clock) = openRig()
         transport.enqueue("SampleNode", reply(firstElements))
         val spec = InterfaceRecord.node("s1")!!.spec!!
         assertEquals("root", spec.root)
@@ -112,6 +112,7 @@ class InterfaceTest {
             ]
         """.trimIndent()
         transport.enqueue("SampleNode", reply(second, "[]"))
+        clock.advance(1000)
         InterfaceRecord.node("s1", force = true)
         val again = InterfaceRecord.find("s1").current()!!.spec!!
         assertEquals(listOf("b1", "root"), again.elements.map { it.id })
