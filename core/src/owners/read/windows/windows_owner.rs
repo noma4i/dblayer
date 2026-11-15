@@ -58,6 +58,7 @@ impl Window {
             cursor_reset_used: false,
             replace_all: false,
             reread_due: false,
+            gap_wait: false,
             change_due: 0,
             answer_base: std::cell::Cell::new(-1),
             answer_marked: std::cell::Cell::new(false),
@@ -440,8 +441,7 @@ impl Windows {
 
     pub(super) fn emitted(state: &mut WindowsState, key: &WindowKey, emits: Vec<Emit>, out: &mut Effects<Self>) {
         let peers = state.peers;
-        let Some(window) = state.windows.get(key) else { return };
-        let epoch = window.machine.epoch;
+        let Some(epoch) = state.windows.get(key).map(|window| window.machine.epoch) else { return };
         for emit in emits {
             match emit {
                 Emit::Run(effect) => out.push(Effect::Run(WindowsEffect::Window { key: key.clone(), effect })),
@@ -466,7 +466,12 @@ impl Windows {
                     out.push(Effect::Backoff { id: ScheduleId(request), policy, attempt, floor: std::time::Duration::ZERO, input: WindowsInput::RetryDue { request } });
                 }
                 Emit::CancelRetry { request } => out.push(Effect::Cancel(ScheduleId(request))),
+                Emit::GapEnd { at } => {
+                    let id = ScheduleId(state.request_ids.next());
+                    out.push(Effect::ScheduleAt { id, at: crate::runtime::Time(u64::try_from(at).unwrap_or(0)), input: WindowsInput::GapDue { key: key.clone() } });
+                }
                 Emit::Announce { streams } => {
+                    let Some(window) = state.windows.get(key) else { continue };
                     let state = window.load_state();
                     for stream in streams {
                         out.push(Effect::Send(Outbound::new(peers.deliveries, DeliveryInput::WindowState { stream, state: state.clone() })));
@@ -671,6 +676,7 @@ impl StateOwner for Windows {
                 }
             }
             WindowsInput::RetryDue { request } => Self::by_request(state, request, Ev::RetryDue { request }, now, &mut out),
+            WindowsInput::GapDue { key } => Self::on(state, &key, Ev::GapDue, now, &mut out),
             WindowsInput::PreloadKeys { keys } => {
                 let dropped: Vec<WindowKey> = state.windows.iter().filter(|(key, window)| !keys.contains(key) && !state.preload.contains(key) && window.interest().contains(&PRELOAD)).map(|(key, _)| key.clone()).collect();
                 for key in dropped {

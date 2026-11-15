@@ -269,6 +269,10 @@ impl Facts {
         self.answer_base.set(-1);
         self.env(event);
         match event {
+            Ev::GapDue if self.gap_wait && !self.in_gap(context.now) => {
+                self.gap_wait = false;
+                if self.is_online() && !self.deferred() { self.leave_waiting(context, *force, *page) } else { Handled }
+            }
             Ev::Online { online: true, .. } if self.deferred() => Handled,
             Ev::Online { online: true, .. } => self.leave_waiting(context, *force, *page),
             Ev::PowerSaving { .. } if self.is_online() && !self.deferred() => self.leave_waiting(context, *force, *page),
@@ -303,6 +307,7 @@ impl Facts {
                 if self.watched() {
                     Handled
                 } else {
+                    self.gap_wait = false;
                     self.drop_fresh();
                     Transition(WinState::idle())
                 }

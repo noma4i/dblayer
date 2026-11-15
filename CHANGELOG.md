@@ -11,6 +11,7 @@
 - Delete the row and its dependent rows when a node read answers null.
 - End the session on cable close code 4401 and wait for the pause of code 4429.
 - Hold every request of the session until the `retryAfter` of a sealed rate limit.
+- Share one request between overlapping reads and wait 1 second between requests of one read.
 
 ## 6.38.0 - 2026-11-15
 

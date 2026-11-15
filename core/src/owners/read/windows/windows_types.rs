@@ -10,8 +10,11 @@ pub struct WindowKey {
 impl WindowKey {
     pub(super) const NODES: &'static str = "nodes:";
 
-    /// The key `(model, node, ids)`: the order of `ids` is the order of the call.
-    pub fn nodes(model: &str, ids: &[&str]) -> Self { Self { model: model.into(), name: format!("{}{}", Self::NODES, serde_json::to_string(ids).unwrap_or_default()) } }
+    /// The key `(model, node, ids)`: the set of `ids`, sorted, so order and repeats of the call do not change it (P-WIN-36).
+    pub fn nodes(model: &str, ids: &[&str]) -> Self {
+        let set: BTreeSet<&str> = ids.iter().copied().collect();
+        Self { model: model.into(), name: format!("{}{}", Self::NODES, serde_json::to_string(&set).unwrap_or_default()) }
+    }
 
     /// A `node` read: a relation keyed by the param `NODE_PARAM`.
     pub(super) fn reads_node(&self) -> bool { matches!(self.kind(), Ok(WindowKind::Relation { params, .. }) if params.contains_key(crate::schema::NODE_PARAM)) }
@@ -165,6 +168,9 @@ pub enum WindowEffect {
 
 pub use crate::store::SavedWindow;
 
+/// P-WIN-37: a key does not go to the network earlier than this many ms after the landing of its previous answer.
+pub const REQUEST_GAP: i64 = 1_000;
+
 pub(super) const REQUEST_TASK: EffectId = 1 << 62;
 pub(super) const READ_TASK: EffectId = 1 << 61;
 /// The id of the task that derives the preload keys: nothing waits for it, its panic closes the database.
@@ -184,6 +190,7 @@ pub(super) enum Emit {
     Commit { landed_at: i64, request: RequestId, page: AnswerPage, number: u32, replace_all: bool, base_revision: i64, marker: Option<Marker>, keep_rows: bool, source: crate::schema::RowSource },
     Retry { request: RequestId, attempt: u32, class: ErrorClass },
     CancelRetry { request: RequestId },
+    GapEnd { at: i64 },
     Announce { streams: Vec<InterestId> },
 }
 
@@ -267,6 +274,8 @@ pub enum WindowsInput {
     Rejected(Rejected),
     Stale { model: String, keys: StaleKeys, cause: StaleCause },
     RetryDue { request: RequestId },
+    /// The end of the gap of `key` (P-WIN-37).
+    GapDue { key: WindowKey },
     /// The executor of `DerivePreload` found these keys in the rows of a source window.
     PreloadKeys { keys: Vec<WindowKey> },
     /// The operations of the `.dbl` are declared: the preload keys of a live session start now.
@@ -305,6 +314,7 @@ pub(super) enum Ev {
     Foreground { online_seq: u64 },
     SourceChanged { revision: i64 },
     RetryDue { request: RequestId },
+    GapDue,
     Online { online: bool, online_seq: u64 },
     PowerSaving { saving: bool },
     /// The saved window of the key: `None` before its first page or after a reset of its generation.

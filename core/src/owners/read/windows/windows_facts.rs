@@ -34,6 +34,8 @@ pub(super) struct Facts {
     pub(super) cursor_reset_used: bool,
     pub(super) replace_all: bool,
     pub(super) reread_due: bool,
+    /// A first-page request waits in `Waiting` for the end of the gap after the landing of the last answer (P-WIN-37).
+    pub(super) gap_wait: bool,
     /// The window lost its freshness here and the Store still carries it fresh: a mark is owed before the machine leaves memory.
     pub(super) mark_owed: std::cell::Cell<bool>,
     /// The largest Store revision of a commit that changed rows of this window (D-454).
@@ -132,7 +134,10 @@ impl Facts {
     pub(super) fn preload_only(&self) -> bool { self.waiters.is_empty() && self.interest.len() == 1 && self.interest.contains(&PRELOAD) }
 
     /// A load waits for the end of power saving: no reader and no waiter asked for it.
-    pub(super) fn deferred(&self) -> bool { self.saving && self.preload_only() }
+    pub(super) fn deferred(&self) -> bool { (self.saving && self.preload_only()) || self.gap_wait }
+
+    /// P-WIN-37: `now` is less than `REQUEST_GAP` after the landing of an answer that did not fail.
+    pub(super) fn in_gap(&self, now: i64) -> bool { self.fresh_until != 0 && !matches!(self.outcome, LastLoad::Failed(_)) && (0..REQUEST_GAP).contains(&(now - self.landed_at)) }
 
     pub(super) fn is_online(&self) -> bool { self.online == Some(true) }
 
@@ -201,6 +206,10 @@ impl Facts {
     /// A load of `page`: a request when online, `Waiting` otherwise. `announce` adds the window state.
     pub(super) fn begin(&mut self, ctx: &mut Ctx<'_>, page: u32, force: bool, announce: bool) -> Outcome<WinState> {
         self.replace_all = false;
+        if page == 1 && self.is_online() && !self.deferred() && self.in_gap(ctx.now) {
+            self.gap_wait = true;
+            self.emit(Emit::GapEnd { at: self.landed_at + REQUEST_GAP });
+        }
         let next = if self.is_online() && !self.deferred() {
             let (request, attempt) = ctx.request();
             self.emit(Emit::Pin { epoch: self.epoch, request });
@@ -216,6 +225,7 @@ impl Facts {
 
     /// A window that waited goes to the network: `Loading` with a new request.
     pub(super) fn leave_waiting(&mut self, ctx: &mut Ctx<'_>, force: bool, page: u32) -> Outcome<WinState> {
+        self.gap_wait = false;
         let (request, attempt) = ctx.request();
         self.emit(Emit::Pin { epoch: self.epoch, request });
         self.announce();
@@ -379,6 +389,10 @@ impl Facts {
                     self.waiters.insert(id, Want::All);
                     self.begin(ctx, next_page, false, true)
                 }
+            }
+            Goal::First | Goal::All if self.in_gap(ctx.now) => {
+                self.enter_fresh();
+                self.immediate(id, loaded)
             }
             Goal::First | Goal::All => {
                 self.waiters.insert(id, if goal == Goal::All { Want::All } else { Want::First });

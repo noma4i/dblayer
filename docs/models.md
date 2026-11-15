@@ -1069,7 +1069,7 @@ val groups = Group.nodes(ids)
 
 - The answer lands as a normal server row of the model. Only the fields the operation selects change, so a small read leaves the other fields, the merge rules and local fields as they were. A local edit that is not confirmed yet is kept.
 - A plain `node(id)` call inside the freshness time of that id reads the local row and sends nothing. `force: true` always asks the server. Freshness per id applies only to `node(id)`.
-- Calls for one id that overlap share one request. Nothing needs to be started or released.
+- Calls for one id, or for the same set of ids in any order, that overlap share one request, and each call gets its rows in its own order. A forced call less than 1 second after the last answer of the same read gets that answer without a request. Nothing needs to be started or released.
 - The result is nil when the answer is `null`, an error `NOT_FOUND` on path `node`, has another type than the `... on` fragment (an empty object), or the id has no entity. `null` and `NOT_FOUND` mean the row does not exist: the stored row and its `dependent: :destroy` children are deleted like a server delete event, and no mutation is sent. A row written after the request started is kept. A foreign type writes nothing.
 - `nodes(ids)` returns the rows in the order of the call. A repeated ID in the call gives the row again. An ID without a row in the answer is left out. A `null` entry deletes the row of that ID like a null `node`. Empty entries are skipped, and each row is written once. Every `nodes` call asks the server.
 - Repeated rows merge selected fields before storage. The last supplied value wins, and root fields take precedence over nested copies.

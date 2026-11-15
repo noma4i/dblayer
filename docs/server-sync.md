@@ -563,6 +563,7 @@ What a refresh does, in one commit:
 - For a paged list the response is the first page. The last row of the response is looked up in the old list. If it is found, the new first page is followed by the old rows that came after it, so a long list that the user scrolled does not jump. If it is not found, the old tail is dropped and `loadMore()` loads the next pages again.
 - Rows that are missing from the response leave the list but stay in the database, because they may belong to other lists. A row is deleted when the server says so (`delete_if:`, a null or `NOT_FOUND` node answer, a delete event).
 - A failed request changes nothing.
+- Every read of one list, node or set of ids shares the request in flight. A request goes to the network at least 1 second after the previous answer of the same read landed: `refresh()` and forced reads inside that second get the previous answer, event rereads and the reread after a gap or a return of the network wait for the end of the second and go once. A failed request leaves no wait.
 
 An event can carry identifiers or full model rows. Without `payload`, `changed_by` always forces its declared HTTP reread, regardless of freshness.
 `changed_by "MESSAGE", via: :node, payload: "chat"` applies the full Chat at the event item's `chat` path.
