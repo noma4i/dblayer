@@ -136,9 +136,9 @@ impl StateOwner for OutboxSpy {
                     note(Seen::Schedule(std::time::Duration::from_millis(at.0)));
                     Effect::ScheduleAt { id, at, input }
                 }
-                Effect::Backoff { id, policy, attempt, input } => {
-                    note(Seen::Schedule(policy.delay_seeded(attempt, 0)));
-                    Effect::Backoff { id, policy, attempt, input }
+                Effect::Backoff { id, policy, attempt, floor, input } => {
+                    note(Seen::Schedule(floor.max(policy.delay_seeded(attempt, 0))));
+                    Effect::Backoff { id, policy, attempt, floor, input }
                 }
                 Effect::Cancel(id) => {
                     note(Seen::CancelTimer);

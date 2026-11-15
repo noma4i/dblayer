@@ -171,9 +171,9 @@ where
                     seen.push(Emitted::Schedule { id, after: std::time::Duration::from_millis(at.0), input: input.clone() });
                     Effect::ScheduleAt { id, at, input }
                 }
-                Effect::Backoff { id, policy, attempt, input } => {
-                    seen.push(Emitted::Schedule { id, after: policy.delay_seeded(attempt, 0), input: input.clone() });
-                    Effect::Backoff { id, policy, attempt, input }
+                Effect::Backoff { id, policy, attempt, floor, input } => {
+                    seen.push(Emitted::Schedule { id, after: floor.max(policy.delay_seeded(attempt, 0)), input: input.clone() });
+                    Effect::Backoff { id, policy, attempt, floor, input }
                 }
                 Effect::Cancel(id) => {
                     seen.push(Emitted::Cancel(id));
