@@ -1,4 +1,4 @@
-use super::shapes::LIFETIME_MS;
+use super::shapes::{LIFETIME_MS, REQUEST_GAP_MS};
 
 /// The windows O1 knows: the feed list, the transcode status node of the row `m1`, and the key of `nodes(["m1"])` (it has no window, only a load that calls with the same ids join).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -64,6 +64,8 @@ pub(super) struct Window {
     pub(super) outcome: Outcome,
     pub(super) error: Option<&'static str>,
     pub(super) landed_run: bool,
+    /// window.md P-WIN-37: a reread asked inside the request gap, sent when the clock reaches the end of the gap.
+    pub(super) gap_due: bool,
 }
 
 impl Window {
@@ -71,6 +73,11 @@ impl Window {
     pub(super) fn fresh(&self, now: i64) -> bool {
         let Some(landed) = self.landed_at else { return false };
         !self.unfresh && now < self.fresh_until && landed - now < self.fresh_until - landed
+    }
+
+    /// window.md P-WIN-37: the last answer landed less than 1 s ago, so the key does not go to the network.
+    pub(super) fn in_gap(&self, now: i64) -> bool {
+        self.landed_at.is_some_and(|landed| self.error.is_none() && now >= landed && now - landed < REQUEST_GAP_MS)
     }
 
     pub(super) fn stamp(&mut self, now: i64) {

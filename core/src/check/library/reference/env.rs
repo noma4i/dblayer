@@ -239,6 +239,14 @@ impl LibraryRef {
                 }
             }
         }
+        let now = self.now;
+        for key in [Key::Feed, Key::Members, Key::Node] {
+            let window = self.win(key);
+            if window.gap_due && window.load.is_none() && !window.in_gap(now) {
+                window.gap_due = false;
+                self.start_run(key, 1);
+            }
+        }
         for key in self.running() {
             let Some(run) = self.run_of(key) else { continue };
             let ceiling = shapes::pause_ceiling_ms(run.attempts);

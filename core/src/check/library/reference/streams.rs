@@ -155,6 +155,10 @@ impl LibraryRef {
             let wanted = self.streams.values().any(|stream| stream.live && stream.wants && stream.reads.key() == Some(key) && stream.on_connect);
             let window = self.win(key);
             if read && window.load.is_none() && (!window.fresh(now) || wanted) {
+                if window.in_gap(now) {
+                    window.gap_due = true;
+                    continue;
+                }
                 starting += 1;
                 self.start_run(key, 1);
             }

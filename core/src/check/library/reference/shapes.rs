@@ -4,6 +4,7 @@ use crate::check::value::Observation;
 
 /// `freshness expires_in: 5.minutes` of the stand schema (docs/models.md): the same for an empty page.
 pub const LIFETIME_MS: i64 = 300_000;
+pub const REQUEST_GAP_MS: i64 = 1_000;
 /// `paginate size: 20` of the stand schema.
 pub const PAGE_SIZE: u64 = 20;
 /// `paginate size: 30` of the scope `container_members` of the stand schema (fixtures/user.dbl).

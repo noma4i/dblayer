@@ -127,8 +127,10 @@ impl LibraryRef {
         if form == Form::BeginLoad {
             self.handles.insert(name, id);
         }
+        let gap = running.is_none() && self.win(key).in_gap(now);
         match running {
             _ if !forced && fresh => self.finish(id, Ending::Done),
+            None if gap => self.finish(id, Ending::Done),
             None => self.start_run(key, 1),
             Some(page) if forced && page > 1 => {
                 if let Some(run) = self.run_of(key).take() {
@@ -179,7 +181,9 @@ impl LibraryRef {
         if busy {
             return Vec::new();
         }
-        if fresh && !force && !cursor {
+        if force && self.win(Key::Feed).in_gap(now) {
+            self.finish(id, Ending::Done);
+        } else if fresh && !force && !cursor {
             self.win(Key::Feed).enter_fresh();
             self.finish(id, Ending::Done);
         } else if fresh && !force {
