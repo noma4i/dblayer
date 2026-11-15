@@ -95,6 +95,7 @@ async fn gap_keeps_the_window_of_a_scope_that_declares_it() {
                 table.push((case, requests(&world, "PRIMARY"), requests(&world, "SECONDARY"), ids(&plain), ids(&kept), after_event));
             }
             Break::Restart => {
+                settled(&database, "the reread deferred to the end of the gap lands before the close", || true).await;
                 bound(database.close_database()).await.unwrap();
                 let (database, transport) = open_at(path, held, &world).await;
                 let (plain, _plain_handle) = watch(&database, "list", "PRIMARY");
