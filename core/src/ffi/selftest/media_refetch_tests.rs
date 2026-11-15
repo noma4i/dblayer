@@ -134,6 +134,7 @@ async fn win_chain_marker_change_resets() {
     rig.world.fail_next("chatMedia", chain_page(&[7, 8], false));
     rig.world.fail_next("chatMediaState", chain_marker("2", 2, 8));
     let epoch = rig.database.session_epoch();
+    rig.clock.advance(1_000);
     bound(rig.database.refresh(epoch, "MediaEntry".into(), Some("media".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
     crate::test_wait::settled(&rig, "the new chain landed", || chain_ids(&rows) == ["7", "8"]).await;
     assert_eq!(chain_ids(&rows), ["7", "8"]);

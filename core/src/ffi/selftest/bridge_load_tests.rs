@@ -248,6 +248,7 @@ async fn a_profile_delivery_is_ready_with_its_rows_before_an_explicit_refresh() 
     }).await;
     assert!(reader.shows("A"));
     assert_eq!(rig.world.count("MyProfile"), 1);
+    rig.clock.advance(1_000);
     bound(rig.database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
     assert_eq!(rig.world.count("MyProfile"), 2);
     rig.database.close_now();
