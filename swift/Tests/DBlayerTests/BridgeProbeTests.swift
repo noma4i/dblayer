@@ -49,6 +49,29 @@ struct BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
+  func theRequestsStreamCarriesTheOperationAndReasonOfALoad() async throws {
+    let transport = MockTransport()
+    transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
+    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
+    try await registerStandOperations(DB.database, defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
+    let requests = Cursor(try DB.requests())
+    try await Moment.feed.load()
+    let sent = await requests.first("the request of the load") {
+      if case .request = $0 { return true }
+      return false
+    }
+    guard case let .request(operation, variablesJson, reason)? = sent else {
+      Issue.record("no request item arrived")
+      return
+    }
+    #expect(operation == "MomentsFeed")
+    #expect(reason == .load)
+    let variables = try JSONSerialization.jsonObject(with: Data(variablesJson.utf8)) as? [String: Any]
+    #expect(variables?["first"] != nil)
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
   func aFailedLoadThrowsTheTransportErrorAndMarksTheRelationFailed() async throws {
     let transport = MockTransport()
     transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))

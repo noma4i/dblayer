@@ -76,6 +76,26 @@ class OperationQueueTest {
     }
 
     @Test
+    fun requestsStreamCarriesTheOperationAndReasonOfALoad() = bounded {
+        val transport = MockTransport()
+        transport.enqueue("MomentsFeed", QUEUE_FEED)
+        try {
+            openSigned(Config(null), modelsJSON, transport)
+            registerStandOperations(DBlayer.database, QUEUE_DEFS)
+            val items = kotlinx.coroutines.channels.Channel<RequestLogItem>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+            val reading = launch { DBlayer.requests().collect { items.send(it) } }
+            while (withTimeout(5000) { items.receive() } !is RequestLogItem.Ready) continue
+            Moment.feed.load()
+            var sent = withTimeout(5000) { items.receive() }
+            while (sent !is RequestLogItem.Request) sent = withTimeout(5000) { items.receive() }
+            assertEquals("MomentsFeed", sent.operation)
+            assertEquals(RequestReason.LOAD, sent.reason)
+            assertTrue(Json.parseToJsonElement(sent.variablesJson).jsonObject.containsKey("first"))
+            reading.cancel()
+        } finally { closeForCleanup() }
+    }
+
+    @Test
     fun theStatusAndQueueStreamsEndWithTheCauseOfTheCore() = bounded {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", QUEUE_FEED)
