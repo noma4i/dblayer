@@ -135,6 +135,12 @@ impl Delivery {
         self.push(Value::CableClose { position: self.position, event }, fx);
     }
 
+    pub(super) fn requested(&mut self, record: crate::transport::RequestRecord, fx: &mut Vec<Emit>) {
+        if self.stage != DeliveryStage::Live || self.view.kind != Kind::Requests { return; }
+        self.position += 1;
+        self.push(Value::Event { position: self.position, payload: serde_json::json!({ "operation": record.operation, "variables_json": record.variables_json, "reason": format!("{:?}", record.reason) }).to_string() }, fx);
+    }
+
     pub(super) fn joined(&mut self, position: u64, fx: &mut Vec<Emit>) {
         if self.events_open() && self.next_feed.is_none() {
             self.next_feed = Some(position + 1);

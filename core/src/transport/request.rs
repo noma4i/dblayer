@@ -9,6 +9,25 @@ pub enum NetworkPurpose {
     Transfer,
 }
 
+/// Why a request leaves for the network: the author of the request names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum RequestReason {
+    Load,
+    Refresh,
+    Event,
+    Reconnect,
+    Retry,
+    Send,
+}
+
+/// One request that passed the gate, as the `requests` stream shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestRecord {
+    pub operation: String,
+    pub variables_json: String,
+    pub reason: RequestReason,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequestOwner {
     Operation { seq: i64 },
@@ -27,12 +46,15 @@ pub struct GraphQLRequest {
     pub owner: Option<RequestOwner>,
     pub purpose: NetworkPurpose,
     pub wire: Option<super::WireIds>,
+    pub reason: RequestReason,
 }
 
 impl GraphQLRequest {
     pub fn new(document: impl Into<String>, operation_name: impl Into<String>, variables: Value) -> Self {
-        Self { document: document.into(), operation_name: operation_name.into(), variables, owner: None, purpose: NetworkPurpose::Standard, wire: None }
+        Self { document: document.into(), operation_name: operation_name.into(), variables, owner: None, purpose: NetworkPurpose::Standard, wire: None, reason: RequestReason::Send }
     }
+
+    pub fn why(self, reason: RequestReason) -> Self { Self { reason, ..self } }
 
     /// The author and the id the author gave the request: a request that reaches the platform carries them in `HttpRequest`.
     pub fn by(self, wire: super::WireIds) -> Self { Self { wire: Some(wire), ..self } }

@@ -13,6 +13,7 @@ use statig::prelude::*;
 use crate::owners::read::deliveries::{DeliveryInput, Deliveries, EndCause};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter};
 use crate::runtime::RetryPolicy;
+use crate::transport::RequestReason;
 use crate::owners::contract::{BatchAuthor, Committed, Drained, EpochEnded, EpochStarted, ErrorClass, Online, RejectReason, Rejected, RequestError, RequestId, WindowPhase as Phase, WindowState};
 use crate::runtime::{Address, Cause, Effect, EffectId, Effects, Epoch, Outbound, ScheduleId, StateOwner};
 
@@ -46,7 +47,7 @@ impl Facts {
                     self.announce();
                     Handled
                 } else {
-                    self.begin(context, 1, false, true)
+                    self.begin(context, 1, (false, RequestReason::Load), true)
                 }
             }
             Ev::Load { id, goal, force, .. } => self.idle_load(context, *id, *goal, *force),
@@ -60,18 +61,18 @@ impl Facts {
                 Handled
             }
             Ev::Stale { cause } if self.covers(*cause) => Handled,
-            Ev::Stale { .. } if self.watched() => self.begin(context, 1, false, self.is_online()),
+            Ev::Stale { cause } if self.watched() => self.begin(context, 1, (false, if matches!(cause, StaleCause::Change { .. }) { RequestReason::Event } else { RequestReason::Reconnect }), self.is_online()),
             Ev::Stale { .. } => {
                 self.fresh = false;
                 Handled
             }
-            Ev::Foreground { .. } if !self.interest.is_empty() && self.is_online() => self.begin(context, 1, false, true),
+            Ev::Foreground { .. } if !self.interest.is_empty() && self.is_online() => self.begin(context, 1, (false, RequestReason::Reconnect), true),
             Ev::SourceChanged { revision } => {
                 self.push_fx(WindowEffect::DerivePreload { revision: *revision });
                 Handled
             }
-            Ev::Online { online: true, .. } if !self.is_fresh(context.now) && self.watched() => self.begin(context, 1, false, true),
-            Ev::Online { online: true, .. } if self.reconnected && self.interest.iter().any(|id| self.reload.contains(id)) => self.begin(context, 1, false, true),
+            Ev::Online { online: true, .. } if !self.is_fresh(context.now) && self.watched() => self.begin(context, 1, (false, RequestReason::Reconnect), true),
+            Ev::Online { online: true, .. } if self.reconnected && self.interest.iter().any(|id| self.reload.contains(id)) => self.begin(context, 1, (false, RequestReason::Reconnect), true),
             Ev::EpochEnded { .. } | Ev::Closing => self.finish(None),
             _ => Handled,
         }
@@ -123,7 +124,7 @@ impl Facts {
                 self.emit(Emit::CancelRetry { request: load.request });
                 self.emit(Emit::Pin { epoch: self.epoch, request });
                 let marked = load.marked;
-                *load = self.issue(request, attempt, 1, true);
+                *load = self.issue(request, attempt, 1, true, RequestReason::Refresh);
                 load.marked = marked;
                 self.announce();
                 Handled
@@ -160,7 +161,7 @@ impl Facts {
                     self.cursor_reset_used = true;
                     self.replace_all = true;
                     self.emit(Emit::Pin { epoch: self.epoch, request: new_request });
-                    return Transition(WinState::loading(self.issue(new_request, new_attempt, 1, load.force)));
+                    return Transition(WinState::loading(self.issue(new_request, new_attempt, 1, load.force, load.reason)));
                 }
                 let class = if error.class == ErrorClass::InvalidCursor { ErrorClass::Permanent } else { error.class };
                 if may_retry(class, load.attempts + 1) {
@@ -174,6 +175,7 @@ impl Facts {
             Ev::RetryDue { request: got } if *got == load.request && load.retry && self.is_online() => {
                 load.attempt = context.attempt();
                 load.retry = false;
+                load.reason = RequestReason::Retry;
                 let effect = self.request_effect(load);
                 self.push_fx(effect);
                 Handled
@@ -183,7 +185,7 @@ impl Facts {
                     self.push_fx(WindowEffect::Cancel { request: load.step, attempt: load.attempt });
                 }
                 self.emit(Emit::CancelRetry { request: load.request });
-                Transition(WinState::waiting(load.force, load.page))
+                Transition(WinState::waiting(load.force, load.page, load.reason))
             }
             Ev::Stale { cause } if self.covers(*cause) => {
                 if self.reads_node && !load.pinning && matches!(cause, StaleCause::Change { .. }) { load.marked = true; }
@@ -265,7 +267,7 @@ impl Facts {
     }
 
     #[state]
-    fn waiting(&mut self, context: &mut Ctx<'_>, force: &mut bool, page: &mut u32, event: &Ev) -> Outcome<WinState> {
+    fn waiting(&mut self, context: &mut Ctx<'_>, force: &mut bool, page: &mut u32, reason: &mut RequestReason, event: &Ev) -> Outcome<WinState> {
         self.answer_base.set(-1);
         self.env(event);
         match event {
@@ -275,11 +277,22 @@ impl Facts {
                     self.drop_fresh();
                     return Transition(WinState::idle());
                 }
-                if self.is_online() && !self.deferred() { self.leave_waiting(context, *force, *page) } else { Handled }
+                if self.is_online() && !self.deferred() { self.leave_waiting(context, (*force, *reason), *page) } else { Handled }
             }
-            Ev::Online { online: true, .. } if self.deferred() => Handled,
-            Ev::Online { online: true, .. } => self.leave_waiting(context, *force, *page),
-            Ev::PowerSaving { .. } if self.is_online() && !self.deferred() => self.leave_waiting(context, *force, *page),
+            Ev::Online { online: true, .. } if self.deferred() => {
+                Self::defer_cause(reason, RequestReason::Reconnect);
+                Handled
+            }
+            Ev::Foreground { .. } if self.gap_wait => {
+                Self::defer_cause(reason, RequestReason::Reconnect);
+                Handled
+            }
+            Ev::Stale { cause } if self.gap_wait => {
+                Self::defer_cause(reason, if matches!(cause, StaleCause::Change { .. }) { RequestReason::Event } else { RequestReason::Reconnect });
+                Handled
+            }
+            Ev::Online { online: true, .. } => self.leave_waiting(context, (*force, RequestReason::Reconnect), *page),
+            Ev::PowerSaving { .. } if self.is_online() && !self.deferred() => self.leave_waiting(context, (*force, *reason), *page),
             Ev::OfflineRefused { message } => {
                 self.outcome = LastLoad::Failed(crate::ffi::DbError::Offline { detail: message.clone() });
                 self.announce();
@@ -293,16 +306,16 @@ impl Facts {
             Ev::InterestPlus { id, .. } => {
                 self.add_interest(*id);
                 if self.is_online() && !self.deferred() {
-                    return self.leave_waiting(context, *force, *page);
+                    return self.leave_waiting(context, (*force, *reason), *page);
                 }
                 self.announce();
                 Handled
             }
             Ev::Load { id, goal, force: wider, .. } => {
                 self.join_load(*id, *goal, *page);
-                *force |= *wider && *goal != Goal::Next;
+                if *wider && *goal != Goal::Next { *force = true; *reason = RequestReason::Refresh; }
                 if self.is_online() && !self.deferred() {
-                    return self.leave_waiting(context, *force, *page);
+                    return self.leave_waiting(context, (*force, *reason), *page);
                 }
                 Handled
             }

@@ -4,12 +4,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use super::{Cause, Clock, Epoch};
-use crate::transport::{GraphQLRequest, PutReply, PutRequest, Response, TransportError, Upstream};
+use crate::transport::{GraphQLRequest, PutReply, PutRequest, RequestReason, RequestRecord, Response, TransportError, Upstream};
 
 const CLOSED: u64 = 1;
 const CUT_SHIFT: u32 = 1;
 const CUT_BITS: u64 = 0x7FFF_FFFF;
 const EPOCH_SHIFT: u32 = 32;
+
+type RequestSink = Arc<dyn Fn(RequestRecord) + Send + Sync>;
 
 type Revoked = Arc<dyn Fn(Epoch, String) -> std::pin::Pin<Box<dyn Future<Output = TransportError> + Send>> + Send + Sync>;
 
@@ -19,6 +21,9 @@ pub struct EpochGate {
     transport: OnceLock<Arc<dyn Upstream>>,
     revoked: OnceLock<Revoked>,
     clock: OnceLock<Arc<dyn Clock>>,
+    requests: OnceLock<RequestSink>,
+    /// The open streams of `requests`: with 0 the gate records nothing.
+    watching: AtomicU64,
     /// The time before which no request leaves: the `retryAfter` of the last sealed `RATE_LIMITED` answer.
     pause: Mutex<Option<Duration>>,
     /// Test builds record every request that reaches the network after `shutdown`; the gate fails the test that sent it when it is dropped.
@@ -60,7 +65,7 @@ enum Admit {
 }
 
 impl Default for EpochGate {
-    fn default() -> Self { Self { state: AtomicU64::new(CLOSED), transport: OnceLock::new(), revoked: OnceLock::new(), clock: OnceLock::new(), pause: Mutex::new(None), #[cfg(test)] recorder: recorder::Recorder::default() } }
+    fn default() -> Self { Self { state: AtomicU64::new(CLOSED), transport: OnceLock::new(), revoked: OnceLock::new(), clock: OnceLock::new(), requests: OnceLock::new(), watching: AtomicU64::new(0), pause: Mutex::new(None), #[cfg(test)] recorder: recorder::Recorder::default() } }
 }
 
 fn epoch_of(state: u64) -> u64 { state >> EPOCH_SHIFT }
@@ -78,6 +83,24 @@ impl EpochGate {
     pub fn attach(&self, transport: Arc<dyn Upstream>) { let _ = self.transport.set(transport); }
 
     pub(crate) fn attach_revoked(&self, revoked: Revoked) { let _ = self.revoked.set(revoked); }
+
+    pub(crate) fn attach_requests(&self, sink: RequestSink) { let _ = self.requests.set(sink); }
+
+    pub(crate) fn watch_requests(&self, plus: bool) {
+        if plus { self.watching.fetch_add(1, Ordering::SeqCst); } else { let _ = self.watching.try_update(Ordering::SeqCst, Ordering::SeqCst, |open| open.checked_sub(1)); }
+    }
+
+    pub(crate) fn watching_requests(&self) -> bool { self.watching.load(Ordering::SeqCst) != 0 }
+
+    /// A request that passed the gate goes to the open `requests` streams; with none open the record is not built.
+    pub(crate) fn note(&self, record: impl FnOnce() -> RequestRecord) {
+        if !self.watching_requests() { return; }
+        if let Some(sink) = self.requests.get() { crate::lock::effect(|| sink(record())); }
+    }
+
+    fn note_graphql(&self, request: &GraphQLRequest) {
+        self.note(|| RequestRecord { operation: request.operation_name.clone(), variables_json: request.variables.to_string(), reason: request.reason });
+    }
 
     pub(crate) fn attach_clock(&self, clock: Arc<dyn Clock>) { let _ = self.clock.set(clock); }
 
@@ -117,9 +140,19 @@ impl EpochGate {
     }
 
     /// A request to the network of `epoch` (`None` belongs to no epoch): the epoch check, the borrow of the transport, the call and the first poll of its future run in one synchronous stretch, a closed gate ends the request as `Interrupted` without a transport to call. The borrow lasts as long as the call.
-    pub async fn query(&self, epoch: Option<Epoch>, mut request: GraphQLRequest) -> Result<Response, TransportError> { self.paused().await; self.answer(epoch, self.lend(epoch, Some(&mut request.variables))?.query(request).await).await }
+    pub async fn query(&self, epoch: Option<Epoch>, mut request: GraphQLRequest) -> Result<Response, TransportError> {
+        self.paused().await;
+        let transport = self.lend(epoch, Some(&mut request.variables))?;
+        self.note_graphql(&request);
+        self.answer(epoch, transport.query(request).await).await
+    }
 
-    pub async fn mutate(&self, epoch: Option<Epoch>, mut request: GraphQLRequest) -> Result<Response, TransportError> { self.paused().await; self.answer(epoch, self.lend(epoch, Some(&mut request.variables))?.mutate(request).await).await }
+    pub async fn mutate(&self, epoch: Option<Epoch>, mut request: GraphQLRequest) -> Result<Response, TransportError> {
+        self.paused().await;
+        let transport = self.lend(epoch, Some(&mut request.variables))?;
+        self.note_graphql(&request);
+        self.answer(epoch, transport.mutate(request).await).await
+    }
 
     /// The session of `epoch` ended by the server: the one way every origin of the end (HTTP answer, cable close) enters `Session`.
     pub(crate) async fn server_ended(&self, epoch: Epoch, detail: String) -> TransportError {
@@ -137,7 +170,12 @@ impl EpochGate {
         }
     }
 
-    pub async fn put(&self, epoch: Option<Epoch>, request: PutRequest) -> Result<PutReply, TransportError> { self.paused().await; self.lend(epoch, None)?.put(request).await }
+    pub async fn put(&self, epoch: Option<Epoch>, request: PutRequest) -> Result<PutReply, TransportError> {
+        self.paused().await;
+        let transport = self.lend(epoch, None)?;
+        self.note(|| RequestRecord { operation: "put".into(), variables_json: serde_json::json!({ "operation": request.identity.operation_id, "item": request.identity.item_id }).to_string(), reason: RequestReason::Send });
+        transport.put(request).await
+    }
 
     pub fn open(&self, epoch: Epoch) { self.update(|state| pack(epoch, cut_of(state), false)); }
 

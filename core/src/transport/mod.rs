@@ -26,7 +26,7 @@ pub use mock::{RecordedKind, MockTransport, PutScript, RecordedCall, RecordedPut
 pub use online::Connectivity;
 pub use raw::{classify, classify_upgrade, encrypted_call, graphql_call, graphql_endpoint, graphql_text, merge_headers, user_agent, ExchangeKind, RawFailureKind, HttpRequest, Author, WireIds, RawFailure, RawOutcome, CONNECT_TIMEOUT_MS, REQUEST_TIMEOUT_MS, MAX_HTTP_RESPONSE_BYTES, MAX_PUT_RESPONSE_BYTES};
 pub use put::{ByteSink, PutFile, PutRequest, PutReply, TransferIdentity, TransferStep};
-pub use request::{GraphQLError, GraphQLRequest, NetworkPurpose, RequestOwner, Response};
+pub use request::{GraphQLError, GraphQLRequest, NetworkPurpose, RequestOwner, RequestReason, RequestRecord, Response};
 pub use response::{ResponseOutcome, ResponseShape};
 pub use retry::{RetryClass, RetryCalls, RetryEntry, RetryOwner, RetrySnapshot};
 pub use session_code::SessionCode;

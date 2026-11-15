@@ -160,7 +160,7 @@ pub enum WindowOutcome {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WindowEffect {
-    Request { request: RequestId, attempt: u32, page: u32, cursor: Option<String>, epoch: Epoch, kind: RequestKind },
+    Request { request: RequestId, attempt: u32, page: u32, cursor: Option<String>, epoch: Epoch, kind: RequestKind, reason: crate::transport::RequestReason },
     Cancel { request: RequestId, attempt: u32 },
     Outcome { id: InterestId, outcome: WindowOutcome },
     DerivePreload { revision: i64 },
@@ -409,11 +409,12 @@ pub struct Load {
     pub confirms: u32,
     /// A request of this load took the reread mark of the window: its landing batch is a `NodeReread` (P-WIN-34).
     pub marked: bool,
+    pub reason: crate::transport::RequestReason,
 }
 
 impl Load {
     /// A request that waits for its pin.
-    pub fn issued(request: RequestId, attempt: u32, page: u32, force: bool) -> Self {
-        Self { request, step: request, attempt, retry: false, pinning: true, page, force, attempts: 0, chain: None, confirms: 0, marked: false }
+    pub fn issued(request: RequestId, attempt: u32, page: u32, force: bool, reason: crate::transport::RequestReason) -> Self {
+        Self { request, step: request, attempt, retry: false, pinning: true, page, force, attempts: 0, chain: None, confirms: 0, marked: false, reason }
     }
 }

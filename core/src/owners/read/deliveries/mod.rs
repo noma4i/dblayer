@@ -44,6 +44,8 @@ pub enum Kind {
     Operations,
     Events,
     CableCloses,
+    /// The requests that pass the gate to the network.
+    Requests,
     Changes,
     Blob,
 }
@@ -270,6 +272,8 @@ enum Emit {
     InterestPassive,
     ReloadOnConnect,
     InterestMinus,
+    RequestsPlus,
+    RequestsMinus,
     DebtPlus(Debt),
     DebtMinus(Debt),
     WantPlus,
@@ -287,6 +291,7 @@ pub enum DeliveryEffect {
     Stream { stream: StreamId, effect: StreamEffect },
     WantPlus { model: String, id: StreamId, stream: bool, scoped: Vec<ScopedChannel> },
     WantMinus { model: String, id: StreamId },
+    RequestsWatch { plus: bool },
     Drained(Drained),
     /// A `Cancel` of a stream that is gone: the caller gets its answer, no stream is touched.
     CancelAnswered { reply: ReplyId },
@@ -307,6 +312,7 @@ pub enum DeliveryInput {
     ModelReady { stream: StreamId },
     ModelEvent { stream: StreamId, position: u64, payload: String },
     CableClosed(crate::owners::read::feed::CableClose),
+    Requested(crate::transport::RequestRecord),
     ModelLost { stream: StreamId, first: u64, last: u64 },
     ModelGap { stream: StreamId },
     /// The server refused the subscription of the model: the stream of events ends with `Invalid`.
@@ -593,6 +599,7 @@ fn lower(peers: DeliveryPeers, revision: i64, stream: StreamId, machine: &Delive
                 let id = stream;
                 Effect::Send(Outbound::new(peers.windows, if plus { WindowsInput::InterestPlus { key, id } } else { WindowsInput::InterestMinus { key, id } }))
             }
+            Emit::RequestsPlus | Emit::RequestsMinus => Effect::Run(DeliveryEffect::RequestsWatch { plus: matches!(emit, Emit::RequestsPlus) }),
             Emit::WantPlus | Emit::WantMinus => {
                 for model in std::iter::once(&machine.view.model).chain(&machine.view.wants) {
                     out.push(Effect::Run(if plus_want { DeliveryEffect::WantPlus { model: model.clone(), id: stream, stream: machine.view.kind == Kind::Events, scoped: machine.view.scoped.to_vec() } } else { DeliveryEffect::WantMinus { model: model.clone(), id: stream } }));
@@ -656,6 +663,10 @@ impl StateOwner for Deliveries {
             DeliveryInput::CableClosed(event) => {
                 let streams: Vec<_> = state.streams.iter().filter(|(_, machine)| machine.view.kind == Kind::CableCloses).map(|(id, _)| *id).collect();
                 for stream in streams { on(state, stream, &mut out, |machine, fx| machine.cable_closed(event.clone(), fx)); }
+            }
+            DeliveryInput::Requested(record) => {
+                let streams: Vec<_> = state.streams.iter().filter(|(_, machine)| machine.view.kind == Kind::Requests).map(|(id, _)| *id).collect();
+                for stream in streams { on(state, stream, &mut out, |machine, fx| machine.requested(record.clone(), fx)); }
             }
             DeliveryInput::ModelLost { stream, first, last } => on(state, stream, &mut out, |machine, fx| machine.model_lost(first, last, fx)),
             DeliveryInput::ModelGap { stream } => on(state, stream, &mut out, |machine, fx| machine.model_gap(fx)),

@@ -60,6 +60,8 @@ pub(super) struct SessionRunner {
     operations: HashMap<RequestId, i64>,
     /// The sessionless requests that went out once: a repeat is a new request on the wire, the server refuses the old id as replayed.
     sent: std::collections::HashSet<RequestId>,
+    /// The requests that went out while a `requests` stream was open: a second attempt is a retry.
+    requested: std::collections::HashSet<RequestId>,
 }
 
 /// What the stored rows and the secret give to the owner and its executor at open.
@@ -89,7 +91,7 @@ impl SessionRunner {
         let digests = restored.digest.iter().cloned().collect();
         let (mint, minted) = std::sync::mpsc::channel();
         let operations = restored.pending.iter().filter_map(|pending| match pending.owner { Some(crate::transport::RequestOwner::Operation { seq }) => Some((pending.request_id, seq)), _ => None }).collect();
-        Self { wiring, exchange, secret, store, seal, executor, running: HashMap::new(), digests, generated: HashMap::new(), minted, mint, wires, operations, sent: Default::default() }
+        Self { wiring, exchange, secret, store, seal, executor, running: HashMap::new(), digests, generated: HashMap::new(), minted, mint, wires, operations, sent: Default::default(), requested: Default::default() }
     }
 
     /// What `Open` of the owner takes: the rows and what `CredentialStore.get` found.
@@ -300,6 +302,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                     Err(identity) => return back.reply(control, SessionInput::Rejected(Rejected { batch, reason: RejectReason::Storage(format!("no digest for the identity {identity}")) })),
                 };
                 self.sent.remove(&request_id);
+                self.requested.remove(&request_id);
                 match identity {
                     Some(identity) => self.digests.retain(|current, _| *current == identity),
                     None if erase_session => self.digests.clear(),
@@ -339,6 +342,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 let watch = back.watch(crate::owners::session::http_id(attempt_id));
                 let launch = self.wiring.handle.launch();
                 let gate = self.wiring.gate.clone();
+                let reason = if !gate.watching_requests() || self.requested.insert(request_id) { crate::transport::RequestReason::Send } else { crate::transport::RequestReason::Retry };
                 let task = crate::task::spawn_on(&self.executor, crate::runtime::counted(Some(launch), async move {
                     let _watch = watch;
                     crate::lock::assert_no_library_lock("HttpExchange::post");
@@ -346,7 +350,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                         Ok(secret) => secret,
                         Err(failure) => return back.reply(EpochStamp::Control, SessionInput::SecretMissing { request_id, attempt_id, lost: matches!(failure, SecretFailure::Lost) }),
                     };
-                    let sent = crate::runtime::send_in_cut(&gate, cut, || exchange.send_once(crate::transport::encrypted::SendOnce { credential: credential.as_deref(), request_id: &wire, response_key: &key, sequence, path: &pending.path, body: &body, purpose, wire: crate::transport::WireIds::new(author_kind(&pending), request_id, attempt_id) })).await;
+                    let sent = crate::runtime::send_in_cut(&gate, cut, || { gate.note(|| crate::transport::RequestRecord { operation: body["operationName"].as_str().unwrap_or_default().to_string(), variables_json: body["variables"].to_string(), reason }); exchange.send_once(crate::transport::encrypted::SendOnce { credential: credential.as_deref(), request_id: &wire, response_key: &key, sequence, path: &pending.path, body: &body, purpose, wire: crate::transport::WireIds::new(author_kind(&pending), request_id, attempt_id) }) }).await;
                     match &sent {
                         Ok(Ok(answer)) => gate.note_rate_limit(&answer.body.to_string()),
                         Ok(Err(TransportError::Session { detail, .. })) => gate.note_rate_limit(detail),

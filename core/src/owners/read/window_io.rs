@@ -79,7 +79,7 @@ impl WindowIo {
         self
     }
 
-    fn request(&mut self, stamp: EpochStamp, key: WindowKey, (request, attempt): (RequestId, u32), (page, epoch, kind): (u32, Epoch, RequestKind), cursor: Option<String>, back: &Back<Windows>) {
+    fn request(&mut self, stamp: EpochStamp, key: WindowKey, (request, attempt): (RequestId, u32), (page, epoch, kind, reason): (u32, Epoch, RequestKind, crate::transport::RequestReason), cursor: Option<String>, back: &Back<Windows>) {
         if let Err(refused) = (self.admit)(epoch) {
             return back.reply(stamp, WindowsInput::Failure { request, attempt, error: RequestError { class: ErrorClass::Permanent, failure: crate::ffi::DbError::Interrupted { detail: refused.0 } } });
         }
@@ -100,7 +100,7 @@ impl WindowIo {
                 () = token.cancelled() => None,
                 outcome = async {
                     if let Err(refused) = admit(epoch) { return TransportOutcome::Error(RequestError { class: ErrorClass::Permanent, failure: crate::ffi::DbError::Interrupted { detail: refused.0 } }); }
-                    ask((&gate, epoch), codec.as_ref(), (&key, page, kind), (cursor.as_deref(), crate::transport::WireIds::new(crate::transport::Author::Window, request, u64::from(attempt)))).await
+                    ask((&gate, epoch), codec.as_ref(), (&key, page, kind), (cursor.as_deref(), crate::transport::WireIds::new(crate::transport::Author::Window, request, u64::from(attempt))), reason).await
                 } => Some(outcome),
             };
             let delivered = outcome.filter(|_| !token.is_cancelled());
@@ -137,7 +137,7 @@ impl WindowIo {
 impl EffectRunner<Windows> for WindowIo {
     fn run(&mut self, stamp: EpochStamp, effect: WindowsEffect, back: &Back<Windows>) {
         match effect {
-            WindowsEffect::Window { key, effect: WindowEffect::Request { request, attempt, page, cursor, epoch, kind } } => self.request(stamp, key, (request, attempt), (page, epoch, kind), cursor, back),
+            WindowsEffect::Window { key, effect: WindowEffect::Request { request, attempt, page, cursor, epoch, kind, reason } } => self.request(stamp, key, (request, attempt), (page, epoch, kind, reason), cursor, back),
             WindowsEffect::Window { effect: WindowEffect::Cancel { request, attempt }, .. } => self.cancel(request, attempt),
             WindowsEffect::ReadWindow { key, read_id } => {
                 if let Some((key, read_id)) = self.read(stamp, (key, read_id), back) { (self.rest)(stamp, WindowsEffect::ReadWindow { key, read_id }); }
@@ -150,9 +150,9 @@ impl EffectRunner<Windows> for WindowIo {
     }
 }
 
-async fn ask((gate, epoch): (&crate::runtime::EpochGate, Epoch), codec: &dyn WindowCodec, (key, page, kind): (&WindowKey, u32, RequestKind), (cursor, wire): (Option<&str>, crate::transport::WireIds)) -> TransportOutcome<AnswerPage> {
+async fn ask((gate, epoch): (&crate::runtime::EpochGate, Epoch), codec: &dyn WindowCodec, (key, page, kind): (&WindowKey, u32, RequestKind), (cursor, wire): (Option<&str>, crate::transport::WireIds), reason: crate::transport::RequestReason) -> TransportOutcome<AnswerPage> {
     let request = match codec.request(key, page, cursor, kind) {
-        Ok(request) => request.by(wire),
+        Ok(request) => request.by(wire).why(reason),
         Err(detail) => return TransportOutcome::Error(RequestError { class: ErrorClass::Permanent, failure: crate::ffi::DbError::Invalid { detail } }),
     };
     match gate.query(Some(epoch), request).await {

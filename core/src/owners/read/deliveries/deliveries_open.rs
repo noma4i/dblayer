@@ -65,6 +65,12 @@ impl Delivery {
                 machine.stage = DeliveryStage::Live;
                 machine.push(Value::Ready, fx);
             }
+            Kind::Requests => {
+                machine.stage = DeliveryStage::Live;
+                fx.push(Emit::RequestsPlus);
+                machine.interested = true;
+                machine.push(Value::Ready, fx);
+            }
             Kind::Blob => {
                 fx.push(Emit::Run(StreamEffect::StatusInterest { plus: true, key: machine.view.subject.clone() }));
                 machine.interested = true;

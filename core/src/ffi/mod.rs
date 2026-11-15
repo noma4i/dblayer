@@ -69,6 +69,7 @@ pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEn
 pub use loading::{LoadMoreResult, LoadRequest};
 pub use command::CommandRequest;
 pub use crate::owners::read::deliveries::EndCause;
+pub use crate::transport::RequestReason;
 pub use read::{SessionStanding, SessionStatus, ReadClaim, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, RowEdit};
 pub use upload_rounds::{RoundJob, RoundJobsSink, RoundRefusal};
 pub use preparer::{PrepareKind, PrepareJob, PrepareOutcome, PrepareProgress, PreparePlan, Preparer, ProbeOutcome};

@@ -107,6 +107,8 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     });
 
     let deliveries_wiring = wiring.clone();
+    let requests_wiring = Arc::downgrade(&wiring);
+    wiring.gate.attach_requests(Arc::new(move |record| { if let Some(wiring) = requests_wiring.upgrade() { wiring.to_deliveries(DeliveryInput::Requested(record)); } }));
     let delivery_io = DeliveryIo::new(
         Arc::new(DbSnapshots::new(db.clone())),
         wiring.pulls.clone(),
@@ -130,6 +132,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
                     (false, false) => {}
                 }
             }
+            DeliveryEffect::RequestsWatch { plus } => deliveries_wiring.gate.watch_requests(plus),
             DeliveryEffect::Drained(done) => drained(&deliveries_wiring, done),
             DeliveryEffect::Census { reply, observed, retained } => {
                 deliveries_wiring.outcomes.settle(OutcomeId::from_raw(reply), LifeReply::Streams { observed, retained });

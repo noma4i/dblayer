@@ -63,6 +63,8 @@ pub enum ReadValue {
     /// One event of a model: the rows before and after its landing, read only while a stream of events is open.
     Event { position: u64, area: String, kind: String, id: String, before: Option<Box<WireRow>>, after: Option<Box<WireRow>> },
     CableClose { position: u64, event: crate::owners::read::feed::CableClose },
+    /// One request that left for the network, read only while a `requests` stream is open.
+    Request { operation: String, variables_json: String, reason: crate::ffi::RequestReason },
     Lost { first: u64, last: u64 },
     Gap,
     Status { revision: i64, state: String, wait_reason: Option<String>, progress: f64, error: Option<String>, local_url: Option<String>, processing: Option<WireProcessing> },
@@ -87,6 +89,8 @@ pub enum ReadRequest {
     /// The events of a model after the stream opened.
     Events { model: String },
     CableCloses,
+    /// Each request that leaves for the network with its reason.
+    Requests,
     /// The status of the transfer of `uploads[action]` of a row.
     Blob { model: String, id: String, action: String },
     /// The queue of operations of the database.
@@ -139,6 +143,21 @@ fn event_row(wire: Option<&WireModel>, id: &str, value: Option<&serde_json::Valu
     Ok(Some(Box::new(wire.row(&crate::store::Record { id, revision: 0, data: data.clone(), sync: Default::default() }))))
 }
 
+fn request_of(payload: &str) -> Result<ReadValue, DbError> {
+    let fields: serde_json::Value = serde_json::from_str(payload).map_err(|error| damaged_event(&error.to_string()))?;
+    let text = |name: &str| fields.get(name).and_then(serde_json::Value::as_str).map(str::to_string).ok_or_else(|| damaged_event(&format!("{name} is not text")));
+    let reason = match text("reason")?.as_str() {
+        "Load" => crate::ffi::RequestReason::Load,
+        "Refresh" => crate::ffi::RequestReason::Refresh,
+        "Event" => crate::ffi::RequestReason::Event,
+        "Reconnect" => crate::ffi::RequestReason::Reconnect,
+        "Retry" => crate::ffi::RequestReason::Retry,
+        "Send" => crate::ffi::RequestReason::Send,
+        other => return Err(damaged_event(&format!("reason {other} is unknown"))),
+    };
+    Ok(ReadValue::Request { operation: text("operation")?, variables_json: text("variables_json")?, reason })
+}
+
 fn event_of(position: u64, payload: &str, wire: Option<&WireModel>) -> Result<ReadValue, DbError> {
     let fields: serde_json::Value = serde_json::from_str(payload).map_err(|error| damaged_event(&error.to_string()))?;
     if !fields.is_object() { return Err(damaged_event("the payload is not an object")); }
@@ -185,6 +204,8 @@ pub struct ReadStream {
     readers: Arc<std::sync::Mutex<ReadReaders>>,
     /// The model of an events stream, to turn the rows of its events into wire rows.
     wire: Option<Arc<WireModel>>,
+    /// The stream of `requests`: its events are requests.
+    requests: bool,
     /// The epoch of the open, and the relation the request reads from the server.
     epoch: u64,
     load: Option<RelationLoad>,
@@ -267,7 +288,7 @@ impl ReadStream {
                     let mut ended = this_stream.ended.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                     *cause = ended.get_or_insert_with(|| cause.clone()).clone();
                 }
-                match read_value(value, this_stream.wire.as_deref()) {
+                match if let (true, Value::Event { payload, .. }) = (this_stream.requests, &value) { request_of(payload) } else { read_value(value, this_stream.wire.as_deref()) } {
                     Ok(value) => Some(value),
                     Err(error) => this_stream.finished(EndCause::Internal { detail: error.to_string() }),
                 }
@@ -363,7 +384,7 @@ impl Database {
                 self.db.spec(model)?;
                 Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone(), node: None, wants: Vec::new(), deferred_rows: Vec::new(), query: None })
             }
-            ReadRequest::Changes | ReadRequest::CableCloses => Ok(View { kind: if matches!(request, ReadRequest::CableCloses) { Kind::CableCloses } else { Kind::Changes }, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), node: None, wants: Vec::new(), deferred_rows: Vec::new(), query: None }),
+            ReadRequest::Changes | ReadRequest::CableCloses | ReadRequest::Requests => Ok(View { kind: match request { ReadRequest::CableCloses => Kind::CableCloses, ReadRequest::Requests => Kind::Requests, _ => Kind::Changes }, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), node: None, wants: Vec::new(), deferred_rows: Vec::new(), query: None }),
             ReadRequest::Operations => Ok(View { kind: Kind::Operations, model: String::new(), tables: std::iter::once(crate::store::operation::QUEUE_TABLE.to_string()).chain(self.db.specs().values().filter(|spec| spec.actions.iter().any(|action| action.processing.is_some())).map(|spec| crate::store::ddl::table_name(spec.key.as_str()))).collect(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), node: None, wants: Vec::new(), deferred_rows: Vec::new(), query: None }),
             ReadRequest::Blob { model, id, action } => Ok(View { kind: Kind::Blob, model: model.clone(), tables: vec![crate::store::ddl::table_name(model)], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: crate::store::transfer_key(model, id, action), node: None, wants: Vec::new(), deferred_rows: Vec::new(), query: None }),
         }
@@ -464,6 +485,8 @@ pub(crate) fn status_of_published(published: &crate::owners::contract::Published
 #[uniffi::export]
 impl Database {
     pub fn cable_closes(&self) -> Arc<ReadStream> { self.subscribe_values(self.session_epoch(), ReadRequest::CableCloses) }
+
+    pub fn requests(&self) -> Arc<ReadStream> { self.subscribe_values(self.session_epoch(), ReadRequest::Requests) }
     /// The epoch of the session now. A reader that opens streams for an account asks for it once, after the sign-in, and hands it to every stream and command of that account.
     pub fn session_epoch(&self) -> u64 { self.life.published().epoch }
 
@@ -489,7 +512,7 @@ impl Database {
             (ReadRequest::List { query } | ReadRequest::Count { query }, true) => query.relation.as_ref().map(|relation| RelationLoad { model: query.model.clone(), relation: relation.clone(), params_json: query.params_json.clone() }),
             _ => None,
         };
-        Arc::new_cyclic(|me| ReadStream { me: me.clone(), database: self.me.clone(), order: Arc::default(), stream, ended: std::sync::Mutex::new(None), readers: Arc::new(std::sync::Mutex::new(ReadReaders::default())), wire, epoch, load })
+        Arc::new_cyclic(|me| ReadStream { me: me.clone(), database: self.me.clone(), order: Arc::default(), stream, ended: std::sync::Mutex::new(None), readers: Arc::new(std::sync::Mutex::new(ReadReaders::default())), wire, requests: matches!(request, ReadRequest::Requests), epoch, load })
     }
 }
 

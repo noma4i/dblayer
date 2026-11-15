@@ -60,7 +60,7 @@ impl Snapshots for DbSnapshots {
         let (query, count) = match view.kind {
             Kind::List | Kind::Count => (view.query.as_deref().cloned().ok_or_else(|| "a list or count view has no query".to_string())?, view.kind == Kind::Count),
             Kind::Entity { .. } => (crate::store::query::Query::new(&view.model).filtered(crate::store::query::Where::equal("id", serde_json::json!(view.subject))), false),
-            Kind::Events | Kind::CableCloses | Kind::Changes | Kind::Blob | Kind::Operations => return Err("a stream of this kind reads no rows".to_string()),
+            Kind::Events | Kind::CableCloses | Kind::Requests | Kind::Changes | Kind::Blob | Kind::Operations => return Err("a stream of this kind reads no rows".to_string()),
         };
         let held = match mode {
             ReadMode::Snapshot { .. } => None,

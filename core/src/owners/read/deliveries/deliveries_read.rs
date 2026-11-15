@@ -183,6 +183,7 @@ impl Delivery {
         Some(match self.view.kind {
             Kind::Events => Emit::WantMinus,
             Kind::Blob => Emit::Run(StreamEffect::StatusInterest { plus: false, key: self.view.subject.clone() }),
+            Kind::Requests => Emit::RequestsMinus,
             _ => Emit::InterestMinus,
         })
     }

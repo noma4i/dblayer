@@ -268,6 +268,7 @@ impl DatabaseSut {
             ReadValue::Event { position, area, kind, id, .. } => {
                 Observation::new("event", json!({ "stream": stream, "position": position, "area": area, "kind": kind, "row": self.name_of(id) }))
             }
+            ReadValue::Request { operation, variables_json, reason } => Observation::new("request", json!({ "stream": stream, "operation": operation, "variables": variables_json, "reason": format!("{reason:?}") })),
             ReadValue::CableClose { position, event } => Observation::new("cable_close", json!({ "stream": stream, "position": position, "connection": event.connection_id, "code": event.code, "intended": event.intended })),
             ReadValue::Ready => Observation::new("ready", json!({ "stream": stream })),
             ReadValue::Changes { revision, rows } => Observation::new("changes", json!({ "stream": stream, "revision": revision, "rows": rows.len() })),

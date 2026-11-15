@@ -204,7 +204,7 @@ impl Facts {
     pub(super) fn can_load_next(&self) -> bool { self.cursor.is_some() && self.page_count < self.max_pages }
 
     /// A load of `page`: a request when online, `Waiting` otherwise. `announce` adds the window state.
-    pub(super) fn begin(&mut self, ctx: &mut Ctx<'_>, page: u32, force: bool, announce: bool) -> Outcome<WinState> {
+    pub(super) fn begin(&mut self, ctx: &mut Ctx<'_>, page: u32, (force, reason): (bool, RequestReason), announce: bool) -> Outcome<WinState> {
         self.replace_all = false;
         if page == 1 && self.is_online() && !self.deferred() && self.in_gap(ctx.now) {
             self.gap_wait = true;
@@ -213,9 +213,9 @@ impl Facts {
         let next = if self.is_online() && !self.deferred() {
             let (request, attempt) = ctx.request();
             self.emit(Emit::Pin { epoch: self.epoch, request });
-            WinState::loading(self.issue(request, attempt, page, force))
+            WinState::loading(self.issue(request, attempt, page, force, reason))
         } else {
-            WinState::waiting(force, page)
+            WinState::waiting(force, page, reason)
         };
         if announce {
             self.announce();
@@ -223,20 +223,25 @@ impl Facts {
         Transition(next)
     }
 
+    /// A reread deferred to the end of the gap goes out with the reason of its cause: `Event` wins over `Reconnect`.
+    pub(super) fn defer_cause(reason: &mut RequestReason, cause: RequestReason) {
+        if *reason == RequestReason::Reconnect && cause == RequestReason::Event { *reason = RequestReason::Event; }
+    }
+
     /// A window that waited goes to the network: `Loading` with a new request.
-    pub(super) fn leave_waiting(&mut self, ctx: &mut Ctx<'_>, force: bool, page: u32) -> Outcome<WinState> {
+    pub(super) fn leave_waiting(&mut self, ctx: &mut Ctx<'_>, (force, reason): (bool, RequestReason), page: u32) -> Outcome<WinState> {
         self.gap_wait = false;
         let (request, attempt) = ctx.request();
         self.emit(Emit::Pin { epoch: self.epoch, request });
         self.announce();
-        Transition(WinState::loading(self.issue(request, attempt, page, force)))
+        Transition(WinState::loading(self.issue(request, attempt, page, force, reason)))
     }
 
     /// A load of the first page of a media window starts with a check of its marker; every other load asks for a page.
-    pub(super) fn issue(&self, request: RequestId, attempt: u32, page: u32, force: bool) -> Load {
+    pub(super) fn issue(&self, request: RequestId, attempt: u32, page: u32, force: bool, reason: RequestReason) -> Load {
         self.load_seq.set(self.online_seq);
         self.answer_base.set(if page == 1 && !self.media { i64::MAX } else { -1 });
-        let load = Load::issued(request, attempt, page, force);
+        let load = Load::issued(request, attempt, page, force, reason);
         if !(self.media && page == 1) { return load; }
         let up_to = self.marker.as_ref().map_or(0, |marker| marker.sequence);
         let stale = self.stale_marked.take() || self.stale_owed.get();
@@ -245,12 +250,15 @@ impl Facts {
     }
 
     pub(super) fn request_effect(&self, load: &mut Load) -> WindowEffect {
-        load.marked |= self.reread_by_event.take();
+        if self.reread_by_event.take() {
+            load.marked = true;
+            if load.reason != RequestReason::Retry { load.reason = RequestReason::Event; }
+        }
         let (cursor, kind) = match &load.chain {
             Some(chain) => (chain.cursor.clone(), chain.kind()),
             None => (self.page_cursor(load.page), RequestKind::Page),
         };
-        WindowEffect::Request { request: load.step, attempt: load.attempt, page: load.page, cursor, epoch: self.epoch, kind }
+        WindowEffect::Request { request: load.step, attempt: load.attempt, page: load.page, cursor, epoch: self.epoch, kind, reason: load.reason }
     }
 
     /// The next step of the chain: its own request id, the Store pin and the batch stay with the load. A confirm asked again after a counted answer is a new step too.
@@ -387,7 +395,7 @@ impl Facts {
                     self.immediate(id, WindowOutcome::PageLimit)
                 } else {
                     self.waiters.insert(id, Want::All);
-                    self.begin(ctx, next_page, false, true)
+                    self.begin(ctx, next_page, (false, RequestReason::Load), true)
                 }
             }
             Goal::First | Goal::All if self.in_gap(ctx.now) => {
@@ -396,14 +404,14 @@ impl Facts {
             }
             Goal::First | Goal::All => {
                 self.waiters.insert(id, if goal == Goal::All { Want::All } else { Want::First });
-                self.begin(ctx, 1, force, true)
+                self.begin(ctx, 1, (force, if force { RequestReason::Refresh } else { RequestReason::Load }), true)
             }
             Goal::Next => {
                 if !self.can_load_next() {
                     self.immediate(id, loaded)
                 } else {
                     self.waiters.insert(id, Want::Next(next_page));
-                    self.begin(ctx, next_page, false, true)
+                    self.begin(ctx, next_page, (false, RequestReason::Load), true)
                 }
             }
         }
@@ -441,7 +449,7 @@ impl Facts {
                     self.waiters.remove(&id);
                     self.answer(id, loaded.clone());
                 }
-                return self.begin(ctx, page + 1, false, true);
+                return self.begin(ctx, page + 1, (false, RequestReason::Load), true);
             }
             self.answer_all(&WindowOutcome::Loaded { revision, has_more: self.can_load_next(), fetched: true });
             self.drop_fresh();
@@ -462,7 +470,7 @@ impl Facts {
                 self.waiters.remove(&id);
                 self.answer(id, loaded.clone());
             }
-            return self.begin(ctx, page + 1, false, true);
+            return self.begin(ctx, page + 1, (false, RequestReason::Load), true);
         }
         self.answer_all(&loaded);
         self.land_end(ctx)
@@ -481,7 +489,7 @@ impl Facts {
             self.announce();
             return Transition(WinState::idle());
         }
-        self.begin(ctx, 1, false, true)
+        self.begin(ctx, 1, (false, RequestReason::Event), true)
     }
 }
 
