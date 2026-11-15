@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Delete the row and its dependent rows when a node read answers null.
+
 ## 6.38.0 - 2026-11-15
 
 ### Changed

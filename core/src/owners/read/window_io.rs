@@ -19,7 +19,7 @@ pub trait WindowCodec: Send + Sync + 'static {
     fn answer(&self, key: &WindowKey, page: u32, kind: RequestKind, response: Response) -> Result<AnswerPage, String>;
 
     fn refusal(&self, response: &Response) -> Option<RequestError> {
-        if response.errors.is_empty() { return None; }
+        if response.errors.is_empty() || response.absent_node() { return None; }
         let kind = match response.answer_kind() {
             Ok(kind) => kind,
             Err(error) => return Some(RequestError { class: ErrorClass::Permanent, failure: crate::ffi::DbError::Internal { detail: error.to_string() } }),

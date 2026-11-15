@@ -134,6 +134,20 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
     Ok(result)
 }
 
+/// An authoritative "no such row" answer deletes each stored row that nothing wrote after the request, with the plan of a server delete event.
+pub(super) fn forget(writer: &mut RowWrite<'_>, model: &str, ids: &[String], base_revision: i64) -> Result<CommitResult, StoreError> {
+    writer.prefetch(model, ids, &[])?;
+    let mut envelope = BatchPlan::from_source(crate::schema::RowSource::Event);
+    for id in ids {
+        let Some(stored) = writer.stored(model, id)? else { continue };
+        if stored.revision > base_revision { continue; }
+        let (entity_ops, transitions) = super::feed_write::server_delete_plan(writer.connection, writer.models, &crate::identity::RowRef::new(ModelKey::new(model), stored.id))?;
+        envelope.entity_ops.extend(entity_ops);
+        envelope.operation_transitions.extend(transitions);
+    }
+    writer.apply(&envelope)
+}
+
 /// The marker of a media window replaces the stored one in the same transaction as the rows of its chain; the window lands now and no debt stays.
 pub(super) fn mark(writer: &mut RowWrite<'_>, key: &crate::owners::read::windows::WindowKey, marker: &WindowMarker, landed_at: Option<i64>) -> Result<CommitResult, StoreError> {
     let model = key.model.as_str();

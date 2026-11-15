@@ -559,7 +559,7 @@ What a refresh does, in one commit:
 - Rows from the response are merged field by field. Rows that did not change keep their revision and are not reported as updated.
 - Records that the server has not confirmed yet (a message being sent, a failed one waiting for retry) stay in the list where they are.
 - For a paged list the response is the first page. The last row of the response is looked up in the old list. If it is found, the new first page is followed by the old rows that came after it, so a long list that the user scrolled does not jump. If it is not found, the old tail is dropped and `loadMore()` loads the next pages again.
-- Rows that are missing from the response leave the list but stay in the database, because they may belong to other lists. A row is deleted when the server says so (`delete_if:`, a null node, a delete event).
+- Rows that are missing from the response leave the list but stay in the database, because they may belong to other lists. A row is deleted when the server says so (`delete_if:`, a null or `NOT_FOUND` node answer, a delete event).
 - A failed request changes nothing.
 
 An event can carry identifiers or full model rows. Without `payload`, `changed_by` always forces its declared HTTP reread, regardless of freshness.

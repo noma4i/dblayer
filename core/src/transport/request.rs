@@ -69,6 +69,11 @@ pub struct Response {
 }
 
 impl Response {
+    /// An error `NOT_FOUND` on path `node` is the answer "no such row" of a node read, no failure.
+    pub fn absent_node(&self) -> bool {
+        !self.errors.is_empty() && self.errors.iter().all(|error| error.code() == Some("NOT_FOUND") && error.path.as_deref() == Some(&[Value::String("node".into())]))
+    }
+
     pub fn data(value: Value) -> Self {
         Self { data: Some(value), errors: Vec::new(), kind: None }
     }

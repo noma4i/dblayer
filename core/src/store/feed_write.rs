@@ -15,6 +15,16 @@ type EventRows = BTreeMap<(String, String), Option<Map<String, Value>>>;
 pub(super) type OverlayWrites = Vec<(String, String, Map<String, Value>)>;
 
 
+pub(super) fn server_delete_plan(connection: &rusqlite::Connection, models: &BTreeMap<String, super::ModelInfo>, owner: &RowRef) -> Result<(Vec<EntityOp>, Vec<crate::store::OperationTransition>), StoreError> {
+    let reader = Reader::new(connection, models);
+    let mut children = Vec::new();
+    super::follow_cascade::descendants(models, &reader, owner, &mut HashSet::from([owner.clone()]), &mut children)?;
+    let entity_ops: Vec<EntityOp> = crate::owners::write::plan_cascade::cascade_destroys(owner, &children, true).into_iter().map(|row| EntityOp::Destroy { model: row.model, id: row.id, reason: DestroyReason::Server }).collect();
+    let keys: BTreeSet<(String, String)> = entity_ops.iter().map(|op| (op.row_ref().model.to_string(), op.row_ref().id.to_string())).collect();
+    let transitions = crate::store::operation::row_operation_sequences(connection, &keys)?.into_iter().map(|seq| crate::store::OperationTransition::Remove { seq, expected: None }).collect();
+    Ok((entity_ops, transitions))
+}
+
 fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mut OverlayWrites) -> Result<Option<CommitResult>, StoreError> {
     let op = payload.get("op").and_then(Value::as_str).ok_or_else(|| StoreError::Constraint("event has no operation".into()))?;
     if op == "reread" { return Ok(None); }
@@ -32,13 +42,7 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
     let mut envelope = BatchPlan::from_source(crate::schema::RowSource::Event);
     if op == "delete" {
         let owner = RowRef::new(ModelKey::new(model), id.clone());
-        let mut children = Vec::new();
-        super::follow_cascade::descendants(writer.models, &reader, &owner, &mut HashSet::from([owner.clone()]), &mut children)?;
-        envelope.entity_ops = crate::owners::write::plan_cascade::cascade_destroys(&owner, &children, true).into_iter().map(|row| EntityOp::Destroy { model: row.model, id: row.id, reason: DestroyReason::Server }).collect();
-        let keys: BTreeSet<(String, String)> = envelope.entity_ops.iter().map(|op| (op.row_ref().model.to_string(), op.row_ref().id.to_string())).collect();
-        for seq in crate::store::operation::row_operation_sequences(writer.connection, &keys)? {
-            envelope.operation_transitions.push(crate::store::OperationTransition::Remove { seq, expected: None });
-        }
+        (envelope.entity_ops, envelope.operation_transitions) = server_delete_plan(writer.connection, writer.models, &owner)?;
     } else if op == "upsert" {
         let patch = payload.get("row").and_then(Value::as_object).ok_or_else(|| StoreError::Constraint("event has no row".into()))?;
         let Some(row) = writer.admit(model, patch, RowKind::Server, Admission { base: Some(writer.revision), closing: &[] })? else { return Ok(None) };

@@ -245,6 +245,8 @@ pub enum StoreOp {
     /// A page of a window: the rows of the answer, the window record (`page`, `cursor`) and whether it replaces the rows of the window.
     /// `source` = `NodeReread` when the window owner marked the load for a reread by event (P-DATA-100).
     Window { landed_at: i64, key: String, model: String, page: u32, replace_all: bool, cursor: Option<String>, roots: Vec<RowValue>, related: Vec<(String, RowValue)>, total: Option<i64>, base_revision: i64, source: crate::schema::RowSource },
+    /// The ids a node read answered with no row (`null`, `NOT_FOUND`): the stored rows of them are deleted like a server delete, unless written after `base_revision`.
+    WindowAbsent { model: String, ids: Vec<String>, base_revision: i64 },
     /// The marker of a media window: it replaces the stored one and moves `landed_at` of the window, the rows stay.
     WindowMarker { landed_at: Option<i64>, key: String, model: String, marker: crate::store::WindowMarker },
 }

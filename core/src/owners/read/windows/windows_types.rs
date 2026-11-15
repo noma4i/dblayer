@@ -70,6 +70,8 @@ pub struct PageRows {
     pub roots: Vec<crate::owners::store::RowValue>,
     pub related: Vec<(String, crate::owners::store::RowValue)>,
     pub total: Option<i64>,
+    /// The asked ids the server answered with no row.
+    pub absent: Vec<String>,
 }
 
 /// The answer of the server for one page.

@@ -91,7 +91,7 @@ impl SchemaWindowCodec {
 
 fn row_value(row: &Map<String, Value>) -> Option<(RowId, Map<String, Value>)> { Some((row.get("id").and_then(read_id)?, row.clone())) }
 
-fn page_rows(normalized: Normalized, total: Option<i64>) -> (Vec<String>, PageRows) {
+fn page_rows(normalized: Normalized, total: Option<i64>, absent: Vec<String>) -> (Vec<String>, PageRows) {
     let mut ids = Vec::with_capacity(normalized.roots.len());
     let mut roots = Vec::with_capacity(normalized.roots.len());
     for root in &normalized.roots {
@@ -103,7 +103,7 @@ fn page_rows(normalized: Normalized, total: Option<i64>) -> (Vec<String>, PageRo
         roots.push(RowValue { row_id: id.as_str().to_string(), values: Value::Object(values).to_string() });
     }
     let related = normalized.related.iter().filter_map(|(model, row)| row_value(row).map(|(id, values)| (model.as_str().to_string(), RowValue { row_id: id.as_str().to_string(), values: Value::Object(values).to_string() }))).collect();
-    (ids, PageRows { roots, related, total })
+    (ids, PageRows { roots, related, total, absent })
 }
 
 impl WindowCodec for SchemaWindowCodec {
@@ -144,11 +144,12 @@ impl WindowCodec for SchemaWindowCodec {
     }
 
     fn answer(&self, key: &WindowKey, page: u32, kind: RequestKind, response: Response) -> Result<AnswerPage, String> {
-        if response.shape().outcome() != ResponseOutcome::Commit {
+        let absent_answer = response.absent_node();
+        if response.shape().outcome() != ResponseOutcome::Commit && !absent_answer {
             let messages: Vec<String> = response.errors.iter().map(|error| error.message.clone()).collect();
             return Err(if messages.is_empty() { "empty response".to_string() } else { messages.join("; ") });
         }
-        let data = response.data.ok_or("response has no data")?;
+        let data = match response.data { Some(data) => data, None if absent_answer => Value::Null, None => return Err("response has no data".into()) };
         let model = key.model.as_str();
         let spec = self.db.spec(model).map_err(|error| error.to_string())?;
         if matches!(kind, RequestKind::Marker { .. }) {
@@ -180,7 +181,12 @@ impl WindowCodec for SchemaWindowCodec {
         let more = extracted.page_info.as_ref().is_some_and(|info| info.has_next_page);
         let cursor = extracted.page_info.as_ref().filter(|info| info.has_next_page).and_then(|info| info.end_cursor.clone());
         let total = extracted.page_info.as_ref().and_then(|info| info.total);
-        let (rows, payload) = page_rows(normalized, total);
+        let absent = match key.kind()? {
+            WindowKind::Relation { params, .. } if declared.node == Some(NodeRead::One) => params.get(crate::schema::NODE_PARAM).and_then(Value::as_str).filter(|_| absent_answer || root_value(&data, &root) == Some(&Value::Null)).map(|id| vec![id.to_string()]).unwrap_or_default(),
+            WindowKind::Nodes { ids } => root_value(&data, &root).and_then(Value::as_array).filter(|items| items.len() == ids.len()).map(|items| ids.iter().zip(items).filter(|(_, item)| item.is_null()).map(|(id, _)| id.clone()).collect()).unwrap_or_default(),
+            WindowKind::Relation { .. } => Vec::new(),
+        };
+        let (rows, payload) = page_rows(normalized, total, absent);
         Ok(AnswerPage { page, rows, cursor, dependency_models, payload, marker: None, more })
     }
 }

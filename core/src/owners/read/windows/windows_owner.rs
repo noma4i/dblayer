@@ -452,6 +452,9 @@ impl Windows {
                     if !keep_rows {
                         ops.push(StoreOp::Window { landed_at, key: key.name.clone(), model: key.model.clone(), page: number, replace_all, cursor: page.cursor.clone(), roots: page.payload.roots.clone(), related: page.payload.related.clone(), total: page.payload.total, base_revision, source });
                     }
+                    if !keep_rows && !page.payload.absent.is_empty() {
+                        ops.push(StoreOp::WindowAbsent { model: key.model.clone(), ids: page.payload.absent.clone(), base_revision });
+                    }
                     if let Some(marker) = marker {
                         ops.push(StoreOp::WindowMarker { landed_at: (number == 1).then_some(landed_at), key: key.name.clone(), model: key.model.clone(), marker });
                     }

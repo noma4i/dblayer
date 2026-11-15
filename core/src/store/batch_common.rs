@@ -113,6 +113,7 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             let page = super::window_values::WindowPage { key: &key, page: *page, replace_all: *replace_all, cursor: cursor.as_deref(), roots, related, total: *total, base_revision: *base_revision, landed_at: *landed_at, source: *source };
             results.push(super::window_write::land(writer, &page)?);
         }
+        StoreOp::WindowAbsent { model, ids, base_revision } => results.push(super::window_write::forget(writer, model, ids, *base_revision)?),
         StoreOp::WindowMarker { landed_at, key, model, marker } => {
             let key = crate::owners::read::windows::WindowKey { model: model.clone(), name: key.clone() };
             results.push(super::window_write::mark(writer, &key, marker, *landed_at)?);
