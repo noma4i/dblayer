@@ -474,8 +474,8 @@ pub enum TransferEffect {
     /// Read the result of the platform in chunks: the answer comes back as `CopyDone` or `CopyFailed`.
     Measure { transfer_id: TransferId, attempt_id: AttemptId },
     /// A step of the file (`part`, `blob`) with `NetworkPurpose::Transfer`.
-    Step { transfer_id: TransferId, attempt_id: AttemptId, cycle_id: CycleId, key: Key, operation: u64, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location>, seeded: Option<SeededAnswer> },
-    Complete { transfer_id: TransferId, attempt_id: AttemptId, cycle_id: CycleId, key: Key, upload_id: Option<String>, parts: Vec<(u32, Option<String>)>, place: Option<Location>, seeded: Option<SeededAnswer> },
+    Step { transfer_id: TransferId, attempt_id: AttemptId, cycle_id: CycleId, key: Key, operation: u64, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location>, seeded: Option<SeededAnswer>, reason: crate::transport::RequestReason },
+    Complete { transfer_id: TransferId, attempt_id: AttemptId, cycle_id: CycleId, key: Key, upload_id: Option<String>, parts: Vec<(u32, Option<String>)>, place: Option<Location>, seeded: Option<SeededAnswer>, reason: crate::transport::RequestReason },
     Abort { transfer_id: TransferId, attempt_id: AttemptId, key: Key, upload_id: String },
     /// `abort` of an upload whose transfer is gone: the answer comes back as `AbortDone`.
     AbortOrphan { key: Key, upload_id: String },

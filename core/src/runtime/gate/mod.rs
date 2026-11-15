@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use super::{Cause, Clock, Epoch};
-use crate::transport::{GraphQLRequest, PutReply, PutRequest, RequestReason, RequestRecord, Response, TransportError, Upstream};
+use crate::transport::{GraphQLRequest, PutReply, PutRequest, RequestRecord, Response, TransportError, Upstream};
 
 const CLOSED: u64 = 1;
 const CUT_SHIFT: u32 = 1;
@@ -173,7 +173,7 @@ impl EpochGate {
     pub async fn put(&self, epoch: Option<Epoch>, request: PutRequest) -> Result<PutReply, TransportError> {
         self.paused().await;
         let transport = self.lend(epoch, None)?;
-        self.note(|| RequestRecord { operation: "put".into(), variables_json: serde_json::json!({ "operation": request.identity.operation_id, "item": request.identity.item_id }).to_string(), reason: RequestReason::Send });
+        self.note(|| RequestRecord { operation: "put".into(), variables_json: serde_json::json!({ "operation": request.identity.operation_id, "item": request.identity.item_id }).to_string(), reason: request.reason });
         transport.put(request).await
     }
 

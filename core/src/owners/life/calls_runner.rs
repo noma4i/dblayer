@@ -78,6 +78,7 @@ struct CallRequest {
     document: String,
     root: String,
     kind: CallKind,
+    reason: crate::transport::RequestReason,
 }
 
 impl CallsRunner {
@@ -86,7 +87,7 @@ impl CallsRunner {
     }
 
     fn query(&mut self, call: CallRequest, back: &Back<Calls>) {
-        let CallRequest { call_id, request_id, epoch, operation, variables, document, root, kind } = call;
+        let CallRequest { call_id, request_id, epoch, operation, variables, document, root, kind, reason } = call;
         if !self.wiring.gate.has_transport() { return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Invalid }); }
         let back = back.clone();
         let (launch, gate) = (self.wiring.handle.launch(), self.wiring.gate.clone());
@@ -97,7 +98,7 @@ impl CallsRunner {
             #[cfg(test)]
             let _flight = flight;
             let variables: Value = serde_json::from_str(&variables).unwrap_or(Value::Null);
-            let request = GraphQLRequest::new(document.clone(), operation, variables).by(crate::transport::WireIds::new(crate::transport::Author::Calls, request_id, crate::transport::WireIds::next_attempt()));
+            let request = GraphQLRequest::new(document.clone(), operation, variables).why(reason).by(crate::transport::WireIds::new(crate::transport::Author::Calls, request_id, crate::transport::WireIds::next_attempt()));
             crate::lock::assert_no_library_lock("Transport::request");
             let result = match kind {
                 CallKind::Mutate => gate.mutate(Some(epoch), request).await,
@@ -143,9 +144,9 @@ pub(super) fn mutate_input(req_id: RequestId, epoch: crate::runtime::Epoch, path
 impl EffectRunner<Calls> for CallsRunner {
     fn run(&mut self, _stamp: EpochStamp, effect: CallsEffect, back: &Back<Calls>) {
         match effect {
-            CallsEffect::Request { call_id, request_id, operation, variables, definition, epoch } => {
+            CallsEffect::Request { call_id, request_id, operation, variables, definition, epoch, reason } => {
                 let crate::owners::calls::CallDefinition { kind, document, root } = definition;
-                let call = CallRequest { call_id, request_id, epoch, operation, variables, document, root, kind };
+                let call = CallRequest { call_id, request_id, epoch, operation, variables, document, root, kind, reason };
                 match kind {
                     CallKind::Query => self.query(call, back),
                     CallKind::Mutate => self.mutate(call, back),

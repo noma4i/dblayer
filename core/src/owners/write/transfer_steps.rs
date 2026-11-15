@@ -56,12 +56,14 @@ impl TransferState {
 
     fn step_effect(transfer: &Transfer, operation: u64) -> Option<TransferEffect> {
         let NextStep::Part(part) = transfer.next_step else { return Some(Self::complete_effect(transfer)) };
-        Some(TransferEffect::Step { transfer_id: transfer.transfer_id, attempt_id: transfer.attempt_id, cycle_id: transfer.cycle_id, key: transfer.key.clone(), operation, part: Some(part), purpose: NetworkPurpose::Transfer, upload_id: transfer.upload_id.clone(), source: transfer.source.clone()?, steps: transfer.steps.clone()?, place: transfer.place, seeded: transfer.seeded.clone() })
+        Some(TransferEffect::Step { transfer_id: transfer.transfer_id, attempt_id: transfer.attempt_id, cycle_id: transfer.cycle_id, key: transfer.key.clone(), operation, part: Some(part), purpose: NetworkPurpose::Transfer, upload_id: transfer.upload_id.clone(), source: transfer.source.clone()?, steps: transfer.steps.clone()?, place: transfer.place, seeded: transfer.seeded.clone(), reason: Self::step_reason(transfer) })
     }
+
+    fn step_reason(transfer: &Transfer) -> crate::transport::RequestReason { if transfer.attempts > 1 { crate::transport::RequestReason::Retry } else { crate::transport::RequestReason::Send } }
 
     fn complete_effect(transfer: &Transfer) -> TransferEffect {
         let parts = transfer.etags.iter().enumerate().map(|(index, etag)| (index as u32 + 1, etag.clone())).collect();
-        TransferEffect::Complete { transfer_id: transfer.transfer_id, attempt_id: transfer.attempt_id, cycle_id: transfer.cycle_id, key: transfer.key.clone(), upload_id: transfer.upload_id.clone(), parts, place: transfer.place, seeded: transfer.seeded.clone() }
+        TransferEffect::Complete { transfer_id: transfer.transfer_id, attempt_id: transfer.attempt_id, cycle_id: transfer.cycle_id, key: transfer.key.clone(), upload_id: transfer.upload_id.clone(), parts, place: transfer.place, seeded: transfer.seeded.clone(), reason: Self::step_reason(transfer) }
     }
 
     /// Ready transfers start by `(seq, position)` while a slot is free, the network is up and `saving` allows. A due retry competes in the same order.

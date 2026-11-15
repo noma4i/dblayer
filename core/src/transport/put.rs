@@ -29,6 +29,7 @@ pub struct PutRequest {
     pub identity: TransferIdentity,
     pub cancel: CancelToken,
     pub sent: ByteSink,
+    pub reason: super::RequestReason,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]

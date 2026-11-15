@@ -73,7 +73,7 @@ pub enum CallPhase {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CallsEffect {
-    Request { call_id: CallId, request_id: RequestId, operation: String, variables: String, definition: CallDefinition, epoch: Epoch },
+    Request { call_id: CallId, request_id: RequestId, operation: String, variables: String, definition: CallDefinition, epoch: Epoch, reason: crate::transport::RequestReason },
     Cancel { request_id: RequestId, kind: CallKind },
     /// Session `Release{req_id}`: the pair of a dropped mutation stays with Session, Calls gives up its outcome.
     Release { request_id: RequestId },
@@ -180,7 +180,7 @@ impl CallsState {
         self.calls.insert(id, (CallPhase::Sending { request_id, kind, generation, releasing: false }, reply));
         self.by_reply.insert(reply, id);
         self.attempts.insert(id, CallAttempt { operation: operation.clone(), definition: definition.clone(), variables: variables.clone(), epoch: self.epoch, attempt: 1, last: None, waiting_network: false, waiting_retry: false });
-        fx.push(CallsEffect::Request { call_id: id, request_id, operation, variables, definition, epoch: self.epoch });
+        fx.push(CallsEffect::Request { call_id: id, request_id, operation, variables, definition, epoch: self.epoch, reason: crate::transport::RequestReason::Send });
     }
 
     fn interrupt(&mut self, end: CallError, fx: &mut Vec<CallsEffect>, finished: &mut Vec<CallId>) {
@@ -223,7 +223,7 @@ impl CallsState {
         let Some(attempt) = self.attempts.get_mut(&call_id) else { return };
         attempt.waiting_retry = false;
         attempt.waiting_network = false;
-        fx.push(CallsEffect::Request { call_id, request_id, operation: attempt.operation.clone(), variables: attempt.variables.clone(), definition: attempt.definition.clone(), epoch: attempt.epoch });
+        fx.push(CallsEffect::Request { call_id, request_id, operation: attempt.operation.clone(), variables: attempt.variables.clone(), definition: attempt.definition.clone(), epoch: attempt.epoch, reason: crate::transport::RequestReason::Retry });
     }
 }
 

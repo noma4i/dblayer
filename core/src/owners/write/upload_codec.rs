@@ -97,6 +97,7 @@ impl UploadCodec {
             identity: TransferIdentity { operation_id: i64::try_from(identity.0).unwrap_or(i64::MAX), item_id: identity.1.to_string(), step },
             cancel: CancelToken::new(),
             sent: Arc::new(|_| {}),
+            reason: crate::transport::RequestReason::Send,
         };
         link.put(request).await
     }
