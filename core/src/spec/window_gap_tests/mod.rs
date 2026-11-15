@@ -357,6 +357,19 @@ impl Twin {
                 self.post(w::WindowsInput::WindowRead { key, read_id, result });
             }
         }
+        self.capture()
+    }
+
+    /// Moves the clock by `ms`, fires what is due and returns the effects it sent like `step`.
+    fn advance(&mut self, ms: i64) -> Vec<Effect> {
+        take(&self.log);
+        self.now += ms;
+        self.det.tick(crate::runtime::Time(self.now as u64));
+        self.run();
+        self.capture()
+    }
+
+    fn capture(&mut self) -> Vec<Effect> {
         let emitted = take(&self.log);
         if let Some(batch) = sent_batches(&emitted, &self.stored).into_iter().rev().find(|batch| batch.author == BatchAuthor::Window && !marks_only(batch)) { self.commit = Some(batch); }
         let (got, outcomes) = self.split(emitted);

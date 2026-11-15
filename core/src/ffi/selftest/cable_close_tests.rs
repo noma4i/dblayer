@@ -90,6 +90,7 @@ async fn cable_opens_only_while_the_declared_singleton_field_is_true() {
     rig.settle().await;
     let mut seen = vec![("no viewer row", rig.cable_connects())];
     for registered in [false, true, false] {
+        rig.clock.advance(1_000);
         rig.world.answer_with("ViewerMe", json!({"data": {"viewer": {"__typename": "Viewer", "id": "v1", "registered": registered}}}));
         super::rig_tests::bound(rig.database.refresh(epoch, "Viewer".into(), Some("me".into()), "{}".into())).await.unwrap();
         rig.settle().await;

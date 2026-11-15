@@ -10,10 +10,14 @@ use crate::test_wait::within;
 use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response};
 use crate::value::ScalarKind;
 
-#[derive(Default)]
 struct Server {
     state: Mutex<ServerState>,
     pause: Mutex<Option<Arc<Pause>>>,
+    clock: Arc<TestClock>,
+}
+
+impl Default for Server {
+    fn default() -> Self { Self { state: Mutex::default(), pause: Mutex::default(), clock: TestClock::new(1_000_000) } }
 }
 
 struct Pause {
@@ -135,7 +139,7 @@ async fn open_models(server: Arc<Server>, model_text: String) -> Arc<Database> {
     let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
     encrypted.endpoints.session_operations.insert("otp".into(), EncryptedSessionOperation { path: "/api/auth/otp".into(), class: crate::transport::EncryptedOperationClass::Sessionless });
-    let database = OpenDatabase::new().open_with_clock(Config { path: None }, crate::ffi::specs(model_text), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(super::encrypted_tests::SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(super::session_guards_tests::WatchedHeld::default())), http: Some(server), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000), crate::ffi::OpenOptions::default(), None).await.unwrap();
+    let database = OpenDatabase::new().open_with_clock(Config { path: None }, crate::ffi::specs(model_text), crate::ffi::OpenPorts { partial_operations: true, transport: Some(Arc::new(super::encrypted_tests::SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(super::session_guards_tests::WatchedHeld::default())), http: Some(server.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, server.clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
     database.register_operations(json!([
         {"name":"MyProfile","document":"query MyProfile { me { id name } }"},
         {"name":"UserNode","document":"query UserNode($id: ID!) { node(id: $id) { ... on User { id name } } }"},
@@ -163,6 +167,7 @@ async fn session_reset_and_close_reject_answers_started_before_the_transition() 
         let database = open(server.clone()).await;
         sign_in(&database, "A").await;
         let pause = Arc::new(Pause { entered: tokio::sync::Notify::new(), release: tokio::sync::Semaphore::new(0), dropped: false.into() });
+        server.clock.advance(1_000);
         *server.pause.lock().unwrap() = Some(pause.clone());
         let caller = database.clone();
         let work = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), async move {

@@ -178,6 +178,7 @@ fn win_epoch_end_and_close_end_every_stage() {
 #[test]
 fn win_wait_refresh_result() {
     let mut success = fresh();
+    success.advance(1_000);
     let effects = success.step(Input::Load { id: 9, goal: Goal::First, force: true });
     assert_eq!(requests(&effects), 1);
     assert!(!success.outcomes.iter().any(|(id, _)| *id == 9));
@@ -185,6 +186,7 @@ fn win_wait_refresh_result() {
     assert!(success.outcomes.contains(&(9, Result3::Loaded)));
 
     let mut failed = fresh();
+    failed.advance(1_000);
     failed.step(Input::Load { id: 9, goal: Goal::First, force: true });
     failed.fail(Failure::Permanent);
     assert!(failed.outcomes.contains(&(9, Result3::Failed)));
@@ -198,6 +200,7 @@ fn win_wait_refresh_result() {
 
     for closing in [false, true] {
         let mut twin = fresh();
+        twin.advance(1_000);
         twin.step(Input::Load { id: 9, goal: Goal::First, force: true });
         take(&twin.log);
         if closing { twin.det.close(); } else { twin.det.end_epoch(EPOCH, Ended::SessionReset); }

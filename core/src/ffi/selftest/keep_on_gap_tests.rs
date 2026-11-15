@@ -68,6 +68,7 @@ async fn gap_keeps_the_window_of_a_scope_that_declares_it() {
         }
         match case {
             Break::Network => {
+                transport.clock.advance(1_000);
                 database.set_online(false).await.unwrap();
                 database.set_online(true).await.unwrap();
             }
@@ -95,9 +96,10 @@ async fn gap_keeps_the_window_of_a_scope_that_declares_it() {
             }
             Break::Restart => {
                 bound(database.close_database()).await.unwrap();
-                let (database, _transport) = open_at(path, held, &world).await;
+                let (database, transport) = open_at(path, held, &world).await;
                 let (plain, _plain_handle) = watch(&database, "list", "PRIMARY");
                 let (kept, _kept_handle) = watch(&database, "pinned", "SECONDARY");
+                transport.clock.advance(1_000);
                 settled(&database, "both windows show their rows after the restart", || ids(&plain) == ["c3", "c1"] && !ids(&kept).is_empty()).await;
                 table.push((case, requests(&world, "PRIMARY"), requests(&world, "SECONDARY"), ids(&plain), ids(&kept), None));
                 bound(database.close_database()).await.unwrap();
@@ -141,6 +143,7 @@ async fn net_background_return_loads_each_window_once() {
     assert_eq!((requests(&world, "PRIMARY") - before.0, requests(&world, "SECONDARY") - before.1), (0, 0), "a foreground without a prior background sends no request");
     sink.enter_background(registration);
     settled(&database, "the background reached the owners", || true).await;
+    transport.clock.advance(1_000);
     sink.enter_foreground(registration);
     signalled(&transport.opened, "the subscription opens again", || transport.token.lock().unwrap().is_some()).await;
     settled(&database, "the windows were read after the return", || true).await;

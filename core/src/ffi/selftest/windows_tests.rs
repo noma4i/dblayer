@@ -17,6 +17,7 @@ use crate::value::ScalarKind;
 struct Pages {
     queries: AtomicUsize,
     gates: Mutex<HashMap<usize, Arc<Gate>>>,
+    clock: Arc<TestClock>,
 }
 
 #[async_trait]
@@ -43,8 +44,9 @@ async fn open_pages_limited(max_pages: Option<u32>) -> (Arc<Database>, Arc<Pages
         stale_time: "5.minutes".into(), empty_stale_time: None, selects_page_info: true, page_size: None, variables: Default::default(), root: None, total_from: None,
     });
     model.relations.push(feed);
-    let pages = Arc::new(Pages { queries: AtomicUsize::new(0), gates: Mutex::new(HashMap::new()) });
-    let database = OpenDatabase::new().open_with_clock(Config { path: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(pages.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000), crate::ffi::OpenOptions::default(), None).await.unwrap();
+    let clock = TestClock::new(1_000_000);
+    let pages = Arc::new(Pages { queries: AtomicUsize::new(0), gates: Mutex::new(HashMap::new()), clock: clock.clone() });
+    let database = OpenDatabase::new().open_with_clock(Config { path: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(pages.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock, crate::ffi::OpenOptions::default(), None).await.unwrap();
     database.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).await.unwrap();
     database.set_online(true).await.unwrap();
     (database, pages)
@@ -104,6 +106,7 @@ async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consist
         let rows = Arc::new(Rows::default());
         let live = database.watch_query(FEED, rows.clone());
         bound(live.wait_for_initial_load()).await.unwrap();
+        pages.clock.advance(1_000);
         let (first, second) = (Gate::new(), Gate::new());
         pages.gates.lock().unwrap().insert(1, first.clone());
         pages.gates.lock().unwrap().insert(2, second.clone());

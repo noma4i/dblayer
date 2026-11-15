@@ -325,6 +325,7 @@ fn win_idle_stale_lost_rereads() {
 #[test]
 fn win_abandoned_force_load_marks_the_saved_window() {
     let mut twin = fresh_watched();
+    twin.advance(1_000);
     twin.step(Input::Load { id: 1, goal: Goal::First, force: true });
     assert_eq!(twin.stage(), Some(WindowStage::Loading));
     twin.step(Input::InterestMinus { id: 1 });
@@ -343,5 +344,6 @@ fn win_reopened_window_reloads_on_connect_after_the_network_left() {
     twin.step(Input::Online(false));
     twin.watch();
     twin.post_call(w::WindowsInput::ReloadOnConnect { key: key(), id: id64(STREAM) });
+    twin.advance(1_000);
     assert_eq!(requests(&twin.step(Input::Online(true))), 1, "the return of the network reloads the fresh window of a reload-on-connect reader");
 }

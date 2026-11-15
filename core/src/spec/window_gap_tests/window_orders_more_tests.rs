@@ -354,6 +354,7 @@ fn win_orders_reconnect_gap() {
                     twin.post_call(w::WindowsInput::ReloadOnConnect { key: key(), id: u64::from(STREAM) });
                 }
                 take(&twin.log);
+                twin.advance(1_000);
                 let mut reads = 0;
                 for event in order.iter().copied() {
                     twin.post(match event {

@@ -51,9 +51,11 @@ async fn a_media_refetch_after_mutation_reads_the_whole_stale_window() {
     assert_eq!(ids(bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query.clone()))).await.unwrap()), ["v1"]);
     let receipt = bound(rig.database.act(epoch, "MediaMessage".into(), "v1".into(), "like".into(), "{}".into(), "{}".into())).await.unwrap();
     assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
+    rig.clock.advance(1_000);
     bound(rig.database.load_all(epoch, "MediaMessage".into(), Some("visual_media".into()), params.clone(), false)).await.unwrap();
     assert_eq!(ids(bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap()), ["v2"], "the stale window was not read again after the mutation");
     assert_eq!(requests(&rig, "ChatMedia"), 2);
+    rig.clock.advance(1_000);
     bound(rig.database.load_all(epoch, "MediaMessage".into(), Some("visual_media".into()), params.clone(), false)).await.unwrap();
     assert_eq!(requests(&rig, "MediaMarker"), 5);
     rig.database.close_now();
@@ -113,6 +115,7 @@ async fn win_chain_refresh_keeps_tail() {
     let (rig, rows, _stream) = chain_rig().await;
     rig.world.fail_next("chatMediaState", chain_marker("1", 6, 6));
     let epoch = rig.database.session_epoch();
+    rig.clock.advance(1_000);
     bound(rig.database.refresh(epoch, "MediaEntry".into(), Some("media".into()), r#"{"chatId":"c1"}"#.into())).await.unwrap();
     crate::test_wait::settled(&rig, "the refresh settled", || chain_ids(&rows).len() == 6).await;
     assert_eq!(chain_ids(&rows), ["1", "2", "3", "4", "5", "6"]);

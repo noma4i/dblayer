@@ -22,6 +22,7 @@ fn win_preload_asks_only_when_not_fresh() {
         let mut stale = fresh_watched();
         stale.step(Input::InterestMinus { id: STREAM });
         stale.step(Input::Stale { in_keys: true });
+        stale.advance(1_000);
         assert_eq!(requests(&stale.step(Input::InterestPlus { id: PRELOAD })), 1, "the preload on a window that is not fresh loads it");
     }
     {

@@ -435,6 +435,7 @@ async fn feed_prop_changed_by_reader_wants() {
     bound(stream.wait_for_initial_load()).await.unwrap();
     transport.subscribed(&database).await;
     let token = transport.token.lock().unwrap().clone().unwrap();
+    transport.clock.advance(1_000);
     let before = world.count("ChatList");
     world.answer_with("ChatList", json!({"data":{"chats":[{"__typename":"Chat","id":"c1","title":"after","revision":2,"lists":["PRIMARY"]}]}}));
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"CHAT","action":"UPDATED","recordId":"c1"}]}}})));
@@ -512,6 +513,7 @@ async fn data_insert_on_node_reread() {
         crate::test_wait::settled(&database, "the node is read", || rows.len() == 1).await;
     }
     assert_eq!(list.len(), 0, "a node read by the caller puts no row into the window");
+    transport.clock.advance(1_000);
     let asked = world.count("ChatNode");
     world.answer_with("ChatNode", chat("c1"));
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"CHAT","action":"UPDATED","recordId":"c1"}]}}})));
@@ -564,6 +566,7 @@ async fn data_insert_on_node_reread_of_a_row_in_debt() {
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"CHAT","action":"UPDATED","recordId":"c1"}]}}})));
     crate::test_wait::settled(&database, "the event is done", || true).await;
     assert_eq!(list.len(), 0, "nobody reads the row, so nothing lands");
+    transport.clock.advance(1_000);
     world.answer_with("ChatNode", chat("c1"));
     let second = Arc::new(crate::ffi::tape::Rows::default());
     let _again = database.watch_query(&node("c1"), second.clone());

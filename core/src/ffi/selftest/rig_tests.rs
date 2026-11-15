@@ -544,12 +544,14 @@ impl Rig {
         bound(database.session_call("login_link".into(), json!({"account":account}).to_string())).await.unwrap();
         bound(database.run(database.session_epoch(), "SessionProfile".into(), "{}".into())).await.unwrap();
         bound(database.refresh(database.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
+        self.clock.advance(1_000);
     }
 
     pub(super) async fn login_android(&self, account: &str) {
         let database = &self.database;
         bound(database.session_call("social".into(), json!({"account":account}).to_string())).await.unwrap();
         bound(database.refresh(database.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
+        self.clock.advance(1_000);
     }
 
     /// The exit of the app. `revoke`: unregister the device and the confirmed server logout come first. `cancel`: the Android app cancels its collectors after the session reset, the iOS app keeps them held.

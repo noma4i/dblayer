@@ -72,7 +72,7 @@ pub(super) fn online_of(rows: &Rows) -> Option<bool> {
 
 async fn observe(loaded_by_node: bool, events_stream: bool, fetch: ReadFetch) -> (bool, usize, Option<bool>, u64) {
     let world = World::new("server", "A", true);
-    let (database, cable, _) = open(world.clone()).await;
+    let (database, cable, clock) = open(world.clone()).await;
     let epoch = database.session_epoch();
     let stream = events_stream.then(|| database.subscribe_values(epoch, ReadRequest::Events { model: "Presence".into() }));
     if let Some(stream) = &stream { assert!(matches!(bound(stream.pull_next()).await, Some(ReadValue::Ready))); }
@@ -95,6 +95,7 @@ async fn observe(loaded_by_node: bool, events_stream: bool, fetch: ReadFetch) ->
     let asked = world.count("PresenceNode");
     if never { assert_eq!(asked, before_reader, "a reader without fetch sends no node request before the event"); }
     world.answer_with("PresenceNode", node_answer(false));
+    clock.advance(1_000);
     if let Some(token) = &token { assert!(cable.peer.event(token, json!({"data":{"recordEvents":{"entries":[{"topic":"PRESENCE","action":"UPDATED","recordId":"p1"}]}}}))); }
     crate::test_wait::settled(&database, "the event is applied", || true).await;
     let seen = (token.is_some(), world.count("PresenceNode") - asked, online_of(&rows), bound(database.subscription_census()).await.unwrap().refused_events);

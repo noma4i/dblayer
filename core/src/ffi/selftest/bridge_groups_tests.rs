@@ -39,6 +39,7 @@ async fn adding_and_removing_a_member_ends_with_the_member_lists_of_the_server_i
     let cases: [Case; 2] = [("add_member", [&["u1", "u2", "u3", "u9"], &["u2", "u1", "u3", "u9"]]), ("remove_member", [&["u1", "u2", "u3"], &["u2", "u1", "u3"]])];
     for (action, ended) in cases {
         for (index, (order, _)) in orders.iter().enumerate() { rig.world.set_members(order, ended[index]); }
+        rig.clock.advance(1_000);
         let acted = bound(rig.database.act(epoch, "Group".into(), created.id.clone(), action.into(), "{}".into(), json!({"userIds": ["u9"]}).to_string())).await;
         assert!(acted.is_ok(), "{action}: the call failed: {:?}", acted.as_ref().err());
         settled(&rig, &format!("{action}: both lists end with the lists of the server"), || shown(&readers) == [strings(ended[0]), strings(ended[1])]).await;
@@ -191,6 +192,7 @@ async fn a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_re
     let before = rig.world.count("Thread");
     rig.database.set_online(false).await.unwrap();
     rig.database.set_online(true).await.unwrap();
+    rig.clock.advance(1_000);
     settled(&rig, "the list loaded again", || rig.world.count("Thread") > before).await;
     settle(&rig).await;
     assert_eq!(rig.world.count("Thread"), before + 1, "the stream loaded more or less than once on reconnect");
@@ -234,6 +236,7 @@ async fn an_accepted_request_whose_answer_lands_after_the_next_account_started_w
     bound(rig.database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
     let before = bound(rig.database.read_row(epoch, "User".into(), "user".into())).await.unwrap().expect("the row of A");
     assert!(named(&before, "A"));
+    rig.clock.advance(1_000);
     let gate = rig.world.hold_next("MyProfile");
     gate.as_account("late");
     let running = { let database = rig.database.clone(); rig.spawn(async move { database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into()).await }) };

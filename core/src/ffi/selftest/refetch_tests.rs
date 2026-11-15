@@ -42,6 +42,7 @@ async fn a_confirmed_action_reads_the_open_window_of_its_refetch_relation_again(
     bound(rig.database.loaded(stream)).await.unwrap();
     let before = rig.world.count("GroupMembers");
     join(&rig, &group, epoch).await;
+    rig.clock.advance(1_000);
     let shown = async {
         while let Some(delivery) = crate::test_wait::within(deliveries.recv()).await {
             let rows = match delivery.value {
@@ -69,6 +70,7 @@ async fn a_window_without_a_reader_is_read_again_when_the_next_reader_opens_it()
     let before = rig.world.count("GroupMembers");
     join(&rig, &group, epoch).await;
     assert_eq!(rig.world.count("GroupMembers"), before, "nobody reads the window: nothing is read");
+    rig.clock.advance(1_000);
     let (sender, _deliveries) = tokio::sync::mpsc::unbounded_channel();
     let query = json!({"model": "Member", "relation": "group_members", "params": params});
     let stream = rig.database.subscribe_reading(epoch, crate::ffi::ReadRequest::List { query: crate::ffi::QuerySpec::json(query.to_string()) }, Arc::new(Deliveries(sender)));

@@ -163,7 +163,8 @@ async fn inv_fresh_13_load_during_a_live_connect_shares_its_request() {
 
 #[test]
 fn inv_api_04_connecting_starts_the_load_and_only_refresh_asks_again() { crate::test_wait::paused(async {
-    let (db, transport, _) = open_rig(None, None, None).await;
+    let clock = TestClock::new(1_000_000);
+    let (db, transport, _) = open_rig(Some(clock.clone()), None, None).await;
     let query = r#"{"model":"Moment","relation":"feed","params":{}}"#;
     let first = db.watch_query(query, Arc::new(Rows::default()));
     first.wait_for_initial_load().await.unwrap();
@@ -171,6 +172,7 @@ fn inv_api_04_connecting_starts_the_load_and_only_refresh_asks_again() { crate::
     let second = db.watch_query(query, Arc::new(Rows::default()));
     second.wait_for_initial_load().await.unwrap();
     assert_eq!(queries(&transport), 1);
+    clock.advance(1_000);
     db.refresh(db.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into()).await.unwrap();
     assert_eq!(queries(&transport), 2);
     first.cancel();

@@ -14,7 +14,7 @@ fn list_requests(world: &World) -> usize { world.log().iter().filter(|entry| ent
 async fn a_list_with_an_events_subscription_loads_once_when_the_network_returns() {
     let world = World::new("server", "A", true);
     world.answer_with("ChatList", json!({"data":{"chats":[{"id":"c1","title":"one","revision":1,"lists":["PRIMARY"]}]}}));
-    let (database, _transport) = feed_database_in(world.clone(), Some(json!({"subscription":"RecordEvents", "root":"recordEvents.item", "apply":{"effect":"upsert"}})), false, false).await;
+    let (database, transport) = feed_database_in(world.clone(), Some(json!({"subscription":"RecordEvents", "root":"recordEvents.item", "apply":{"effect":"upsert"}})), false, false).await;
     let events = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
     assert!(matches!(bound(events.pull_next()).await, Some(ReadValue::Ready)));
     let rows = Arc::new(Rows::default());
@@ -24,6 +24,7 @@ async fn a_list_with_an_events_subscription_loads_once_when_the_network_returns(
     assert_eq!(list_requests(&world), 1);
     database.set_online(false).await.unwrap();
     database.set_online(true).await.unwrap();
+    transport.clock.advance(1_000);
     settled(&database, "the list loaded again", || list_requests(&world) >= 2).await;
     loop {
         if matches!(bound(events.pull_next()).await, Some(ReadValue::Gap)) { break; }

@@ -24,6 +24,7 @@ struct Pages {
     response: Mutex<Option<String>>,
     panics: std::sync::atomic::AtomicBool,
     reached: tokio::sync::Notify,
+    clock: Arc<TestClock>,
 }
 
 #[async_trait::async_trait]
@@ -54,8 +55,9 @@ async fn open(gated: bool) -> (Arc<Database>, Arc<Pages>) {
         stale_time: "5.minutes".into(), empty_stale_time: None, selects_page_info: true, page_size: None, variables: Default::default(), root: None, total_from: None,
     });
     model.relations.push(feed);
-    let transport = Arc::new(Pages { asked: Mutex::new(Vec::new()), gate: Arc::new(Semaphore::new(0)), gated, count: AtomicUsize::new(0), last_page: AtomicUsize::new(1), response: Mutex::new(None), panics: std::sync::atomic::AtomicBool::new(false), reached: tokio::sync::Notify::new() });
-    let db = Database::open_with_clock(Config { path: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000)).await.unwrap();
+    let clock = TestClock::new(1_000_000);
+    let transport = Arc::new(Pages { asked: Mutex::new(Vec::new()), gate: Arc::new(Semaphore::new(0)), gated, count: AtomicUsize::new(0), last_page: AtomicUsize::new(1), response: Mutex::new(None), panics: std::sync::atomic::AtomicBool::new(false), reached: tokio::sync::Notify::new(), clock: clock.clone() });
+    let db = Database::open_with_clock(Config { path: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).await.unwrap();
     db.set_online(true).await.unwrap();
     (db, transport)
@@ -87,6 +89,7 @@ async fn a_load_asks_the_first_page_once_and_the_snapshot_shows_the_revision_of_
 async fn a_refresh_asks_the_first_page_again_even_when_the_window_is_fresh() {
     let (db, transport) = open(false).await;
     crate::test_wait::within(begin(&db).await.result()).await.unwrap();
+    transport.clock.advance(1_000);
     crate::test_wait::within(refresh(&db)).await.unwrap();
     assert_eq!(transport.requests(), 2);
     let asked = transport.asked.lock().unwrap().clone();
@@ -132,6 +135,7 @@ async fn win_loading_error_preserves_graphql_messages_and_extensions() {
     for (next, code) in [(false, "FORBIDDEN"), (true, "FORBIDDEN"), (false, "INVALID_CURSOR"), (true, "INVALID_CURSOR")] {
         let (db, transport) = open(false).await;
         crate::test_wait::within(begin(&db).await.result()).await.unwrap();
+        transport.clock.advance(1_000);
         let response = serde_json::json!({"errors": [
             {"message": "first refusal", "extensions": {"code": code, "transactionDisposition": "FINISH", "field": "feed"}},
             {"message": "second refusal"}
@@ -214,6 +218,7 @@ async fn a_stream_loads_more_and_refreshes_its_own_relation() {
     assert_eq!(transport.requests(), 2);
     assert!(transport.asked.lock().unwrap()[1].contains("c0"), "the next page follows the cursor of the first");
     assert_eq!(crate::test_wait::within(stream.load_more()).await.unwrap(), LoadMoreResult::NoMore);
+    transport.clock.advance(1_000);
     crate::test_wait::within(stream.refresh()).await.unwrap();
     assert_eq!(transport.requests(), 3, "the refresh asks the first page again");
 

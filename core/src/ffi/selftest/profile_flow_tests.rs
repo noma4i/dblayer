@@ -113,6 +113,7 @@ async fn flow_user_block() {
     bound(stream.wait_for_initial_load()).await.unwrap();
     assert_eq!(blocked.len(), 0);
 
+    rig.clock.advance(1_000);
     let refused = rig.world.hold_then("BlockUser", Fault::Business);
     let receipt = bound(rig.database.act(epoch, "User".into(), "u5".into(), "block".into(), "{}".into(), "{}".into())).await.unwrap();
     refused.entered().await;
@@ -122,10 +123,12 @@ async fn flow_user_block() {
     rig.settle().await;
     assert_eq!(blocked.len(), 0, "a refused block changed the list");
 
+    rig.clock.advance(1_000);
     let receipt = bound(rig.database.act(epoch, "User".into(), "u5".into(), "block".into(), "{}".into(), "{}".into())).await.unwrap();
     assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     settled(&rig, "the blocked list shows the user", || blocked.len() == 1).await;
 
+    rig.clock.advance(1_000);
     let receipt = bound(rig.database.act(epoch, "User".into(), "u5".into(), "unblock".into(), "{}".into(), "{}".into())).await.unwrap();
     assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     settled(&rig, "the blocked list is empty again", || blocked.emptied()).await;

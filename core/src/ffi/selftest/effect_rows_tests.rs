@@ -158,6 +158,7 @@ async fn an_outcome_arrives_before_a_held_list_and_the_automatic_reread_shows_th
     let (sender, mut deliveries) = tokio::sync::mpsc::unbounded_channel();
     let stream = rig.database.subscribe_reading(epoch, crate::ffi::ReadRequest::List { query: crate::ffi::QuerySpec::json(query.to_string()) }, Arc::new(Deliveries(sender)));
     bound(rig.database.loaded(stream)).await.unwrap();
+    rig.clock.advance(1_000);
     let old = rig.world.hold_next("GroupMembers");
     let refreshing = { let database = rig.database.clone(); let params = params.clone(); rig.spawn(async move { database.refresh(epoch, "Member".into(), Some("group_members".into()), params.to_string()).await }) };
     old.entered().await;
@@ -170,6 +171,7 @@ async fn an_outcome_arrives_before_a_held_list_and_the_automatic_reread_shows_th
     assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     old.release();
     bound(refreshing).await.unwrap().unwrap();
+    rig.clock.advance(1_000);
     let shown = async {
         while let Some(delivery) = crate::test_wait::within(deliveries.recv()).await {
             let rows = match delivery.value {
@@ -254,6 +256,7 @@ async fn a_later_confirmed_membership_change_survives_an_earlier_refusal() {
     bound(rig.database.refresh(epoch, "Member".into(), Some("group_members".into()), params.to_string())).await.unwrap();
     if first_join { remove_member(&rig, &group.id).await; }
     if first_join { rig.world.set_members("JOINED", &["u1", "u2", "u3"]); }
+    rig.clock.advance(1_000);
     let old = rig.world.hold_next("GroupMembers");
     let reading = { let database = rig.database.clone(); let params = params.clone(); rig.spawn(async move { database.refresh(epoch, "Member".into(), Some("group_members".into()), params.to_string()).await }) };
     old.entered().await;
@@ -392,6 +395,7 @@ async fn an_acknowledged_membership_change_survives_an_older_list_answer() {
             remove_member(&rig, &created.id).await;
             rig.world.set_members("JOINED", &["u1", "u2", "u3"]);
         }
+        rig.clock.advance(1_000);
         let held = rig.world.hold_next("GroupMembers");
         let reading = { let database = rig.database.clone(); let params = params.clone(); rig.spawn(async move { database.refresh(epoch, "Member".into(), Some("group_members".into()), params).await }) };
         held.entered().await;

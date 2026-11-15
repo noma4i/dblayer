@@ -88,6 +88,7 @@ impl Stand {
     /// The server event of `area` for row `id` goes through the change feed; the caller waits for what the event causes.
     async fn event(&self, area: &str, id: &str) {
         crate::test_wait::signalled(&self.transport.opened, "the change feed is subscribed", || self.transport.token.lock().unwrap().is_some()).await;
+        self.transport.clock.advance(1_000);
         let token = self.transport.token.lock().unwrap().clone().unwrap();
         assert!(self.transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":area,"action":"UPDATED","recordId":id}]}}})));
     }

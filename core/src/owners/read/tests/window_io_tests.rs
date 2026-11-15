@@ -271,6 +271,7 @@ fn win_change_after_commit_marks_the_next_load() {
     let mut wrong = Vec::new();
     for (case, window, turns, want) in cases {
         let mut rig = rig();
+        let mut now = 0_u64;
         rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::InterestPassive { key: window.clone(), id: 9 });
         rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::WindowRead { key: window.clone(), read_id: 1, result: Ok(None) });
         rig.det.run_until_quiet(10_000).expect("the scheduler goes quiet");
@@ -279,6 +280,8 @@ fn win_change_after_commit_marks_the_next_load() {
             match turn {
                 Stale => rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Stale { model: "Moment".into(), keys: w::StaleKeys::all(), cause: w::StaleCause::Change { revision: None } }),
                 Load | LoadRefused => {
+                    now += 1_000;
+                    rig.det.tick(crate::runtime::Time(now));
                     let reply = if matches!(turn, Load) { Reply::data(json!({ "rows": ["r1"], "cursor": null })) } else { Reply::fail(TransportError::Decode("broken".into())) };
                     rig.mock.enqueue("Page", reply);
                     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Load { key: window.clone(), id: 1, goal: w::Goal::First, force: true, store_revision: 0 });

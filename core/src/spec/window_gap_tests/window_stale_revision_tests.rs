@@ -20,22 +20,28 @@ fn win_change_covered_by_a_load_pinned_after_its_commit() {
         before_pin.watch();
         let mut asked = requests(&change_at(&mut before_pin, revision));
         asked += requests(&before_pin.step(Input::Read(Read::None)));
-        asked += requests(&before_pin.finish(None));
+        before_pin.respond(None);
+        before_pin.advance(1_000);
+        asked += requests(&before_pin.land());
         let mut loading = Twin::new();
         loading.pin_revision.store(BASE, Ordering::SeqCst);
         loading.watch();
         let mut asked_loading = requests(&change_at(&mut loading, revision));
-        asked_loading += requests(&loading.finish(None));
+        loading.respond(None);
+        loading.advance(1_000);
+        asked_loading += requests(&loading.land());
         let mut landing = Twin::new();
         landing.pin_revision.store(BASE, Ordering::SeqCst);
         landing.watch();
         landing.respond(None);
+        landing.advance(1_000);
         let mut asked_landing = requests(&change_at(&mut landing, revision));
         asked_landing += requests(&landing.land());
         let mut idle = Twin::new();
         idle.pin_revision.store(BASE, Ordering::SeqCst);
         idle.watch();
         idle.finish(None);
+        idle.advance(1_000);
         let asked_idle = requests(&change_at(&mut idle, revision));
         for (stage, got) in [("before the pin", asked - 1), ("Loading", asked_loading), ("Landing", asked_landing), ("Idle", asked_idle)] {
             if got != second { wrong.push(format!("change at {revision}, base {BASE}, {stage}: {got} more requests, the rule asks {second}")); }

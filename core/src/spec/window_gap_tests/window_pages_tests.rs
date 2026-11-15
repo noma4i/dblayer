@@ -59,6 +59,7 @@ fn win_loading_refresh_over_more() {
     let mut twin = fresh_with_cursor();
     twin.call(2, Goal::Next);
     assert_eq!(twin.stage(), Some(WindowStage::Loading));
+    twin.advance(1_000);
     let refreshed = twin.step(Input::Load { id: 3, goal: Goal::First, force: true });
     assert_eq!(requests(&refreshed), 1, "a refresh over a page after the first cancels it and asks page 1: {refreshed:?}");
     assert!(refreshed.iter().any(|effect| matches!(effect, Effect::Cancel { .. })));
@@ -94,6 +95,7 @@ fn win_page_limit_landing_keeps_the_reread() {
     twin.call(1, Goal::All);
     twin.step(Input::Stale { in_keys: true });
     twin.respond(Some(3));
+    twin.advance(1_000);
     let landed = twin.land();
     assert_eq!(landed.iter().filter_map(|effect| match effect { Effect::Request { page, .. } => Some(*page), _ => None }).collect::<Vec<_>>(), [1], "the reread of the first page after the landing at the page limit");
 }

@@ -22,6 +22,7 @@ async fn a_changed_by_event_makes_the_next_load_of_a_fresh_window_ask_again() {
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"CHAT","action":"UPDATED","recordId":"c1"}]}}})));
     assert!(matches!(bound(events.pull_next()).await, Some(ReadValue::Event { .. })));
     crate::test_wait::settled(&database, "the event is applied", || true).await;
+    transport.clock.advance(1_000);
     load().await.unwrap();
     assert_eq!(world.count("ChatList"), 2, "the event marked the window stale");
     bound(database.close_database()).await.unwrap();

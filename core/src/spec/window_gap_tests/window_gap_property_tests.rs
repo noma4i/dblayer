@@ -79,6 +79,7 @@ fn win_prop_stale_reload_once() {
         twin.step(Input::Stale { in_keys: true });
     }
     twin.respond(None);
+    twin.advance(1_000);
     let again = twin.land();
     assert_eq!(requests(&again), 1, "three marks make one more load");
     twin.respond(None);
@@ -96,6 +97,7 @@ fn win_base_revision() {
     twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None) });
     assert_eq!(base_revisions(&twin), [11], "the batch carries the revision from Pinned");
     twin.post(w::WindowsInput::Committed(committed_at(1, 9, &[])));
+    twin.advance(1_000);
     twin.pin_revision.store(13, Ordering::SeqCst);
     twin.post_call(w::WindowsInput::Load { key: key(), id: 2, goal: w::Goal::First, force: true, store_revision: 5 });
     twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None) });

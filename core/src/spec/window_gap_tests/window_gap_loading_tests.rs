@@ -143,6 +143,7 @@ fn win_loading_stale_covered() {
     late.step(Input::Online(true));
     assert!(late.step(Input::StaleGap).is_empty());
     late.respond(None);
+    late.advance(1_000);
     assert_eq!(requests(&late.land()), 1, "the request began before the return of the network: the landed rows are read again");
     let mut covered = Twin::new();
     covered.step(Input::Online(false));
@@ -165,6 +166,7 @@ fn win_landing_stale_reread() {
         twin.step(Input::Stale { in_keys: true });
         twin.watch();
         twin.respond(None);
+        twin.advance(1_000);
         let effects = twin.land();
         assert_eq!(effects, [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 1 }]);
         assert_eq!(twin.stage(), Some(WindowStage::Loading));
@@ -182,6 +184,7 @@ fn win_landing_stale_reread() {
         twin.step(Input::Stale { in_keys: true });
         assert_eq!(twin.land(), none(), "the only waiter was answered, nobody asks for a reread");
         assert_eq!(twin.stage(), Some(WindowStage::Idle));
+        twin.advance(1_000);
         assert_eq!(requests(&twin.call(9, Goal::First)), 1, "the window is not fresh any more");
     }
 }

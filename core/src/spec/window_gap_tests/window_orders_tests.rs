@@ -68,7 +68,11 @@ pub(super) fn play(twin: &mut Twin, event: Ev) -> Vec<Effect> {
         Ev::Leave1 => twin.step(Input::InterestMinus { id: 1 }),
         Ev::Respond if twin.stage() == Some(WindowStage::Loading) => twin.respond(None),
         Ev::Respond => twin.step(stray_answer()),
-        Ev::Land if twin.stage() == Some(WindowStage::Landing) => twin.land(),
+        Ev::Land if twin.stage() == Some(WindowStage::Landing) => {
+            let mut landed = twin.land();
+            landed.extend(twin.advance(1_000));
+            landed
+        }
         Ev::Land => twin.step(stray_commit()),
         Ev::Reset => unreachable!(),
         Ev::Error => twin.step(Input::TransportError { request: 1, attempt: 1, failure: Failure::Network }),
@@ -89,7 +93,11 @@ pub(super) fn settle(twin: &mut Twin, seen: &mut Seen) {
                 seen.answered += 1;
                 twin.respond(None)
             }
-            Some(WindowStage::Landing) => twin.land(),
+            Some(WindowStage::Landing) => {
+                let mut landed = twin.land();
+                landed.extend(twin.advance(1_000));
+                landed
+            }
             _ => return,
         };
         seen.add(&effects);

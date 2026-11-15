@@ -138,6 +138,7 @@ async fn a_missing_destroyed_row_causes_one_reread_of_the_open_list() {
     bound(rig.database.loaded(stream)).await.unwrap();
     assert_eq!(ids_of(reader.rows()), ["user"]);
     let before = rig.world.count("Users");
+    rig.clock.advance(1_000);
     rig.world.fail_next("DeleteGroup", Fault::Answer(json!({"errors":[{"message":"gone","extensions":{"code":"NOT_FOUND"}}]})));
     let receipt = bound(rig.database.destroy(epoch, "User".into(), "user".into())).await.unwrap();
     assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
@@ -325,6 +326,7 @@ async fn a_late_answer_of_the_old_epoch_is_dropped_and_a_command_of_the_old_epoc
     bound(rig.database.loaded(stream)).await.unwrap();
     settled(&rig, "A shows", || first.shows("A")).await;
 
+    rig.clock.advance(1_000);
     let gate = rig.world.hold_next("Users").as_account("A");
     let late = { let database = rig.database.clone(); rig.spawn(async move { database.refresh_stream(stream).await }) };
     gate.entered().await;

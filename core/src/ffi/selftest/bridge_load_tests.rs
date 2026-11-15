@@ -293,6 +293,7 @@ async fn a_cached_entity_remains_loaded_when_its_initial_network_read_fails() {
     let first = rig.database.subscribe_reading(epoch, request(), Reader::open());
     bound(rig.database.loaded(first)).await.unwrap();
     rig.database.cancel_stream(first);
+    rig.clock.advance(1_000);
     rig.world.fail_next("UserNode", Fault::Business);
     let reader = Reader::open();
     let stream = rig.database.subscribe_reading(epoch, request(), reader.clone());
@@ -401,6 +402,7 @@ async fn a_mutation_answer_requires_one_reread_after_an_older_load() {
     let older = rig.world.hold_next("GroupMembers");
     let response = rig.world.hold_next("RemoveMember");
     let reread = rig.world.hold_next("GroupMembers");
+    rig.clock.advance(1_000);
     let refresh = { let database = rig.database.clone(); rig.spawn(async move { database.refresh_stream(stream).await }) };
     older.entered().await;
     let action = { let database = rig.database.clone(); let id = created.id.clone(); rig.spawn(async move { database.act(epoch, "Group".into(), id, "remove_member".into(), "{}".into(), json!({"userIds":["u1"]}).to_string()).await }) };
@@ -411,6 +413,8 @@ async fn a_mutation_answer_requires_one_reread_after_an_older_load() {
     assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
     assert_eq!(rig.world.count("GroupMembers"), before + 1);
     older.release();
+    rig.settle().await;
+    rig.clock.advance(1_000);
     reread.entered().await;
     assert_eq!(rig.world.count("GroupMembers"), before + 2);
     reread.release();

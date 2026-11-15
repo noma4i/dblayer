@@ -77,6 +77,7 @@ async fn late_answer_case(call: Call, transition: Transition, refusal: bool) {
     held.shows(&rig, "A").await;
     held.lists_show(&rig, "A").await;
     rig.settle().await;
+    rig.clock.advance(1_000);
     let gate = if refusal { rig.world.hold_then(call.operation(), Fault::Refuse { code: "UNAUTHENTICATED", confirmed: false }) } else { rig.world.hold_next(call.operation()) };
     gate.as_account("late");
     let mut running = call.start(rig.database.clone());

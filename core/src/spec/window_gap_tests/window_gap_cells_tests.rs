@@ -156,6 +156,7 @@ fn win_idle_call_starts_the_wanted_page() {
         assert_eq!(twin.call(1, Goal::First), [Effect::Request { request: 1, attempt: 1, page: 1 }]);
         assert_eq!(twin.state().waiters(&key()), [1]);
         let mut forced = fresh();
+        forced.advance(1_000);
         assert_eq!(forced.step(Input::Load { id: 2, goal: Goal::First, force: true }), [Effect::Request { request: 2, attempt: 2, page: 1 }], "force loads a fresh window");
     }
     {
@@ -208,6 +209,7 @@ fn win_idle_call_offline_waits() {
 fn win_idle_stale_decides_the_reload() {
     {
         let mut twin = fresh_watched();
+        twin.advance(1_000);
         assert_eq!(twin.step(Input::Stale { in_keys: true }), [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 1 }]);
         assert_eq!(twin.stage(), Some(WindowStage::Loading));
         assert_eq!(twin.phase(), Phase::Loading);
@@ -216,6 +218,7 @@ fn win_idle_stale_decides_the_reload() {
         let mut twin = fresh_watched();
         twin.step(Input::Online(false));
         twin.step(Input::Online(true));
+        twin.advance(1_000);
         assert_eq!(twin.step(Input::StaleGap), [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 1 }], "the last landing began before the return of the network: the gap is read");
         twin.finish(None);
         assert!(twin.step(Input::StaleGap).is_empty(), "the last landing began after the return of the network: nothing to read");
@@ -231,6 +234,7 @@ fn win_idle_stale_decides_the_reload() {
         let mut twin = fresh();
         assert!(twin.step(Input::Stale { in_keys: true }).is_empty());
         assert_eq!(twin.stage(), Some(WindowStage::Idle));
+        twin.advance(1_000);
         assert!(twin.call(2, Goal::First).len() == 1, "the window is not fresh any more");
     }
     {
@@ -293,6 +297,7 @@ fn win_idle_online_reload_by_interest() {
         let mut stale = fresh_watched();
         stale.step(Input::Online(false));
         stale.step(Input::Stale { in_keys: true });
+        stale.advance(1_000);
         assert_eq!(stale.step(Input::Online(true)), [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 1 }], "a stale window reads without an earlier network error");
         let mut waiting_call = waiting();
         assert_eq!(requests(&waiting_call.step(Input::Online(true))), 1, "a waiting call reads once");
@@ -312,6 +317,7 @@ fn win_idle_online_reload_by_interest() {
         let mut twin = fresh_watched();
         twin.post_call(w::WindowsInput::ReloadOnConnect { key: key(), id: id64(STREAM) });
         twin.post(w::WindowsInput::Online { online: Online(false), online_seq: 0 });
+        twin.advance(1_000);
         twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1 });
         assert_eq!(twin.stage(), Some(WindowStage::Loading), "a fresh window with a reload interest loads again when the network returns");
         let mut plain = fresh_watched();
