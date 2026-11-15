@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
-use super::feed::{CableClose, CableCloseInitiator, Frame, FramedEvent, Outgoing, ProtocolReason};
+use super::feed::{CABLE_LIMIT_FLOOR, CableClose, CableCloseInitiator, Frame, FramedEvent, Outgoing, ProtocolReason};
 use super::ports::{Admit, Rest};
 use crate::owners::contract::ConnectionId;
 use crate::owners::read::feed::{Feed, FeedEffect, FeedInput};
@@ -53,8 +53,19 @@ pub struct FeedIo {
     gate: Arc<crate::runtime::EpochGate>,
 }
 
-/// The codes of a closing server that no retry changes: the session is over.
-fn session_closed(code: u16, reason: &str) -> bool { matches!(code, 4401 | 4403) || matches!(reason, "LOGGED_OUT" | "ACCOUNT_LOCKED") }
+/// What a close of the server means: code 4401 ends the session like a `Revoked` answer, code 4429 asks for a pause (`retryAfter` of a JSON reason, else `CABLE_LIMIT_FLOOR`), every other close is a drop.
+enum Closed {
+    SessionEnded,
+    Dropped { floor: Option<Duration> },
+}
+
+fn closed_by(code: Option<u16>, reason: Option<&str>) -> Closed {
+    match code {
+        Some(4401) => Closed::SessionEnded,
+        Some(4429) => Closed::Dropped { floor: Some(reason.and_then(|reason| serde_json::from_str::<Value>(reason).ok()).and_then(|reason| reason["retryAfter"].as_u64()).map_or(CABLE_LIMIT_FLOOR, Duration::from_secs)) },
+        _ => Closed::Dropped { floor: None },
+    }
+}
 
 impl FeedIo {
     pub fn new(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, handle: Handle, rest: Rest<FeedEffect>, gate: Arc<crate::runtime::EpochGate>) -> Self { Self { lines, codec, handle, gate, counted: None, admit: None, open: Connections::default(), rest } }
@@ -112,10 +123,10 @@ impl FeedIo {
                     return reply(match error.error {
                         TransportError::Session { .. } => FeedInput::SubscriptionEnded { connection_id: connection },
                         TransportError::Decode(_) => FeedInput::ProtocolError { connection_id: connection, reason: ProtocolReason::Handshake },
-                        _ => FeedInput::Dropped { connection_id: connection },
+                        _ => FeedInput::Dropped { connection_id: connection, floor: None },
                     });
                 }
-                Err(_) => return reply(FeedInput::Dropped { connection_id: connection }),
+                Err(_) => return reply(FeedInput::Dropped { connection_id: connection, floor: None }),
             };
             reply(FeedInput::HandshakeDone { connection_id: connection, key_id: connection });
             let closed = Arc::new(AtomicBool::new(false));
@@ -126,7 +137,7 @@ impl FeedIo {
                         #[cfg(test)]
                         FRAMES_QUEUED.fetch_sub(1, Ordering::SeqCst);
                         if crate::runtime::send_in_epoch(&gate, epoch, || crate::lock::effect(|| line.send(counter, body))).await.is_err() {
-                            reply(FeedInput::Dropped { connection_id: connection });
+                            reply(FeedInput::Dropped { connection_id: connection, floor: None });
                             return false;
                         }
                     }
@@ -146,8 +157,11 @@ impl FeedIo {
                 event = reader => Some(event),
             };
             let event = event.unwrap_or_else(|| CableClose { connection_id: connection, code: None, reason: None, failure: None, initiator: CableCloseInitiator::Client, intended: reason.load(Ordering::SeqCst) != 2 });
+            let ended = matches!(closed_by(event.code, event.reason.as_deref()), Closed::SessionEnded);
+            let detail = event.reason.clone().unwrap_or_default();
             report(event);
             if !closed.swap(true, Ordering::SeqCst) { line.close().await; }
+            if let (true, Some(epoch)) = (ended, epoch) { gate.server_ended(epoch, detail).await; }
             if closing.is_cancelled() {
                 cancel.cancelled().await;
                 line.cancel().await;
@@ -170,7 +184,7 @@ impl FeedIo {
                     }
                 }
                 Incoming::Closed { code, reason, failure } => {
-                    reply(if session_closed(code.unwrap_or(1006), reason.as_deref().unwrap_or_default()) { FeedInput::SubscriptionEnded { connection_id: connection } } else { FeedInput::Dropped { connection_id: connection } });
+                    if let Closed::Dropped { floor } = closed_by(code, reason.as_deref()) { reply(FeedInput::Dropped { connection_id: connection, floor }); }
                     let initiator = if code.is_some() { CableCloseInitiator::Server } else { CableCloseInitiator::Network };
                     return CableClose { connection_id: connection, code, reason, failure, initiator, intended: false };
                 }

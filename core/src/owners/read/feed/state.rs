@@ -146,10 +146,10 @@ impl FeedState {
     }
 
     /// A new `opening_connection` that waits for `Resubscribe` by the backoff.
-    pub(super) fn wait_resubscribe(&mut self, fx: &mut Vec<Fx>) {
+    pub(super) fn wait_resubscribe(&mut self, floor: Option<Duration>, fx: &mut Vec<Fx>) {
         let connection = self.fresh_connection();
         self.attempts += 1;
-        fx.push(Fx::Resubscribe { connection: connection.id, attempt: self.attempts });
+        fx.push(Fx::Resubscribe { connection: connection.id, attempt: self.attempts, floor });
         self.opening = Some(connection);
     }
 

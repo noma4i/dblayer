@@ -95,7 +95,7 @@ impl FeedState {
     }
 
     /// `Dropped` and `SubscriptionEnded` of a known connection.
-    pub(super) fn dropped(&mut self, connection: ConnectionId, fx: &mut Vec<Fx>) {
+    pub(super) fn dropped(&mut self, connection: ConnectionId, floor: Option<Duration>, fx: &mut Vec<Fx>) {
         if self.connection_mut(connection).is_some() {
             fx.push(Fx::CancelKeepalive { connection });
             fx.push(Fx::CancelPong { connection });
@@ -103,7 +103,7 @@ impl FeedState {
         match self.mode {
             Mode::Opening { .. } if self.opening_connection() == Some(connection) => {
                 let lost = self.lose_held(fx);
-                self.wait_resubscribe(fx);
+                self.wait_resubscribe(floor, fx);
                 self.stale_lost(&lost, fx);
             }
             Mode::Live if self.active_connection() == Some(connection) => {
@@ -113,8 +113,8 @@ impl FeedState {
                 self.active = None;
                 self.gap_seq = Some(self.online_seq);
                 self.mode = Mode::Opening { gap: true };
-                if self.attempts > 0 {
-                    self.wait_resubscribe(fx);
+                if self.attempts > 0 || floor.is_some() {
+                    self.wait_resubscribe(floor, fx);
                 } else {
                     self.attempts = 1;
                     self.open_connection(fx);
@@ -366,7 +366,7 @@ impl FeedState {
     pub(super) fn draining(&mut self, connection: ConnectionId, then: Resume, input: FeedInput, fx: &mut Vec<Fx>) {
         match input {
             FeedInput::Drain { connection_id } if connection_id == connection => self.drain_over(connection, then, false, fx),
-            FeedInput::Dropped { connection_id } | FeedInput::SubscriptionEnded { connection_id } if connection_id == connection => self.drain_over(connection, then, true, fx),
+            FeedInput::Dropped { connection_id, .. } | FeedInput::SubscriptionEnded { connection_id } if connection_id == connection => self.drain_over(connection, then, true, fx),
             FeedInput::EpochEnded(ended) if ended.epoch == self.epoch => self.drain_over(connection, Resume::End, true, fx),
             FeedInput::Closing => {
                 self.closing_asked = true;

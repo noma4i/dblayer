@@ -20,6 +20,8 @@ pub type SubscriptionId = u64;
 
 /// A connection that finished no handshake by then fails like a protocol error.
 pub const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(10);
+/// The pause after close code 4429 when its reason names no `retryAfter`.
+pub const CABLE_LIMIT_FLOOR: Duration = Duration::from_secs(5);
 
 /// The schedule ids of the handshake deadlines are above the connection ids that name the resubscribe timers.
 const HANDSHAKE_SCHEDULE: u64 = 1 << 40;
@@ -192,7 +194,7 @@ enum Fx {
     Run(FeedEffect),
     Debounce { after_ms: u64 },
     CancelDebounce,
-    Resubscribe { connection: ConnectionId, attempt: u32 },
+    Resubscribe { connection: ConnectionId, attempt: u32, floor: Option<Duration> },
     CancelResubscribe { connection: ConnectionId },
     Drain { connection: ConnectionId },
     CancelDrain { connection: ConnectionId },
@@ -232,7 +234,8 @@ pub enum FeedInput {
     /// The server closed the subscription of one channel: `failed` = with an error of the request.
     ChannelEnded { connection_id: ConnectionId, channel: Channel, error: Option<ChannelError> },
     ChannelResubscribe { connection_id: ConnectionId, channel: Channel },
-    Dropped { connection_id: ConnectionId },
+    /// `floor`: the server asked for a pause (close code 4429), the next socket waits at least that long.
+    Dropped { connection_id: ConnectionId, floor: Option<Duration> },
     SubscriptionEnded { connection_id: ConnectionId },
     Resubscribe { connection_id: ConnectionId },
     /// The timer of a `Connect`: a connection still in `Handshake` fails.
@@ -423,8 +426,11 @@ impl Feed {
                 Fx::Run(effect) => out.push(Effect::Run(effect)),
                 Fx::Debounce { after_ms } => out.push(Effect::Schedule { id: DEBOUNCE, after: Duration::from_millis(after_ms), input: FeedInput::Tick }),
                 Fx::CancelDebounce => out.push(Effect::Cancel(DEBOUNCE)),
-                Fx::Resubscribe { connection, attempt } => {
+                Fx::Resubscribe { connection, attempt, floor: None } => {
                     out.push(Effect::Backoff { id: ScheduleId(connection), policy: RetryPolicy::Cable, attempt, input: FeedInput::Resubscribe { connection_id: connection } });
+                }
+                Fx::Resubscribe { connection, attempt, floor: Some(floor) } => {
+                    out.push(Effect::Schedule { id: ScheduleId(connection), after: floor.max(RetryPolicy::Cable.delay(attempt)), input: FeedInput::Resubscribe { connection_id: connection } });
                 }
                 Fx::CancelResubscribe { connection } => out.push(Effect::Cancel(ScheduleId(connection))),
                 Fx::ResubscribeChannel { connection, channel, slot, attempt } => {
@@ -527,7 +533,8 @@ impl StateOwner for Feed {
             FeedInput::ChannelConfirmed { connection_id, channel } => state.channel_confirmed(connection_id, channel, &mut fx),
             FeedInput::ChannelEnded { connection_id, channel, error, .. } => state.channel_ended(connection_id, channel, error, &mut fx),
             FeedInput::ChannelResubscribe { connection_id, channel, .. } => state.channel_resubscribe(connection_id, channel, &mut fx),
-            FeedInput::Dropped { connection_id } | FeedInput::SubscriptionEnded { connection_id } => state.dropped(connection_id, &mut fx),
+            FeedInput::Dropped { connection_id, floor } => state.dropped(connection_id, floor, &mut fx),
+            FeedInput::SubscriptionEnded { connection_id } => state.dropped(connection_id, None, &mut fx),
             FeedInput::Resubscribe { connection_id } => state.resubscribe(connection_id, &mut fx),
             FeedInput::HandshakeDeadline { connection_id } => state.handshake_deadline(connection_id, &mut fx),
             FeedInput::Keepalive { connection_id, counter } => state.keepalive(connection_id, counter, now, &mut fx),
@@ -560,5 +567,5 @@ impl StateOwner for Feed {
 
     fn closing() -> FeedInput { FeedInput::Closing }
 
-    fn executor_failed(_executor: &str, pending: Vec<crate::runtime::EffectId>) -> Vec<FeedInput> { pending.into_iter().map(|connection_id| FeedInput::Dropped { connection_id }).collect() }
+    fn executor_failed(_executor: &str, pending: Vec<crate::runtime::EffectId>) -> Vec<FeedInput> { pending.into_iter().map(|connection_id| FeedInput::Dropped { connection_id, floor: None }).collect() }
 }
