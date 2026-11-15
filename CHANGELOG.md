@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Open the cable only while the stored singleton field named by `cable_when` is true.
+
 ### Changed
 
 - Delete the row and its dependent rows when a node read answers null.

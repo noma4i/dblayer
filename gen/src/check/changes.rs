@@ -16,6 +16,16 @@ pub(super) fn check_changes(nodes: &[ModelDecl], models: &[ModelSpec], errors: &
                 errors.push(at(node.file, node.pos, "server_revision requires a required integer attribute"));
             }
         }
+        if let (Some(field), Some((_, pos))) = (&model.cable_when, &node.cable_when) {
+            if !model.relations.iter().any(dblayer::schema::RelationSpec::is_singleton) {
+                errors.push(at(node.file, *pos, "cable_when requires a singleton model"));
+            } else if !model.field(field).is_some_and(|field| matches!(field.kind, FieldKind::Scalar { kind: ScalarKind::Bool })) {
+                errors.push(at(node.file, *pos, "cable_when requires a bool attribute"));
+            }
+            if nodes.iter().zip(models).take(index).any(|(_, earlier)| earlier.cable_when.is_some()) {
+                errors.push(at(node.file, *pos, "duplicate cable_when"));
+            }
+        }
         for (decl, change) in node.changed_by.iter().zip(&model.changes) {
             let mut report = |message: String| errors.push(at(node.file, decl.pos, message));
             if let Some((file, line, column)) = seen.get(&(index, change.area.as_str(), change.observed)) {

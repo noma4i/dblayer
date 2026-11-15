@@ -69,6 +69,9 @@ pub struct ModelSpec {
     pub change_feed: Option<ChangeFeed>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_revision: Option<String>,
+    /// The bool field of this singleton model that opens the cable while the stored row has it true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cable_when: Option<String>,
     /// The steps of file uploads declared once per project (`uploads do`): the generator copies them to every model with an upload action.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upload_steps: Option<crate::owners::write::upload::UploadOperations>,
@@ -138,6 +141,7 @@ impl ModelSpec {
             changes: Vec::new(),
             change_feed: None,
             server_revision: None,
+            cable_when: None,
             upload_steps: None,
             removed_by: Vec::new(),
         }

@@ -245,7 +245,7 @@ impl FeedState {
             fx.push(Fx::Joined { id, position });
         }
         match self.mode {
-            Mode::Off { gap } if self.is_online() => {
+            Mode::Off { gap } if self.can_open() => {
                 self.mode = Mode::Opening { gap };
                 self.attempts = 0;
                 self.open_connection(fx);
@@ -315,7 +315,7 @@ impl FeedState {
             self.online_seq = online_seq;
         }
         match self.mode {
-            Mode::Off { gap } if online && !self.want.is_empty() => {
+            Mode::Off { gap } if online && self.gate && !self.want.is_empty() => {
                 self.mode = Mode::Opening { gap };
                 self.attempts = 0;
                 self.open_connection(fx);
@@ -325,6 +325,29 @@ impl FeedState {
                 self.leave(fx);
             }
             Mode::Live if !online => {
+                self.flush_pending(fx);
+                self.drain_live(true, fx);
+            }
+            _ => {}
+        }
+    }
+
+    /// `Gate` of the Store: false closes the connection like the last `Want-` with `want` kept, true opens it without Backoff.
+    pub(super) fn gate_changed(&mut self, open: bool, fx: &mut Vec<Fx>) {
+        if std::mem::replace(&mut self.gate, open) == open {
+            return;
+        }
+        match self.mode {
+            Mode::Off { gap } if open && self.is_online() && !self.want.is_empty() => {
+                self.mode = Mode::Opening { gap };
+                self.attempts = 0;
+                self.open_connection(fx);
+            }
+            Mode::Opening { gap } if !open => {
+                self.mode = Mode::Off { gap };
+                self.leave(fx);
+            }
+            Mode::Live if !open => {
                 self.flush_pending(fx);
                 self.drain_live(true, fx);
             }
@@ -375,6 +398,7 @@ impl FeedState {
             FeedInput::WantPlus { model, id, stream, scoped, .. } if then != Resume::End => self.want_plus(model, id, stream, scoped, fx),
             FeedInput::WantMinus { model, id, .. } if then != Resume::End => self.want_minus(&model, id, fx),
             FeedInput::Online { online: Online(online), online_seq, .. } if then != Resume::End => self.online_changed(online, online_seq, fx),
+            FeedInput::Gate(open) if then != Resume::End => self.gate_changed(open, fx),
             _ => {}
         }
     }
@@ -408,7 +432,7 @@ impl FeedState {
     }
 
     fn go_on(&mut self, gap: bool, fx: &mut Vec<Fx>) {
-        if self.want.is_empty() || !self.is_online() {
+        if self.want.is_empty() || !self.can_open() {
             self.mode = Mode::Off { gap };
             return;
         }

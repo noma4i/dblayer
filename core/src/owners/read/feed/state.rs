@@ -13,6 +13,12 @@ impl FeedState {
         self
     }
 
+    pub fn with_gate(mut self, declared: bool) -> Self {
+        self.gated = declared;
+        self.gate = !declared;
+        self
+    }
+
     pub fn new(epoch: Epoch, peers: FeedPeers, debounce: BTreeMap<String, u64>, channels: BTreeMap<String, Vec<Channel>>) -> Self {
         Self {
             epoch,
@@ -51,6 +57,8 @@ impl FeedState {
             drained: false,
             closing_asked: false,
             peers,
+            gated: false,
+            gate: true,
         }
     }
 
@@ -130,6 +138,8 @@ impl FeedState {
     pub(super) fn debounce_of(&self, model: &str) -> u64 { self.debounce.get(model).copied().unwrap_or(0) }
 
     pub(super) fn is_online(&self) -> bool { self.online == Some(true) }
+
+    pub(super) fn can_open(&self) -> bool { self.is_online() && self.gate }
 
     pub(super) fn fresh_connection(&mut self) -> Connection {
         let id = self.next_connection;

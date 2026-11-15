@@ -88,6 +88,7 @@ fn build_model(node: &ModelDecl) -> ModelSpec {
         id: feed.id.item.clone(),
     });
     model.server_revision = node.server_revision.clone();
+    model.cable_when = node.cable_when.as_ref().map(|(field, _)| field.clone());
     model.changes = node.changed_by.iter().map(|change| dblayer::schema::ChangeRead {
         area: change.area.clone(),
         relation: change.via.clone(),

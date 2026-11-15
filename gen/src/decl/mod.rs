@@ -528,6 +528,7 @@ pub struct ModelDecl {
     pub changed_by: Vec<ChangedByDecl>,
     pub removed_by: Vec<RemovedByDecl>,
     pub server_revision: Option<String>,
+    pub cable_when: Option<(String, Pos)>,
     pub operations: Vec<OperationDecl>,
 }
 

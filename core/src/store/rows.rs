@@ -192,6 +192,14 @@ impl<'a> Reader<'a> {
         Ok(self.stored_rows(model, &[id.to_string()])?.remove(id).map(|stored| stored.row))
     }
 
+    /// Whether the stored row of a singleton model has `field` true: no row, null or false = false.
+    pub fn first_row_flag(&self, model: &str, field: &str) -> Result<bool, StoreError> {
+        let info = self.model(model)?;
+        let id: Option<String> = self.connection.query_row(&format!(include_str!("sql/rows/first_id.sql"), info.table), [], |row| row.get(0)).optional()?;
+        let Some(id) = id else { return Ok(false) };
+        Ok(self.stored_rows(model, std::slice::from_ref(&id))?.remove(&id).is_some_and(|stored| stored.row.get(field) == Some(&Value::Bool(true))))
+    }
+
     #[cfg(test)]
     pub fn row_count(&self, model: &str) -> Result<i64, StoreError> {
         let info = self.model(model)?;

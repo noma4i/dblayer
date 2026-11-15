@@ -27,6 +27,9 @@ Fetch config with `DB.serverConfig` or `DBlayer.serverConfig` before opening the
 Config posts to `EncryptedConfig.endpoints.bootstrap` without credentials, sequence or Cable connection. See [server sync](server-sync.md).
 The platform opens the WebSocket with `openCable` and reports every frame to the `CableEvents` the core passes in. Rust handles encryption, subscriptions, reopening and timers.
 
+The core opens the WebSocket only while a session is committed, the network is up and a reader wants a channel.
+When a model declares `cable_when`, the stored value of its field must also be true. A change of the stored row opens or closes the socket at once, without a timer.
+
 ## Platform sockets
 
 `DB.open` and `DBlayer.open` choose a platform transport when `transport` is omitted.

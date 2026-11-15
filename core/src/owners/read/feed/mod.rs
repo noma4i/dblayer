@@ -255,6 +255,8 @@ pub enum FeedInput {
     EpochEnded(EpochEnded),
     Closing,
     Census { reply: ReplyId },
+    /// The Store's verdict on `cable_when`: the connection opens only while it is true.
+    Gate(bool),
 }
 
 /// The owners `Feed` sends inputs to.
@@ -350,6 +352,9 @@ pub struct FeedState {
     /// `Closing` came: the end of the drain answers it with `Drained`.
     closing_asked: bool,
     peers: FeedPeers,
+    /// The schema declares `cable_when`: `gate` starts closed and follows the stored row.
+    gated: bool,
+    gate: bool,
 }
 
 mod state;
@@ -484,7 +489,7 @@ impl StateOwner for Feed {
             return effects;
         }
         if let FeedInput::ActivateEpoch(epoch) = &input {
-            *state = FeedState::new(*epoch, state.peers, std::mem::take(&mut state.debounce), std::mem::take(&mut state.channels)).with_kept(std::mem::take(&mut state.kept));
+            *state = FeedState::new(*epoch, state.peers, std::mem::take(&mut state.debounce), std::mem::take(&mut state.channels)).with_kept(std::mem::take(&mut state.kept)).with_gate(state.gated);
             return Vec::new();
         }
         for models in std::mem::take(&mut state.gap_retry) { state.commit_gap(models, &mut fx); }
@@ -521,6 +526,7 @@ impl StateOwner for Feed {
             }
             FeedInput::Closing => state.end(true, &mut fx),
             FeedInput::Census { .. } => {}
+            FeedInput::Gate(open) => state.gate_changed(open, &mut fx),
             FeedInput::WantPlus { model, id, stream, scoped, .. } => state.want_plus(model, id, stream, scoped, &mut fx),
             FeedInput::WantMinus { model, id, .. } => state.want_minus(&model, id, &mut fx),
             FeedInput::HandshakeDone { connection_id, key_id, .. } => state.handshake_done(connection_id, key_id, &mut fx),

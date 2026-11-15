@@ -246,7 +246,7 @@ fn model(cx: &mut Cx, node: &ModelNode) -> ModelDecl {
     let owner = Owner(cx.schema.map(|_| node.name.clone()));
     let mut decl = ModelDecl {
         name: node.name.clone(), pos: Pos { line: node.line, column: node.column }, file: node.file, storage, expires_in, attributes: Vec::new(), ephemeral: Vec::new(),
-        indexes: Vec::new(), search: Vec::new(), associations: Vec::new(), scopes: Vec::new(), subscriptions: Vec::new(), changes: Vec::new(), changed_by: Vec::new(), removed_by: Vec::new(), server_revision: None, operations: Vec::new(),
+        indexes: Vec::new(), search: Vec::new(), associations: Vec::new(), scopes: Vec::new(), subscriptions: Vec::new(), changes: Vec::new(), changed_by: Vec::new(), removed_by: Vec::new(), server_revision: None, cable_when: None, operations: Vec::new(),
     };
     for call in &node.body {
         let mut line = Line::of(call);
@@ -306,6 +306,14 @@ fn model(cx: &mut Cx, node: &ModelNode) -> ModelDecl {
                 let field = arg.and_then(|arg| symbol(cx, arg, "server revision"));
                 if decl.server_revision.is_some() { cx.fail(line.pos, "duplicate server_revision"); }
                 decl.server_revision = field;
+                line.finish(cx);
+            }
+            "cable_when" => {
+                no_block(cx, call);
+                let arg = exactly_one_arg(cx, &line, "a bool attribute");
+                let field = arg.and_then(|arg| symbol(cx, arg, "cable_when field"));
+                if decl.cable_when.is_some() { cx.fail(line.pos, "duplicate cable_when"); }
+                decl.cable_when = field.map(|field| (field, line.pos));
                 line.finish(cx);
             }
             "changed_by" => {
