@@ -158,6 +158,8 @@ Only `logout` is a name the library reserves. The other names in the table, `otp
 | `noCredential`                                                                               | the call needs a session and the database has none                                | kept                                                         |
 | `other`                                                                                      | any other `error` value, the text is in `detail`                                  | kept                                                         |
 
+A sealed `RATE_LIMITED` answer with `retryAfter` of N seconds ends its request at once. No request of the session leaves before N seconds pass, the cable open included. A later `retryAfter` inside the pause moves the end of the pause.
+
 ### Ending a session
 
 | Event                                            | What the app sees                                                                                                                                         | Credential and data                                                                                           |

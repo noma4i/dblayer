@@ -171,10 +171,12 @@ The platform observer reports the connection state to the core, which passes it 
 | Close                                                    | Result                                                                                         |
 | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | HTTP 401 or 403 during open, a session error during open | Reopen with backoff, like a dropped connection                                                 |
-| 4401, 4403, ACCOUNT_LOCKED or LOGGED_OUT                 | Reopen with backoff, like a dropped connection                                                 |
-| 1003, 1006, 4400, 4408, 4409, 4429, 4430, 4500, 4503     | Reopen with backoff. A close before the first server frame after ready keeps growing the delay |
+| 4401                                                     | The session ends like after a revoked answer. No socket reopens                                |
+| 4403, ACCOUNT_LOCKED or LOGGED_OUT                       | Reopen with backoff, like a dropped connection                                                 |
+| 4429                                                     | Reopen after the longer of the backoff and `retryAfter` seconds of a JSON close reason, 5 s without it |
+| 1003, 1006, 4400, 4408, 4409, 4430, 4500, 4503           | Reopen with backoff. A close before the first server frame after ready keeps growing the delay |
 
-No close deletes the credential and no close ends the session. Cable receives only the function that reads the credential.
+Only close code 4401 ends the session. Cable receives only the function that reads the credential.
 A subscription failure never reaches the `error` of a list or entity stream: windows keep their own load state. User-initiated configuration requests and queries remain available.
 `DbError` keeps socket close codes and GraphQL extensions. Kotlin exposes the same data through `DbException`.
 
