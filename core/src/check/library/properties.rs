@@ -11,6 +11,9 @@ const ENTITY_OPERATION: &str = "MomentTranscodeStatus";
 /// Fresh-window lifetime of the stand schema (`stale_time` 5 minutes, the same for an empty page).
 const LIFETIME_MS: i64 = 300_000;
 
+/// window.md P-WIN-37: a window key does not go to the network earlier than 1 s after its last landed answer.
+const REQUEST_GAP_MS: i64 = 1_000;
+
 /// window.md win_loading_temp_error: a retryable failure waits for `Retry` while the attempts are below the limit (network 3, server 2).
 const NETWORK_ATTEMPTS: u32 = 3;
 const SERVER_ATTEMPTS: u32 = 2;
@@ -83,6 +86,8 @@ struct Walk {
     logins: u32,
     /// Entity streams opened with `fetch: force` without a network: the force request goes out at the network return (`load: Waiting{page, force}`).
     waiting_force: HashMap<String, &'static str>,
+    /// Rereads the network return deferred to the end of the request gap: the first-page request of the operation may come at a later step.
+    deferred: HashSet<String>,
 }
 
 fn kinds<'a>(observed: &'a [Observation], kind: &'a str) -> impl Iterator<Item = &'a Observation> {
@@ -120,6 +125,11 @@ fn describe(steps: &[Step], index: usize) -> String {
 fn fresh(window: &Window, now: i64) -> bool {
     let Some(landed) = window.landed else { return false };
     !window.failed && !window.lost && !window.gap && now >= landed && now - landed < LIFETIME_MS
+}
+
+/// P-WIN-37: the last answer of the window landed less than `REQUEST_GAP_MS` ago.
+fn in_gap(window: Option<&Window>, now: i64) -> bool {
+    window.is_some_and(|window| !window.failed && window.landed.is_some_and(|landed| now >= landed && now - landed < REQUEST_GAP_MS))
 }
 
 fn session_sent(steps: &[Step], id: &str) -> bool {
@@ -342,6 +352,10 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
         }
         let waiting_retry = walk.streaks.values().any(|(network, server)| (*network > 0 && *network < NETWORK_ATTEMPTS) || (*server > 0 && *server < SERVER_ATTEMPTS));
 
+        if !before_online && walk.online && input.name == "set_online" && before_logged && walk.logged {
+            let deferred: Vec<&'static str> = reread_after_return(&walk, &fresh_now).into_iter().filter(|(operation, expected)| *expected == 1 && in_gap(walk.windows.get(*operation), walk.now)).map(|(operation, _)| operation).collect();
+            walk.deferred.extend(deferred.into_iter().map(str::to_string));
+        }
         match rule {
             Rule::Outcomes if !walk.pending.is_empty() && walk.held.is_empty() && walk.online && !waiting_retry => {
                 return Err(format!("{}: the load(s) {:?} have no outcome, the mock holds no request, the network is on and no retry pause runs", describe(steps, index), walk.pending));
@@ -371,6 +385,7 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
                 let returned = !before_online && walk.online && input.name == "set_online";
                 if returned && before_logged && walk.logged {
                     for (operation, expected) in reread_after_return(&walk, &fresh_now) {
+                        let expected = if in_gap(walk.windows.get(operation), walk.now) { 0 } else { expected };
                         let got = first_pages(operation);
                         if got != expected && !was_held.iter().any(|held| held == operation) {
                             return Err(format!("{}: network return sent {got} request(s) of {operation}, expected {expected}", describe(steps, index)));
@@ -386,7 +401,7 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
                 for request in sent.iter().filter(|request| request.first_page && request.operation != "ContainersByIds") {
                     let was_fresh = fresh_now.get(&request.operation).copied().unwrap_or(false) && landed_before.get(&request.operation).copied().unwrap_or(false);
                     let forced = input.name == "refresh" || (input.name == "node" && input.flag("force") == Some(true)) || (input.name == "open_entity" && input.text("fetch") == Some("force"));
-                    if !was_fresh || forced || (on_connect_return && streams_declared(&request.operation)) {
+                    if !was_fresh || forced || (on_connect_return && streams_declared(&request.operation)) || walk.deferred.remove(&request.operation) {
                         continue;
                     }
                     let Some(window) = walk.windows.get_mut(&request.operation) else { continue };
@@ -416,8 +431,9 @@ fn analyze(steps: &[Step], rule: Rule) -> Result<(), String> {
                 };
                 if let Some(operation) = forced_load.filter(|operation| rule == Rule::Fresh && exact(operation)) {
                     let got = first_pages(operation);
-                    if got != 1 && !has_error(observed, "in_flight") {
-                        return Err(format!("{}: {} sent {got} request(s) of {operation}, expected exactly 1", describe(steps, index), input.name));
+                    let expected = usize::from(!in_gap(walk.windows.get(operation), walk.now));
+                    if got != expected && !has_error(observed, "in_flight") {
+                        return Err(format!("{}: {} sent {got} request(s) of {operation}, expected exactly {expected}", describe(steps, index), input.name));
                     }
                 }
             }
