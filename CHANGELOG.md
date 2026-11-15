@@ -5,6 +5,7 @@
 ### Added
 
 - Open the cable only while the stored singleton field named by `cable_when` is true.
+- Stream each request that leaves for the network with its reason through `requests`.
 
 ### Changed
 

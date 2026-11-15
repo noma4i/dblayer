@@ -904,6 +904,41 @@ end
 
 A model-level subscription opens when the first stream with live data of the model starts (a `scope.events(Model)` reader, a list, a count or an entity of the model) and closes in the same step when the last of them ends. A signed-in session alone opens no subscription. Preloads and reloads after a sign-in are requests, not subscriptions, and run either way. The `scope.events(Model)` stream of a scope ends when its session ends: its last item is `ended`. Subscriptions that a refusal stopped restart with the next committed credential.
 
+## Request log
+
+`DB.requests()` in Swift and `DBlayer.requests()` in Kotlin give a stream of `RequestLogItem` (`RequestLogStream` in Swift) for debugging: `ready` when the stream starts, `request` with the `operation`, the variables as a JSON string and a `RequestReason` for each request that leaves for the network, `lost` with the `first` and `last` positions when more than 256 items waited, and `ended` with an `EndCause` when the session ends. A network failure after the request left still counts as sent, its retry is a new item. While no stream is open, nothing is recorded.
+
+| Reason      | Request                                                                                           |
+| ----------- | ------------------------------------------------------------------------------------------------- |
+| `load`      | first load of a window, a node without freshness, the next page                                   |
+| `refresh`   | a call with `force`: `refresh`, `node` and `nodes`                                                |
+| `event`     | reread after an event of `changed_by` or a stale mark                                             |
+| `reconnect` | reread after a gap, when the network returns, when the app comes to the foreground                |
+| `retry`     | resend after a failure                                                                            |
+| `send`      | first send of a queued operation, a call or an upload step                                        |
+
+```swift
+for await item in try DB.requests() {
+  switch item {
+  case .ready: break
+  case let .request(operation, variablesJson, reason): log(operation, variablesJson, reason)
+  case let .lost(first, last): log(first, last)
+  case let .ended(cause): log(cause)
+  }
+}
+```
+
+```kotlin
+DBlayer.requests().collect { item ->
+    when (item) {
+        RequestLogItem.Ready -> Unit
+        is RequestLogItem.Request -> log(item.operation, item.variablesJson, item.reason)
+        is RequestLogItem.Lost -> log(item.first, item.last)
+        is RequestLogItem.Ended -> log(item.cause)
+    }
+}
+```
+
 ## Automatic refetching
 
 | Event                                       | Result                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
