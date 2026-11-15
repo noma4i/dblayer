@@ -33,6 +33,7 @@ fn graphql() -> GraphQLRequest { GraphQLRequest::new("query Q { q }", "Q", serde
 fn put() -> PutRequest {
     PutRequest {
         url: "http://upload.invalid/part".into(),
+        reason: crate::transport::RequestReason::Send,
         headers: Vec::new(),
         file: PutFile { path: "unused".into(), offset: 0, length: 0 },
         identity: TransferIdentity { operation_id: 1, item_id: "item".into(), step: TransferStep::Part { number: 1 } },

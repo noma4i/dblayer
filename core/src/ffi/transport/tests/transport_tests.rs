@@ -149,6 +149,7 @@ async fn a_failed_put_is_interrupted_only_when_the_core_cancelled_it() {
     let transport = ForeignTransport::beside_session(Arc::new(Port { link, refusal: None, put: failed }));
     let request = |cancel: crate::transport::CancelToken| crate::transport::PutRequest {
         url: "https://files.test/blob".into(),
+        reason: crate::transport::RequestReason::Send,
         headers: Vec::new(),
         file: PutFile { path: "/none".into(), offset: 0, length: 0 },
         identity: TransferIdentity { operation_id: 1, item_id: "a".into(), step: crate::transport::TransferStep::Put },

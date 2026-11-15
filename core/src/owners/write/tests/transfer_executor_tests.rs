@@ -44,7 +44,7 @@ impl StepCodec for Codec {
     async fn step(&self, link: &Link, _operation: u64, part: Option<u32>, upload_id: Option<&str>, source: &Source, _steps: &Steps) -> Result<StepDone, TransportError> {
         lock(&self.asked).push(("Step".into(), part, upload_id.map(str::to_string), source.path.clone()));
         if self.put.load(std::sync::atomic::Ordering::SeqCst) {
-            let request = PutRequest { url: "https://storage/part".into(), headers: Vec::new(), file: PutFile { path: source.path.clone(), offset: 0, length: 1 }, identity: TransferIdentity { operation_id: 0, item_id: "k".into(), step: TransferStep::Put }, cancel: CancelToken::new(), sent: Arc::new(|_| {}) };
+            let request = PutRequest { reason: crate::transport::RequestReason::Send, url: "https://storage/part".into(), headers: Vec::new(), file: PutFile { path: source.path.clone(), offset: 0, length: 1 }, identity: TransferIdentity { operation_id: 0, item_id: "k".into(), step: TransferStep::Put }, cancel: CancelToken::new(), sent: Arc::new(|_| {}) };
             link.put(request).await?;
         } else {
             link.mutate(GraphQLRequest::new("mutation Step", "Step", json!({ "part": part })), &step_key()).await?;
@@ -397,7 +397,7 @@ async fn rt_prop_close_against_query_no_old_transport_transfer() {
     stub.hang_puts();
     let gate = open_gate(EPOCH, Arc::new(stub.clone()));
     let link = Arc::new(Link::over(gate.clone(), EPOCH));
-    let put = || PutRequest { url: "https://storage/part".into(), headers: Vec::new(), file: PutFile { path: "unused".into(), offset: 0, length: 1 }, identity: TransferIdentity { operation_id: 0, item_id: "k".into(), step: TransferStep::Put }, cancel: CancelToken::new(), sent: Arc::new(|_| {}) };
+    let put = || PutRequest { reason: crate::transport::RequestReason::Send, url: "https://storage/part".into(), headers: Vec::new(), file: PutFile { path: "unused".into(), offset: 0, length: 1 }, identity: TransferIdentity { operation_id: 0, item_id: "k".into(), step: TransferStep::Put }, cancel: CancelToken::new(), sent: Arc::new(|_| {}) };
     let inside = crate::task::spawn_on(&tokio::runtime::Handle::current(), { let (link, request) = (link.clone(), put()); async move { link.put(request).await } });
     crate::test_wait::signalled(stub.signal(), "the PUT is inside the transport", || stub.put_tokens().len() == 1).await;
     gate.close(EPOCH);

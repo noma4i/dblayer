@@ -83,6 +83,7 @@ async fn life_prop_headers_per_request() {
     }
     let put = crate::transport::PutRequest {
         url: "https://files.test/blob".into(),
+        reason: crate::transport::RequestReason::Send,
         headers: vec![("x-amz-meta".into(), "presign".into())],
         file: PutFile { path: "/none".into(), offset: 0, length: 0 },
         identity: TransferIdentity { operation_id: 1, item_id: "a".into(), step: crate::transport::TransferStep::Put },
