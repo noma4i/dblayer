@@ -91,7 +91,8 @@ impl EpochGate {
         *pause = Some(pause.map_or(deadline, |held| held.max(deadline)));
     }
 
-    async fn paused(&self) {
+    /// Waits until the pause of a sealed `RATE_LIMITED` ends: a request that waits here is not on the way yet.
+    pub(crate) async fn paused(&self) {
         let Some(clock) = self.clock.get() else { return };
         loop {
             let deadline = *crate::lock::lock(&self.pause);

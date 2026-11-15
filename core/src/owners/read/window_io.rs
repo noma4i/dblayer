@@ -89,11 +89,12 @@ impl WindowIo {
         let (codec, back, admit, gate) = (self.codec.clone(), back.clone(), self.admit.clone(), self.gate.clone());
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         #[cfg(test)]
-        let flight = self.flights.as_ref().map(super::ports::InFlight::start);
+        let flights = self.flights.clone();
         spawn_on(&self.handle, crate::runtime::counted(launch, async move {
             let _watch = back.watch(request_task(request, attempt));
+            gate.paused().await;
             #[cfg(test)]
-            let _flight = flight;
+            let _flight = flights.as_ref().map(super::ports::InFlight::start);
             let outcome = tokio::select! {
                 biased;
                 () = token.cancelled() => None,
