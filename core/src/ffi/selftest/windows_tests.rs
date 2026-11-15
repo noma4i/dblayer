@@ -219,6 +219,7 @@ async fn a_refused_refresh_keeps_the_views_and_the_credential() {
     held.lists_show(&rig, "A").await;
     rig.settle().await;
     rig.world.fail_next("MyProfile", super::rig_tests::Fault::Refuse { code: "UNAUTHENTICATED", confirmed: false });
+    rig.clock.advance(1_000);
 
     let refused = bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap_err();
 

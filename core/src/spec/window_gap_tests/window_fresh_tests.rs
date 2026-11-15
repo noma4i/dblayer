@@ -314,6 +314,8 @@ fn win_open_freshness_of_the_saved_window() {
 fn win_idle_stale_lost_rereads() {
     let mut twin = fresh_watched();
     take(&twin.log);
+    twin.now += 1_000;
+    twin.det.tick(crate::runtime::Time(twin.now as u64));
     twin.post(w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::all(), cause: w::StaleCause::Lost });
     let (effects, _) = twin.split(take(&twin.log));
     assert_eq!(requests(&effects), 1, "a lost event requires a new load: {effects:?}");
