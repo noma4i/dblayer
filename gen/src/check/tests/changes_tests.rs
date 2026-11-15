@@ -228,3 +228,22 @@ fn subscribe_takes_a_composite_id_and_deletes_when_a_path_is_false() {
     assert_eq!(listen["deleted_by"], serde_json::json!("gone"));
     assert!(listen["deleted_unless"].is_null());
 }
+
+/// D-479: `cable_when` names a bool attribute of a singleton model, once per project; every other form stops the generator with its line.
+#[test]
+fn cable_when_names_a_bool_attribute_of_one_singleton() {
+    let viewer = |body: &str| format!("model Viewer do\n  attribute :id, :id\n  attribute :registered, :bool, null: true\n  attribute :name, :string\n  scope :current do\n    query \"ViewerQuery\"\n  end\n{body}end\n");
+    let models = parse_models(&viewer("  cable_when :registered\n")).unwrap_or_else(|errors| panic!("{errors:?}"));
+    assert_eq!(serde_json::to_value(&models[0]).unwrap()["cable_when"], "registered");
+    let listed = "model Item do\n  attribute :id, :id\n  attribute :done, :bool, null: true\n  cable_when :done\nend\n".to_string();
+    for (source, expected) in [
+        (listed, "cable_when requires a singleton model"),
+        (viewer("  cable_when :name\n"), "cable_when requires a bool attribute"),
+        (viewer("  cable_when :missing\n"), "cable_when requires a bool attribute"),
+        (viewer("  cable_when :registered\n  cable_when :registered\n"), "duplicate cable_when"),
+        (format!("{}{}", viewer("  cable_when :registered\n"), viewer("  cable_when :registered\n").replace("Viewer", "Other")), "duplicate cable_when"),
+    ] {
+        let errors = parse_models(&source).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains(expected)), "{expected}: {errors:?}");
+    }
+}
