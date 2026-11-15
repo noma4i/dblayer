@@ -123,10 +123,10 @@ impl FeedIo {
                     return reply(match error.error {
                         TransportError::Session { .. } => FeedInput::SubscriptionEnded { connection_id: connection },
                         TransportError::Decode(_) => FeedInput::ProtocolError { connection_id: connection, reason: ProtocolReason::Handshake },
-                        _ => FeedInput::Dropped { connection_id: connection, floor: None },
+                        _ => FeedInput::Dropped { connection_id: connection },
                     });
                 }
-                Err(_) => return reply(FeedInput::Dropped { connection_id: connection, floor: None }),
+                Err(_) => return reply(FeedInput::Dropped { connection_id: connection }),
             };
             reply(FeedInput::HandshakeDone { connection_id: connection, key_id: connection });
             let closed = Arc::new(AtomicBool::new(false));
@@ -137,7 +137,7 @@ impl FeedIo {
                         #[cfg(test)]
                         FRAMES_QUEUED.fetch_sub(1, Ordering::SeqCst);
                         if crate::runtime::send_in_epoch(&gate, epoch, || crate::lock::effect(|| line.send(counter, body))).await.is_err() {
-                            reply(FeedInput::Dropped { connection_id: connection, floor: None });
+                            reply(FeedInput::Dropped { connection_id: connection });
                             return false;
                         }
                     }
@@ -184,7 +184,11 @@ impl FeedIo {
                     }
                 }
                 Incoming::Closed { code, reason, failure } => {
-                    if let Closed::Dropped { floor } = closed_by(code, reason.as_deref()) { reply(FeedInput::Dropped { connection_id: connection, floor }); }
+                    match closed_by(code, reason.as_deref()) {
+                        Closed::SessionEnded => {}
+                        Closed::Dropped { floor: Some(floor) } => reply(FeedInput::Limited { connection_id: connection, floor }),
+                        Closed::Dropped { floor: None } => reply(FeedInput::Dropped { connection_id: connection }),
+                    }
                     let initiator = if code.is_some() { CableCloseInitiator::Server } else { CableCloseInitiator::Network };
                     return CableClose { connection_id: connection, code, reason, failure, initiator, intended: false };
                 }

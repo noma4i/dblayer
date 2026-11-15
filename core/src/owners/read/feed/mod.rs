@@ -234,8 +234,9 @@ pub enum FeedInput {
     /// The server closed the subscription of one channel: `failed` = with an error of the request.
     ChannelEnded { connection_id: ConnectionId, channel: Channel, error: Option<ChannelError> },
     ChannelResubscribe { connection_id: ConnectionId, channel: Channel },
-    /// `floor`: the server asked for a pause (close code 4429), the next socket waits at least that long.
-    Dropped { connection_id: ConnectionId, floor: Option<Duration> },
+    Dropped { connection_id: ConnectionId },
+    /// The server closed the cable with code 4429: a `Dropped` whose next socket waits at least `floor`.
+    Limited { connection_id: ConnectionId, floor: Duration },
     SubscriptionEnded { connection_id: ConnectionId },
     Resubscribe { connection_id: ConnectionId },
     /// The timer of a `Connect`: a connection still in `Handshake` fails.
@@ -533,7 +534,8 @@ impl StateOwner for Feed {
             FeedInput::ChannelConfirmed { connection_id, channel } => state.channel_confirmed(connection_id, channel, &mut fx),
             FeedInput::ChannelEnded { connection_id, channel, error, .. } => state.channel_ended(connection_id, channel, error, &mut fx),
             FeedInput::ChannelResubscribe { connection_id, channel, .. } => state.channel_resubscribe(connection_id, channel, &mut fx),
-            FeedInput::Dropped { connection_id, floor } => state.dropped(connection_id, floor, &mut fx),
+            FeedInput::Dropped { connection_id } => state.dropped(connection_id, None, &mut fx),
+            FeedInput::Limited { connection_id, floor } => state.dropped(connection_id, Some(floor), &mut fx),
             FeedInput::SubscriptionEnded { connection_id } => state.dropped(connection_id, None, &mut fx),
             FeedInput::Resubscribe { connection_id } => state.resubscribe(connection_id, &mut fx),
             FeedInput::HandshakeDeadline { connection_id } => state.handshake_deadline(connection_id, &mut fx),
@@ -567,5 +569,5 @@ impl StateOwner for Feed {
 
     fn closing() -> FeedInput { FeedInput::Closing }
 
-    fn executor_failed(_executor: &str, pending: Vec<crate::runtime::EffectId>) -> Vec<FeedInput> { pending.into_iter().map(|connection_id| FeedInput::Dropped { connection_id, floor: None }).collect() }
+    fn executor_failed(_executor: &str, pending: Vec<crate::runtime::EffectId>) -> Vec<FeedInput> { pending.into_iter().map(|connection_id| FeedInput::Dropped { connection_id }).collect() }
 }

@@ -128,7 +128,7 @@ impl FeedState {
     /// `ProtocolError` of the executor: an `Established` live connection drains and reopens, any other connection is dropped (the executor closed it).
     pub(super) fn protocol_error(&mut self, connection: ConnectionId, fx: &mut Vec<Fx>) {
         let established = self.connection_mut(connection).is_some_and(|found| found.goodbye());
-        if established && self.mode == Mode::Live && self.active_connection() == Some(connection) { self.protocol_failed(connection, fx); } else { self.dropped(connection, fx); }
+        if established && self.mode == Mode::Live && self.active_connection() == Some(connection) { self.protocol_failed(connection, fx); } else { self.dropped(connection, None, fx); }
     }
 
     pub(super) fn protocol_failed(&mut self, connection: ConnectionId, fx: &mut Vec<Fx>) {
@@ -146,7 +146,7 @@ impl FeedState {
             return;
         }
         fx.push(Fx::Run(FeedEffect::Close { connection, goodbye, drain: false, intended: false }));
-        self.dropped(connection, fx);
+        self.dropped(connection, None, fx);
     }
 
     pub(super) fn handshake_done(&mut self, connection: ConnectionId, key_id: u64, fx: &mut Vec<Fx>) {
@@ -178,7 +178,7 @@ impl FeedState {
     pub(super) fn pong_deadline(&mut self, connection: ConnectionId, counter: u64, now: Time, fx: &mut Vec<Fx>) {
         if self.mode != Mode::Live || self.active_connection() != Some(connection) || !self.active.as_ref().is_some_and(|found| found.pong == Some(counter) && found.pong_due.is_some_and(|due| now >= due)) { return; }
         fx.push(Fx::Run(FeedEffect::Cancel { connection }));
-        self.dropped(connection, fx);
+        self.dropped(connection, None, fx);
     }
 
     pub(super) fn frame_opened(&mut self, connection: ConnectionId, counter: u64, frame: Frame, fx: &mut Vec<Fx>) {
@@ -215,7 +215,7 @@ impl FeedState {
             Frame::Confirmed { id } => self.channel_confirmed(connection, id, fx),
             Frame::Complete { id } => self.channel_ended(connection, id, None, fx),
             Frame::Error { id: Some(id), retryable } => self.channel_ended(connection, id, Some(ChannelError { retryable }), fx),
-            Frame::Ended | Frame::Error { id: None, .. } => self.dropped(connection, fx),
+            Frame::Ended | Frame::Error { id: None, .. } => self.dropped(connection, None, fx),
             Frame::Quiet => {}
         }
     }
@@ -366,7 +366,7 @@ impl FeedState {
     pub(super) fn draining(&mut self, connection: ConnectionId, then: Resume, input: FeedInput, fx: &mut Vec<Fx>) {
         match input {
             FeedInput::Drain { connection_id } if connection_id == connection => self.drain_over(connection, then, false, fx),
-            FeedInput::Dropped { connection_id, .. } | FeedInput::SubscriptionEnded { connection_id } if connection_id == connection => self.drain_over(connection, then, true, fx),
+            FeedInput::Dropped { connection_id } | FeedInput::Limited { connection_id, .. } | FeedInput::SubscriptionEnded { connection_id } if connection_id == connection => self.drain_over(connection, then, true, fx),
             FeedInput::EpochEnded(ended) if ended.epoch == self.epoch => self.drain_over(connection, Resume::End, true, fx),
             FeedInput::Closing => {
                 self.closing_asked = true;
