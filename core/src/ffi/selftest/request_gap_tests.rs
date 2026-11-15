@@ -72,3 +72,19 @@ async fn request_gap_defers_event_rereads_and_one_batch_rereads_once() {
     drop(reader);
     bound(database.close_database()).await.unwrap();
 }
+
+/// P-WIN-36, P-WIN-37 (owner: identical requests do not pile up): 100 forced reads of one key spread over 2 s send 2 requests, every call gets the row.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hundred_identical_reads_in_two_seconds_send_two_requests() {
+    let world = World::new("server", "A", true);
+    let (database, _, clock) = open(world.clone()).await;
+    let epoch = database.session_epoch();
+    world.answer_with("PresenceNode", node_answer(true));
+    let mut answered = 0;
+    for _ in 0..100 {
+        if bound(database.node(epoch, "Presence".into(), "node".into(), "p1".into(), true)).await.unwrap().is_some_and(|row| row.id == "p1") { answered += 1; }
+        clock.advance(20);
+    }
+    assert_eq!((answered, world.count("PresenceNode")), (100, 2), "(calls answered with the row, requests)");
+    bound(database.close_database()).await.unwrap();
+}
