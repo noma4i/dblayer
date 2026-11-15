@@ -40,6 +40,7 @@ mod data_touch_tests;
 mod node_event_other_load_tests;
 mod node_absent_tests;
 mod cable_close_tests;
+mod request_gap_tests;
 mod rig_held;
 mod rig_models;
 mod rig_tests;

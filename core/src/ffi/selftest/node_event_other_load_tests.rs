@@ -7,10 +7,10 @@ use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::{Database, DbError, ReadFetch, ReadRequest, ReadValue};
 
-struct Cable {
-    peer: crate::transport::encrypted::cable::tests::peer_tests::CablePeer,
-    token: Arc<Mutex<Option<String>>>,
-    opened: Arc<tokio::sync::Notify>,
+pub(super) struct Cable {
+    pub(super) peer: crate::transport::encrypted::cable::tests::peer_tests::CablePeer,
+    pub(super) token: Arc<Mutex<Option<String>>>,
+    pub(super) opened: Arc<tokio::sync::Notify>,
 }
 
 #[async_trait::async_trait]
@@ -21,7 +21,7 @@ impl crate::ffi::FakeTransport for Cable {
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, DbError> { unreachable!() }
 }
 
-async fn open(world: Arc<World>) -> (Arc<Database>, Arc<Cable>, Arc<crate::ffi::TestClock>) {
+pub(super) async fn open(world: Arc<World>) -> (Arc<Database>, Arc<Cable>, Arc<crate::ffi::TestClock>) {
     use crate::schema::{FieldSpec, ModelSpec, NodeRead, RelationSpec, RemoteShape, VariableSource, NODE_PARAM};
     use crate::value::ScalarKind;
     let mut presence = ModelSpec::new("Presence", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("online", ScalarKind::Bool)]);
@@ -36,7 +36,10 @@ async fn open(world: Arc<World>) -> (Arc<Database>, Arc<Cable>, Arc<crate::ffi::
     let mut remote = crate::schema_fixtures::remote("PresenceDetails", RemoteShape::Single, "5.minutes");
     remote.variables.insert("id".into(), VariableSource::Param { name: "key".into() });
     details.remote = Some(remote);
-    presence.relations.extend([node, details]);
+    let mut nodes = RelationSpec::global("nodes");
+    nodes.remote = Some(crate::schema_fixtures::remote("PresenceNodes", RemoteShape::List { coverage: crate::schema::Coverage::Complete }, "5.minutes"));
+    nodes.node = Some(NodeRead::Many);
+    presence.relations.extend([node, details, nodes]);
     presence.changes = vec![serde_json::from_value(json!({"area":"PRESENCE","relation":"node","removes_on":["DELETED"]})).unwrap()];
     presence.change_feed = Some(crate::schema::ChangeFeed { subscription: "RecordEvents".into(), root: "recordEvents.entries".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
     let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
@@ -52,6 +55,7 @@ async fn open(world: Arc<World>) -> (Arc<Database>, Arc<Cable>, Arc<crate::ffi::
     let database = bound(Database::open_with_clock(crate::ffi::Config { path: None }, crate::ffi::specs(serde_json::to_string(&vec![presence]).unwrap()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(cable.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::tests::session_guards_tests::WatchedHeld::default())), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone())).await.unwrap();
     database.register_operations(json!([
         {"name":"PresenceNode","document":"query PresenceNode($id: ID!) { node(id: $id) { ... on Presence { id online } } }"},
+        {"name":"PresenceNodes","document":"query PresenceNodes($ids: [ID!]!) { nodes(ids: $ids) { ... on Presence { id online } } }"},
         {"name":"PresenceDetails","document":"query PresenceDetails($id: ID!) { presence(id: $id) { id online } }"},
         {"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId } } }"}
     ]).to_string()).await.unwrap();
@@ -60,9 +64,9 @@ async fn open(world: Arc<World>) -> (Arc<Database>, Arc<Cable>, Arc<crate::ffi::
     (database, cable, clock)
 }
 
-fn node_answer(online: bool) -> serde_json::Value { json!({"data":{"node":{"__typename":"Presence","id":"p1","online":online}}}) }
+pub(super) fn node_answer(online: bool) -> serde_json::Value { json!({"data":{"node":{"__typename":"Presence","id":"p1","online":online}}}) }
 
-fn online_of(rows: &Rows) -> Option<bool> {
+pub(super) fn online_of(rows: &Rows) -> Option<bool> {
     rows.0.lock().unwrap().iter().find(|row| row.id == "p1").and_then(|row| row.cells.iter().find_map(|cell| if let Cell::Bool { value } = cell { Some(*value) } else { None }))
 }
 
