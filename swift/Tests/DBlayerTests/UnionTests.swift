@@ -96,8 +96,7 @@ extension BridgeProbeTests {
   func aServerAnswerCarriesEveryVariantAndLaterAnswersReplaceTheVariant() async throws {
     let transport = MockTransport()
     transport.enqueue("ContainerThread", reply: Self.threadReply(Self.nodes))
-    _ = try await open(transport)
-    try await registerStandOperations(DB.database, defsJson: JSONValue.array([.object(["name": .string("ContainerThread"), "document": .string(Self.threadDocument)])]).text)
+    let clock = try await openSignedClocked(modelsJson: modelsJSON, transport: transport, operations: JSONValue.array([.object(["name": .string("ContainerThread"), "document": .string(Self.threadDocument)])]).text)
     let thread = try Record.thread("c1")
     try await thread.load()
 
@@ -114,6 +113,7 @@ extension BridgeProbeTests {
     changed["m5"] = #"{"__typename":"RewardAttachment","id":"g9","rewardTier":"bronze","status":null,"tags":[]}"#
     changed["m6"] = #"{"__typename":"ReactionAttachment","body":"late"}"#
     transport.enqueue("ContainerThread", reply: Self.threadReply(changed))
+    clock.advance(by: 1)
     try await thread.refresh()
 
     #expect(try await Record.find("m1").current()?.attachment == .reaction(ReactionAttachment(body: "now")))

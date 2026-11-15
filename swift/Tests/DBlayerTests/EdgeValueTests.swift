@@ -14,16 +14,15 @@ extension BridgeProbeTests {
 
   private static let rankedEdgeReply = #"{"data":{"feed":{"edges":[{"impressionUuid":"imp-1","impressionScore":9,"rank":"top","node":{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z","text":"in a vibe"}}],"pageInfo":{"hasNextPage":false,"endCursor":"c"}}}}"#
 
-  private func openEdgeRig() async throws -> MockTransport {
+  private func openEdgeRig() async throws -> (MockTransport, TestClock) {
     let transport = MockTransport()
-    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
-    try await registerStandOperations(DB.database, defsJson: JSONValue.array([.object(["name": .string("MomentsFeed"), "document": .string(Self.edgeFeedDocument)])]).text)
-    return transport
+    let clock = try await openSignedClocked(modelsJson: modelsJSON, transport: transport, operations: JSONValue.array([.object(["name": .string("MomentsFeed"), "document": .string(Self.edgeFeedDocument)])]).text)
+    return (transport, clock)
   }
 
   @Test(.timeLimit(.minutes(1)))
   func edgeCallsDecodeNullableFieldsAliasesAndEnums() async throws {
-    let transport = try await openEdgeRig()
+    let (transport, clock) = try await openEdgeRig()
     transport.enqueue("MomentsFeed", reply: Self.edgeReply(uuid: "imp-1", score: 5))
     try await Moment.feed.refresh()
     #expect(try await Moment.feedEdge(of: "1") == MomentFeedEdge(["impressionUuid": "imp-1", "impressionScore": 5]))
@@ -34,6 +33,7 @@ extension BridgeProbeTests {
     try await Moment.vibeFeed("v1").refresh()
     #expect(try await Moment.vibeFeedEdge("v1", of: "1") == MomentVibeFeedEdge([:]))
 
+    clock.advance(by: 1)
     transport.enqueue("MomentsFeed", reply: Self.rankedEdgeReply)
     try await Moment.vibeFeed("v1").refresh()
     let ranked = try await Moment.vibeFeedEdge("v1", of: "1")

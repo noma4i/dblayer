@@ -134,8 +134,7 @@ extension BridgeProbeTests {
   @Test @MainActor
   func membersSnapshotPlatforms() async throws {
     let transport = MockTransport()
-    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
-    try await registerStandOperations(DB.database, defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
+    let clock = try await openSignedClocked(modelsJson: modelsJSON, transport: transport, operations: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
     transport.enqueue("ContainerMembers", reply: membersPage("a0", hasNext: true))
     transport.enqueue("ContainerMembers", reply: membersPage("a1", hasNext: false))
     let query = try User.completeMembers("c1")
@@ -146,6 +145,7 @@ extension BridgeProbeTests {
     #expect(members.snapshot.error == nil)
     #expect(members.snapshot.rows.map(\.id) == members.rows.map(\.id))
     transport.enqueue("ContainerMembers", reply: #"{"errors":[{"message":"refused"}]}"#)
+    clock.advance(by: 1)
     do { try await query.refresh(); Issue.record("a refused refresh must throw") } catch {}
     await eventually("members error") { members.snapshot.error != nil }
     #expect(members.snapshot.phase == .loaded)

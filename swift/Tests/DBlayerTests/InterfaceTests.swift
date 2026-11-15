@@ -30,16 +30,15 @@ extension BridgeProbeTests {
     #"{"data":{"node":{"__typename":"InterfaceRecord","id":"s1","slug":"main","spec":{"root":"root","elements":\#(elements),"state":\#(state)}}}}"#
   }
 
-  private func openSampleRig() async throws -> MockTransport {
+  private func openSampleRig() async throws -> (MockTransport, TestClock) {
     let transport = MockTransport()
-    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
-    try await registerStandOperations(DB.database, defsJson: JSONValue.array([.object(["name": .string("SampleNode"), "document": .string(Self.screenDocument)])]).text)
-    return transport
+    let clock = try await openSignedClocked(modelsJson: modelsJSON, transport: transport, operations: JSONValue.array([.object(["name": .string("SampleNode"), "document": .string(Self.screenDocument)])]).text)
+    return (transport, clock)
   }
 
   @Test(.timeLimit(.minutes(1)))
   func aServerAnswerCarriesEveryElementVariantAndALaterAnswerReplacesTheList() async throws {
-    let transport = try await openSampleRig()
+    let (transport, clock) = try await openSampleRig()
     transport.enqueue("SampleNode", reply: Self.screenReply(elements: Self.screenElements))
     let screen = try #require(try await InterfaceRecord.node("s1"))
     let spec = try #require(screen.spec)
@@ -68,6 +67,7 @@ extension BridgeProbeTests {
     ]
     """#
     transport.enqueue("SampleNode", reply: Self.screenReply(elements: second, state: "[]"))
+    clock.advance(by: 1)
     _ = try await InterfaceRecord.node("s1", force: true)
     let again = try #require(await InterfaceRecord.find("s1").current()?.spec)
     #expect(again.elements.map(\.id) == ["b1", "root"])

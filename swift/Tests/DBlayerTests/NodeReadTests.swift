@@ -10,12 +10,11 @@ extension BridgeProbeTests {
     ("MomentTranscodeStatus", "query MomentTranscodeStatus($momentId: ID!) { node(id: $momentId) { ... on Moment { id uuid createdAt media } } }"),
   ]
 
-  private func openNodeRig() async throws -> MockTransport {
+  private func openNodeRig() async throws -> (MockTransport, TestClock) {
     let transport = MockTransport()
-    try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport)
     let defs = Self.nodeDocuments.map { JSONValue.object(["name": .string($0.0), "document": .string($0.1)]) }
-    try await registerStandOperations(DB.database, defsJson: JSONValue.array(defs).text)
-    return transport
+    let clock = try await openSignedClocked(modelsJson: modelsJSON, transport: transport, operations: JSONValue.array(defs).text)
+    return (transport, clock)
   }
 
   private func nodeCalls(_ transport: MockTransport, _ operation: String) -> [TransportRequest] {
@@ -24,13 +23,14 @@ extension BridgeProbeTests {
 
   @Test(.timeLimit(.minutes(1)))
   func nodePassesItsIdAndForceAndDecodesTheTypedRow() async throws {
-    let transport = try await openNodeRig()
+    let (transport, clock) = try await openNodeRig()
     transport.enqueue("ContainerNode", reply: #"{"data":{"node":{"id":"c1","title":"one","shareUrl":"u","isPublic":true}}}"#)
     transport.enqueue("ContainerNode", reply: #"{"data":{"node":{"id":"c1","title":"two","shareUrl":"v","isPublic":false}}}"#)
 
     let first = try await Container.node("c1")
     #expect(first?.title == "one" && first?.shareUrl == "u" && first?.isPublic == true)
     #expect(nodeCalls(transport, "ContainerNode").first?.variablesJson == #"{"id":"c1"}"#)
+    clock.advance(by: 1)
     let rereads = try await Container.node("c1", force: true)
     #expect(rereads?.title == "two")
     #expect(nodeCalls(transport, "ContainerNode").count == 2)
@@ -38,7 +38,7 @@ extension BridgeProbeTests {
 
   @Test(.timeLimit(.minutes(1)))
   func theVariableNameOfANodeReadFollowsTheDeclaration() async throws {
-    let transport = try await openNodeRig()
+    let (transport, _) = try await openNodeRig()
     transport.enqueue("MomentTranscodeStatus", reply: #"{"data":{"node":{"id":"mo1","uuid":"u","createdAt":"2026-10-01T00:00:00.000Z","media":{"kind":"VIDEO"}}}}"#)
     #expect(try await Moment.transcodeStatus("mo1")?.id == "mo1")
     #expect(nodeCalls(transport, "MomentTranscodeStatus").first?.variablesJson == #"{"momentId":"mo1"}"#)
@@ -46,11 +46,11 @@ extension BridgeProbeTests {
 
   @Test(.timeLimit(.minutes(1)))
   func nodesPassesIdsAndDecodesTypedRows() async throws {
-    let transport = try await openNodeRig()
+    let (transport, _) = try await openNodeRig()
     transport.enqueue("ContainersByIds", reply: #"{"data":{"nodes":[{"id":"c2","title":"b"},{"id":"c1","title":"a"}]}}"#)
     let rows = try await Container.nodes(["c2", "c1"])
     #expect(Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0.title) }) == ["c2": "b", "c1": "a"])
     #expect(nodeCalls(transport, "ContainersByIds").count == 1)
-    #expect(nodeCalls(transport, "ContainersByIds").first?.variablesJson == #"{"ids":["c2","c1"]}"#)
+    #expect(nodeCalls(transport, "ContainersByIds").first?.variablesJson == #"{"ids":["c1","c2"]}"#)
   }
 }

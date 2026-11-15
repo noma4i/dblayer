@@ -58,7 +58,7 @@ extension BridgeProbeTests {
   }
 
   @MainActor
-  static func openSealedSession() async throws -> SealedServer {
+  static func openSealedSession() async throws -> (SealedServer, TestClock) {
     await DB.closeForCleanup()
     let account = Self.account
     account.signOut()
@@ -80,11 +80,11 @@ extension BridgeProbeTests {
       }
     }
     let encrypted = EncryptedConfig(origin: SealedServer.origin, serverKey: SealedServer.serverKey, pin: SealedServer.pin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["login_link": EncryptedSessionOperation(path: "/api/auth/login_link", class: .authenticated)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel")
-    try await DB.openTesting(transport: MockTransport(), modelsJSON: withRawCalls(modelsJSON), encrypted: encrypted, credentials: LifecycleCredential(), http: server)
+    let clock = try await DB.openTesting(transport: MockTransport(), modelsJSON: withRawCalls(modelsJSON), encrypted: encrypted, credentials: LifecycleCredential(), http: server)
     let fixtureOperations = #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"}]"#
     try server.registerDocuments(fixtureOperations)
     try await registerStandOperations(DB.database, defsJson: fixtureOperations)
-    return server
+    return (server, clock)
   }
 
   /// The order of the app: sign-in call, session profile, profile refresh.
@@ -115,10 +115,11 @@ extension BridgeProbeTests {
   @MainActor
   @Test
   func closeEndsACallThatTheServerNeverAnswers() async throws {
-    let server = try await Self.openSealedSession()
+    let (server, clock) = try await Self.openSealedSession()
     try await Self.startSealedSession("A")
     server.hold(operation: "UserProfile")
     let ended = Outcome()
+    clock.advance(by: 1)
     Task { @MainActor in
       _ = try? await User.profile.refresh()
       ended.finish()
