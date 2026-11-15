@@ -1,34 +1,35 @@
 # Changelog
 
-## Unreleased
+## 6.38.0 - 2026-11-15
 
 ### Changed
 
 - Return the row as it is stored now from `confirmed`, not the row at landing.
-- Keep the outcome of a finished write on disk so its receipt still answers after a restart.
+- Keep the outcome of a finished write on disk for receipts after a restart.
+- Refuse a server row with null in a required field that has no default.
 
 ### Fixed
 
-- End a call or transfer with a runtime error when its task panics instead of waiting.
-- End a session reset, a receipt read or an answer decode when its task panics instead of waiting.
+- End a call or transfer with a runtime error when its task panics.
+- End a session reset, receipt read or answer decode when its task panics.
 - Refuse a stored operation or window whose saved text does not parse instead of guessing.
-- Find an upload by the id the app used when its row got a server id.
+- Find an upload by the app id after its row gets a server id.
 - Confirm a mutation whose answer rows do not decode instead of failing it.
-- End a refresh with a runtime error when reading the saved window fails by a panic.
+- End a refresh with a runtime error when reading the saved window panics.
 - Refuse a server row whose field value does not decode instead of dropping the field.
 - Give a list value the revision of the commit that changed its rows.
 - Read a row once after its event when a counter or list also shows it.
 - Return the receipt of an accepted write when the session ends before the call returns.
-- Show the loaded state when a window lands while the first read of its stream runs.
+- Show the loaded state when a window lands during the first read of its stream.
 - Reload a window that changed while its last allowed page was loading.
 - Keep the revision of an upload status from going back.
 - Apply upload calls made while the database opens in the order they were made.
 - Leave the revision and subscribers untouched when a write changes no stored data.
-- Refuse a server row whose list holds a value of another type instead of storing it shorter.
-- Report an upload whose saved data cannot be read as failed to restore instead of sending it empty.
-- Keep the server subscription closed when the database opens while the app is in the background.
+- Refuse a server row whose list holds a value of another type.
+- Report an upload whose saved data cannot be read as failed to restore.
+- Keep the server subscription closed when the database opens in the background.
 - Reload a refresh-on-foreground window only when the app returns from the background.
-- Release the state of finished calls and refused uploads instead of keeping it for the whole session.
+- Release the state of finished calls and refused uploads instead of keeping it.
 - Release a window nobody watches from memory instead of keeping it until the session ends.
 
 ## 6.37.0 - 2026-11-14
