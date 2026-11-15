@@ -110,6 +110,7 @@ async fn late_answer_case(call: Call, transition: Transition, refusal: bool) {
     held.follow(&rig.database);
     held.shows(&rig, "B").await;
     assert!(held.never_showed("late"), "{case}: the late answer ({late:?}) reached a held handle");
+    rig.clock.advance(1_000);
     bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), Some("all".into()), "{}".into())).await.unwrap_or_else(|error| panic!("{case}: the read after the late answer failed with {error:?}"));
     held.lists_show(&rig, "B").await;
     rig.database.close_now();

@@ -25,6 +25,7 @@ async fn flow_user_everywhere() {
     let epoch = rig.database.session_epoch();
 
     rig.world.set_account("A2");
+    rig.clock.advance(1_000);
     bound(rig.database.refresh(epoch, "User".into(), Some("all".into()), "{}".into())).await.unwrap();
     held.shows(&rig, "A2").await;
     held.lists_show(&rig, "A2").await;

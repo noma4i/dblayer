@@ -369,6 +369,7 @@ async fn the_reader_that_cancels_ends_the_stream_and_the_core_keeps_nothing() {
     assert!(reader.ended().is_empty(), "a cancelled stream delivers no outcome");
     let mark = reader.len();
     rig.world.set_account("A2");
+    rig.clock.advance(1_000);
     bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), Some("all".into()), "{}".into())).await.unwrap();
     settle(&rig).await;
     assert_eq!(reader.len(), mark, "a value reached a cancelled reader");
