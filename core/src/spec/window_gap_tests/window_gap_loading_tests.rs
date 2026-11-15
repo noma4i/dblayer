@@ -101,6 +101,7 @@ fn win_loading_failures_retry_then_fail() {
         assert_eq!(twin.stage(), Some(WindowStage::Idle));
         assert_eq!(twin.phase(), Phase::Failed);
         let mut rows = fresh_watched();
+        rows.advance(1_000);
         rows.step(Input::Stale { in_keys: true });
         rows.fail(Failure::Permanent);
         assert_eq!(rows.phase(), Phase::Failed, "the window does not judge its rows when a later load fails");

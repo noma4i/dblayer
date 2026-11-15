@@ -19,6 +19,7 @@ fn win_phase_waiting_by_outcome() {
     let mut landed = Twin::new();
     landed.watch();
     landed.finish(None);
+    landed.advance(1_000);
     landed.step(Input::Stale { in_keys: true });
     landed.step(Input::Online(false));
     assert_eq!((landed.stage(), landed.load_state().phase), (Some(WindowStage::Waiting), OwnerPhase::Loaded), "after a landing");
@@ -87,6 +88,7 @@ fn win_phase_failed_with_and_without_rows() {
     let mut rows = Twin::new();
     rows.watch();
     rows.finish(None);
+    rows.advance(1_000);
     rows.step(Input::Stale { in_keys: true });
     rows.fail(Failure::Permanent);
     let state = rows.load_state();

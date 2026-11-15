@@ -258,6 +258,7 @@ fn win_foreground_reload_once_per_return() {
         twin.step(Input::InterestPlus { id: 1 });
         twin.step(Input::Response { request: 1, attempt: 1, cursor: None, rows: true });
         twin.step(Input::Committed { request: 1, revision: 5 });
+        twin.advance(1_000);
         assert_eq!(twin.step(Input::Foreground { seq: 1 }), [Effect::WindowState, Effect::Request { request: 2, attempt: 2, page: 1 }]);
     }
     {
@@ -270,6 +271,7 @@ fn win_foreground_reload_once_per_return() {
         again.step(Input::InterestPlus { id: 1 });
         again.step(Input::Response { request: 1, attempt: 1, cursor: None, rows: true });
         again.step(Input::Committed { request: 1, revision: 5 });
+        again.advance(1_000);
         again.step(Input::Foreground { seq: 1 });
         assert!(again.step(Input::Foreground { seq: 1 }).is_empty(), "the same return counts once");
         let mut loading = Twin::new();
