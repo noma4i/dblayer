@@ -347,6 +347,11 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                         Err(failure) => return back.reply(EpochStamp::Control, SessionInput::SecretMissing { request_id, attempt_id, lost: matches!(failure, SecretFailure::Lost) }),
                     };
                     let sent = crate::runtime::send_in_cut(&gate, cut, || exchange.send_once(crate::transport::encrypted::SendOnce { credential: credential.as_deref(), request_id: &wire, response_key: &key, sequence, path: &pending.path, body: &body, purpose, wire: crate::transport::WireIds::new(author_kind(&pending), request_id, attempt_id) })).await;
+                    match &sent {
+                        Ok(Ok(answer)) => gate.note_rate_limit(&answer.body.to_string()),
+                        Ok(Err(TransportError::Session { detail, .. })) => gate.note_rate_limit(detail),
+                        _ => {}
+                    }
                     back.reply(EpochStamp::Control, match sent {
                         Ok(result) => match session_input(request_id, attempt_id, logout, sequence.is_some(), has_document, result) {
                             SessionInput::Revoked { request_id, attempt_id, body, author_ref, .. } => SessionInput::Revoked { request_id, attempt_id, body, author_ref, epoch: pending.epoch },

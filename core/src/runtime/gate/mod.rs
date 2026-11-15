@@ -1,8 +1,9 @@
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
-use super::{Cause, Epoch};
+use super::{Cause, Clock, Epoch};
 use crate::transport::{GraphQLRequest, PutReply, PutRequest, Response, TransportError, Upstream};
 
 const CLOSED: u64 = 1;
@@ -17,6 +18,9 @@ pub struct EpochGate {
     state: AtomicU64,
     transport: OnceLock<Arc<dyn Upstream>>,
     revoked: OnceLock<Revoked>,
+    clock: OnceLock<Arc<dyn Clock>>,
+    /// The time before which no request leaves: the `retryAfter` of the last sealed `RATE_LIMITED` answer.
+    pause: Mutex<Option<Duration>>,
     /// Test builds record every request that reaches the network after `shutdown`; the gate fails the test that sent it when it is dropped.
     #[cfg(test)]
     recorder: recorder::Recorder,
@@ -56,7 +60,7 @@ enum Admit {
 }
 
 impl Default for EpochGate {
-    fn default() -> Self { Self { state: AtomicU64::new(CLOSED), transport: OnceLock::new(), revoked: OnceLock::new(), #[cfg(test)] recorder: recorder::Recorder::default() } }
+    fn default() -> Self { Self { state: AtomicU64::new(CLOSED), transport: OnceLock::new(), revoked: OnceLock::new(), clock: OnceLock::new(), pause: Mutex::new(None), #[cfg(test)] recorder: recorder::Recorder::default() } }
 }
 
 fn epoch_of(state: u64) -> u64 { state >> EPOCH_SHIFT }
@@ -75,6 +79,26 @@ impl EpochGate {
 
     pub(crate) fn attach_revoked(&self, revoked: Revoked) { let _ = self.revoked.set(revoked); }
 
+    pub(crate) fn attach_clock(&self, clock: Arc<dyn Clock>) { let _ = self.clock.set(clock); }
+
+    /// A sealed `RATE_LIMITED` body with `retryAfter` N >= 1 holds every request of the gate until now + N s; the later deadline wins.
+    pub(crate) fn note_rate_limit(&self, body: &str) {
+        let Some(clock) = self.clock.get() else { return };
+        let Ok(body) = serde_json::from_str::<serde_json::Value>(body) else { return };
+        let Some(after) = body.get("retryAfter").and_then(serde_json::Value::as_u64).filter(|after| *after >= 1 && body.get("error").and_then(serde_json::Value::as_str) == Some("RATE_LIMITED")) else { return };
+        let deadline = clock.now().saturating_add(Duration::from_secs(after));
+        let mut pause = crate::lock::lock(&self.pause);
+        *pause = Some(pause.map_or(deadline, |held| held.max(deadline)));
+    }
+
+    async fn paused(&self) {
+        let Some(clock) = self.clock.get() else { return };
+        loop {
+            let deadline = *crate::lock::lock(&self.pause);
+            match deadline { Some(deadline) if clock.now() < deadline => clock.sleep_until(deadline).await, _ => return }
+        }
+    }
+
     pub fn has_transport(&self) -> bool { self.transport.get().is_some() }
 
     fn lend(&self, epoch: Option<Epoch>, variables: Option<&mut serde_json::Value>) -> Result<Arc<dyn Upstream>, TransportError> {
@@ -92,21 +116,27 @@ impl EpochGate {
     }
 
     /// A request to the network of `epoch` (`None` belongs to no epoch): the epoch check, the borrow of the transport, the call and the first poll of its future run in one synchronous stretch, a closed gate ends the request as `Interrupted` without a transport to call. The borrow lasts as long as the call.
-    pub async fn query(&self, epoch: Option<Epoch>, mut request: GraphQLRequest) -> Result<Response, TransportError> { self.answer(epoch, self.lend(epoch, Some(&mut request.variables))?.query(request).await).await }
+    pub async fn query(&self, epoch: Option<Epoch>, mut request: GraphQLRequest) -> Result<Response, TransportError> { self.paused().await; self.answer(epoch, self.lend(epoch, Some(&mut request.variables))?.query(request).await).await }
 
-    pub async fn mutate(&self, epoch: Option<Epoch>, mut request: GraphQLRequest) -> Result<Response, TransportError> { self.answer(epoch, self.lend(epoch, Some(&mut request.variables))?.mutate(request).await).await }
+    pub async fn mutate(&self, epoch: Option<Epoch>, mut request: GraphQLRequest) -> Result<Response, TransportError> { self.paused().await; self.answer(epoch, self.lend(epoch, Some(&mut request.variables))?.mutate(request).await).await }
+
+    /// The session of `epoch` ended by the server: the one way every origin of the end (HTTP answer, cable close) enters `Session`.
+    pub(crate) async fn server_ended(&self, epoch: Epoch, detail: String) -> TransportError {
+        match self.revoked.get() {
+            Some(revoked) => revoked(epoch, detail).await,
+            None => TransportError::Session { code: crate::transport::SessionCode::SessionEnded, detail },
+        }
+    }
 
     async fn answer(&self, epoch: Option<Epoch>, result: Result<Response, TransportError>) -> Result<Response, TransportError> {
+        if let Err(TransportError::Session { code: crate::transport::SessionCode::RateLimited, detail }) = &result { self.note_rate_limit(detail); }
         match (epoch, result) {
-            (Some(epoch), Err(TransportError::Session { code: crate::transport::SessionCode::SessionEnded, detail })) => match self.revoked.get() {
-                Some(revoked) => Err(revoked(epoch, detail).await),
-                None => Err(TransportError::Session { code: crate::transport::SessionCode::SessionEnded, detail }),
-            },
+            (Some(epoch), Err(TransportError::Session { code: crate::transport::SessionCode::SessionEnded, detail })) => Err(self.server_ended(epoch, detail).await),
             (_, result) => result,
         }
     }
 
-    pub async fn put(&self, epoch: Option<Epoch>, request: PutRequest) -> Result<PutReply, TransportError> { self.lend(epoch, None)?.put(request).await }
+    pub async fn put(&self, epoch: Option<Epoch>, request: PutRequest) -> Result<PutReply, TransportError> { self.paused().await; self.lend(epoch, None)?.put(request).await }
 
     pub fn open(&self, epoch: Epoch) { self.update(|state| pack(epoch, cut_of(state), false)); }
 
@@ -138,6 +168,7 @@ impl EpochGate {
 
 /// A request to the network of `epoch`: the gate check, the call of the transport method and the first poll of its future run in one synchronous stretch, a closed gate ends the request as `Interrupted` without calling the transport. `None` is a step that belongs to no epoch.
 pub async fn send_in_epoch<T, F: Future<Output = Result<T, TransportError>>>(gate: &EpochGate, epoch: Option<Epoch>, request: impl FnOnce() -> F) -> Result<T, TransportError> {
+    gate.paused().await;
     if epoch.is_some_and(|epoch| !gate.admits(epoch)) {
         return Err(TransportError::Interrupted("the epoch ended before the request was sent".into()));
     }
@@ -147,6 +178,7 @@ pub async fn send_in_epoch<T, F: Future<Output = Result<T, TransportError>>>(gat
 }
 
 pub async fn send_in_cut<T, F: Future<Output = Result<T, TransportError>>>(gate: &EpochGate, cut: u64, request: impl FnOnce() -> F) -> Result<Result<T, TransportError>, GateClosed> {
+    gate.paused().await;
     if !gate.accepts(Admit::Cut(cut)) { return Err(GateClosed); }
     #[cfg(test)]
     gate.recorder.sent("send_in_cut");

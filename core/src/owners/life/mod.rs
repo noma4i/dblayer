@@ -379,8 +379,9 @@ impl Life {
         let restore_error = restored.as_ref().and_then(|state| state.restore_error.clone());
         let found = boot_found(&ports.db, saved_unowned_pending)?;
         let clock = ports.db.lock().clock.clone();
-        let mut builder = RuntimeBuilder::new(clock);
+        let mut builder = RuntimeBuilder::new(clock.clone());
         let wiring = Wiring::new(builder.handle());
+        wiring.gate.attach_clock(clock);
         if let Some(transport) = &ports.transport { wiring.gate.attach(transport.clone()); }
         let wiring = Arc::new(wiring);
         let weak = Arc::downgrade(&wiring);
