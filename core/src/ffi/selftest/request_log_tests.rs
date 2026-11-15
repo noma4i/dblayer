@@ -19,6 +19,9 @@ async fn each_request_shows_once_with_its_reason() {
     bound(database.load(epoch, "Presence".into(), "details".into(), json!({"key": "p1"}).to_string())).await.unwrap();
     world.answer_with("PresenceNode", node_answer(true));
     bound(database.node(epoch, "Presence".into(), "node".into(), "p1".into(), true)).await.unwrap();
+    let rows = std::sync::Arc::new(crate::ffi::tape::Rows::default());
+    let row_reader = database.watch(ReadRequest::Entity { model: "Presence".into(), id: "p1".into(), fetch: crate::ffi::ReadFetch::Never }, rows);
+    bound(row_reader.wait_for_initial_load()).await.unwrap();
     let events = database.subscribe_values(epoch, ReadRequest::Events { model: "Presence".into() });
     assert!(matches!(bound(events.pull_next()).await, Some(ReadValue::Ready)));
     crate::test_wait::signalled(&cable.opened, "the subscription opens", || cable.token.lock().unwrap().is_some()).await;
@@ -50,5 +53,6 @@ async fn each_request_shows_once_with_its_reason() {
         ("PresenceDetails".to_string(), RequestReason::Retry, true),
     ], "(operation, reason, variables name p2)");
     drop(events);
+    drop(row_reader);
     bound(database.close_database()).await.unwrap();
 }

@@ -233,6 +233,7 @@ private class DatabaseRunner {
         is ReadValue.Status -> observation("unsupported", JsonPrimitive("status"))
         is ReadValue.Operations -> observation("unsupported", JsonPrimitive("operations"))
         is ReadValue.CableClose -> observation("unsupported", JsonPrimitive("cable_close"))
+        is ReadValue.Request -> observation("unsupported", JsonPrimitive("request"))
         is ReadValue.Ended -> obs("ended", "stream" to stream, "cause" to causeName(value.cause))
     }
 

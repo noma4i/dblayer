@@ -280,6 +280,8 @@ private final class DatabaseRunner {
       return observation("unsupported", "operations")
     case .cableClose:
       return observation("unsupported", "cable_close")
+    case .request:
+      return observation("unsupported", "request")
     case .ended(let reason):
       return observation("ended", ["stream": stream, "cause": causeName(reason)])
     }
