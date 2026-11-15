@@ -38,6 +38,7 @@ mod rig_events;
 mod data_event_tests;
 mod data_touch_tests;
 mod node_event_other_load_tests;
+mod node_absent_tests;
 mod rig_held;
 mod rig_models;
 mod rig_tests;
