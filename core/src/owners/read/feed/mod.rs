@@ -432,15 +432,12 @@ impl Feed {
                 Fx::Run(effect) => out.push(Effect::Run(effect)),
                 Fx::Debounce { after_ms } => out.push(Effect::Schedule { id: DEBOUNCE, after: Duration::from_millis(after_ms), input: FeedInput::Tick }),
                 Fx::CancelDebounce => out.push(Effect::Cancel(DEBOUNCE)),
-                Fx::Resubscribe { connection, attempt, floor: None } => {
-                    out.push(Effect::Backoff { id: ScheduleId(connection), policy: RetryPolicy::Cable, attempt, input: FeedInput::Resubscribe { connection_id: connection } });
-                }
-                Fx::Resubscribe { connection, attempt, floor: Some(floor) } => {
-                    out.push(Effect::Schedule { id: ScheduleId(connection), after: floor.max(RetryPolicy::Cable.delay(attempt)), input: FeedInput::Resubscribe { connection_id: connection } });
+                Fx::Resubscribe { connection, attempt, floor } => {
+                    out.push(Effect::Backoff { id: ScheduleId(connection), policy: RetryPolicy::Cable, attempt, floor: floor.unwrap_or(Duration::ZERO), input: FeedInput::Resubscribe { connection_id: connection } });
                 }
                 Fx::CancelResubscribe { connection } => out.push(Effect::Cancel(ScheduleId(connection))),
                 Fx::ResubscribeChannel { connection, channel, slot, attempt } => {
-                    out.push(Effect::Backoff { id: ScheduleId(CHANNEL_SCHEDULE | (connection << 16) | slot), policy: RetryPolicy::Cable, attempt, input: FeedInput::ChannelResubscribe { connection_id: connection, channel } });
+                    out.push(Effect::Backoff { id: ScheduleId(CHANNEL_SCHEDULE | (connection << 16) | slot), policy: RetryPolicy::Cable, attempt, floor: Duration::ZERO, input: FeedInput::ChannelResubscribe { connection_id: connection, channel } });
                 }
                 Fx::HandshakeDeadline { connection } => out.push(Effect::Schedule { id: ScheduleId(HANDSHAKE_SCHEDULE | connection), after: HANDSHAKE_DEADLINE, input: FeedInput::HandshakeDeadline { connection_id: connection } }),
                 Fx::Drain { connection } => out.push(Effect::Schedule { id: drain_schedule(connection), after: crate::owners::read::CLOSE_DRAIN, input: FeedInput::Drain { connection_id: connection } }),

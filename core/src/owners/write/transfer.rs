@@ -151,7 +151,7 @@ impl TransferState {
             RejectReason::Storage(_) => {
                 let Some(attempt) = self.storage_refused(id) else { return };
                 let timer = self.timer();
-                fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt: attempt.max(1), input: TransferInput::Tick { kind: if pending.kind == StoreKind::BatchShown { TransferTick::BatchShown { transfer_id: id } } else { TransferTick::Shown { transfer_id: id } } } });
+                fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt: attempt.max(1), floor: std::time::Duration::ZERO, input: TransferInput::Tick { kind: if pending.kind == StoreKind::BatchShown { TransferTick::BatchShown { transfer_id: id } } else { TransferTick::Shown { transfer_id: id } } } });
             }
             RejectReason::Invalid(_) | RejectReason::NoSession | RejectReason::Closed => {}
         }
@@ -602,7 +602,7 @@ impl TransferState {
         let attempt_id = self.next_attempt;
         self.next_attempt += 1;
         if retry {
-            fx.push(Effect::Backoff { id: ScheduleId(RETRY_TIMER + attempt_id), policy: RetryPolicy::Upload, attempt: attempts.max(1), input: TransferInput::Tick { kind: TransferTick::Minted { upload_id: upload_id.clone(), attempt_id } } });
+            fx.push(Effect::Backoff { id: ScheduleId(RETRY_TIMER + attempt_id), policy: RetryPolicy::Upload, attempt: attempts.max(1), floor: std::time::Duration::ZERO, input: TransferInput::Tick { kind: TransferTick::Minted { upload_id: upload_id.clone(), attempt_id } } });
         }
         self.minted.insert(upload_id, MintedDebt { transfer, key, attempts, attempt_id, record });
     }
@@ -631,7 +631,7 @@ impl TransferState {
             }
         }
         self.retrying.insert(attempt_id, (kind, ids.to_vec()));
-        fx.push(Effect::Backoff { id: ScheduleId(RETRY_TIMER + attempt_id), policy: RetryPolicy::Upload, attempt: attempt.max(1), input: TransferInput::Tick { kind: TransferTick::Retry { transfer_id: first, attempt_id } } });
+        fx.push(Effect::Backoff { id: ScheduleId(RETRY_TIMER + attempt_id), policy: RetryPolicy::Upload, attempt: attempt.max(1), floor: std::time::Duration::ZERO, input: TransferInput::Tick { kind: TransferTick::Retry { transfer_id: first, attempt_id } } });
     }
 
     /// An element leaves the stage of a refused write: the batch retry forgets it, the timer goes with the last one.
@@ -655,7 +655,7 @@ impl TransferState {
         self.next_attempt += 1;
         transfer.attempt_id = attempt_id;
         let timer = ScheduleId(RETRY_TIMER + attempt_id);
-        fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt: attempt.max(1), input: TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id } } });
+        fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt: attempt.max(1), floor: std::time::Duration::ZERO, input: TransferInput::Tick { kind: TransferTick::Retry { transfer_id: id, attempt_id } } });
     }
 
     /// Everything that waits for the call answers `answer`; `Interrupted` for the end of the epoch and for the close.

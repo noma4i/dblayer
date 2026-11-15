@@ -203,8 +203,8 @@ impl<O: StateOwner> Cell<O> {
                     self.schedule_input(id, at, out, input, false);
                     None
                 }
-                Effect::Backoff { id, policy, attempt, input } => {
-                    let delay = policy.delay_seeded(attempt, (self.jitter)());
+                Effect::Backoff { id, policy, attempt, floor, input } => {
+                    let delay = floor.max(policy.delay_seeded(attempt, (self.jitter)()));
                     let at = Time(self.now.0.saturating_add(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX)));
                     self.schedule_input(id, at, out, input, true);
                     if let Some(owner) = self.retry_owner {

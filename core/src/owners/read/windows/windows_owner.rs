@@ -463,7 +463,7 @@ impl Windows {
                 }
                 Emit::Retry { request, attempt, class } => {
                     let policy = retry_policy(class).unwrap_or(RetryPolicy::QueryServer);
-                    out.push(Effect::Backoff { id: ScheduleId(request), policy, attempt, input: WindowsInput::RetryDue { request } });
+                    out.push(Effect::Backoff { id: ScheduleId(request), policy, attempt, floor: std::time::Duration::ZERO, input: WindowsInput::RetryDue { request } });
                 }
                 Emit::CancelRetry { request } => out.push(Effect::Cancel(ScheduleId(request))),
                 Emit::Announce { streams } => {

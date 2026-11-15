@@ -355,7 +355,7 @@ impl StateOwner for Calls {
         }
         let mut out: Effects<Self> = fx.into_iter().map(Effect::Run).collect();
         out.extend(deadlines.into_iter().map(|call_id| Effect::Schedule { id: crate::runtime::ScheduleId(call_id * 2), after: CALL_DEADLINE, input: CallsInput::Deadline { call_id } }));
-        out.extend(scheduled.into_iter().map(|(call_id, attempt, policy)| Effect::Backoff { id: crate::runtime::ScheduleId(call_id * 2 + 1), policy, attempt, input: CallsInput::RetryDue { call_id, attempt } }));
+        out.extend(scheduled.into_iter().map(|(call_id, attempt, policy)| Effect::Backoff { id: crate::runtime::ScheduleId(call_id * 2 + 1), policy, attempt, floor: std::time::Duration::ZERO, input: CallsInput::RetryDue { call_id, attempt } }));
         for call_id in finished { out.push(Effect::Cancel(crate::runtime::ScheduleId(call_id * 2))); out.push(Effect::Cancel(crate::runtime::ScheduleId(call_id * 2 + 1))); }
         out
     }

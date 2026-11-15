@@ -436,7 +436,7 @@ impl TransferState {
     fn backoff_restore(&mut self, id: TransferId, fx: &mut Fx) {
         let Some(attempt) = self.storage_refused(id) else { return };
         let timer = self.timer();
-        fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt, input: TransferInput::Tick { kind: TransferTick::StagedRestore { transfer_id: id } } });
+        fx.push(Effect::Backoff { id: timer, policy: RetryPolicy::Upload, attempt, floor: std::time::Duration::ZERO, input: TransferInput::Tick { kind: TransferTick::StagedRestore { transfer_id: id } } });
     }
 
     /// The old row is committed after a failed swap: the temporary file goes, the call that waited for the swap learns the fault.
