@@ -271,6 +271,10 @@ impl Facts {
         match event {
             Ev::GapDue if self.gap_wait && !self.in_gap(context.now) => {
                 self.gap_wait = false;
+                if !self.watched() {
+                    self.drop_fresh();
+                    return Transition(WinState::idle());
+                }
                 if self.is_online() && !self.deferred() { self.leave_waiting(context, *force, *page) } else { Handled }
             }
             Ev::Online { online: true, .. } if self.deferred() => Handled,
