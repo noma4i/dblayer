@@ -272,7 +272,7 @@ fn feed_prop_cover() {
 #[test]
 fn feed_prop_pending_never_vanishes() {
     let frames = vec![event_input("Chat", "c1"), event_input("Chat", "c2"), FeedInput::Dropped { connection_id: ACTIVE }, event_input("Chat", "c3")];
-    let report = explore(|| rig(DEBOUNCE_MS, frames.clone()), Limits { depth: 40, max_traces: 4_000 }, |det| {
+    let report = crate::test_wait::explore_in_parallel(|| rig(DEBOUNCE_MS, frames.clone()), Limits { depth: 40, max_traces: 4_000 }, |det| {
         if !det.ready().is_empty() {
             return Ok(());
         }

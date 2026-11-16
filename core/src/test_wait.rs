@@ -319,6 +319,31 @@ pub(crate) fn each_in_parallel<T: Sync>(items: &[T], body: impl Fn(&T) + Sync) {
     });
 }
 
+/// `explore` with the subtree of each first choice on its own thread: the scheduler is built on the thread that walks it, and the subtrees are independent.
+pub(crate) fn explore_in_parallel(build: impl Fn() -> crate::runtime::DetScheduler + Sync, limits: crate::runtime::Limits, check: impl Fn(&crate::runtime::DetScheduler) -> Result<(), String> + Sync) -> crate::runtime::Report {
+    let firsts: Vec<usize> = (0..build().choices().len()).collect();
+    let parts = Mutex::new(Vec::new());
+    each_in_parallel(&firsts, |first| {
+        let after_first = || { let mut at = build(); at.step_choice(*first); at };
+        let mut report = crate::runtime::Report { traces: 1, ..Default::default() };
+        if let Err(message) = check(&after_first()) {
+            report.violations.push(crate::runtime::Violation { choices: vec![*first], trace: after_first().trace().to_vec(), message });
+        } else if limits.depth > 1 {
+            report = crate::runtime::explore(after_first, crate::runtime::Limits { depth: limits.depth - 1, ..limits }, &check);
+            for violation in &mut report.violations { violation.choices.insert(0, *first); }
+        }
+        parts.lock().unwrap().push((*first, report));
+    });
+    let mut parts = parts.into_inner().unwrap();
+    parts.sort_by_key(|part| part.0);
+    parts.into_iter().fold(crate::runtime::Report::default(), |mut total, (_, part)| {
+        total.traces += part.traces;
+        total.incomplete |= part.incomplete;
+        total.violations.extend(part.violations);
+        total
+    })
+}
+
 /// The orders of `events` in which every pair `(first, second)` of `before` keeps its order: the causal filter of a permutation test.
 pub(crate) fn orders_of<T: Copy + PartialEq>(events: &[T], before: &[(T, T)]) -> Vec<Vec<T>> {
     let at = |order: &[T], event: T| order.iter().position(|found| *found == event);

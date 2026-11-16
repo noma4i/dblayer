@@ -62,10 +62,8 @@ async fn an_orphan_abort_goes_out_once(order: OpenOrder) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_saved_step_and_an_orphan_abort_go_out_once_in_every_open_order() {
-    for order in OpenOrder::ALL {
-        a_saved_step_goes_out_once(order).await;
-        an_orphan_abort_goes_out_once(order).await;
-    }
+    let tasks: Vec<_> = OpenOrder::ALL.into_iter().flat_map(|order| [tokio::spawn(a_saved_step_goes_out_once(order)), tokio::spawn(an_orphan_abort_goes_out_once(order))]).collect();
+    for task in tasks { bound(task).await.unwrap(); }
 }
 
 #[tokio::test(flavor = "multi_thread")]

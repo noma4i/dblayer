@@ -103,11 +103,18 @@ async fn scenario(case: Case) {
     assert_eq!(pending_rows(&live), 0, "{case:?}: no pair is left");
 }
 
-/// out_failed_releases_held_pair: an operation that enters `Failed` with a lost pair lets Session replay it, the writes behind it go out, and the pair is written once on the server.
+/// out_failed_releases_held_pair: an operation that enters `Failed` with a lost pair lets Session replay it, the writes behind it go out, and the pair is written once on the server. One test per case: the cases share nothing.
 #[tokio::test(flavor = "multi_thread")]
-async fn out_failed_releases_held_pair() {
-    for case in [Case::ReleasedRefused, Case::ReleasedLands, Case::RetryWhileReleased, Case::NoPair] { scenario(case).await; }
-}
+async fn out_failed_releases_held_pair_refused() { scenario(Case::ReleasedRefused).await; }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn out_failed_releases_held_pair_lands() { scenario(Case::ReleasedLands).await; }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn out_failed_releases_held_pair_retry_while_released() { scenario(Case::RetryWhileReleased).await; }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn out_failed_releases_held_pair_no_pair() { scenario(Case::NoPair).await; }
 
 /// A process that died after the operation ended `Failed` with its pair held opens, sends the pair again once, and the write of another row goes out without a `retry` or `discard`.
 #[tokio::test(flavor = "multi_thread")]

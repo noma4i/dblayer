@@ -144,13 +144,13 @@ fn xfer_orders_epoch_purpose() {
     use Ev::*;
     let orders = orders_of(&[End, Offline, Online, Slot, Retry, Power, Commit], &[]);
     assert_eq!(orders.len(), 5040);
-    let mut steps = 0;
-    for order in orders {
+    let steps = std::sync::atomic::AtomicUsize::new(0);
+    crate::test_wait::each_in_parallel(&orders, |order| {
         let mut twin = Twin::new();
         let id = twin.uploading(KEY, 3);
         twin.step_error(id, true);
         let mut ended = false;
-        for event in &order {
+        for event in order {
             let out = match event {
                 End => {
                     ended = true;
@@ -168,13 +168,13 @@ fn xfer_orders_epoch_purpose() {
             }
             for run in &out.runs {
                 if let TransferEffect::Step { purpose, .. } = run {
-                    steps += 1;
+                    steps.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     assert_eq!(*purpose, NetworkPurpose::Transfer, "{order:?}");
                 }
             }
         }
-    }
-    assert!(steps > 0, "the traces send steps");
+    });
+    assert!(steps.into_inner() > 0, "the traces send steps");
 }
 
 /// P-XFER-06: the picks of the network (a part done, `complete` done, the write) in any sequence keep at most `FileSlots` attempts, never leave a slot to a waiting transfer, and start the waiting ones by their order.
