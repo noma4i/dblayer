@@ -540,5 +540,6 @@ pub struct CallDecl {
     pub answer: Option<FieldSpec>,
     pub shape: Option<(ResponseShape, Pos)>,
     pub upserts: Vec<UpsertDecl>,
+    pub refetch: Vec<RefetchDecl>,
 }
 

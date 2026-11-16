@@ -17,6 +17,8 @@ pub struct OperationCall {
     pub result: Option<FieldSpec>,
     pub list: bool,
     pub lands: Vec<dblayer::schema::ActionLanding>,
+    /// The `Model.scope` windows that turn stale after a successful answer (`refetch :scope, model: Model`).
+    pub refetch: Vec<String>,
 }
 
 pub(crate) fn element_name(kind: &str) -> &str {
@@ -71,7 +73,7 @@ pub(crate) fn build(nodes: &[CallDecl], errors: &mut Vec<Found>) -> Vec<Operatio
         if !seen.insert(node.name.as_str()) {
             errors.push(fail(node.pos, format!("operation `{}` is declared twice", node.name)));
         }
-        let mut call = OperationCall { name: node.name.clone(), operation: String::new(), wrap: node.wrap.clone(), args: Vec::new(), result: None, list: false, lands: node.upserts.iter().map(|upsert| dblayer::schema::ActionLanding { model: upsert.model.clone(), root: upsert.from.item.clone() }).collect() };
+        let mut call = OperationCall { name: node.name.clone(), operation: String::new(), wrap: node.wrap.clone(), args: Vec::new(), result: None, list: false, lands: node.upserts.iter().map(|upsert| dblayer::schema::ActionLanding { model: upsert.model.clone(), root: upsert.from.item.clone() }).collect(), refetch: node.refetch.iter().flat_map(|refetch| refetch.model.as_ref().map(|model| format!("{model}.{}", refetch.scope))).collect() };
         if let Some((_, name, _)) = &node.kind {
             call.operation = name.clone();
         }

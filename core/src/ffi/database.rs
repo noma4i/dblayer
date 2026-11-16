@@ -446,6 +446,9 @@ impl Database {
             let waiter = this_db.life.local_write(epoch, String::new(), crate::owners::write::outbox::LocalWriteKind::Landing(rows), String::new(), String::new());
             this_db.outbox_answer(waiter, "land the answer").await?;
         }
+        if !declared.refetch.is_empty() {
+            this_db.life.refetch(declared.refetch.iter().filter_map(|name| name.split_once('.')).map(|(model, relation)| (model.to_string(), relation.to_string())).collect());
+        }
         this_db.offload(move || crate::value::call_result::normalize(&root, &declared.returns).map_err(|detail| DbError::Invalid { detail })).await
     }).await? }
     pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<super::upload_wire::WireUploadSource>) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {

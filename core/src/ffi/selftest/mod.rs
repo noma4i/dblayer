@@ -44,6 +44,7 @@ mod request_gap_tests;
 mod request_log_tests;
 mod singleton_action_tests;
 mod standalone_upsert_tests;
+mod standalone_refetch_tests;
 mod rig_held;
 mod rig_models;
 mod rig_tests;

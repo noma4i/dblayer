@@ -6,7 +6,7 @@ use dblayer::value::ScalarKind;
 use crate::build::build;
 use crate::decl::{
     Effect, ModelDecl, OperationDecl, OperationKind, OptimisticDecl, OptimisticElement, OptimisticValue, ParamBase, ParameterDecl, Pos,
-    PreloadChoice, PreloadDecl, ResponseDecl, ResponseShape, ScopeDecl, Spanned, SubscribeDecl, TypeRef, VariableValue,
+    PreloadChoice, PreloadDecl, RefetchDecl, ResponseDecl, ResponseShape, ScopeDecl, Spanned, SubscribeDecl, TypeRef, VariableValue,
 };
 use crate::ParseError;
 
@@ -161,6 +161,31 @@ fn check_subscription(update: &SubscribeDecl, report: &mut impl FnMut(Pos, Strin
     }
 }
 
+/// M86: the `refetch` lines of an operation of a model or of a standalone operation (`owner` is `None`: `model:` is required).
+pub(crate) fn check_refetches(all: &[ModelDecl], owner: Option<&ModelDecl>, refetches: &[RefetchDecl], report: &mut impl FnMut(Pos, String)) {
+    let mut refetched = HashSet::new();
+    for refetch in refetches {
+        let target = match (refetch.model.as_deref(), owner) {
+            (Some(model), _) => all.iter().find(|candidate| candidate.name == model).ok_or(model),
+            (None, Some(owner)) => Ok(owner),
+            (None, None) => {
+                report(refetch.pos, "`refetch` of an operation without a model needs `model: Model`".to_string());
+                continue;
+            }
+        };
+        match target {
+            Err(model) => report(refetch.pos, format!("`refetch` names unknown model `{model}`")),
+            Ok(target) if !target.scopes.iter().any(|scope| scope.name == refetch.scope && scope.is_remote()) => {
+                report(refetch.pos, format!("`refetch` names `{}`, which is not a scope with `query` of `{}`", refetch.scope, target.name));
+            }
+            Ok(_) => {}
+        }
+        if !refetched.insert((refetch.scope.as_str(), refetch.model.as_deref())) {
+            report(refetch.pos, format!("`refetch :{}` is declared twice", refetch.scope));
+        }
+    }
+}
+
 fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDecl, report: &mut impl FnMut(Pos, String)) {
     let name = &operation.name;
     let attributes: HashSet<&str> = node.attributes.iter().chain(node.ephemeral.iter().flat_map(|group| &group.attributes)).map(|attribute| attribute.name.as_str()).collect();
@@ -190,25 +215,7 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
             check_optimistic_value(node, all, operation, (field.as_str(), value), *pos, report);
         }
     }
-    for refetch in &operation.refetch {
-        let target = match refetch.model.as_deref() {
-            Some(model) => all.iter().find(|candidate| candidate.name == model).ok_or(model),
-            None => Ok(node),
-        };
-        match target {
-            Err(model) => report(refetch.pos, format!("`refetch` names unknown model `{model}`")),
-            Ok(target) if !target.scopes.iter().any(|scope| scope.name == refetch.scope && scope.is_remote()) => {
-                report(refetch.pos, format!("`refetch` names `{}`, which is not a scope with `query` of `{}`", refetch.scope, target.name));
-            }
-            Ok(_) => {}
-        }
-    }
-    let mut refetched = HashSet::new();
-    for refetch in &operation.refetch {
-        if !refetched.insert((refetch.scope.as_str(), refetch.model.as_deref())) {
-            report(refetch.pos, format!("`refetch :{}` is declared twice", refetch.scope));
-        }
-    }
+    check_refetches(all, Some(node), &operation.refetch, report);
     for upsert in &operation.upserts {
         if !all.iter().any(|candidate| candidate.name == upsert.model) {
             report(upsert.pos, format!("`upsert` names unknown model `{}`", upsert.model));

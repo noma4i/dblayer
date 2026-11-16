@@ -160,6 +160,11 @@ impl Life {
         waiter
     }
 
+    /// The answer of a standalone operation that refetches these (model, relation) windows landed.
+    pub fn refetch(&self, families: Vec<(String, String)>) {
+        if !self.shut.load(Ordering::SeqCst) { self.wiring.mark_stale(families, None); }
+    }
+
     /// The declarations of a registration reach every receiver in one step; `Windows` starts the preload last.
     pub fn register_operations(&self, calls: Vec<(String, CallKind)>, declarations: Vec<(String, String)>, complete: bool) {
         let calls = calls.into_iter().filter_map(|(name, kind)| (self.operations)(&name).map(|(document, root)| (name, crate::owners::calls::CallDefinition { kind, document, root }))).collect();

@@ -28,6 +28,7 @@ impl<'a> Run<'a> {
                 self.fail(node.file, pos, format!("operation `{name}` requires input `{key}: {}`", ty.describe()));
             }
         }
+        crate::check::check_refetches(models, None, &node.refetch, &mut |at, message| self.fail(node.file, at, message));
         for landing in &node.upserts {
             let Some(model) = models.iter().find(|candidate| candidate.name == landing.model) else {
                 self.fail(node.file, landing.pos, format!("`upsert` names unknown model `{}`", landing.model));

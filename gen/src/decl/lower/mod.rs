@@ -405,13 +405,13 @@ pub(crate) fn lower_calls(nodes: &[OperationNode], errors: &mut Vec<Found>) -> V
     for node in nodes {
         let mut cx = Cx { file: node.file, errors, schema: None, memory: false };
         let pos = Pos { line: node.line, column: node.column };
-        let mut decl = CallDecl { name: node.name.clone(), pos, file: node.file, kind: None, wrap: None, parameters: Vec::new(), answer: None, shape: None, upserts: Vec::new() };
+        let mut decl = CallDecl { name: node.name.clone(), pos, file: node.file, kind: None, wrap: None, parameters: Vec::new(), answer: None, shape: None, upserts: Vec::new(), refetch: Vec::new() };
         let mut seen: Vec<&str> = Vec::new();
         let mut named = 0;
         for call in &node.body {
             let mut line = Line::of(call);
             let word = call.word.as_str();
-            if !matches!(word, "parameter") && seen.contains(&word) {
+            if !matches!(word, "parameter" | "refetch") && seen.contains(&word) {
                 cx.fail(line.pos, format!("`{word}` is declared twice"));
                 continue;
             }
@@ -439,7 +439,8 @@ pub(crate) fn lower_calls(nodes: &[OperationNode], errors: &mut Vec<Found>) -> V
                     None => {}
                 },
                 "upsert" => decl.upserts.extend(upsert(&mut cx, call)),
-                other => cx.fail(line.pos, format!("unknown line `{other}` in an operation, expected one of mutation, query, parameter, response, upsert")),
+                "refetch" => decl.refetch.extend(refetch(&mut cx, call)),
+                other => cx.fail(line.pos, format!("unknown line `{other}` in an operation, expected one of mutation, query, parameter, response, upsert, refetch")),
             }
         }
         if named != 1 {

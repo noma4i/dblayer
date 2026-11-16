@@ -5,7 +5,7 @@ use serde_json::Value;
 use crate::compile_files;
 
 const SCHEMA: &str = r#"
-type Query { chat(id: ID!): Chat }
+type Query { chat(id: ID!): Chat node(id: ID!): Node ping: Pingback }
 type Mutation { callEnd(input: CallEndInput!): CallEndPayload callPeer(input: CallEndInput!): CallEndPayload chatPin(input: ChatPinInput!): ChatPinPayload }
 input CallEndInput { callId: ID! }
 input ChatPinInput { chatId: ID! pinned: Boolean! }
@@ -17,10 +17,14 @@ type Person { id: ID! name: String! }
 type Robot { id: ID! serial: String! }
 type Contact { id: ID! peer: Peer }
 type ChatPinPayload { chat: Chat pinnedCount: Int! }
-type Chat { id: ID! pinned: Boolean! }
+type Chat implements Node { id: ID! pinned: Boolean! }
+interface Node { id: ID! }
+type Message implements Node { id: ID! readers: [Reader!]! }
+type Reader { id: ID! name: String! }
+type Pingback { subject: Node }
 "#;
 
-const DOCUMENTS: &str = "mutation CallEnd($input: CallEndInput!) { callEnd(input: $input) { call { id status finishedAt: endedAt } } }\nmutation ChatPin($input: ChatPinInput!) { chatPin(input: $input) { chat { id pinned } pinnedCount } }\nmutation CallPeer($input: CallEndInput!) { callPeer(input: $input) { call { peer { __typename ... on Person { id name } ... on Robot { id serial } } } } }\n";
+const DOCUMENTS: &str = "mutation CallEnd($input: CallEndInput!) { callEnd(input: $input) { call { id status finishedAt: endedAt } } }\nmutation ChatPin($input: ChatPinInput!) { chatPin(input: $input) { chat { id pinned } pinnedCount } }\nmutation CallPeer($input: CallEndInput!) { callPeer(input: $input) { call { peer { __typename ... on Person { id name } ... on Robot { id serial } } } } }\nquery MessageReaders($id: ID!) { node(id: $id) { ... on Message { readers { ...ReaderBits } } } }\nfragment ReaderBits on Reader { id name }\nquery PingOne { ping { subject { __typename ... on Message { id } } } }\nquery ChatLoad($chatId: ID!) { chat(id: $chatId) { id pinned } }\nquery PingBoth { ping { subject { __typename ... on Message { id } ... on Chat { pinned } } } }\n";
 
 const CALL_END: &str = "operation :call_end do\n  mutation \"CallEnd\"\n  parameter :input, CallEndInput\nend\n";
 
@@ -108,5 +112,36 @@ fn a_standalone_upsert_declares_its_landing() {
     for (upsert, expected) in [("upsert Absent, from: \"chatPin.chat\"", "unknown model `Absent`"), ("upsert Chat, from: \"chatPin.missing\"", "missing")] {
         let errors = compile(&[chat, &call(upsert)]).err().unwrap_or_default();
         assert!(errors.iter().any(|error| error.contains(expected)), "{upsert}: {errors:?}");
+    }
+}
+
+/// D-490 M53: a field of an interface whose selection is `... on T` of one type is an object with the fields of T, a document fragment spread expands in place, 2 types are a union.
+#[test]
+fn an_interface_field_with_one_type_is_an_object() {
+    let readers = "operation :message_readers_load do\n  query \"MessageReaders\"\n  parameter :id, :id\nend\n";
+    let pings = "operation :ping_one do\n  query \"PingOne\"\nend\noperation :ping_both do\n  query \"PingBoth\"\nend\n";
+    let declarations = compile(&[readers, pings]).unwrap_or_else(|errors| panic!("{errors:?}"));
+    let result = |name: &str| serde_json::to_value(declarations.operations.iter().find(|call| call.name == name).unwrap().result.as_ref().unwrap_or_else(|| panic!("{name} has no typed answer"))).unwrap();
+    let message = result("message_readers_load");
+    assert_eq!(message["app_type"], "MessageReadersLoadResult");
+    assert_eq!(fields(&message), vec![("readers".to_owned(), true)]);
+    assert_eq!(fields(&message["fields"][0]), vec![("id".to_owned(), true), ("name".to_owned(), true)], "the spread of the document fragment expands in place");
+    let one = &result("ping_one")["fields"][0];
+    assert_eq!(one["kind"]["type"], "object", "{one}");
+    assert_eq!(fields(one), vec![("id".to_owned(), true)]);
+    let both = &result("ping_both")["fields"][0];
+    assert_eq!(both["kind"]["type"], "union", "{both}");
+}
+
+/// D-490 M86: `refetch :scope, model: Model` of a standalone operation names `Model.scope` in its declaration; it needs `model:` and a remote scope of that model.
+#[test]
+fn a_standalone_refetch_names_a_scope_of_a_model() {
+    let chat = "model Chat do\n  attribute :pinned, :bool\n  scope :loaded do\n    query \"ChatLoad\"\n    parameter :chatId, :id\n  end\nend\n";
+    let call = |refetch: &str| format!("operation :pin_chat do\n  mutation \"ChatPin\"\n  parameter :input, ChatPinInput\n  {refetch}\nend\n");
+    let declarations = compile(&[chat, &call("refetch :loaded, model: Chat")]).unwrap_or_else(|errors| panic!("{errors:?}"));
+    assert_eq!(declarations.operations.iter().find(|call| call.name == "pin_chat").unwrap().refetch, ["Chat.loaded"]);
+    for (refetch, expected) in [("refetch :loaded", "needs `model: Model`"), ("refetch :ghost, model: Chat", "not a scope with `query`"), ("refetch :loaded, model: Ghost", "unknown model `Ghost`")] {
+        let errors = compile(&[chat, &call(refetch)]).err().unwrap_or_default();
+        assert!(errors.iter().any(|error| error.contains(expected)), "{refetch}: {errors:?}");
     }
 }

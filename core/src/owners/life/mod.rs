@@ -297,6 +297,15 @@ impl Wiring {
         if let Some(Addresses { windows: Some(windows), .. }) = self.addresses() { self.handle.post(windows, EpochStamp::Control, input); }
     }
 
+    /// The windows of the (model, relation) pairs turn stale: the answer of an operation that refetches them landed.
+    pub fn mark_stale(&self, families: Vec<(String, String)>, revision: Option<i64>) {
+        if let Some(revision) = revision { self.to_windows(super::read::windows::WindowsInput::StoreCommitted { models: Vec::new(), revision }); }
+        for (model, relation) in families {
+            let keys = if relation.is_empty() { super::read::windows::StaleKeys::all() } else { super::read::windows::StaleKeys::Relations(std::collections::BTreeSet::from([relation])) };
+            self.to_windows(super::read::windows::WindowsInput::Stale { model, keys, cause: super::read::windows::StaleCause::Change { revision } });
+        }
+    }
+
     pub fn to_windows_in(&self, epoch: Epoch, input: super::read::windows::WindowsInput) {
         if let Some(Addresses { windows: Some(windows), .. }) = self.addresses() { self.handle.post(windows, EpochStamp::Epoch(epoch), input); }
     }
@@ -440,13 +449,7 @@ impl Life {
                 read_outcome: Some(read_outcome.clone()),
                 stale: Some({
                     let stale_wiring = wiring.clone();
-                    Arc::new(move |families: Vec<(String, String)>, revision: i64| {
-                        stale_wiring.to_windows(super::read::windows::WindowsInput::StoreCommitted { models: Vec::new(), revision });
-                        for (model, relation) in families {
-                            let keys = if relation.is_empty() { super::read::windows::StaleKeys::all() } else { super::read::windows::StaleKeys::Relations(std::collections::BTreeSet::from([relation])) };
-                            stale_wiring.to_windows(super::read::windows::WindowsInput::Stale { model, keys, cause: super::read::windows::StaleCause::Change { revision: Some(revision) } });
-                        }
-                    })
+                    Arc::new(move |families: Vec<(String, String)>, revision: i64| stale_wiring.mark_stale(families, Some(revision)))
                 }),
                 decode: ports.read_operations.clone().map(|operations| {
                     let db = ports.db.clone();

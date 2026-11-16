@@ -415,21 +415,7 @@ pub(super) fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl)
         }
         "optimistic" => decl.optimistic = optimistic(cx, call).map(|found| (found, line.pos)),
         "upsert" => decl.upserts.extend(upsert(cx, call)),
-        "refetch" => {
-            no_block(cx, call);
-            let scope = match call.args.as_slice() {
-                [node] => symbol(cx, node, "the refetched scope"),
-                _ => {
-                    cx.fail(line.pos, "`refetch` needs a scope like `refetch :thread`");
-                    None
-                }
-            };
-            let model = line.opt(cx, "model").and_then(|pair| konst(cx, &pair.value, "`model`"));
-            line.finish(cx);
-            if let Some(scope) = scope {
-                decl.refetch.push(RefetchDecl { pos: line.pos, scope, model });
-            }
-        }
+        "refetch" => decl.refetch.extend(refetch(cx, call)),
         "removes_receiver" => {
             no_block(cx, call);
             line.no_args(cx);
@@ -495,6 +481,21 @@ pub(super) fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl)
 
 
 /// `upsert Model, from: "path"`: the rows of the answer under the path land in the table of the model (a model operation and a standalone operation read it the same way).
+pub(super) fn refetch(cx: &mut Cx, call: &Call) -> Option<RefetchDecl> {
+    let mut line = Line::of(call);
+    no_block(cx, call);
+    let scope = match call.args.as_slice() {
+        [node] => symbol(cx, node, "the refetched scope"),
+        _ => {
+            cx.fail(line.pos, "`refetch` needs a scope like `refetch :thread`");
+            None
+        }
+    };
+    let model = line.opt(cx, "model").and_then(|pair| konst(cx, &pair.value, "`model`"));
+    line.finish(cx);
+    scope.map(|scope| RefetchDecl { pos: line.pos, scope, model })
+}
+
 pub(super) fn upsert(cx: &mut Cx, call: &Call) -> Option<UpsertDecl> {
     let mut line = Line::of(call);
     no_block(cx, call);

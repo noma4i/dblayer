@@ -9,6 +9,9 @@ pub struct OperationSpec {
     /// The rows of the answer that land before the call answers (`upsert Model, from:` of a standalone operation).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lands: Vec<ActionLanding>,
+    /// The `Model.scope` windows that turn stale after a successful answer (`refetch :scope, model: Model` of a standalone operation).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refetch: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
