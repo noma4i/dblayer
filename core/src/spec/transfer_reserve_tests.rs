@@ -471,3 +471,21 @@ fn xfer_replace_interval_two_owners() {
         assert_eq!(twin.open_operations(), 0, "no operation of the key");
     }
 }
+
+#[test]
+fn xfer_status_figures_follow_the_confirmed_parts() {
+    let mut twin = Twin::new();
+    let (id, _) = reserved(&mut twin);
+    twin.post(TransferInput::StatusInterestPlus { key: KEY.into(), stream_id: 43 });
+    twin.commit();
+    twin.copy_done(id);
+    twin.commit();
+    twin.commit();
+    twin.step_ok(id, 1, None);
+    let size = twin.t(id).size;
+    let outs = [twin.commit(), twin.commit()];
+    let last = outs.iter().flat_map(|out| out.figures()).filter(|(stream, _)| *stream == 43).last().map(|(_, figures)| figures).expect("a status after the part");
+    let first_part = crate::owners::write::upload::part_range(size, crate::owners::write::upload::UploadConfig::default().part_size, 1).1;
+    assert!(size > 0 && first_part > 0, "the transfer has a size");
+    assert_eq!((last.total_bytes, last.sent_bytes), (size, first_part), "the figures are those of the transfer when its value is published");
+}

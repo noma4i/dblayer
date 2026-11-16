@@ -40,7 +40,7 @@ async fn upload(length: u64, cut_part_two: bool, expire_part_two: bool) -> Obser
     let sink = frames.clone();
     let collector = tokio::spawn(async move {
         while let Some(value) = watch.pull_next().await {
-            if let ReadValue::Status { progress, .. } = value { sink.lock().unwrap().push(progress); }
+            if let ReadValue::Status { upload, .. } = value { sink.lock().unwrap().push(upload.progress); }
         }
     });
     advancing(&clock, create.entered()).await;

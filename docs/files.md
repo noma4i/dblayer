@@ -391,7 +391,7 @@ A finished upload closes its operation and removes its entry from `uploads`, . T
 - After the content mutation starts, cancelling a single upload returns `false` immediately. Cancelling a batch member returns `InFlight`.
 - One record has one upload in progress per declared action. A new upload replaces a failed upload of that action, also a failed member of an earlier batch.
 - `upload` on a row that does not exist is accepted: it opens a transfer with no optimistic value and the answer of the final mutation writes the row. A call checks its arguments in this order: `Closed` or `NoSession` first, then `Invalid` (an empty or unreadable file, an undeclared action or variables). A missing row is no refusal.
-- `scope.uploadStatus(row, action)` streams the status of one transfer (`UploadInfo`, the same type as `uploads[action]`, with the `revision` of the change). Its last item is `ended` with the cause. `sentBytes`, `totalBytes`, `attempts` and `batchProgress` are those of the row at the open of the stream and at a change of the wait reason.
+- `scope.uploadStatus(row, action)` streams the status of one transfer (`UploadInfo`, the same type as `uploads[action]`, with the `revision` of the change). Its last item is `ended` with the cause.
 - `cancelUpload(action)` returns `true` when it stopped the transfer, in any stage of the transfer: a call that meets a step of the library waits for the end of that step and gets the outcome of the removal, so the call is never repeated. It returns `false` once the final mutation left. `retry(action)` sends a failed transfer again and `discard(action)` removes it with its optimistic row.
 
 ## Upload before the final mutation

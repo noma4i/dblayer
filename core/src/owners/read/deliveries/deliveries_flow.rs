@@ -229,7 +229,7 @@ impl Delivery {
         if self.view.kind != Kind::Blob || !self.sink_open() {
             return;
         }
-        let changed_reason = self.upload_row.as_ref().and_then(|row| row.as_ref().ok()).is_none_or(|(reason, _)| *reason != blob.wait_reason);
+        let changed_reason = self.upload_row.as_ref().and_then(|row| row.as_ref().ok()).is_none_or(|row| row.as_ref().map_or(&None, |upload| &upload.wait_reason) != &blob.wait_reason);
         self.transfer = Some(blob);
         self.status_revision = self.status_revision.max(revision);
         if changed_reason { fx.push(self.new_read(self.read_revision)); } else if !self.upload_inflight { self.show_status(fx); }
@@ -246,10 +246,11 @@ impl Delivery {
     fn show_status(&mut self, fx: &mut Vec<Emit>) {
         let (Some(transfer), Some(row)) = (&self.transfer, &self.upload_row) else { return };
         let blob = match row {
-            Ok((wait_reason, local_url)) => BlobStatus { wait_reason: *wait_reason, local_url: local_url.clone(), ..transfer.clone() },
-            Err(error) => BlobStatus { state: "failed".into(), wait_reason: None, progress: 0, error: Some(error.clone()), local_url: None },
+            Ok(Some(upload)) => BlobStatus { wait_reason: upload.wait_reason.clone(), local_url: upload.local_url.clone(), ..transfer.clone() },
+            Ok(None) => BlobStatus { wait_reason: None, ..transfer.clone() },
+            Err(error) => BlobStatus::of(&crate::owners::write::transfer::Shown::Failed { error: error.clone() }),
         };
-        let blob = if matches!(blob.state.as_str(), "gone" | "failed") && self.blob.is_some() { BlobStatus { progress: self.blob.as_ref().map_or(0, |last| last.progress), ..blob } } else { blob };
+        let blob = if matches!(blob.status, crate::owners::write::upload::UploadStatus::Done | crate::owners::write::upload::UploadStatus::Failed) && self.blob.is_some() { BlobStatus { progress: self.blob.as_ref().map_or(0, |last| last.progress), ..blob } } else { blob };
         if !self.sink_open() || self.blob.as_ref() == Some(&blob) {
             return;
         }

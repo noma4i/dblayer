@@ -233,7 +233,7 @@ async fn a_blob_stream_without_a_transfer_owner_is_gone() {
     let (db, _) = open(false).await;
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::Blob { model: "Moment".into(), id: "m1".into(), action: "upload".into() });
     match crate::test_wait::within(stream.pull_next()).await.expect("a value") {
-        ReadValue::Status { state, progress, .. } => assert_eq!((state.as_str(), progress), ("gone", 0.0)),
+        ReadValue::Status { upload, .. } => assert_eq!((upload.status, upload.progress), (crate::ffi::WireUploadStatus::Done, 0.0)),
         other => panic!("{other:?}"),
     }
 }
@@ -244,9 +244,9 @@ async fn boundary_value_orders() {
     let (db, _) = open(false).await;
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::Blob { model: "Moment".into(), id: " ".into(), action: "upload".into() });
     loop {
-        if let ReadValue::Status { state, error, .. } = crate::test_wait::within(stream.pull_next()).await.expect("a value") {
-            assert_eq!(state, "failed");
-            assert!(error.is_some_and(|error| !error.is_empty()));
+        if let ReadValue::Status { upload, .. } = crate::test_wait::within(stream.pull_next()).await.expect("a value") {
+            assert_eq!(upload.status, crate::ffi::WireUploadStatus::Failed);
+            assert!(upload.error.is_some_and(|error| !error.message.is_empty()));
             break;
         }
     }

@@ -57,9 +57,9 @@ async fn xfer_stage_accept() {
     let status = database.subscribe_values(database.session_epoch(), ReadRequest::Blob { model: "Moment".into(), id: staged.row_id.clone(), action: "upload_clip".into() });
     let mut last = None;
     for _ in 0..8 {
-        if let Some(ReadValue::Status { state, progress, .. }) = bound(status.pull_next()).await { last = Some((state, progress)); if progress >= 0.99 { break; } }
+        if let Some(ReadValue::Status { upload, .. }) = bound(status.pull_next()).await { last = Some((upload.status, upload.progress)); if upload.progress >= 0.99 { break; } }
     }
-    assert_eq!(last, Some(("uploading".to_string(), 0.99)));
+    assert_eq!(last, Some((crate::ffi::WireUploadStatus::Uploading, 0.99)));
     database.close_now();
 }
 

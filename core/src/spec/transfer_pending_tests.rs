@@ -355,7 +355,7 @@ fn xfer_pending_interest() {
     let out = twin.post(TransferInput::StatusInterestPlus { key: KEY.into(), stream_id: 43 });
     assert_eq!(out.statuses(), vec![(43, crate::owners::write::transfer::Shown::WaitingSource)]);
     let blob = crate::owners::read::deliveries::BlobStatus::of(&out.statuses()[0].1);
-    assert_eq!((blob.state.as_str(), blob.wait_reason), ("waiting", Some(crate::owners::write::upload::WaitReason::SourcePending)));
+    assert_eq!((blob.status, blob.wait_reason.as_deref()), (crate::owners::write::upload::UploadStatus::Waiting, Some("source_pending")));
 }
 
 fn cached(twin: &mut Twin, id: u64) -> Out {

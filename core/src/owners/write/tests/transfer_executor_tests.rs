@@ -96,7 +96,7 @@ fn world() -> World {
         TransferSinks {
             settle: Arc::new(move |reply, answer| lock(&to_answers).push((reply, answer))),
             read_outcome: Arc::new(move |_, id, cycle, reply, _| lock(&to_reads).push((reply, id, cycle))),
-            status: Arc::new(move |_stream, shown, _revision| lock(&to_shown).push(shown)),
+            status: Arc::new(move |_stream, shown, _figures, _revision| lock(&to_shown).push(shown)),
             drained: Arc::new(|_| {}),
             signal: Arc::new(|_| {}),
         },

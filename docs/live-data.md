@@ -14,7 +14,7 @@ One owner in the core serves each stream: the query, the count, the row by id, t
 | `scope.singleton(Model)` | The one row of a model that has a single record. |
 | `scope.events(Model)` | The events of a model after the stream opened. Past events are not repeated. |
 | `scope.changes()` | One item per commit of the database that changed rows, with the `(model, id)` pairs. It reads no rows and opens no query. |
-| `scope.uploadStatus(row, action)` | The status of a media upload while it runs, with `localUrl` of the copy of the library. The last item is `ended` with the cause of the core. |
+| `scope.uploadStatus(row, action)` | The status of a media upload while it runs, as the `UploadInfo` of `uploads[action]` with `localUrl` of the copy of the library. The last item is `ended` with the cause of the core. |
 
 ```swift
 let scope = try DB.account()

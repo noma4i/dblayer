@@ -102,7 +102,7 @@ fn read_uploads(connection: &Connection, model: &str, ids: &[String]) -> rusqlit
                 if let (None, Some(reason)) = (&info.error, row.get::<_, Option<String>>(13)?) {
                     info.error = Some(crate::value::sync::OperationFailure::new(crate::value::sync::FailureKind::Refused, reason));
                 }
-                info.sent_bytes = crate::owners::write::upload::bytes_sent(&info, size);
+                info.sent_bytes = crate::owners::write::upload::bytes_sent(info.status, info.total_bytes, info.sent_bytes, size);
                 info.total_bytes = size;
                 info.share = u32::try_from(row.get::<_, i64>(14)?).unwrap_or(0);
                 info.batch_share = row.get::<_, Option<i64>>(16)?.map(|share| u32::try_from(share).unwrap_or(0));

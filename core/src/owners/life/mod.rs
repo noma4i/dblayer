@@ -470,7 +470,7 @@ impl Life {
                     TransferSinks {
                         read_outcome: read_outcome.clone(),
                         settle: Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Transfer(answer)); }),
-                        status: Arc::new(move |stream, shown, revision| status_wiring.to_deliveries(super::read::deliveries::DeliveryInput::TransferStatus { stream, blob: super::read::deliveries::BlobStatus::of(&shown), revision })),
+                        status: Arc::new(move |stream, shown, figures, revision| status_wiring.to_deliveries(super::read::deliveries::DeliveryInput::TransferStatus { stream, blob: super::read::deliveries::BlobStatus::of(&shown).with(&figures), revision })),
                         drained: Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
                         signal: Arc::new(move |signal| match signal {
                             LifeSignal::Started(epoch) => signal_wiring.to_lifecycle(LifecycleInput::Started { owner: Peer::Transfer, epoch }),

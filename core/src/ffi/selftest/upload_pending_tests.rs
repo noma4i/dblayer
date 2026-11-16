@@ -17,7 +17,7 @@ async fn xfer_prop_pending_no_io() {
     let snapshot = bound(stream.pull_next()).await.unwrap();
     assert!(matches!(snapshot, crate::ffi::ReadValue::Snapshot { ref rows, revision, .. } if revision == receipt.items[0].receipt.revision && rows.len() == 2));
     let status = database.subscribe_values(epoch, crate::ffi::ReadRequest::Blob { model: "Asset".into(), id: receipt.items[0].optimistic_value.id.clone(), action: "create_files".into() });
-    assert!(matches!(bound(status.pull_next()).await, Some(crate::ffi::ReadValue::Status { state, wait_reason: Some(reason), .. }) if state == "waiting" && reason == "source_pending"));
+    assert!(matches!(bound(status.pull_next()).await, Some(crate::ffi::ReadValue::Status { upload, .. }) if upload.status == crate::ffi::WireUploadStatus::Waiting && upload.wait_reason.as_deref() == Some("source_pending")));
     let life = database.life_handle();
     bound(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
     assert_eq!(database.db.files().source_reads() - reads, 0);

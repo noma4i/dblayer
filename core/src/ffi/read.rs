@@ -6,7 +6,7 @@ use std::sync::{Arc, Weak};
 use super::database::Database;
 use super::LoadMoreResult;
 use super::queue::OperationInfo;
-use super::wire::{WireModel, WireRow};
+use super::wire::{WireModel, WireRow, WireUpload, WireUploadStatus};
 use super::QuerySpec;
 use super::DbError;
 use crate::owners::contract::{WindowPhase, WindowState};
@@ -67,7 +67,8 @@ pub enum ReadValue {
     Request { operation: String, variables_json: String, reason: crate::ffi::RequestReason },
     Lost { first: u64, last: u64 },
     Gap,
-    Status { revision: i64, state: String, wait_reason: Option<String>, progress: f64, error: Option<String>, local_url: Option<String> },
+    /// The status of one transfer: the value of the row of the same transfer, at the revision of the stream.
+    Status { revision: i64, upload: WireUpload },
     /// The last value of a stream, exactly one.
     Ended { cause: EndCause },
 }
@@ -102,6 +103,31 @@ pub enum ReadRequest {
 pub struct ChangedRow {
     pub model: String,
     pub id: String,
+}
+
+fn status_upload(blob: crate::owners::read::deliveries::BlobStatus) -> WireUpload {
+    use crate::owners::write::upload::UploadStatus;
+    let share = |hundredths: u64| hundredths as f64 / 100.0;
+    WireUpload {
+        status: match blob.status {
+            UploadStatus::Waiting => WireUploadStatus::Waiting,
+            UploadStatus::Preparing => WireUploadStatus::Preparing,
+            UploadStatus::Queued => WireUploadStatus::Queued,
+            UploadStatus::Uploading => WireUploadStatus::Uploading,
+            UploadStatus::Sending => WireUploadStatus::Sending,
+            UploadStatus::Done => WireUploadStatus::Done,
+            UploadStatus::Failed => WireUploadStatus::Failed,
+        },
+        stage: blob.stage.and_then(|stage| crate::store::operation::enum_text(&stage)).unwrap_or_default(),
+        sent_bytes: blob.sent_bytes,
+        total_bytes: blob.total_bytes,
+        progress: share(blob.progress),
+        batch_progress: share(blob.batch_progress.unwrap_or(blob.progress)),
+        wait_reason: blob.wait_reason,
+        attempts: blob.attempts,
+        error: blob.error.as_deref().map(super::write::failure_of),
+        local_url: blob.local_url,
+    }
 }
 
 fn state_of(state: WindowState) -> ReadState {
@@ -188,7 +214,7 @@ pub(super) fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadV
         Value::CableClose { position, event } => ReadValue::CableClose { position, event },
         Value::Lost { first, last } => ReadValue::Lost { first, last },
         Value::Gap => ReadValue::Gap,
-        Value::Status { revision, blob } => ReadValue::Status { revision, state: blob.state, wait_reason: blob.wait_reason.and_then(|reason| crate::store::operation::enum_text(&reason)), progress: blob.progress as f64 / 100.0, error: blob.error, local_url: blob.local_url },
+        Value::Status { revision, blob } => ReadValue::Status { revision, upload: status_upload(blob) },
         Value::Ended(cause) => ReadValue::Ended { cause },
     })
 }

@@ -54,8 +54,7 @@ impl Snapshots for DbSnapshots {
             let (model, id, action) = crate::store::split_transfer_key(&view.subject).ok_or_else(|| format!("{} is no transfer key", view.subject))?;
             let id = crate::identity::RowId::new(id).map_err(|error| error.to_string())?;
             let (version, upload) = self.db.read_transfer(model, &id, action, revision, from, view).map_err(|error| error.to_string())?;
-            let (wait_reason, local_url) = upload.map_or((None, None), |upload| { let wire = crate::ffi::wire::upload(&upload); (upload.wait_reason, wire.local_url) });
-            return Ok((version, ReadData::Upload { wait_reason, local_url }));
+            return Ok((version, ReadData::Upload(upload.as_ref().map(crate::ffi::wire::upload))));
         }
         let (query, count) = match view.kind {
             Kind::List | Kind::Count => (view.query.as_deref().cloned().ok_or_else(|| "a list or count view has no query".to_string())?, view.kind == Kind::Count),

@@ -274,19 +274,9 @@ public struct ChangeStream: AsyncSequence, Sendable {
   public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(inner: stream.makeAsyncIterator()) }
 }
 
-/// The status of a transfer at one change.
-public struct TransferProgress: Sendable, Equatable {
-  public let revision: Int64
-  public let state: String
-  public let waitReason: String?
-  public let progress: Double
-  public let error: String?
-  public let localUrl: String?
-}
-
 /// One item of the status of a transfer: a change, or the end of the stream with the cause of the core.
 public enum TransferItem: Sendable, Equatable {
-  case progress(TransferProgress)
+  case progress(revision: Int64, info: UploadInfo)
   case ended(EndCause)
 }
 
@@ -301,7 +291,7 @@ public struct UploadStatusStream: AsyncSequence, Sendable {
     public mutating func next() async -> TransferItem? {
       while let value = await inner.next() {
         switch value {
-        case let .status(revision, state, waitReason, progress, error, localUrl): return .progress(TransferProgress(revision: revision, state: state, waitReason: waitReason, progress: progress, error: error, localUrl: localUrl))
+        case let .status(revision, upload): return .progress(revision: revision, info: UploadInfo(wire: upload))
         case let .ended(cause): return .ended(cause)
         default: continue
         }

@@ -124,11 +124,11 @@ val removed = staged.discard()
 - `localUrl` of an upload is set from the first frame of its row. During the call that brought the file it is the file of the caller, after the copy is durable it is the copy of the library, and it is `nil` once the transfer is removed. Show the preview only from `localUrl`, and remove the own copy of the picked file that the app keeps for the preview. See [files](files.md#upload-before-the-final-mutation).
 
 ```swift
-for await status in scope.uploadStatus(staged) { preview.show(status.localUrl) }
+for await item in scope.uploadStatus(staged) { if case let .progress(_, info) = item { preview.show(info.localUrl) } }
 ```
 
 ```kotlin
-scope.uploadStatus(staged).uploadStatus.collect { status -> preview.show(status.localUrl) }
+scope.uploadStatus(staged).uploadStatus.collect { item -> if (item is TransferItem.Progress) preview.show(item.info.localUrl) }
 ```
 
 - A saved write or upload whose operation the generated set no longer declares ends `failed` with a `refused` error: "the operation <model>.<action> is not declared". Handle it as any refused write: `discard` it, or `retry` it after the update that declares the operation. See [sync state](sync-state.md).

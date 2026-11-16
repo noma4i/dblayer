@@ -70,8 +70,7 @@ pub enum ReadData {
     Count(u64),
     Owed(Box<ReadData>, BTreeSet<Debt>),
     Operations(Vec<crate::ffi::OperationInfo>),
-    /// The copy URL that the row of a transfer shows.
-    Upload { wait_reason: Option<crate::owners::write::upload::WaitReason>, local_url: Option<String> },
+    Upload(Option<crate::ffi::WireUpload>),
     Overflow,
 }
 
@@ -99,7 +98,7 @@ pub struct ReadVersion {
     pub touching: Touching,
 }
 
-type UploadRowRead = Result<(Option<crate::owners::write::upload::WaitReason>, Option<String>), String>;
+type UploadRowRead = Result<Option<crate::ffi::WireUpload>, String>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct View {
@@ -173,27 +172,33 @@ pub enum EndCause {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlobStatus {
-    pub state: String,
-    pub wait_reason: Option<crate::owners::write::upload::WaitReason>,
+    pub status: crate::owners::write::upload::UploadStatus,
+    pub stage: Option<crate::owners::write::upload::UploadStage>,
+    pub wait_reason: Option<String>,
     pub progress: u64,
     pub error: Option<String>,
     pub local_url: Option<String>,
+    pub sent_bytes: u64,
+    pub total_bytes: u64,
+    pub attempts: u32,
+    pub batch_progress: Option<u64>,
 }
 
 impl BlobStatus {
+    pub fn with(self, figures: &crate::owners::write::transfer::Figures) -> Self {
+        Self { sent_bytes: figures.sent_bytes, total_bytes: figures.total_bytes, attempts: figures.attempts, batch_progress: figures.batch_share.map(u64::from), ..self }
+    }
+
     /// The state and the progress of a transfer; the row of the transfer gives the copy URL.
     pub fn of(shown: &crate::owners::write::transfer::Shown) -> Self {
         use crate::owners::write::transfer::Shown;
-        let (state, progress, error) = match shown {
-            Shown::Gone => ("gone", 0, None),
-            Shown::Copying => ("copying", 0, None),
-            Shown::WaitingSource => ("waiting", 0, None),
-            Shown::Queued { progress } => ("queued", u64::from(*progress), None),
-            Shown::Preparing { progress } => ("preparing", u64::from(*progress), None),
-            Shown::Uploading { progress } => ("uploading", u64::from(*progress), None),
-            Shown::Failed { error } => ("failed", 0, Some(error.clone())),
+        let (progress, error) = match shown {
+            Shown::Gone | Shown::Copying | Shown::WaitingSource => (0, None),
+            Shown::Queued { progress } | Shown::Preparing { progress } | Shown::Uploading { progress } => (u64::from(*progress), None),
+            Shown::Failed { error } => (0, Some(error.clone())),
         };
-        Self { state: state.into(), wait_reason: shown.wait_reason(), progress, error, local_url: None }
+        let (status, stage) = shown.status().unwrap_or((crate::owners::write::upload::UploadStatus::Done, None));
+        Self { status, stage, wait_reason: shown.wait_reason().and_then(|reason| crate::store::operation::enum_text(&reason)), progress, error, local_url: None, sent_bytes: 0, total_bytes: 0, attempts: 0, batch_progress: None }
     }
 }
 

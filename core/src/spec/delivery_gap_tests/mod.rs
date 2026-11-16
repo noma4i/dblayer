@@ -99,7 +99,7 @@ fn val_of(value: &d::Value) -> Val {
         d::Value::CableClose { .. } => unreachable!("the reference models no cable close stream"),
         d::Value::Lost { first, last } => Val::Lost { first: *first, last: *last },
         d::Value::Gap => Val::Gap,
-        d::Value::Status { revision, blob } => Val::Status { revision: *revision, state: blob.state.clone() },
+        d::Value::Status { revision, blob } => Val::Status { revision: *revision, state: crate::store::operation::enum_text(&blob.status).unwrap_or_default() },
         d::Value::Ended(cause) => Val::Ended(match cause {
             d::EndCause::SessionEnded => Cause::SessionEnded,
             d::EndCause::Closed => Cause::Closed,
@@ -234,7 +234,7 @@ impl Twin {
             Input::ModelLost { first, last } => self.post(d::DeliveryInput::ModelLost { stream, first: *first, last: *last }),
             Input::ModelGap => self.post(d::DeliveryInput::ModelGap { stream }),
             Input::Resync => self.call(d::DeliveryInput::Resync { stream }),
-            Input::Transfer { state, revision } => self.post(d::DeliveryInput::TransferStatus { stream, revision: *revision, blob: d::BlobStatus { state: state.clone(), wait_reason: None, progress: 0, error: None, local_url: None } }),
+            Input::Transfer { state, revision } => self.post(d::DeliveryInput::TransferStatus { stream, revision: *revision, blob: blob_named(state, 0) }),
             Input::Pull => {
                 let outcome = self.answers.register(EPOCH).id();
                 if !self.parked { self.pull = Some(outcome); }
@@ -269,7 +269,7 @@ impl Twin {
             });
             if asked.is_empty() { break; }
             for read_id in asked {
-                self.post(d::DeliveryInput::ReadDone { stream, read_id, revision: 0, position: 0, relevant: Some((0, 0)), touching: Vec::new(), data: d::ReadData::Upload { wait_reason: None, local_url: None } });
+                self.post(d::DeliveryInput::ReadDone { stream, read_id, revision: 0, position: 0, relevant: Some((0, 0)), touching: Vec::new(), data: d::ReadData::Upload(None) });
             }
             entries.extend(take(&self.log));
         }
@@ -382,14 +382,19 @@ fn dlv_open_effects() {
     }
 }
 
+fn blob_named(name: &str, progress: u64) -> d::BlobStatus {
+    let status: crate::owners::write::upload::UploadStatus = serde_json::from_value(serde_json::json!(name)).expect("a status name");
+    d::BlobStatus { status, stage: None, wait_reason: None, progress, error: None, local_url: None, sent_bytes: 0, total_bytes: 0, attempts: 0, batch_progress: None }
+}
+
 #[test]
 fn dlv_opening_status() {
     let mut full = open_as(Kind::Blob);
-    let blob = d::BlobStatus { state: "uploading".into(), wait_reason: None, progress: 42, error: None, local_url: None };
+    let blob = blob_named("uploading", 42);
     full.post(d::DeliveryInput::TransferStatus { stream: STREAM, revision: 11, blob });
     let read_id = full.read_id();
     let local_url = Some("file:///copy".to_string());
-    full.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 11, position: 0, relevant: Some((11, 0)), touching: Vec::new(), data: d::ReadData::Upload { wait_reason: None, local_url: local_url.clone() } });
+    full.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 11, position: 0, relevant: Some((11, 0)), touching: Vec::new(), data: d::ReadData::Upload(Some(crate::ffi::WireUpload { status: crate::ffi::WireUploadStatus::Uploading, stage: String::new(), sent_bytes: 0, total_bytes: 0, progress: 0.42, batch_progress: 0.42, wait_reason: None, attempts: 0, error: None, local_url: local_url.clone() })) });
     assert!(matches!(full.state().journal(STREAM).as_slice(), [d::Value::Status { revision: 11, blob }] if blob.local_url == local_url && blob.progress == 42));
     let mut blob = open_as(Kind::Blob);
     assert!(blob.step(Input::Transfer { state: "uploading".into(), revision: 11 }).is_empty());
@@ -404,9 +409,9 @@ fn dlv_live_status() {
     assert!(twin.step(Input::Transfer { state: "done".into(), revision: 13 }).is_empty());
     assert_eq!(twin.read_all(), [Val::Status { revision: 13, state: "done".into() }]);
     twin.step(Input::Transfer { state: "failed".into(), revision: 14 });
-    twin.step(Input::Transfer { state: "retrying".into(), revision: 15 });
-    assert_eq!(twin.read_all(), [Val::Status { revision: 15, state: "retrying".into() }], "an unread status gives way to the last one");
-    assert!(twin.step(Input::Transfer { state: "retrying".into(), revision: 16 }).is_empty(), "the same status gives nothing");
+    twin.step(Input::Transfer { state: "sending".into(), revision: 15 });
+    assert_eq!(twin.read_all(), [Val::Status { revision: 15, state: "sending".into() }], "an unread status gives way to the last one");
+    assert!(twin.step(Input::Transfer { state: "sending".into(), revision: 16 }).is_empty(), "the same status gives nothing");
 }
 
 #[test]

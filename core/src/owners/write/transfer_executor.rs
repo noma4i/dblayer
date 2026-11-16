@@ -485,7 +485,7 @@ impl EffectRunner<Transfers> for TransferExecutor {
             TransferEffect::ClearPrepare { transfer_id, clear_id } => self.clear_prepare(stamp, back, transfer_id, clear_id),
             TransferEffect::Reply { reply, answer } => self.answers.push((reply, answer)),
             TransferEffect::ReadOutcome { reply, id, cycle_id } => (self.read_outcome)(crate::owners::store::OutcomeOwner::Transfer, id, cycle_id, reply, Box::new(back.watch(task_id(TaskKind::OutcomeRead, reply)))),
-            TransferEffect::Status { stream_id, shown, revision, .. } => (self.status)(stream_id, shown, revision),
+            TransferEffect::Status { stream_id, shown, figures, revision, .. } => (self.status)(stream_id, shown, figures, revision),
             TransferEffect::Started { epoch } => (self.signal)(LifeSignal::Started(epoch)),
             TransferEffect::SnapshotRequest { epoch } => (self.signal)(LifeSignal::SnapshotRequest(epoch)),
             TransferEffect::RestoreClassified { epoch } => (self.signal)(LifeSignal::RestoreClassified(epoch)),

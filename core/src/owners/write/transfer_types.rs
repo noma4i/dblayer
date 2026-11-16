@@ -26,7 +26,7 @@ pub use crate::owners::session::AttemptId;
 pub type CycleId = u64;
 pub use crate::owners::read::deliveries::StreamId;
 /// The sink of a `Blob` stream: the stream and what its key shows.
-pub type StatusSink = std::sync::Arc<dyn Fn(StreamId, Shown, i64) + Send + Sync>;
+pub type StatusSink = std::sync::Arc<dyn Fn(StreamId, Shown, Figures, i64) + Send + Sync>;
 
 #[derive(Clone, Copy, Debug)]
 pub struct TransferPeers {
@@ -407,11 +407,41 @@ impl Shown {
         }
     }
 
+    pub fn status(&self) -> Option<(crate::owners::write::upload::UploadStatus, Option<crate::owners::write::upload::UploadStage>)> {
+        use crate::owners::write::upload::{UploadStage, UploadStatus};
+        Some(match self {
+            Self::Copying | Self::Preparing { .. } => (UploadStatus::Preparing, Some(UploadStage::Prepare)),
+            Self::WaitingSource => (UploadStatus::Waiting, Some(UploadStage::Prepare)),
+            Self::Queued { .. } => (UploadStatus::Queued, Some(UploadStage::Prepare)),
+            Self::Uploading { progress: 100.. } => (UploadStatus::Sending, Some(UploadStage::Mutation)),
+            Self::Uploading { .. } => (UploadStatus::Uploading, Some(UploadStage::Part)),
+            Self::Failed { .. } => (UploadStatus::Failed, None),
+            Self::Gone => return None,
+        })
+    }
+
     pub fn wait_reason(&self) -> Option<crate::owners::write::upload::WaitReason> {
         match self {
             Self::WaitingSource => Some(crate::owners::write::upload::WaitReason::SourcePending),
             _ => None,
         }
+    }
+}
+
+/// The figures of a transfer that its status stream shows next to `Shown`, read from the live state of the transfer.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Figures {
+    pub sent_bytes: u64,
+    pub total_bytes: u64,
+    pub attempts: u32,
+    pub batch_share: Option<u32>,
+}
+
+impl Figures {
+    pub(super) fn of(transfer: &Transfer, shown: &Shown) -> Self {
+        let Some((status, _)) = shown.status() else { return Self::default() };
+        let parts = transfer.source.as_ref().map_or(0, |source| u64::from(source.parts));
+        Self { sent_bytes: crate::owners::write::upload::bytes_sent(status, parts, u64::from(transfer.confirmed_parts), transfer.size), total_bytes: transfer.size, attempts: transfer.attempts, batch_share: transfer.batch_id.map(|_| transfer.batch_floor) }
     }
 }
 
@@ -488,7 +518,7 @@ pub enum TransferEffect {
     ReadOutcome { reply: ReplyId, id: TransferId, cycle_id: CycleId },
     /// `uploads[action]`.
     /// Deliveries `TransferStatus` for the stream `stream_id`.
-    Status { stream_id: StreamId, key: Key, shown: Shown, revision: i64 },
+    Status { stream_id: StreamId, key: Key, shown: Shown, figures: Figures, revision: i64 },
     Started { epoch: Epoch },
     SnapshotRequest { epoch: Epoch },
     RestoreClassified { epoch: Epoch },

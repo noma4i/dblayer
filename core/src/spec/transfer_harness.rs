@@ -9,7 +9,7 @@ use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter, UploadK
 use crate::spec::support::{new_log, take, Discard, Emitted, Log, NoEffect, Silent, Spy, SpyState};
 use crate::owners::write::outbox::{Fault, NewOp, Outbox, OutboxEffect, OutboxInput, OutboxOutcome, OutboxPeers, OutboxState, OpSource, Receipt, ReserveTarget};
 use crate::owners::write::rounds::{Rounds, RoundsInput};
-use crate::owners::write::transfer::{BatchItem, Joint, NextStep, Shown, Source, Steps, StoredTransfer, Transfer, TransferAnswer, TransferEffect as Run, TransferId, TransferInput, TransferPeers, TransferStage, TransferState, TransferTick, Transfers};
+use crate::owners::write::transfer::{BatchItem, Figures, Joint, NextStep, Shown, Source, Steps, StoredTransfer, Transfer, TransferAnswer, TransferEffect as Run, TransferId, TransferInput, TransferPeers, TransferStage, TransferState, TransferTick, Transfers};
 use crate::runtime::{Address, Cause, DetScheduler, Effects, Epoch, EpochStamp, StateOwner, Time};
 use crate::schema::OnFailure;
 use crate::spec::support::committed_at;
@@ -110,6 +110,8 @@ impl Out {
 
 
     pub fn statuses(&self) -> Vec<(u64, Shown)> { self.runs.iter().filter_map(|run| if let Run::Status { stream_id, shown, .. } = run { (*stream_id != SPY).then(|| (*stream_id, shown.clone())) } else { None }).collect() }
+
+    pub fn figures(&self) -> Vec<(u64, Figures)> { self.runs.iter().filter_map(|run| if let Run::Status { stream_id, figures, .. } = run { (*stream_id != SPY).then(|| (*stream_id, figures.clone())) } else { None }).collect() }
 
     /// The final mutations handed to Outbox: of a batch, of a single element, reserved or not.
     pub fn submit_ops(&self) -> Vec<&NewOp> { self.outbox.iter().filter_map(|input| match input { OutboxInput::Submit { op, .. } | OutboxInput::SubmitReserved { op, .. } => Some(op), _ => None }).collect() }

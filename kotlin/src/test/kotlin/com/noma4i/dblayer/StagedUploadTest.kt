@@ -25,7 +25,7 @@ private fun enqueueCommitSteps(transport: MockTransport) {
 }
 
 private suspend fun untilHeld(scope: AccountScope, staged: StagedUpload<Moment>): Boolean =
-    scope.uploadStatus(staged).uploadStatus.firstOrNull { it is TransferItem.Progress && it.progress.progress >= 0.99 } != null
+    scope.uploadStatus(staged).uploadStatus.firstOrNull { it is TransferItem.Progress && it.info.progress >= 0.99 } != null
 
 class StagedUploadTest {
     @Test

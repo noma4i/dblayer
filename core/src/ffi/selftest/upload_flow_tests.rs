@@ -295,11 +295,11 @@ async fn xfer_status_local_url() {
     let hold = rig.world.hold_next("PUT");
     let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
     hold.entered().await;
-    let ReadValue::Status { local_url: Some(url), .. } = status_until(&stream, "the copy has a URL", |value| matches!(value, ReadValue::Status { local_url: Some(_), .. })).await else { unreachable!() };
+    let ReadValue::Status { upload: crate::ffi::WireUpload { local_url: Some(url), .. }, .. } = status_until(&stream, "the copy has a URL", |value| matches!(value, ReadValue::Status { upload: crate::ffi::WireUpload { local_url: Some(_), .. }, .. })).await else { unreachable!() };
     assert!(url.starts_with("file://") && std::path::Path::new(&url["file://".len()..]).exists(), "{url}");
     hold.release();
     bound(rig.database.confirmed(receipt, false)).await.unwrap();
-    status_until(&stream, "the URL goes with the transfer", |value| matches!(value, ReadValue::Status { local_url: None, .. })).await;
+    status_until(&stream, "the URL goes with the transfer", |value| matches!(value, ReadValue::Status { upload: crate::ffi::WireUpload { local_url: None, .. }, .. })).await;
     rig.database.close_now();
 }
 

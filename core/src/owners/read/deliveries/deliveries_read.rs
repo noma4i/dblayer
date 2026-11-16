@@ -27,7 +27,7 @@ impl Delivery {
             ReadData::Rows { rows, replaced, total } => Some(Whole::Rows { rows, replaced, total }),
             ReadData::Count(count) => Some(Whole::Count(count)),
             ReadData::Operations(items) => Some(Whole::Operations(items)),
-            ReadData::Upload { .. } => None,
+            ReadData::Upload(_) => None,
             ReadData::Owed(..) => None,
             ReadData::Changes { keys, rows, replaced, total } => {
                 let changed: HashMap<&str, &StreamRow> = rows.iter().map(|row| (row.id.as_str(), row)).collect();
@@ -217,7 +217,7 @@ impl Delivery {
         if !self.sink_open() { return; }
         if read_id == self.read_id { self.read_inflight = false; }
         if read_id == self.read_id && self.view.kind == Kind::Blob {
-            if let ReadData::Upload { wait_reason, local_url } = data { self.upload_read(Ok((wait_reason, local_url)), version.revision, fx); }
+            if let ReadData::Upload(row) = data { self.upload_read(Ok(row), version.revision, fx); }
             return;
         }
         if read_id != self.read_id || !self.view.kind.reads_rows() {

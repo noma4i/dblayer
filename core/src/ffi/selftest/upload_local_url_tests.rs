@@ -35,8 +35,8 @@ impl Places {
         if matches!(self.entry, Entry::Stage) && database.peek_row(database.session_epoch(), "Moment".into(), ids[0].clone()).await.unwrap().is_none() {
             let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Blob { model: "Moment".into(), id: ids[0].clone(), action: "upload_clip".into() });
             loop {
-                let Some(ReadValue::Status { state, local_url, .. }) = bound(stream.pull_next()).await else { panic!("{what}: the stream ended") };
-                let shown = vec![(local_url, state == "sending")];
+                let Some(ReadValue::Status { upload, .. }) = bound(stream.pull_next()).await else { panic!("{what}: the stream ended") };
+                let shown = vec![(upload.local_url, upload.status == crate::ffi::WireUploadStatus::Sending)];
                 if ready(&shown) { return shown; }
             }
         }

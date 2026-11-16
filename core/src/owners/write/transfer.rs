@@ -45,6 +45,8 @@ impl TransferState {
     }
 
     /// What a joining reader gets: the value the readers got last with its revision, `Gone` while no value of the key was published.
+    pub(super) fn figures_by_key(&self, key: &str, shown: &Shown) -> Figures { self.open_id(key).and_then(|id| self.transfers.get(&id)).map_or_else(Figures::default, |transfer| Figures::of(transfer, shown)) }
+
     pub(super) fn published_by_key(&self, key: &str) -> (Shown, i64) { self.published.get(key).cloned().unwrap_or((Shown::Gone, 0)) }
 
     /// The Store op that writes the shown value with the counters it shows.
@@ -159,11 +161,12 @@ impl TransferState {
 
     fn publish_shown(&mut self, key: &str, shown: Shown, revision: i64, fx: &mut Fx) {
         if shown == Shown::Gone { self.published.remove(key); } else { self.published.insert(key.to_string(), (shown.clone(), revision)); }
+        let figures = self.figures_by_key(key, &shown);
         let sent = (shown.clone(), revision);
         for (stream_id, last) in self.subscribers.get_mut(key).into_iter().flatten() {
             if *last == sent { continue; }
             *last = sent.clone();
-            run(fx, TransferEffect::Status { stream_id: *stream_id, key: key.to_string(), shown: shown.clone(), revision });
+            run(fx, TransferEffect::Status { stream_id: *stream_id, key: key.to_string(), shown: shown.clone(), figures: figures.clone(), revision });
         }
     }
 

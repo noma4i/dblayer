@@ -103,17 +103,7 @@ pub(super) fn outcome_of(kind: &str, revision: Option<i64>, value: Option<String
 }
 
 fn shown_columns(shown: &crate::owners::write::transfer::Shown) -> (Option<String>, Option<String>, Option<String>) {
-    use crate::owners::write::transfer::Shown;
-    use crate::owners::write::upload::{UploadStage, UploadStatus};
-    let (status, stage) = match shown {
-        Shown::Copying | Shown::Preparing { .. } => (UploadStatus::Preparing, Some(UploadStage::Prepare)),
-        Shown::WaitingSource => (UploadStatus::Waiting, Some(UploadStage::Prepare)),
-        Shown::Queued { .. } => (UploadStatus::Queued, Some(UploadStage::Prepare)),
-        Shown::Uploading { progress: 100.. } => (UploadStatus::Sending, Some(UploadStage::Mutation)),
-        Shown::Uploading { .. } => (UploadStatus::Uploading, Some(UploadStage::Part)),
-        Shown::Failed { .. } => (UploadStatus::Failed, None),
-        Shown::Gone => return (None, None, None),
-    };
+    let Some((status, stage)) = shown.status() else { return (None, None, None) };
     (super::operation::enum_text(&status), stage.and_then(|stage| super::operation::enum_text(&stage)), shown.wait_reason().and_then(|reason| super::operation::enum_text(&reason)))
 }
 

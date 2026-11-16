@@ -144,7 +144,7 @@ async fn xfer_prepare_runs_then_uploads() {
     let mut preparing = Vec::new();
     loop {
         match bound(watch.pull_next()).await {
-            Some(ReadValue::Status { state, progress, .. }) if state == "preparing" => preparing.push(progress),
+            Some(ReadValue::Status { upload, .. }) if upload.status == WireUploadStatus::Preparing => preparing.push(upload.progress),
             Some(ReadValue::Status { .. }) => break,
             other => panic!("the status ended: {other:?}"),
         }
@@ -291,13 +291,13 @@ async fn xfer_prepare_end() {
 
 const LOCATION: &str = "com.apple.quicktime.location.ISO6709";
 
-async fn states_of(database: &crate::ffi::Database, id: &str) -> (Arc<std::sync::Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
+async fn states_of(database: &crate::ffi::Database, id: &str) -> (Arc<std::sync::Mutex<Vec<WireUploadStatus>>>, tokio::task::JoinHandle<()>) {
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let watch = database.subscribe_values(database.session_epoch(), ReadRequest::Blob { model: "Moment".into(), id: id.into(), action: "upload_clip".into() });
     let sink = seen.clone();
     let task = tokio::spawn(async move {
         while let Some(value) = watch.pull_next().await {
-            if let ReadValue::Status { state, .. } = value { sink.lock().unwrap().push(state); }
+            if let ReadValue::Status { upload, .. } = value { sink.lock().unwrap().push(upload.status); }
         }
     });
     (seen, task)
@@ -437,7 +437,7 @@ async fn xfer_prepare_cannot_decode() {
             let body = if keys == [LOCATION] { PREPARED } else { SOURCE };
             assert_eq!(*stand.puts.bodies.lock().unwrap(), vec![body.to_vec()], "{name}");
             assert_eq!(stand.script.count("CreateMoment"), 1, "{name}");
-            assert!(!states.lock().unwrap().iter().any(|state| state == "failed"), "{name}: no frame shows a failure: {:?}", states.lock().unwrap());
+            assert!(!states.lock().unwrap().iter().any(|status| *status == WireUploadStatus::Failed), "{name}: no frame shows a failure: {:?}", states.lock().unwrap());
             let jobs = preparer.jobs();
             if keys == [LOCATION] {
                 assert_eq!(jobs.len(), 2, "{name}: the second run repacks");
