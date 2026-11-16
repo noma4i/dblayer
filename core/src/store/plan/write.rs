@@ -151,8 +151,17 @@ impl Store {
         let mut shown = None;
         let mut read_models = vec![model];
         if let Some(copy) = declared.as_ref().and_then(|declared| declared.copies_receiver_to.as_ref()) { read_models.extend(Self::copy_source_models(copy)); }
+        let on_type = asked.as_str() == crate::schema::SINGLETON && spec.singleton_relation().is_some();
         let (id, effects) = self.read_models(&read_models, |reader| {
-            let id = &crate::store::readers::resolve_in(reader, model, id)?;
+            let resolved = if on_type {
+                match self.effect_row(reader, &Map::new(), model, None)? {
+                    Some(stored) => stored,
+                    None => return Ok((asked.clone(), IntentEffects::default())),
+                }
+            } else {
+                crate::store::readers::resolve_in(reader, model, id)?
+            };
+            let id = &resolved;
             let own = RowRef::new(ModelKey::new(model), id.clone());
             let current = reader.point(model, id.as_str())?.ok_or_else(|| CoreError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let view = super::view::ReaderView { reader, specs: &|name| self.spec(name).ok(), db: Some(self) };
@@ -174,9 +183,10 @@ impl Store {
             }
             Ok((id.clone(), effects))
         })?;
+        let row_id = if on_type { id.clone() } else { asked.clone() };
         let mut input = args;
-        input.insert("id".to_string(), Value::String(asked.to_string()));
-        Ok(Planned { model: model.to_string(), row_id: asked.clone(), shown: shown.unwrap_or_else(|| id.clone()), input: Value::Object(input), effects, noop: false })
+        input.insert("id".to_string(), Value::String(row_id.to_string()));
+        Ok(Planned { model: model.to_string(), row_id, shown: shown.unwrap_or_else(|| id.clone()), input: Value::Object(input), effects, noop: false })
     }
 
     /// The row and every row that depends on it.

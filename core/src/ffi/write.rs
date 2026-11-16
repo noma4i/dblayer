@@ -151,17 +151,18 @@ impl Database {
             return Ok(receipt_of(epoch, model, None, revision, value, None, self.life.clone()));
         }
         let destroyed = action == "destroy";
+        let rowless = row.as_str() == crate::schema::SINGLETON;
         let call = crate::blocking::blocking_unit(|| self.db.mutation_call(&model, action, &planned, &uuid::Uuid::new_v4().to_string()))?;
         let Some(call) = call else {
             let mut effects = planned.effects;
-            if !destroyed { effects.shown = Some((model.clone(), shown.to_string())); }
+            if !destroyed && !rowless { effects.shown = Some((model.clone(), shown.to_string())); }
             let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Model(effects), row.to_string(), String::new());
             let (revision, value) = self.written(waiter, action, &model).await?;
             return Ok(receipt_of(epoch, model, None, revision, value, None, self.life.clone()));
         };
         let (path, body) = self.mutation_request(&call)?;
         let mut effects = planned.effects;
-        if !destroyed { effects.shown = Some((model.clone(), shown.to_string())); }
+        if !destroyed && !rowless { effects.shown = Some((model.clone(), shown.to_string())); }
         let op = NewOp { model: model.clone(), row_id: row.to_string(), action: action.to_string(), on_failure: call.on_failure, origin: OpSource::Api, path, body, effects, expires_after: call.expires_after.map(std::time::Duration::from_secs) };
         let waiter = self.life.submit(epoch, op);
         let OutboxAnswer::Receipt(held) = self.outbox_answer(waiter, action).await? else { return Err(DbError::Internal { detail: "the owner answered a call with no receipt".into() }) };

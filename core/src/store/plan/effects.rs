@@ -28,7 +28,7 @@ impl Edits {
 }
 
 impl Store {
-    fn effect_row(&self, reader: &Reader<'_>, args: &Map<String, Value>, model: &str, row: Option<&str>) -> Result<Option<RowId>, CoreError> {
+    pub(super) fn effect_row(&self, reader: &Reader<'_>, args: &Map<String, Value>, model: &str, row: Option<&str>) -> Result<Option<RowId>, CoreError> {
         if let Some(name) = row {
             return Ok(args.get(name).and_then(read_id));
         }
