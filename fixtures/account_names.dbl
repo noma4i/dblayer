@@ -2,13 +2,13 @@ model Ledger do
   attribute :scope, :string
   index :scope
   operation :create do
-    mutation "CreateMoment"
+    mutation "LedgerCreate"
   end
   operation :update do
-    mutation "UpdateMoment"
+    mutation "LedgerUpdate"
   end
   operation :move do
-    mutation "LikeMoment"
+    mutation "LedgerMove"
     parameter :scope, :string
     optimistic false
   end
@@ -18,7 +18,7 @@ model LedgerFeed do
   attribute :title, :string
   scope :entries do
     parameter :scope, :string
-    query "MomentsFeed"
+    query "LedgerEntries"
     paginate size: 20, direction: :forward
     edge do
       attribute :impressionUuid, :string, null: true
@@ -29,17 +29,17 @@ end
 model Shadow do
   attribute :title, :string
   operation :create do
-    mutation "CreateMoment"
+    mutation "ShadowCreate"
   end
   scope :scope do
-    query "MomentsFeed"
+    query "ShadowScope"
     paginate size: 20, direction: :forward
     edge do
       attribute :score, :int, null: true
     end
   end
   scope :account do
-    query "MomentsFeed"
+    query "ShadowAccount"
     paginate size: 20, direction: :forward
     edge do
       attribute :rank, :int, null: true
@@ -59,13 +59,13 @@ model Mailbox do
   attribute :read, :bool
   attribute :put, :string, null: true
   operation :mark do
-    mutation "LikeMoment"
+    mutation "MailboxMark"
     parameter :put, :string
     optimistic false
   end
   scope :entries do
     parameter :act, :string
-    query "MomentsFeed"
+    query "MailboxEntries"
     paginate size: 20, direction: :forward
     edge do
       attribute :score, :int, null: true

@@ -1,0 +1,25 @@
+mutation CreateClub($name: String!) { createClub(name: $name) { id name } }
+mutation LeaveClub($clubId: ID!) { leaveClub(clubId: $clubId) }
+mutation AddClubMember($clubId: ID!, $userIds: [ID!]!) { addClubMember(clubId: $clubId, userIds: $userIds) { id name } }
+mutation RemoveClubMember($clubId: ID!, $userIds: [ID!]!) { removeClubMember(clubId: $clubId, userIds: $userIds) { id name } }
+mutation SendLetter($chatId: ID!, $text: String!, $at: Int!) { sendLetter(chatId: $chatId, text: $text, at: $at) { id chatId text at } }
+mutation ForwardLetter($letterId: ID!, $chatId: ID!) { forwardLetter(letterId: $letterId, chatId: $chatId) { letter { id chatId text at } } }
+mutation CreateMoment($text: String, $media: JSON) { createMoment(text: $text, media: $media) { id uuid userId text likedByMe media createdAt successMessage } }
+mutation UpdateMoment($momentId: ID!, $text: String, $media: JSON) { updateMoment(momentId: $momentId, text: $text, media: $media) { id uuid userId text likedByMe media createdAt } }
+mutation DeleteMoment($momentId: ID!) { deleteMoment(momentId: $momentId) }
+mutation LikeMoment($momentId: ID!) { likeMoment(momentId: $momentId) { id uuid userId text likedByMe media createdAt } }
+mutation ShareMoment($momentId: ID!) { shareMoment(momentId: $momentId) { successMessage copies moment { id uuid userId text likedByMe media createdAt } } }
+mutation CreateContainer($title: String!, $shareUrl: String, $isPublic: Boolean, $shelves: [ContainerShelf!]) { createContainer(title: $title, shareUrl: $shareUrl, isPublic: $isPublic, shelves: $shelves) { id title shareUrl isPublic shelves } }
+mutation LedgerCreate { ledgerCreate { id scope } }
+mutation LedgerUpdate($ledgerId: ID!) { ledgerUpdate(ledgerId: $ledgerId) { id scope } }
+mutation LedgerMove($ledgerId: ID!, $scope: String!) { ledgerMove(ledgerId: $ledgerId, scope: $scope) { id scope } }
+mutation ShadowCreate { shadowCreate { id title } }
+mutation MailboxMark($mailboxId: ID!, $put: String!) { mailboxMark(mailboxId: $mailboxId, put: $put) { id read put } }
+mutation CreateAsset($signedId: String!, $clientKey: String!, $position: Int, $size: Int) { createAsset(signedId: $signedId, clientKey: $clientKey, position: $position, size: $size) { asset { id clientKey size position } } }
+mutation CreateAssets($items: [AssetItemInput!]!) { createAssets(items: $items) { assets { id clientKey size position } } }
+mutation ContainerGroupCreateFile($signedId: String!) { groupContainerCreate: containerGroupCreate(signedId: $signedId) { container { id title shareUrl isPublic shelves } } }
+mutation ContainerGroupUpdateFile($containerId: ID!, $signedId: String!) { groupContainerUpdate: containerGroupUpdate(containerId: $containerId, signedId: $signedId) { container { id title shareUrl isPublic shelves } } }
+mutation CreateRecord($containerId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { ...RecordFields } }
+mutation RecordReact($recordId: ID!) { recordReact(recordId: $recordId) { ...RecordFields } }
+mutation RecordPin($recordId: ID!) { recordPin(recordId: $recordId) { record { ...RecordFields } container { id title shareUrl isPublic shelves } } }
+mutation UserPhotoUpdate($keepOld: Boolean, $skipAssign: Boolean) { userPhotoUpdate(keepOld: $keepOld, skipAssign: $skipAssign) { userPhoto { reason media { thumbUrl } } viewer { user { id name } } } }

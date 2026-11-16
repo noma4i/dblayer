@@ -1,7 +1,7 @@
 mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }
 mutation SignOut { signOut }
-mutation StickerSend($input: StickerInput!, $silent: Boolean) { stickerSend(input: $input, silent: $silent) { id } }
-mutation MomentCreate($input: MomentInput!, $silent: Boolean) { momentCreate(input: $input, silent: $silent) { moment { id } } }
+mutation StickerSend($input: StickerInput!) { stickerSend(input: $input) { id } }
+mutation MomentCreate($input: MomentInput!) { momentCreate(input: $input) { moment { id } } }
 mutation WidgetsSend($widgets: [StickerWidgetInput!]) { widgetsSend(widgets: $widgets) { id } }
 mutation ClipCreateFile($signedId: String!, $widgets: [StickerWidgetInput!]) { clipCreate(signedId: $signedId, widgets: $widgets) { clip { id title } } }
 mutation InboxMove($id: ID!, $list: ContainerShelfKind!) { inboxMove(id: $id, list: $list) { id title stance } }

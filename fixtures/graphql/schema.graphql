@@ -1,12 +1,167 @@
 scalar DateTime
+enum MediaMessageKind { TEXT GIFT }
+enum MediaKindValue { AUDIO IMAGE VIDEO }
+enum ContainerShelf { PRIMARY SECONDARY }
+enum CoverStage { DONE FAILED PENDING RUNNING }
 scalar JSON
-type Query { clubMembers(clubId: ID!, order: String, first: Int, after: String): ClubNode }
-type Mutation { createClub(name: String!): Club, leaveClub(clubId: ID!): Boolean, addClubMember(clubId: ID!, userIds: [ID!]!): Club, removeClubMember(clubId: ID!, userIds: [ID!]!): Club, sendLetter(chatId: ID!, text: String!, at: Int!): Letter, forwardLetter(letterId: ID!, chatId: ID!): ForwardLetterPayload }
+interface Node { id: ID! }
+type PageInfo { hasNextPage: Boolean!, endCursor: String }
+type Query {
+  node(id: ID!): Node
+  nodes(ids: [ID!]!): [Node]!
+  clubMembers(clubId: ID!, order: String): ClubNode
+  momentsFeed(first: Int, after: String): MomentConnection!
+  ledgerEntries(scope: String!, first: Int, after: String): LedgerFeedConnection!
+  shadowScope(first: Int, after: String): ShadowConnection!
+  shadowAccount(first: Int, after: String): ShadowAccountConnection!
+  mailboxEntries(act: String!, first: Int, after: String): MailboxConnection!
+  accountProfile: Holder
+  containerShelf(shelf: ContainerShelf!): [Container!]!
+  containerSearch(text: String!): ContainerSearchResult
+  documentBySlug(slug: String!, source: String!): [Document!]!
+  tailSince(containerId: String!, afterSequence: Int!, pinned: Boolean!, first: Int, after: String): TailConnection!
+  chats(list: String!): [Chat!]!
+  viewer: CurrentUser
+  region: CurrentRegion
+  userProfile: User
+  mediaChat(id: ID!): Chat
+  containerMembers(containerId: String!, first: Int, after: String): ContainerMembersNode
+  presenceOnline: [Presence!]!
+  presenceOnChannel(channel: String!): [Presence!]!
+  presenceHistory(presenceId: ID!): [Presence!]!
+  containerById(id: ID!): ContainerRecordsNode
+  containerRecords(containerId: ID!): ContainerRecordsNode
+  containerRecordsHistory(first: Int, last: Int, before: String): RecordConnection!
+  recentMedia(containerId: ID!, first: Int, after: String): RecordConnection!
+}
+type Mutation {
+  createClub(name: String!): Club
+  leaveClub(clubId: ID!): Boolean
+  addClubMember(clubId: ID!, userIds: [ID!]!): Club
+  removeClubMember(clubId: ID!, userIds: [ID!]!): Club
+  sendLetter(chatId: ID!, text: String!, at: Int!): Letter
+  forwardLetter(letterId: ID!, chatId: ID!): ForwardLetterPayload
+  createMoment(text: String, media: JSON): Moment
+  updateMoment(momentId: ID!, text: String, media: JSON): Moment
+  deleteMoment(momentId: ID!): Boolean
+  likeMoment(momentId: ID!): Moment
+  shareMoment(momentId: ID!): ShareMomentPayload
+  createContainer(title: String!, shareUrl: String, isPublic: Boolean, shelves: [ContainerShelf!]): Container
+  ledgerCreate: Ledger
+  ledgerUpdate(ledgerId: ID!): Ledger
+  ledgerMove(ledgerId: ID!, scope: String!): Ledger
+  shadowCreate: Shadow
+  mailboxMark(mailboxId: ID!, put: String!): Mailbox
+  createAsset(signedId: String!, clientKey: String!, position: Int, size: Int): AssetPayload
+  createAssets(items: [AssetItemInput!]!): AssetsPayload
+  containerGroupCreate(signedId: String!): ContainerPayload
+  containerGroupUpdate(containerId: ID!, signedId: String!): ContainerPayload
+  createRecord(containerId: ID!, text: String!, signedId: String, attachedUserId: ID): Record
+  recordReact(recordId: ID!): Record
+  recordPin(recordId: ID!): RecordPinPayload
+  userPhotoUpdate(keepOld: Boolean, skipAssign: Boolean): UserPhotoPayload
+}
 type Club { id: ID!, name: String! }
-type Letter { id: ID!, chatId: ID!, text: String!, at: Int! }
-type ForwardLetterPayload { letter: Letter }
 type ClubNode { id: ID!, members(first: Int, after: String): PersonConnection! }
 type Person { id: ID!, name: String! }
-type PersonConnection { nodes: [Person!]!, edges: [PersonEdge!]!, pageInfo: PageInfo! }
+type PersonConnection { edges: [PersonEdge!]!, pageInfo: PageInfo! }
 type PersonEdge { cursor: String!, node: Person! }
-type PageInfo { hasNextPage: Boolean!, endCursor: String }
+type Letter { id: ID!, chatId: ID!, text: String!, at: Int! }
+type ForwardLetterPayload { letter: Letter }
+type Moment implements Node { id: ID!, uuid: String!, userId: ID, text: String, likedByMe: Boolean!, media: JSON!, createdAt: DateTime!, successMessage: String }
+type MomentConnection { edges: [MomentEdge!]!, pageInfo: PageInfo! }
+type MomentEdge { cursor: String!, node: Moment!, impressionUuid: String, impressionScore: Int, rank: String }
+type ShareMomentPayload { moment: Moment, successMessage: String!, copies: Int! }
+type Ledger { id: ID!, scope: String! }
+type LedgerFeed { id: ID!, title: String! }
+type LedgerFeedConnection { edges: [LedgerFeedEdge!]!, pageInfo: PageInfo! }
+type LedgerFeedEdge { cursor: String!, node: LedgerFeed!, impressionUuid: String }
+type Shadow { id: ID!, title: String! }
+type ShadowConnection { edges: [ShadowEdge!]!, pageInfo: PageInfo! }
+type ShadowEdge { cursor: String!, node: Shadow!, score: Int }
+type ShadowAccountConnection { edges: [ShadowAccountEdge!]!, pageInfo: PageInfo! }
+type ShadowAccountEdge { cursor: String!, node: Shadow!, rank: Int }
+type Mailbox { id: ID!, read: Boolean!, put: String }
+type MailboxConnection { edges: [MailboxEdge!]!, pageInfo: PageInfo! }
+type MailboxEdge { cursor: String!, node: Mailbox!, score: Int }
+type Holder { id: ID!, label: String }
+type Container implements Node { id: ID!, title: String!, shareUrl: String, isPublic: Boolean, shelves: [ContainerShelf!] }
+type ContainerSearchResult { containers: [ContainerHit!]! }
+type ContainerHit { id: ID!, container: Container! }
+type Document { id: ID!, slug: String!, previewIds: [ID!]!, cover: DocumentCover, previews: [Record!]! }
+type DocumentCover { imageUrl: String, width: Float, stage: CoverStage, progress: Float }
+type Tail { id: ID!, text: String! }
+type TailConnection { edges: [TailEdge!]!, pageInfo: PageInfo! }
+type TailEdge { cursor: String!, node: Tail! }
+type Chat implements Node { id: ID!, title: String!, revision: Int!, lists: [String!]!, messages(mediaKinds: [MediaKindValue!], includeGifts: Boolean, afterSequence: Int, first: Int, after: String): MediaMessageConnection! }
+type Message implements Node { id: ID!, text: String!, chatId: ID! }
+type CurrentUser { id: ID!, name: String! }
+type CurrentRegion { id: ID!, name: String! }
+type User { id: ID!, name: String!, birthday: DateTime }
+type ContainerMembersNode { id: ID!, membersCount: Int!, members(first: Int, after: String): UserConnection! }
+type UserConnection { edges: [UserEdge!]!, pageInfo: PageInfo! }
+type UserEdge { cursor: String!, node: User! }
+type Presence { id: ID!, userId: ID!, room: String! }
+type Asset { id: ID!, clientKey: String!, size: Int!, position: Int! }
+type AssetPayload { asset: Asset }
+type AssetsPayload { assets: [Asset!]! }
+input AssetItemInput { signedId: String!, clientKey: String!, position: Int, size: Int }
+type ContainerPayload { container: Container }
+type Record implements Node { id: ID!, containerId: ID!, authorId: ID!, regionId: ID, text: String!, createdAt: DateTime!, sequenceNumber: Int, reactions: [RecordReaction!]!, attachment: RecordAttachment, media: RecordMedia }
+type RecordReaction { body: String, user: RecordReactionUser }
+type RecordReactionUser { id: ID, name: String }
+type RecordMedia { kind: String, transcoded: Boolean, fileUrl: String }
+union RecordAttachment = RewardAttachment | MomentAttachment | ProfileAttachment | ReactionAttachment
+type RewardAttachment { id: ID!, rewardTier: String!, status: String, tags: [String!]! }
+type MomentAttachment { momentId: ID!, caption: String }
+type ProfileAttachment { user: AttachmentUser }
+type AttachmentUser { id: ID!, name: String }
+type ReactionAttachment { body: String! }
+type RecordPinPayload { record: Record, container: Container }
+type RecordConnection { edges: [RecordEdge!]!, pageInfo: PageInfo! }
+type RecordEdge { cursor: String!, node: Record! }
+type ContainerRecordsNode { id: ID!, records(first: Int, after: String): RecordConnection! }
+type UserPhotoPayload { userPhoto: UserPhoto, viewer: Viewer }
+type UserPhoto { reason: String!, media: PhotoMedia! }
+type PhotoMedia { thumbUrl: String! }
+type Viewer { user: CurrentUser }
+type Subscription { recordEvents: RecordEvents! }
+type RecordEvents { entries: [RecordEvent!]! }
+type RecordEvent { area: String!, kind: String!, recordId: ID!, chat: Chat, message: Message }
+type MediaMessage implements Node { id: ID!, chatId: ID!, kind: MediaMessageKind!, mediaKind: MediaKindValue, sequenceNumber: Int }
+type MediaMessageConnection { edges: [MediaMessageEdge!]!, pageInfo: PageInfo! }
+type MediaMessageEdge { cursor: String!, node: MediaMessage! }
+type CustomScreen implements Node { id: ID!, slug: String!, version: Int!, requires: ScreenRequires!, spec: ScreenSpec }
+type ScreenRequires { ios: Int, android: Int }
+type ScreenSpec { root: ID!, state: [ScreenStateEntry!]!, elements: [ScreenElement!]! }
+type ScreenStateEntry { path: String!, value: JSON! }
+type ScreenElement { id: ID!, type: String!, slot: String, children: [ID!]!, props: JSON, visible: JSON, press: JSON, change: JSON, padding: String, margin: String, background: String, radius: String, expand: Boolean, align: String, accessibilityLabel: String }
+type InterfaceRecord implements Node { id: ID!, slug: String!, spec: SampleSpec }
+type SampleSpec { root: ID!, elements: [SampleElement!]!, state: [SampleStateEntry!]! }
+interface SampleElement { id: ID!, children: [ID!]!, press: SampleAction, visible: SampleVisibility }
+type SampleButton implements SampleElement { id: ID!, children: [ID!]!, press: SampleAction, visible: SampleVisibility, label: SampleTextValue, disabled: SampleFlagValue }
+type SampleColumn implements SampleElement { id: ID!, children: [ID!]!, press: SampleAction, visible: SampleVisibility, gap: SampleNumberValue, alignItems: String }
+type SampleHeading implements SampleElement { id: ID!, children: [ID!]!, press: SampleAction, visible: SampleVisibility, text: SampleTextValue, level: Int }
+type SamplePressable implements SampleElement { id: ID!, children: [ID!]!, press: SampleAction, visible: SampleVisibility }
+type SampleSpacer implements SampleElement { id: ID!, children: [ID!]!, press: SampleAction, visible: SampleVisibility, length: SampleNumberValue }
+type SampleSwitch implements SampleElement { id: ID!, children: [ID!]!, press: SampleAction, visible: SampleVisibility, checked: SampleFlagValue, label: SampleTextValue }
+union SampleAction = SampleNavigateAction | SampleOpenRecordAction | SampleOpenExternalAction | SampleOpenProfileAction
+type SampleNavigateAction { slug: String!, title: String }
+type SampleOpenRecordAction { recordId: String! }
+type SampleOpenExternalAction { url: String! }
+type SampleOpenProfileAction { userId: String! }
+union SampleVisibility = SampleCondition | SampleVisibleAll | SampleVisibleAny | SampleVisibleFlag
+type SampleCondition { comparison: String!, negated: Boolean!, operand: SampleOperand, path: String! }
+type SampleVisibleAll { conditions: [SampleCondition!]! }
+type SampleVisibleAny { conditions: [SampleCondition!]! }
+type SampleVisibleFlag { flag: Boolean! }
+union SampleOperand = SampleFlagLiteral | SampleNumberLiteral | SampleStateRef | SampleTextLiteral
+union SampleTextValue = SampleStateRef | SampleTextLiteral
+union SampleFlagValue = SampleFlagLiteral | SampleStateRef
+union SampleNumberValue = SampleNumberLiteral | SampleStateRef
+union SampleStateValue = SampleFlagLiteral | SampleNumberLiteral | SampleTextLiteral
+type SampleFlagLiteral { flag: Boolean! }
+type SampleNumberLiteral { number: Float! }
+type SampleStateRef { path: String! }
+type SampleTextLiteral { text: String! }
+type SampleStateEntry { path: String!, value: SampleStateValue! }

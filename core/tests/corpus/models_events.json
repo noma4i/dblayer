@@ -151,7 +151,12 @@
           "root": null,
           "root_shape": "upsert",
           "upload": false,
-          "variables": {},
+          "variables": {
+            "isPublic": "isPublic",
+            "shareUrl": "shareUrl",
+            "shelves": "shelves",
+            "title": "title"
+          },
           "wrap": null
         },
         {
@@ -173,7 +178,7 @@
           "root": "groupContainerCreate.container",
           "root_shape": "upsert",
           "upload": true,
-          "variables": { "containerId": "id" },
+          "variables": {},
           "wrap": null
         },
         {
@@ -195,7 +200,7 @@
           "root": "groupContainerUpdate.container",
           "root_shape": "upsert",
           "upload": true,
-          "variables": { "containerId": "id" },
+          "variables": {},
           "wrap": null
         }
       ],
@@ -561,7 +566,7 @@
           "root": "userPhotoUpdate.viewer.user",
           "root_shape": "upsert",
           "upload": true,
-          "variables": { "keepOld": "keepOld", "skipAssign": "skipAssign" },
+          "variables": {},
           "wrap": null
         }
       ],

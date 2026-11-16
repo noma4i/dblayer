@@ -1,1 +1,0 @@
-query ClubMembers($clubId: ID!, $order: String, $first: Int, $after: String) { node: clubMembers(clubId: $clubId, order: $order) { members(first: $first, after: $after) { edges { cursor node { id name } } pageInfo { hasNextPage endCursor } } } }

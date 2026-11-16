@@ -14,7 +14,7 @@ cat > "$root/bin/cargo" <<'CARGO'
 #!/bin/sh
 echo "$*" >> "$FAKE_CARGO_LOG"
 kind=models
-case "$*" in *--schema*) kind=operations ;; esac
+case "$*" in *fixtures/operations/schema.graphql*) kind=operations ;; esac
 for arg in "$@"; do
   case "$arg" in
     swift|kotlin) if [ "$kind" = models ]; then echo "$kind-$arg-${FAKE_CARGO_TAG:-v1},\"operations\":[]}"; else echo "$kind-$arg-${FAKE_CARGO_TAG:-v1}"; fi ;;

@@ -1,0 +1,1 @@
+fragment RecordFields on Record { id containerId authorId regionId text createdAt sequenceNumber reactions { body user { id name } } attachment { __typename ... on RewardAttachment { id rewardTier status tags } ... on MomentAttachment { momentId caption } ... on ProfileAttachment { user { id name } } ... on ReactionAttachment { body } } media { kind transcoded fileUrl } }

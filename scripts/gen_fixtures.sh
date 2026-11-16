@@ -23,7 +23,8 @@ snapshots=(
   "fixtures/media-marker.json models MediaEntry operations"
 )
 
-gen() { cargo run -p dblayer-gen -- "$1" "$root"/fixtures/*.dbl; }
+schema="$root/fixtures/graphql/schema.graphql"
+gen() { cargo run -p dblayer-gen -- --schema "$schema" "$1" "$root"/fixtures/*.dbl; }
 gen_operations() { cargo run -p dblayer-gen -- --schema "$root/fixtures/operations/schema.graphql" "$1" "$root"/fixtures/operations/*.dbl | grep -v -e '^public let modelsJSON = ' -e '^val modelsJSON = '; }
 
 gen_operation_specs() { cargo run -p dblayer-gen -- --schema "$root/fixtures/operations/schema.graphql" spec "$root"/fixtures/operations/*.dbl | python3 -I -c 'import json, sys; print(json.dumps(json.load(sys.stdin)["operations"], separators=(",", ":")))'; }
@@ -36,8 +37,8 @@ swift_operations="$(gen_operations swift)"
 kotlin_operations="$(gen_operations kotlin)"
 sources="$(mktemp -d)"
 trap 'rm -r "$sources"' EXIT
-cargo run -p dblayer-gen -- spec "$root"/fixtures/*.dbl > "$sources/fixtures"
-cargo run -p dblayer-gen -- spec "$root/core/tests/corpus/container_nodes.dbl" > "$sources/corpus"
+cargo run -p dblayer-gen -- --schema "$schema" spec "$root"/fixtures/*.dbl > "$sources/fixtures"
+cargo run -p dblayer-gen -- --schema "$schema" spec "$root/core/tests/corpus/container_nodes.dbl" > "$sources/corpus"
 cargo run -p dblayer-gen -- spec "$root/fixtures/matrix/kinds.dbl" > "$sources/kinds"
 cargo run -p dblayer-gen -- spec "$root/fixtures/matrix/removed_by.dbl" > "$sources/removed_by"
 cargo run -p dblayer-gen -- --schema "$root/fixtures/operations/schema.graphql" spec "$root"/fixtures/operations/*.dbl > "$sources/operations"
@@ -58,5 +59,7 @@ printf '%s\n' "$kotlin" > "$kotlin_out"
 printf '%s\n' "$swift_operations" > "$swift_operations_out"
 printf '%s\n' "$kotlin_operations" > "$kotlin_operations_out"
 for entry in "${snapshots[@]}"; do
-  snapshot_of "$entry" > "$root/${entry%% *}"
+  target="$root/${entry%% *}"
+  fresh="$(snapshot_of "$entry")"
+  printf '%s' "$fresh" | python3 -I -c 'import json, sys; sys.exit(json.load(sys.stdin) != json.load(open(sys.argv[1])))' "$target" || printf '%s' "$fresh" > "$target"
 done

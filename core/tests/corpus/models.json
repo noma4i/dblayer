@@ -43,7 +43,7 @@
           "root": null,
           "root_shape": "upsert",
           "upload": false,
-          "variables": {},
+          "variables": { "media": "media", "momentId": "id", "text": "text" },
           "wrap": null
         },
         {
@@ -91,7 +91,7 @@
           "root": "createMoment",
           "root_shape": "upsert",
           "upload": true,
-          "variables": { "momentId": "id" },
+          "variables": {},
           "wrap": null
         },
         {
@@ -113,7 +113,7 @@
           "root": null,
           "root_shape": "destroy",
           "upload": false,
-          "variables": {},
+          "variables": { "momentId": "id" },
           "wrap": null
         },
         {
