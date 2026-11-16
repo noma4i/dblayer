@@ -298,11 +298,15 @@ impl Wiring {
     }
 
     /// The windows of the (model, relation) pairs turn stale: the answer of an operation that refetches them landed.
-    pub fn mark_stale(&self, families: Vec<(String, String)>, revision: Option<i64>) {
+    pub fn mark_stale(&self, families: Vec<(String, String)>, rows: Vec<(String, String, String)>, revision: Option<i64>) {
         if let Some(revision) = revision { self.to_windows(super::read::windows::WindowsInput::StoreCommitted { models: Vec::new(), revision }); }
         for (model, relation) in families {
             let keys = if relation.is_empty() { super::read::windows::StaleKeys::all() } else { super::read::windows::StaleKeys::Relations(std::collections::BTreeSet::from([relation])) };
             self.to_windows(super::read::windows::WindowsInput::Stale { model, keys, cause: super::read::windows::StaleCause::Change { revision } });
+        }
+        for (model, row, relation) in rows {
+            let key = super::read::windows::WindowKey::relation(&model, &relation, &serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(row))]));
+            self.to_windows(super::read::windows::WindowsInput::Stale { model, keys: super::read::windows::StaleKeys::Set(std::collections::BTreeSet::from([key])), cause: super::read::windows::StaleCause::Change { revision } });
         }
     }
 
@@ -449,7 +453,7 @@ impl Life {
                 read_outcome: Some(read_outcome.clone()),
                 stale: Some({
                     let stale_wiring = wiring.clone();
-                    Arc::new(move |families: Vec<(String, String)>, revision: i64| stale_wiring.mark_stale(families, Some(revision)))
+                    Arc::new(move |families: Vec<(String, String)>, rows: Vec<(String, String, String)>, revision: i64| stale_wiring.mark_stale(families, rows, Some(revision)))
                 }),
                 decode: ports.read_operations.clone().map(|operations| {
                     let db = ports.db.clone();

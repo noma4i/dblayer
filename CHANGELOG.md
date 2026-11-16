@@ -6,6 +6,7 @@
 
 - Give the receipt of an operation with `returns` the typed answer as `confirmed().answer`.
 - Declare `refetch :scope, model: Model` on an operation without a model.
+- Reload the `refetch` scopes and read the receiver row again after a refused operation is rolled back.
 
 ### Changed
 

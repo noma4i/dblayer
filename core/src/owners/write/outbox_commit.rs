@@ -108,7 +108,7 @@ impl OutboxState {
                 }
                 if let Some(operation) = self.ops.get(&op_id) {
                     let families = Self::stale_families_of(operation);
-                    if !families.is_empty() { fx.push(Effect::Run(OutboxEffect::Stale { families, revision })); }
+                    if !families.is_empty() { fx.push(Effect::Run(OutboxEffect::Stale { families, rows: Vec::new(), revision })); }
                 }
                 let result = self.ops.get(&op_id).and_then(|operation| operation.result.clone());
                 let row_id = self.ops.get(&op_id).map(|operation| operation.landed.clone().unwrap_or_else(|| operation.op.row_id.clone()));
@@ -145,7 +145,11 @@ impl OutboxState {
                     }
                 }
                 if let Some(operation) = self.ops.get(&op_id).filter(|operation| operation.answer_rows_dropped) {
-                    fx.push(Effect::Run(OutboxEffect::Stale { families: Self::stale_families_of(operation), revision }));
+                    fx.push(Effect::Run(OutboxEffect::Stale { families: Self::stale_families_of(operation), rows: Vec::new(), revision }));
+                }
+                if let Some(operation) = self.ops.get(&op_id).filter(|operation| operation.stage == Stage::RollingBack(Why::Rejected)) {
+                    let rows: Vec<_> = Self::rejection_debt(operation).into_iter().collect();
+                    if !rows.is_empty() || !operation.stale.is_empty() { fx.push(Effect::Run(OutboxEffect::Stale { families: operation.stale.clone(), rows, revision })); }
                 }
                 let created = Self::created_temps(&self.ops[&op_id]);
                 self.end_temps(created);

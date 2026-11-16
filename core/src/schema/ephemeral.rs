@@ -53,6 +53,12 @@ impl ModelSpec {
         self.storage == Storage::Local
     }
 
+    /// The scope of a server model that reads one row by id (`node`).
+    pub fn node_scope(&self) -> Option<&crate::schema::RelationSpec> {
+        if self.is_local() { return None; }
+        self.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One))
+    }
+
     pub fn expire_window(&self) -> Option<Duration> {
         self.expire_after.as_deref().and_then(parse_duration)
     }

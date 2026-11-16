@@ -223,6 +223,12 @@ impl OutboxState {
     }
 
     /// The temp ids of the rows the operation creates.
+    /// M87: the receiver row of a refused action that stays after the rollback owes a reread by the `node` scope of its model.
+    pub(super) fn rejection_debt(operation: &QueuedOperation) -> Option<(String, String, String)> {
+        let relation = operation.owe.as_ref().filter(|_| operation.stage == Stage::RollingBack(Why::Rejected) && Self::created_temps(operation).is_empty())?;
+        Some((operation.op.model.clone(), operation.op.row_id.clone(), relation.clone()))
+    }
+
     pub(super) fn created_temps(operation: &QueuedOperation) -> Vec<String> {
         match &operation.op.origin {
             OpSource::TransferGroup { members, .. } => members.iter().map(|member| member.row_id.clone()).filter(|row| crate::identity::is_temp_id(row)).collect(),
@@ -341,6 +347,7 @@ impl OutboxState {
                 missing: Vec::new(),
                 result: None,
                 stale: Vec::new(),
+                owe: None,
                 landed: None,
                 shown: None,
                 recorded: false,
@@ -419,6 +426,8 @@ impl OutboxState {
                 .collect(),
             CommitKind::Rollback if operation.restore_element.is_some() => operation.restore_element.iter().map(|(table, key)| StoreOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() }).chain([StoreOp::RemoveIntent { op_id }]).collect(),
             CommitKind::Rollback => (!operation.answer_rows_dropped).then_some(StoreOp::RollBack { op_id }).into_iter().chain([StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }])
+                .chain(Self::rejection_debt(operation).map(|(model, id, relation)| StoreOp::OweReread { model, id, relation }))
+                .chain((operation.stage == Stage::RollingBack(Why::Rejected) && !operation.stale.is_empty()).then(|| StoreOp::StaleFamilies { families: operation.stale.clone() }))
                 .chain(((operation.pending_owned || operation.pair_in_flight) && operation.stage == Stage::RollingBack(Why::Discarded)).then_some(StoreOp::ReleasePendingOwner { request_id: operation.request_id }))
                 .collect(),
             CommitKind::ErrorMark => vec![StoreOp::MarkError { op_id, error: Some(operation.error.clone().unwrap_or_else(|| "refused".into())) }, StoreOp::RemoveAnswer { request_id: operation.request_id }],
@@ -927,6 +936,9 @@ impl OutboxState {
                     if let Some(operation) = self.ops.get_mut(&op_id) { operation.reject_error = Some(detail); }
                     self.transport_failed(now, op_id, temporary, None, fx);
                 }
+            }
+            OutboxInput::RefusalDebt { op_id, stale, owe } => {
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.stale = stale; operation.owe = owe; }
             }
             OutboxInput::Retry { model, row_id, action: None, reply } => self.select_row((model, row_id), SelectKind::Retry, reply, fx),
             OutboxInput::Retry { model, row_id, action, reply } => self.retry(&model, &row_id, action.as_deref(), reply, fx),

@@ -179,6 +179,7 @@ Every queued change keeps what it replaced: the old field values, or the destroy
 - Destroying a row with a temporary id whose `create` has not started removes the `create` and every change queued on it without any network call. If the `create` is already in flight, the destroy waits for the answer and is then sent with the real id.
 - When the server deletes a row (an event or a list refresh), the changes still queued on it are closed without being sent and without a rollback, because a rollback would bring the deleted row back.
 - A destroyed row keeps its file bytes until the server confirms the destroy. A refusal brings back the row, the files and the list positions.
+- After a permanent server refusal and its rollback, the scopes of the operation's `refetch` reload, and the row that received the change is read again by the `node` scope of its model. A model without a `node` scope has no row read. A network failure and `Unauthorized` read nothing again.
 
 ## Failures
 

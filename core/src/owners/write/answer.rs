@@ -32,11 +32,16 @@ pub enum Decoded {
     Land { rows: Vec<(String, Vec<RowValue>)>, swaps: Vec<(String, String)>, stale: Vec<(String, String)>, result: Option<String>, missing: Vec<String> },
     /// The server accepted the mutation, the rows of its answer do not decode: Outbox lands the answer without rows.
     Unreadable { stale: Vec<(String, String)> },
-    /// The server refused or the answer cannot be read. A temporary refusal is sent again.
-    Refused { temporary: bool, detail: String },
+    /// The server refused or the answer cannot be read. A temporary refusal is sent again. `stale` and `owe` (a GraphQL refusal only): the refetch scopes of the action and the `node` scope of its model, owed a reread when the refusal rolls the change back (M87).
+    Refused { temporary: bool, detail: String, stale: Vec<(String, String)>, owe: Option<String> },
 }
 
-fn refused(detail: impl Into<String>) -> Decoded { Decoded::Refused { temporary: false, detail: super::failure::of_graphql(detail.into(), None) } }
+/// The (model, scope) pairs an action refetches.
+fn refetch_pairs(owner: &str, declared: &crate::schema::ActionDeclaration) -> Vec<(String, String)> {
+    declared.refetch.iter().map(|name| name.split_once('.').map_or_else(|| (owner.to_string(), name.clone()), |(model, relation)| (model.to_string(), relation.to_string()))).collect()
+}
+
+fn refused(detail: impl Into<String>) -> Decoded { Decoded::Refused { temporary: false, detail: super::failure::of_graphql(detail.into(), None), stale: Vec::new(), owe: None } }
 
 /// `root_of` gives the root field of a registered mutation.
 pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: &DecodeJob) -> Decoded {
@@ -45,7 +50,7 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
     if let Some(body) = parsed.as_ref().filter(|body| body.get("error").is_some()) {
         if let Some(refusal) = crate::transport::refusal(body) {
             let code = match refusal { crate::transport::Refusal::Session(code) => code.name().to_string(), crate::transport::Refusal::Graphql(code) => code };
-            return Decoded::Refused { temporary, detail: super::failure::of_graphql(code, None) };
+            return Decoded::Refused { temporary, detail: super::failure::of_graphql(code, None), stale: Vec::new(), owe: None };
         }
     }
     let Ok(answer) = serde_json::from_str::<crate::transport::Response>(&job.body) else { return refused("the answer is not a GraphQL response") };
@@ -55,12 +60,16 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
     }
     if !answer.errors.is_empty() {
         let messages: Vec<&str> = answer.errors.iter().map(|error| error.message.as_str()).collect();
-        return Decoded::Refused { temporary, detail: super::failure::of_graphql(messages.join("; "), answer.extensions()) };
+        let detail = super::failure::of_graphql(messages.join("; "), answer.extensions());
+        if answer.errors.iter().any(|error| error.code() == Some("UNAUTHENTICATED")) { return Decoded::Refused { temporary, detail, stale: Vec::new(), owe: None }; }
+        let spec = db.spec(&job.model).ok();
+        let stale = spec.iter().flat_map(|spec| spec.actions.iter().find(|declared| declared.name == job.action)).flat_map(|declared| refetch_pairs(&job.model, declared)).collect();
+        return Decoded::Refused { temporary, detail, stale, owe: spec.and_then(|spec| spec.node_scope().map(|relation| relation.name.clone())) };
     }
     let data = answer.data.unwrap_or(Value::Null);
     let Ok(spec) = db.spec(&job.model) else { return refused(format!("unknown model {}", job.model)) };
     let declared = spec.actions.iter().find(|declared| declared.name == job.action);
-    let stale: Vec<(String, String)> = declared.iter().flat_map(|declared| &declared.refetch).map(|name| name.split_once('.').map_or_else(|| (job.model.clone(), name.clone()), |(model, relation)| (model.to_string(), relation.to_string()))).collect();
+    let stale: Vec<(String, String)> = declared.iter().flat_map(|declared| refetch_pairs(&job.model, declared)).collect();
     let unreadable = || {
         let mut families = stale.clone();
         for model in std::iter::once(&job.model).chain(declared.iter().flat_map(|declared| declared.lands.iter().map(|landing| &landing.model))) {

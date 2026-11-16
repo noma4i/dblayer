@@ -576,6 +576,5 @@ pub(crate) fn node_read(spec: &crate::schema::ModelSpec) -> Option<&crate::schem
 }
 
 fn node_relation(spec: &crate::schema::ModelSpec) -> Option<String> {
-    if spec.is_local() { return None; }
-    node_read(spec).map(|relation| relation.name.clone())
+    spec.node_scope().map(|relation| relation.name.clone())
 }

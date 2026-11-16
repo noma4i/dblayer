@@ -162,7 +162,7 @@ impl Life {
 
     /// The answer of a standalone operation that refetches these (model, relation) windows landed.
     pub fn refetch(&self, families: Vec<(String, String)>) {
-        if !self.shut.load(Ordering::SeqCst) { self.wiring.mark_stale(families, None); }
+        if !self.shut.load(Ordering::SeqCst) { self.wiring.mark_stale(families, Vec::new(), None); }
     }
 
     /// The declarations of a registration reach every receiver in one step; `Windows` starts the preload last.

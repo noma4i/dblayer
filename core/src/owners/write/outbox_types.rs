@@ -235,6 +235,8 @@ pub enum OutboxInput {
     Answered { req_id: RequestId, outcome: crate::owners::session::AuthorOutcome },
     /// The answer could not be landed: `detail` is the text the row and the outcome show.
     Refused { op_id: OpId, temporary: bool, detail: String },
+    /// What the server refusal owes a reread when it rolls the change back; it comes before its `Refused`.
+    RefusalDebt { op_id: OpId, stale: Vec<(String, String)>, owe: Option<String> },
     Dropped { op_id: OpId },
     /// The task that reads the outcome of `reply` from the Store panicked.
     OutcomeReadFailed { reply: ReplyId },
@@ -305,7 +307,7 @@ pub enum OutboxEffect {
     /// The receipt of an operation that left the memory: the record of the Store answers.
     ReadOutcome { reply: ReplyId, op_id: OpId, cycle_id: u64 },
     /// The windows of these (model, relation) pairs are stale in memory: the answer of an action that refetches them landed.
-    Stale { families: Vec<(String, String)>, revision: i64 },
+    Stale { families: Vec<(String, String)>, rows: Vec<(String, String, String)>, revision: i64 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -372,6 +374,8 @@ pub struct QueuedOperation {
     pub result: Option<String>,
     /// The (model, relation) pairs the action refetches: their windows turn stale when the answer lands.
     pub stale: Vec<(String, String)>,
+    /// The `node` scope of the model: the receiver row owes a reread by it after a refusal rolled the change back.
+    pub owe: Option<String>,
     /// The root row of the answer that landed (the real id of a `create`, the row an action returned).
     pub landed: Option<String>,
     /// The row the landing batch shows: the value of the confirmed outcome, fixed by that batch.

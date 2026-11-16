@@ -15,7 +15,7 @@ pub enum OutboxSignal {
     RestoreClassified(Epoch),
 }
 
-pub type MarkStale = Arc<dyn Fn(Vec<(String, String)>, i64) + Send + Sync>;
+pub type MarkStale = Arc<dyn Fn(Vec<(String, String)>, Vec<(String, String, String)>, i64) + Send + Sync>;
 /// Reads the record of a receipt outside the actor and settles the reply with the answer of the owner (`owner`, `id`, `cycle_id`, `reply`). The task holds the last argument, the watch of its effect, to its end.
 pub type ReadOutcome = Arc<dyn Fn(crate::owners::store::OutcomeOwner, u64, u64, ReplyId, Box<dyn Send>) + Send + Sync>;
 pub type DecodeAnswer = Arc<dyn Fn(&DecodeJob) -> Decoded + Send + Sync>;
@@ -46,8 +46,8 @@ impl EffectRunner<Outbox> for OutboxExecutor {
                 Some(read) => read(crate::owners::store::OutcomeOwner::Operation, op_id, cycle_id, reply, Box::new(back.watch(super::outbox_types::OUTCOME_READ_TASK | reply))),
                 None => (self.settle)(reply, OutboxAnswer::Err(super::outbox::Fault::NotFound)),
             },
-            OutboxEffect::Stale { families, revision } => {
-                if let Some(stale) = &self.stale { stale(families, revision); }
+            OutboxEffect::Stale { families, rows, revision } => {
+                if let Some(stale) = &self.stale { stale(families, rows, revision); }
             }
             OutboxEffect::Decode(job) => {
                 let Some((handle, decode)) = self.decode.clone() else {
@@ -61,7 +61,10 @@ impl EffectRunner<Outbox> for OutboxExecutor {
                         Decoded::MissingDestroy { stale } => OutboxInput::MissingDestroy { op_id: job.op_id, stale },
                         Decoded::Land { rows, swaps, stale, result, missing } => OutboxInput::Response { op_id: job.op_id, rows, swaps, stale, result, missing, errors: None },
                         Decoded::Unreadable { stale } => OutboxInput::Unreadable { op_id: job.op_id, stale },
-                        Decoded::Refused { temporary, detail } => OutboxInput::Refused { op_id: job.op_id, temporary, detail },
+                        Decoded::Refused { temporary, detail, stale, owe } => {
+                            if owe.is_some() || !stale.is_empty() { back.reply(stamp, OutboxInput::RefusalDebt { op_id: job.op_id, stale, owe }); }
+                            OutboxInput::Refused { op_id: job.op_id, temporary, detail }
+                        }
                     };
                     back.reply(stamp, input);
                 }));
