@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 6.43.0 - 2026-11-16
 
 ### Added
 
@@ -18,6 +18,7 @@
 
 - Discard a failed batch member after its batch confirmed without a row for it.
 - Generate the answer type of a query whose root is an interface field selected by `... on T`.
+- Resolve a temporary row id in uploads after a restart.
 
 ### Removed
 
