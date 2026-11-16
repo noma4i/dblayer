@@ -220,7 +220,7 @@ fn out_ephemeral_reset_by_position_batch() {
     twin.post(OutboxInput::ArmReset { reset: reset.clone() });
     twin.post(OutboxInput::ResetField { reset });
     assert_eq!(twin.stores.len(), 1);
-    assert!(twin.store_ops.contains(&StoreOp::ResetEphemeral { model: "Moment".into(), row_id: "w".into(), field: "typing".into(), position: 42 }), "{:?}", twin.store_ops);
+    assert_eq!(twin.batch_ops(), vec![StoreOp::ResetEphemeral { model: "Moment".into(), row_id: "w".into(), field: "typing".into(), position: 42 }]);
 }
 
 #[test]
@@ -229,5 +229,5 @@ fn out_ephemeral_expire_batch() {
     twin.post(OutboxInput::ArmExpiry { model: "Moment".into(), row: "w".into(), revision: 42, deadline: 100 });
     twin.post(OutboxInput::ExpireRow { model: "Moment".into(), row: "w".into(), revision: 42 });
     assert_eq!(twin.stores.len(), 1);
-    assert!(twin.store_ops.contains(&StoreOp::ExpireRow { model: "Moment".into(), row_id: "w".into(), write_revision: 42 }), "{:?}", twin.store_ops);
+    assert_eq!(twin.batch_ops(), vec![StoreOp::ExpireRow { model: "Moment".into(), row_id: "w".into(), write_revision: 42 }]);
 }

@@ -45,7 +45,7 @@ fn out_marking_retry_committed_queued() {
     twin.post(OutboxInput::Online(Online(false)));
     let effects = twin.committed(id);
     assert_eq!((sends(&effects), answers(&effects, RETRY_REPLY).len()), (0, 1));
-    assert!(twin.store_ops.contains(&StoreOp::Requeue { op_id: id }), "{:?}", twin.store_ops);
+    assert_eq!(twin.batch_ops(), vec![StoreOp::Requeue { op_id: id }]);
 }
 
 #[test]

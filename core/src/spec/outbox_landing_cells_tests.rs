@@ -60,8 +60,7 @@ fn out_sending_destroy_not_found_batch() {
     let Decoded::MissingDestroy { stale } = decode_answer(&db, &|_| None, &job) else { panic!("NOT_FOUND destroy must land") };
     twin.post(OutboxInput::MissingDestroy { op_id: id, stale });
     assert_eq!(twin.stores.len(), 1);
-    assert!(twin.store_ops.contains(&StoreOp::RemoveServerRows { model: "Moment".into(), ids: vec!["r".into()] }), "{:?}", twin.store_ops);
-    assert!(twin.store_ops.contains(&StoreOp::RemoveIntent { op_id: id }) && twin.store_ops.contains(&StoreOp::RemoveAnswer { request_id }), "{:?}", twin.store_ops);
+    assert_eq!(twin.batch_ops(), vec![StoreOp::RemoveServerRows { model: "Moment".into(), ids: vec!["r".into()] }, StoreOp::RemoveIntent { op_id: id }, StoreOp::RemoveAnswer { request_id }]);
 }
 
 #[test]

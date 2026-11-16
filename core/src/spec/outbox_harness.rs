@@ -397,6 +397,9 @@ impl Twin {
         (effects, sends)
     }
 
+    /// The ops the last post sent to Store, without the records of outcomes (each outcome has its own cell).
+    pub(super) fn batch_ops(&self) -> Vec<StoreOp> { self.store_ops.iter().filter(|op| !matches!(op, StoreOp::Outcome { .. })).cloned().collect() }
+
     fn post_input(&mut self, input: OutboxInput) -> Vec<OutboxEffect> {
         take_fx(&self.log, None);
         self.det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), input);

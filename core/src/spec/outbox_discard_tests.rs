@@ -23,8 +23,7 @@ fn out_discard_restore_failed_committed() {
     let discarded = twin.post(discard(None, DISCARD));
     assert_eq!(twin.stage(7), Some(St::RollingBack(super::outbox_harness::RWhy::Discarded)));
     assert!(answers(&discarded, DISCARD).is_empty(), "nothing is answered before the commit");
-    assert!(twin.store_ops.contains(&StoreOp::DiscardRestoreFailed { table: "op".into(), key: "k1".into() }) && has_op!(twin, StoreOp::RemoveIntent { .. }), "{:?}", twin.store_ops);
-    assert!(!has_op!(twin, StoreOp::RollBack { .. }), "the dropped intent has no optimistic effects to take back: {:?}", twin.store_ops);
+    assert_eq!(twin.batch_ops(), vec![StoreOp::DiscardRestoreFailed { table: "op".into(), key: "k1".into() }, StoreOp::RemoveIntent { op_id: 7 }], "the dropped intent has no optimistic effects to take back");
     let effects = twin.committed(7);
     assert_eq!(twin.stage(7), Some(St::Done));
     assert_eq!(answers(&effects, DISCARD), vec![OutboxAnswer::Ok]);
@@ -38,7 +37,7 @@ fn out_discard_restore_failed_committed() {
 fn out_open_orphan_answer() {
     let mut twin = Twin::new();
     twin.post(OutboxInput::OrphanAnswers { request_ids: vec![41, 42] });
-    assert!(twin.store_ops.contains(&StoreOp::RemoveAnswer { request_id: 41 }) && twin.store_ops.contains(&StoreOp::RemoveAnswer { request_id: 42 }), "{:?}", twin.store_ops);
+    assert_eq!(twin.batch_ops(), vec![StoreOp::RemoveAnswer { request_id: 41 }, StoreOp::RemoveAnswer { request_id: 42 }]);
     assert!(twin.state().ops.is_empty(), "the owner holds no operation for them");
     twin.post(OutboxInput::OrphanAnswers { request_ids: Vec::new() });
     assert!(twin.store_batches.is_empty(), "no answers, no batch");
