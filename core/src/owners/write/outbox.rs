@@ -90,7 +90,7 @@ pub struct OutboxState {
     pub(super) removed: BTreeSet<OpId>,
     pub(super) orphan_transfers: BTreeSet<OpId>,
     pub(super) removing: BTreeSet<OpId>,
-    pub(super) aliases: BTreeMap<(String, String), String>,
+    pub(super) aliases: AliasMap,
     pub(super) ended_creates: std::collections::BTreeSet<String>,
 }
 
@@ -184,15 +184,23 @@ impl OutboxState {
         self.ops.values().any(|other| other.sequence < operation.sequence && other.stage != Stage::Done && Self::shares_row(other, operation) && !Self::awaits_row_of(other, operation)) || self.temp_dependency(operation) != TempDependency::Clear || self.awaits_ended_create(operation)
     }
 
+    fn creates_own_row(operation: &QueuedOperation) -> bool { operation.op.action == "create" || matches!(operation.op.origin, OpSource::TransferGroup { .. }) }
+
+    /// The temp ids of the body of the operation except the row it creates, or the reason the body is no JSON.
+    pub(super) fn body_temps(operation: &QueuedOperation) -> Result<Vec<String>, String> {
+        if !operation.op.body.contains(crate::identity::TEMP_ID_PREFIX) { return Ok(Vec::new()); }
+        let creates_own = Self::creates_own_row(operation);
+        let mut body = serde_json::from_str::<serde_json::Value>(&operation.op.body).map_err(|error| format!("the body of {}.{} is not JSON: {error}", operation.op.model, operation.op.action))?;
+        let mut temps = Vec::new();
+        crate::identity::walk_temp_ids(&mut body, &mut |temp| if !(creates_own && Self::addresses_row(operation, &operation.op.model, temp)) { temps.push(temp.clone()); });
+        Ok(temps)
+    }
+
     /// The temp ids the operation waits for: its own row when it acts on one, every temp id of the body except the row it creates.
     fn awaited_temps(operation: &QueuedOperation) -> Result<Vec<String>, String> {
-        let creates_own = operation.op.action == "create" || matches!(operation.op.origin, OpSource::TransferGroup { .. });
         let mut temps = Vec::new();
-        if !creates_own && operation.cancels.is_none() && crate::identity::is_temp_id(&operation.op.row_id) { temps.push(operation.op.row_id.clone()); }
-        if operation.op.body.contains(crate::identity::TEMP_ID_PREFIX) {
-            let mut body = serde_json::from_str::<serde_json::Value>(&operation.op.body).map_err(|error| format!("the body of {}.{} is not JSON: {error}", operation.op.model, operation.op.action))?;
-            crate::identity::walk_temp_ids(&mut body, &mut |temp| if !(creates_own && Self::addresses_row(operation, &operation.op.model, temp)) { temps.push(temp.clone()); });
-        }
+        if !Self::creates_own_row(operation) && operation.cancels.is_none() && crate::identity::is_temp_id(&operation.op.row_id) { temps.push(operation.op.row_id.clone()); }
+        temps.extend(operation.body_temps.clone()?);
         Ok(temps)
     }
 
@@ -200,7 +208,7 @@ impl OutboxState {
     fn temp_dependency(&self, operation: &QueuedOperation) -> TempDependency {
         let holds = |temp: &String| matches!(operation.op.origin, OpSource::Transfer { .. }) && &operation.op.row_id == temp;
         let Ok(awaited) = Self::awaited_temps(operation) else { return TempDependency::Open };
-        let unknown = awaited.iter().any(|temp| !holds(temp) && !self.ended_creates.contains(temp) && !self.aliases.keys().any(|(_, aliased)| aliased == temp));
+        let unknown = awaited.iter().any(|temp| !holds(temp) && !self.ended_creates.contains(temp) && !self.aliases.contains_key(temp));
         if unknown { TempDependency::Open } else { TempDependency::Clear }
     }
 
@@ -348,14 +356,23 @@ impl OutboxState {
                 before_cancel: None,
                 restore_element: None,
                 rows_pending: false,
+                body_temps: Ok(Vec::new()),
             },
         );
+        if let Some(operation) = self.ops.get_mut(&op_id) {
+            let temps = Self::body_temps(operation);
+            operation.body_temps = temps;
+        }
         self.next_op = self.next_op.max(op_id + 1);
     }
 
     pub(super) fn emit_send(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get_mut(&op_id) else { return };
         Self::resolve_operation(&self.aliases, &mut operation.op);
+        if operation.body_temps.as_ref().is_ok_and(|temps| !temps.is_empty()) {
+            let temps = Self::body_temps(operation);
+            operation.body_temps = temps;
+        }
         operation.sends += 1;
         operation.sent = true;
         operation.attempt_unsent = false;
@@ -741,13 +758,13 @@ impl OutboxState {
     }
 
     pub(super) fn open_on_row(&self, model: &str, row: &str, action: Option<&str>) -> Option<OpId> {
-        let row = self.aliases.get(&(model.to_string(), row.to_string())).map_or(row, String::as_str);
+        let row = alias_in(&self.aliases, model, row).map_or(row, String::as_str);
         self.ops.values().filter(|operation| Self::addresses_row(operation, model, row) && action.is_none_or(|action| operation.op.action == action) && operation.stage != Stage::Done).min_by_key(|operation| operation.sequence).map(|operation| operation.op_id)
     }
 
     /// A call without an action asks Transfer, which holds the transfers that have no operation yet: the smallest open operation of the row here is the bound.
     fn select_row(&mut self, (model, row_id): (String, String), kind: SelectKind, reply: ReplyId, fx: &mut Effects<Outbox>) {
-        let resolved = self.aliases.get(&(model.clone(), row_id.clone())).cloned();
+        let resolved = alias_in(&self.aliases, &model, &row_id).cloned();
         let outbox_min = self.open_on_row(&model, &row_id, None).map(|op_id| (op_id, self.ops[&op_id].op.action.clone()));
         let Some(transfer) = self.peers.transfer else {
             return match outbox_min {
@@ -778,7 +795,7 @@ impl OutboxState {
     }
 
     fn selection_key(&self, model: &str, row: &str) -> (String, String) {
-        (model.to_string(), self.aliases.get(&(model.to_string(), row.to_string())).cloned().unwrap_or_else(|| row.to_string()))
+        (model.to_string(), alias_in(&self.aliases, model, row).cloned().unwrap_or_else(|| row.to_string()))
     }
 
     fn selection_version(&self, model: &str, row: &str) -> u64 { self.selection_versions.get(&self.selection_key(model, row)).copied().unwrap_or(0) }
@@ -997,7 +1014,7 @@ impl StateOwner for Outbox {
             return fx;
         }
         if let OutboxInput::Resolve { model, row, reply } = input {
-            let resolved = state.aliases.get(&(model, row.clone())).cloned().unwrap_or(row);
+            let resolved = alias_in(&state.aliases, &model, &row).cloned().unwrap_or(row);
             OutboxState::reply(&mut fx, reply, OutboxAnswer::Resolved(resolved));
             return fx;
         }

@@ -203,25 +203,27 @@ impl OutboxState {
 
     /// The row `temp` became `real`: the open operations of the row address `real`.
     pub(super) fn swap_row(&mut self, model: &str, temp: &str, real: &str) {
-        if self.aliases.get(&(model.to_string(), temp.to_string())).is_some_and(|known| known == real) { return; }
+        if alias_in(&self.aliases, model, temp).is_some_and(|known| known == real) { return; }
         self.bump_selection_row(model, temp);
         self.bump_selection_row(model, real);
-        self.aliases.insert((model.to_string(), temp.to_string()), real.to_string());
+        self.aliases.insert(temp.to_string(), (model.to_string(), real.to_string()));
         for operation in self.ops.values_mut().filter(|operation| operation.stage != Stage::Done && Self::addresses_row(operation, model, temp)) {
             Self::resolve_operation(&self.aliases, &mut operation.op);
+            let temps = Self::body_temps(operation);
+            operation.body_temps = temps;
         }
     }
 
-    pub(super) fn resolve_operation(aliases: &std::collections::BTreeMap<(String, String), String>, op: &mut NewOp) {
+    pub(super) fn resolve_operation(aliases: &AliasMap, op: &mut NewOp) {
         let resolve = |model: &str, row: &mut String| {
-            if let Some(real) = aliases.get(&(model.to_string(), row.clone())) { *row = real.clone(); }
+            if let Some(real) = alias_in(aliases, model, row) { *row = real.clone(); }
         };
         resolve(&op.model, &mut op.row_id);
         if !aliases.is_empty() && op.body.contains(crate::identity::TEMP_ID_PREFIX) {
             if let Ok(mut body) = serde_json::from_str::<serde_json::Value>(&op.body) {
                 let mut changed = false;
                 crate::identity::walk_temp_ids(&mut body, &mut |text| {
-                    if let Some((_, real)) = aliases.iter().find(|((_, temp), _)| temp == text) { text.clone_from(real); changed = true; }
+                    if let Some((_, real)) = aliases.get(text.as_str()) { text.clone_from(real); changed = true; }
                 });
                 if changed { op.body = body.to_string(); }
             }

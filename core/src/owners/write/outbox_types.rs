@@ -336,6 +336,14 @@ pub enum Phase {
     Ready,
 }
 
+/// The swaps the Store committed, by temp id (a temp id names one row): the model and the real id.
+pub(super) type AliasMap = BTreeMap<String, (String, String)>;
+
+/// The real id of `row` in `model` when its `create` landed.
+pub(super) fn alias_in<'a>(aliases: &'a AliasMap, model: &str, row: &str) -> Option<&'a String> {
+    aliases.get(row).filter(|(swapped, _)| swapped == model).map(|(_, real)| real)
+}
+
 #[derive(Clone, Debug)]
 pub struct QueuedOperation {
     pub op_id: OpId,
@@ -398,4 +406,6 @@ pub struct QueuedOperation {
     pub restore_element: Option<(String, String)>,
     /// A saved answer was restored: the operation is `Landing` and waits for the rows the codec reads from the saved body.
     pub rows_pending: bool,
+    /// The temp ids of the body the operation waits for, read when it is queued and when a swap or the send rewrites the body.
+    pub body_temps: Result<Vec<String>, String>,
 }

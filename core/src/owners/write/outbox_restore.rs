@@ -198,7 +198,7 @@ impl OutboxState {
                 fx.push(Effect::Run(OutboxEffect::SnapshotRequest { epoch: started.epoch }));
             }
             OutboxInput::RegisterOperations { declarations, complete } => { self.declarations.extend(declarations); self.complete = complete; }
-            OutboxInput::AliasesRestored { aliases, ended } => { self.aliases = aliases; self.ended_creates = ended; }
+            OutboxInput::AliasesRestored { aliases, ended } => { self.aliases = aliases.into_iter().map(|((model, temp), real)| (temp, (model, real))).collect(); self.ended_creates = ended; }
             OutboxInput::OrphanTransfers { op_ids } => self.orphan_transfers.extend(op_ids),
             OutboxInput::EpochEnded(ended) => {
                 self.ended = true;
