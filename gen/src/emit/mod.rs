@@ -392,9 +392,24 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             let params = swift_scope(&params, &scope);
             writeln!(out, "    nonisolated(nonsending) public {} {}({params}) async throws -> {returns} {{", if on_type { "static func" } else { "func" }, identifier(&name(&action.name), true)).unwrap();
             writeln!(out, "        {} {values} = try JSONValue.readObject(#\"{}\"#)", if action.optimistic.values().any(|value| value.get("$arg").is_some()) { "var" } else { "let" }, serde_json::to_string(&literals).unwrap()).unwrap();
-            for (field, value) in &action.optimistic { if let Some(arg) = value.get("$arg").and_then(|arg| arg.as_str()) { writeln!(out, "        {values}[\"{field}\"] = try JSONValue.encode({printed})", printed = identifier(arg, true)).unwrap(); } }
-            let args = action.args.keys().map(|arg| format!("\"{arg}\": try JSONValue.encode({printed})", printed = identifier(arg, true))).collect::<Vec<_>>().join(", ");
-            writeln!(out, "        return try await {}(\"{}\", values: {values}, args: [{}], in: {scope})\n    }}", if on_type { "Self.actOnSingleton" } else { "self.act" }, action.name, if args.is_empty() { ":" } else { &args }).unwrap();
+            for (field, value) in &action.optimistic {
+                let Some(arg) = value.get("$arg").and_then(|arg| arg.as_str()) else { continue };
+                let printed = identifier(arg, true);
+                if action.args.get(arg).is_some_and(|kind| kind.ends_with('?')) { writeln!(out, "        if let value = {printed} {{ {values}[\"{field}\"] = try JSONValue.encode(value) }}").unwrap(); }
+                else { writeln!(out, "        {values}[\"{field}\"] = try JSONValue.encode({printed})").unwrap(); }
+            }
+            let args = if action.args.values().any(|kind| kind.ends_with('?')) {
+                writeln!(out, "        var args_: [String: JSONValue] = [:]").unwrap();
+                for (arg, kind) in &action.args {
+                    if kind.ends_with('?') { writeln!(out, "        if let value = {printed} {{ args_[\"{arg}\"] = try JSONValue.encode(value) }}", printed = identifier(arg, true)).unwrap(); }
+                    else { writeln!(out, "        args_[\"{arg}\"] = try JSONValue.encode({printed})", printed = identifier(arg, true)).unwrap(); }
+                }
+                "args_".to_string()
+            } else {
+                let listed = action.args.keys().map(|arg| format!("\"{arg}\": try JSONValue.encode({printed})", printed = identifier(arg, true))).collect::<Vec<_>>().join(", ");
+                format!("[{}]", if listed.is_empty() { ":" } else { &listed })
+            };
+            writeln!(out, "        return try await {}(\"{}\", values: {values}, args: {args}, in: {scope})\n    }}", if on_type { "Self.actOnSingleton" } else { "self.act" }, action.name).unwrap();
         }
         for action in model.actions.iter().filter(|action| action.upload && action.batch.is_none()) {
             let method = identifier(&name(&action.name), true);
@@ -439,9 +454,28 @@ fn swift_scope(params: &str, scope: &str) -> String {
 fn kotlin_action_call(action: &dblayer::schema::ActionDeclaration, account: &str) -> (String, String) {
     let params = action.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
     let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
-    let from_args = action.optimistic.iter().flat_map(|(field, value)| value.get("$arg").and_then(|arg| arg.as_str()).map(|arg| format!("\"{field}\" to jsonValue({printed})", printed = identifier(arg, false)))).collect::<Vec<_>>().join(", ");
-    let args = action.args.keys().map(|arg| format!("\"{arg}\" to jsonValue({printed})", printed = identifier(arg, false))).collect::<Vec<_>>().join(", ");
-    let call = format!("\"{}\", JsonObject(parseJsonObject(\"\"\"{}\"\"\") + mapOf({from_args})), JsonObject(mapOf({args}))", action.name, serde_json::to_string(&literals).unwrap().replace('$', "${'$'}"));
+    let from_args = {
+        let named: Vec<(&String, &str)> = action.optimistic.iter().flat_map(|(field, value)| value.get("$arg").and_then(|arg| arg.as_str()).map(|arg| (field, arg))).collect();
+        if named.iter().any(|(_, arg)| action.args.get(*arg).is_some_and(|kind| kind.ends_with('?'))) {
+            let puts = named.iter().map(|(field, arg)| {
+                let printed = identifier(arg, false);
+                if action.args.get(*arg).is_some_and(|kind| kind.ends_with('?')) { format!("if ({printed} != null) put(\"{field}\", jsonValue({printed}))") } else { format!("put(\"{field}\", jsonValue({printed}))") }
+            }).collect::<Vec<_>>().join("; ");
+            format!("buildMap {{ {puts} }}")
+        } else {
+            format!("mapOf({})", named.iter().map(|(field, arg)| format!("\"{field}\" to jsonValue({printed})", printed = identifier(arg, false))).collect::<Vec<_>>().join(", "))
+        }
+    };
+    let args = if action.args.values().any(|kind| kind.ends_with('?')) {
+        let puts = action.args.iter().map(|(arg, kind)| {
+            let printed = identifier(arg, false);
+            if kind.ends_with('?') { format!("if ({printed} != null) put(\"{arg}\", jsonValue({printed}))") } else { format!("put(\"{arg}\", jsonValue({printed}))") }
+        }).collect::<Vec<_>>().join("; ");
+        format!("buildMap {{ {puts} }}")
+    } else {
+        format!("mapOf({})", action.args.keys().map(|arg| format!("\"{arg}\" to jsonValue({printed})", printed = identifier(arg, false))).collect::<Vec<_>>().join(", "))
+    };
+    let call = format!("\"{}\", JsonObject(parseJsonObject(\"\"\"{}\"\"\") + {from_args}), JsonObject({args})", action.name, serde_json::to_string(&literals).unwrap().replace('$', "${'$'}"));
     (kotlin_scope(&params, account), call)
 }
 

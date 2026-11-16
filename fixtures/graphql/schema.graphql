@@ -45,7 +45,7 @@ type Mutation {
   updateMoment(momentId: ID!, text: String, media: JSON): Moment
   deleteMoment(momentId: ID!): Boolean
   likeMoment(momentId: ID!): Moment
-  shareMoment(momentId: ID!): ShareMomentPayload
+  shareMoment(momentId: ID!, note: String): ShareMomentPayload
   createContainer(title: String!, shareUrl: String, isPublic: Boolean, shelves: [ContainerShelf!]): Container
   ledgerCreate: Ledger
   ledgerUpdate(ledgerId: ID!): Ledger

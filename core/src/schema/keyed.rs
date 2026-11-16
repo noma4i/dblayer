@@ -81,10 +81,10 @@ pub fn resolve_maps(patch: &mut Map<String, Value>, args: &Map<String, Value>) {
 
 fn stored_at<'a>(object: &'a Map<String, Value>, path: &str) -> Option<&'a Value> { object.get(path).or_else(|| super::read_path(object, path)) }
 
-fn resolved(value: &Value, args: &Map<String, Value>) -> Value {
+fn resolved(value: &Value, args: &Map<String, Value>) -> Option<Value> {
     match value.get("$arg").and_then(Value::as_str) {
-        Some(name) => args.get(name).cloned().unwrap_or(Value::Null),
-        None => value.clone(),
+        Some(name) => args.get(name).cloned(),
+        None => Some(value.clone()),
     }
 }
 
@@ -99,7 +99,7 @@ pub fn apply<E>(
     let stored_name = |name: &str| declared().find(|field| field.name == name).and_then(|field| field.from.clone()).unwrap_or_else(|| name.to_string());
     let Some(by) = op.get("by").and_then(Value::as_str).map(stored_name) else { return Ok(None) };
     let Some(spec) = op.get("element").and_then(Value::as_object) else { return Ok(None) };
-    let mut element: Map<String, Value> = spec.iter().map(|(name, value)| (stored_name(name), resolved(value, args))).collect();
+    let Some(mut element) = spec.iter().map(|(name, value)| Some((stored_name(name), resolved(value, args)?))).collect::<Option<Map<String, Value>>>() else { return Ok(None) };
     let Some(key) = stored_at(&element, &by).cloned() else { return Ok(None) };
     let key_field = if element.contains_key(&by) { by.as_str() } else { by.split('.').next().unwrap_or(&by) };
     let mut items: Vec<Value> = current.and_then(Value::as_array).cloned().unwrap_or_default();

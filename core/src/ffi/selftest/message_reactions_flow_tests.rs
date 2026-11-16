@@ -80,3 +80,25 @@ async fn dlv_prop_nested_ref_follows_row() {
     settled(&rig, "without the row of the user the nested value is as written", || has(&rig, &thread, &["Kept"]) && has(&rig, &entity, &["Kept"])).await;
     rig.database.close_now();
 }
+
+/// D-485 M81: an optional parameter without a value in the call leaves the field of the row as it is before the answer: the keyed reaction of the user stays, it is not removed.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unset_optional_parameter_leaves_the_reaction_of_the_row() {
+    let rig = Rig::signed_as(World::new("server", "A", true), false, events(|models| { add_chat(models); add_reactions(models); add_reactor_user(models); })).await;
+    rig.land("Chat", chat_row("c1", 0)).await;
+    rig.land("User", json!({"id": "u1", "name": "Ann"})).await;
+    rig.land("Message", json!({"id": "m1", "chatId": "c1", "text": "hello", "at": 1, "reactions": [{"body": "A", "userId": "u1", "user": {"name": "Ann"}}]})).await;
+    let entity = Arc::new(Rows::default());
+    drop(rig.database.watch(ReadRequest::Entity { model: "Message".into(), id: "m1".into(), fetch: ReadFetch::Never }, entity.clone()));
+    settled(&rig, "the entity shows the reaction", || has(&rig, &entity, &["A", "Ann"])).await;
+    let epoch = rig.database.session_epoch();
+    let patch = json!({"reactions":{"$keyed":{"by":"userId","element":{"body":{"$arg":"body"},"userId":{"$arg":"userId"}}}}}).to_string();
+    let hold = rig.world.hold_then("MessageReact", answer(json!([{"body":"A","userId":"u1"}])));
+    let receipt = bound(rig.database.act(epoch, "Message".into(), "m1".into(), "react".into(), patch, json!({"userId":"u1"}).to_string())).await.unwrap();
+    hold.entered().await;
+    settled(&rig, "the entity reached the revision of the receipt", || entity.1.lock().unwrap().iter().any(|seen| seen.revision >= receipt.revision)).await;
+    assert!(has(&rig, &entity, &["A", "Ann"]), "the reaction stays while the answer is out: {:?}", reactions(&rig, &entity));
+    hold.release();
+    bound(rig.database.confirmed(receipt, false)).await.unwrap();
+    rig.database.close_now();
+}

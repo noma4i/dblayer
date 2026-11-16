@@ -178,6 +178,8 @@ struct BridgeProbeTests {
     #expect(answer.successMessage == "Shared")
     #expect(answer.copies == 3)
     #expect(try await shared.answer(as: MomentShareResult.self).copies == 3)
+    let sentShare = transport.calls.filter { $0.operationName == "ShareMoment" }.map(\.variablesJson)
+    #expect(sentShare.first?.contains("momentId") == true && sentShare.first?.contains("note") == false, "an unset optional parameter of an action is not sent (M85): \(sentShare)")
 
     transport.enqueue("ShareMoment", reply: #"{"errors":[{"message":"not allowed","extensions":{"code":"FORBIDDEN"}}]}"#)
     let refused = try await moment.share()

@@ -73,6 +73,7 @@ model Moment do
   operation :share do
     mutation "ShareMoment"
     optimistic false
+    parameter :note, :string, null: true
     variables momentId: :id
     returns
     response from: "shareMoment.moment"

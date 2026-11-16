@@ -99,3 +99,25 @@ fn gen_node_param_name_is_reserved() {
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(errors[0].message.contains("by_owner") && errors[0].message.contains("`nodeId`"), "{}", errors[0].message);
 }
+
+/// D-485 M85: an optional parameter without a value is not in the args of a named operation call.
+#[test]
+fn a_named_operation_call_leaves_an_unset_optional_parameter_out_of_its_args() {
+    let models = parse_models(&model("operation :forward do\n  mutation \"Forward\"\n  optimistic false\n  parameter :momentId, :id, null: true\n  parameter :note, :string\nend")).unwrap();
+    let swift = emit_swift(&models, &[], &SchemaTypes::default());
+    for expected in ["if let value = momentId { args_[\"momentId\"] = try JSONValue.encode(value) }", "args_[\"note\"] = try JSONValue.encode(note)", "args: args_"] {
+        assert!(swift.contains(expected), "swift lacks {expected}");
+    }
+    let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
+    assert!(kotlin.contains("buildMap { if (momentId != null) put(\"momentId\", jsonValue(momentId)); put(\"note\", jsonValue(note)) }"), "kotlin sends an unset optional parameter");
+}
+
+/// D-485 M81: an optional parameter without a value does not write its attribute in the optimistic values of the call.
+#[test]
+fn an_unset_optional_parameter_does_not_write_its_attribute_before_the_answer() {
+    let models = parse_models(&model("operation :annotate do\n  mutation \"Annotate\"\n  optimistic name: :note\n  parameter :note, :string, null: true\nend")).unwrap();
+    let swift = emit_swift(&models, &[], &SchemaTypes::default());
+    assert!(swift.contains("if let value = note { values_[\"name\"] = try JSONValue.encode(value) }"), "swift writes an unset optional parameter");
+    let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
+    assert!(kotlin.contains("+ buildMap { if (note != null) put(\"name\", jsonValue(note)) }"), "kotlin writes an unset optional parameter");
+}

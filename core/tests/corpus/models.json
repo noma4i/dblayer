@@ -223,7 +223,7 @@
           "wrap": null
         },
         {
-          "args": {},
+          "args": { "note": "string?" },
           "client_mutation_id": false,
           "correlate": [],
           "has_cascade_dependents": false,
@@ -377,7 +377,7 @@
           "root": "shareMoment.moment",
           "root_shape": "upsert",
           "upload": false,
-          "variables": { "momentId": "id" },
+          "variables": { "momentId": "id", "note": "note" },
           "wrap": null
         }
       ],

@@ -25,6 +25,8 @@ class ActionResultTest {
         assertEquals("Shared", answer.successMessage)
         assertEquals(3L, answer.copies)
         assertEquals(3L, withTimeout(5000) { shared.answer<MomentShareResult>() }.copies)
+        val sentShare = transport.calls.filter { it.operationName == "ShareMoment" }.map { it.variablesJson }
+        assertEquals("an unset optional parameter of an action is not sent (M85): $sentShare", true, sentShare.first().contains("momentId") && !sentShare.first().contains("note"))
 
         transport.enqueue("ShareMoment", """{"errors":[{"message":"not allowed","extensions":{"code":"FORBIDDEN"}}]}""")
         val refused = moment.share()

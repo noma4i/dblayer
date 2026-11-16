@@ -188,7 +188,7 @@ pub(super) fn add_reactions(models: &mut Value) {
     message["fields"].as_array_mut().unwrap().push(serde_json::to_value(field).unwrap());
     let mut action = crate::schema::ActionDeclaration::new("react", crate::schema::RootShape::Upsert);
     action.mutation = Some("MessageReact".into());
-    action.args.insert("body".into(), "string".into());
+    action.args.insert("body".into(), "string?".into());
     action.args.insert("userId".into(), "id".into());
     action.variables.insert("id".into(), "id".into());
     action.variables.insert("body".into(), "body".into());
