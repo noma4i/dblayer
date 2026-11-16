@@ -6,18 +6,19 @@ The owner chooses each version and authorizes publication. Use a minor version f
 
 1. Replace `## Unreleased` in `CHANGELOG.md` with `## X.Y.Z - YYYY-MM-DD`. Keep only non-empty `### Added`, `### Changed`, `### Fixed`, `### Removed` sections, in that order, one sentence of at most 15 words per entry.
 2. Set the version in `core/Cargo.toml` and the `dblayer` entry in `Cargo.lock`.
-3. Commit those three files as `Release X.Y.Z` on `master`. Exactly one commit with that subject must exist since the previous tag. Keep the tree clean.
+3. Commit those three files as `Release X.Y.Z` on `master`. Exactly one commit with that subject must exist since the previous tag. Keep the tree clean. The root `Package.swift` must equal the manifest of the previous tag, or the release script refuses.
 4. Run `make release VERSION=X.Y.Z` for a dry run. It builds the four release files, stages Maven artifacts, runs the sequence suites (and, when the release needs them, the app suites), writes `RECEIPT.json` into the stage, prints the generated `Package.swift`, and checks that manifest in a temporary copy. The stage `target/release-X.Y.Z` belongs to one source commit (`SOURCE` inside it): a run from another commit moves the old stage aside and builds the files again.
 5. After the owner agrees, run `make release-publish VERSION=X.Y.Z`. It runs the same checks and creates `Package release X.Y.Z` with a temporary Git index. The commit has `Release X.Y.Z` as its parent and contains the release manifest and generated binding.
 6. The release script tags the packaging commit and checks the tagged `dblayer.swift`. It pushes the unchanged `Release X.Y.Z` commit as `master` and the packaging commit as the tag. It also puts the tag `release-X.Y.Z` on the `Release X.Y.Z` commit, so the history of `master` shows each release. It publishes the staged Maven files to the orphan `maven` branch, then creates the GitHub Release with the four release files.
+7. After the GitHub Release is verified, the script commits `Point the package manifest at X.Y.Z` on `master` and pushes `master`. The commit sets the root `Package.swift` equal to the manifest of the packaging commit and changes nothing else. The generated binding stays untracked on `master`. A rerun after a partial publish reuses this commit and never creates a second one.
 
-The root `Package.swift` on `master` retains the manifest from the last release made on the branch. Its binding is ignored, so a root build needs locally generated bindings. The tagged manifest pins that release's URL and the checksum of `DBlayerFFI.xcframework.zip`. Use `swift/Package.swift` and `scripts/build_ios.sh` for local development.
+The root `Package.swift` on `master` is always the manifest of the last published release. Its binding is ignored, so a root build needs locally generated bindings. The tagged manifest pins that release's URL and the checksum of `DBlayerFFI.xcframework.zip`. The next packaging commit therefore differs from `master` in the URL and checksum lines only. Use `swift/Package.swift` and `scripts/build_ios.sh` for local development.
 
 Android coordinates are `com.noma4i:dblayer:X.Y.Z`. The Maven branch contains `com/noma4i/dblayer/X.Y.Z/` at its root. Consumers use the raw branch URL and dependency shown in [Getting started](getting-started.md#use-a-release). Publication uses a local staging directory and does not need credentials.
 
 The packaging commit carries the staged `dblayer.swift`, and the script fails if the tag differs from the asset.
 
-The release script checks for exactly one `Release X.Y.Z` commit since the previous tag and requires it at HEAD. The packaging commit is outside `master` and is referenced by the release tag. Its SHA is saved in the local stage so a rerun after removing the tag reuses the same commit. A rerun checks the commit and the existing Maven version against the staged files.
+The release script checks for exactly one `Release X.Y.Z` commit since the previous tag and requires it at HEAD, or directly below the `Point the package manifest at X.Y.Z` commit of a rerun. The `Release X.Y.Z` commit must carry the same `Package.swift` as the previous tag. The packaging commit is outside `master` and is referenced by the release tag. Its SHA is saved in the local stage so a rerun after removing the tag reuses the same commit. A rerun checks the commit and the existing Maven version against the staged files.
 
 ## Checks before the tag
 

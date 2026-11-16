@@ -219,11 +219,17 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     staged_binding = (stage / "dblayer.swift").read_bytes()
     assert subprocess.check_output([real_git, "-C", str(repo), "show", f"{version}:swift/Sources/DBlayer/dblayer.swift"]) == staged_binding
     assert (repo / "swift/Sources/DBlayer/dblayer.swift").read_bytes() == b"generated-bindings"
-    assert (repo / "Package.swift").read_bytes() == source_manifest
+    assert (repo / "Package.swift").read_bytes() != source_manifest
     assert not subprocess.check_output([real_git, "-C", str(repo), "ls-files", "--", "swift/Sources/DBlayer/dblayer.swift"], text=True).strip()
     assert not subprocess.check_output([real_git, "-C", str(repo), "status", "--porcelain"], text=True).strip()
-    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip() == source_head
-    assert subprocess.check_output([real_git, "-C", str(repo), "log", "-1", "--format=%s"], text=True).strip() == f"Release {version}"
+    point_head = subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    assert point_head != source_head
+    assert subprocess.check_output([real_git, "-C", str(repo), "log", "-1", "--format=%s"], text=True).strip() == f"Point the package manifest at {version}"
+    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD^"], text=True).strip() == source_head
+    assert subprocess.check_output([real_git, "-C", str(repo), "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"], text=True).splitlines() == ["Package.swift"]
+    assert subprocess.check_output([real_git, "-C", str(repo), "show", "HEAD:Package.swift"]) == subprocess.check_output([real_git, "-C", str(repo), "show", f"{version}:Package.swift"])
+    assert (repo / "Package.swift").read_bytes() == subprocess.check_output([real_git, "-C", str(repo), "show", f"{version}:Package.swift"])
+    print("ok publish creates one manifest commit on master and leaves the binding untracked")
     assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", f"{version}^"], text=True).strip() == source_head
     assert subprocess.check_output([real_git, "-C", str(repo), "diff-tree", "--no-commit-id", "--name-only", "-r", version], text=True).splitlines() == ["Package.swift", "swift/Sources/DBlayer/dblayer.swift"]
     sums = [line.split("  ", 1)[1] for line in (stage / "SHA256SUMS").read_text().splitlines()]
@@ -234,7 +240,9 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     package_head = subprocess.check_output([real_git, "-C", str(repo), "rev-parse", version + "^{commit}"], text=True).strip()
     run(["bash", "scripts/release.sh", version, "--publish"], repo, env)
     assert subprocess.check_output([real_git, "-C", str(repo), "show", f"{version}:Package.swift"]) == first_package
+    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip() == point_head
     subjects = subprocess.check_output([real_git, "-C", str(repo), "log", "--format=%s", "1.2.2..HEAD"], text=True)
+    assert subjects.splitlines().count(f"Point the package manifest at {version}") == 1
     assert subjects.splitlines().count(f"Package release {version}") == 0
     assert subjects.splitlines().count("Stop tracking the generated Swift binding") == 0
     assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", version + "^{commit}"], text=True).strip() == package_head
@@ -242,9 +250,9 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     events = (base / "events").read_text().splitlines()
     head_now = subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
     package_now = package_head
-    assert f"git push origin {head_now}:refs/heads/master" in events and f"git push origin {package_now}:refs/tags/{version}" in events, events
-    assert f"git push origin {head_now}:refs/tags/release-{version}" in events, events
-    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", f"release-{version}^{{commit}}"], text=True).strip() == head_now
+    assert f"git push origin {source_head}:refs/heads/master" in events and f"git push origin {head_now}:refs/heads/master" in events and f"git push origin {package_now}:refs/tags/{version}" in events, events
+    assert f"git push origin {source_head}:refs/tags/release-{version}" in events, events
+    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", f"release-{version}^{{commit}}"], text=True).strip() == source_head
     print("ok the Release commit on master carries the tag release-X.Y.Z")
     assert any(line.startswith("git -C ") and line.endswith("push -u origin maven") for line in events), events
     assert any(line.startswith("gh release create 1.2.3 ") and all(name in line for name in attachments) for line in events), events
@@ -254,14 +262,14 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     subprocess.run([real_git, "-C", str(repo), "tag", "-d", version], check=True, capture_output=True)
     run(["bash", "scripts/release.sh", version, "--publish"], repo, env)
     assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", version + "^{commit}"], text=True).strip() == package_head
-    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip() == source_head
+    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip() == point_head
     assert not subprocess.check_output([real_git, "-C", str(repo), "status", "--porcelain"], text=True).strip()
     print("ok a rerun after the tag was deleted reuses the package commit and leaves master unchanged")
 
     next_release, next_env = fixture(base / "detached-previous", detached_previous=True)
     run(["bash", "scripts/release.sh", version, "--publish"], next_release, next_env)
-    assert subprocess.check_output([real_git, "-C", str(next_release), "log", "-1", "--format=%s"], text=True).strip() == f"Release {version}"
-    assert subprocess.check_output([real_git, "-C", str(next_release), "rev-parse", f"{version}^"], text=True).strip() == subprocess.check_output([real_git, "-C", str(next_release), "rev-parse", "HEAD"], text=True).strip()
+    assert subprocess.check_output([real_git, "-C", str(next_release), "log", "-1", "--format=%s"], text=True).strip() == f"Point the package manifest at {version}"
+    assert subprocess.check_output([real_git, "-C", str(next_release), "rev-parse", f"{version}^"], text=True).strip() == subprocess.check_output([real_git, "-C", str(next_release), "rev-parse", "HEAD^"], text=True).strip()
     print("ok the next release finds a previous package tag outside master")
 
     wrong, wrong_env = fixture(base / "wrong")
@@ -286,6 +294,13 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         run(["bash", "scripts/release.sh", version], repo_red, env_red, expected=1, contains=message)
         assert not (repo_red / "target/release-1.2.3").exists(), f"{label}: the stage was built after a red check_legacy"
         return f"ok release refuses {label} before any build"
+
+    stale, stale_env = fixture(base / "stale-manifest")
+    amend_with(stale, "Package.swift", "newer manifest\n")
+    for flags in ([], ["--publish"]):
+        run(["bash", "scripts/release.sh", version, *flags], stale, stale_env, expected=1, contains="Package.swift on master differs from the manifest of 1.2.2")
+    assert not (stale / "target/release-1.2.3").exists(), "the stage was built with a stale master manifest"
+    print("ok a stale master manifest refuses the dry run and the publish before any build")
 
     for line in pool.map(legacy_case, (
         ("a legacy line", "core/src/extra.rs", "// one legacy line\n", "1 legacy lines or files, 0 development-file references or files"),

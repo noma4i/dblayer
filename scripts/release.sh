@@ -43,13 +43,16 @@ check_package_commit() {
   [ "$changed" = "$(printf 'Package.swift\nswift/Sources/DBlayer/dblayer.swift')" ] || fail "package commit $commit must change exactly Package.swift and dblayer.swift"
 }
 package_sha=""
-source_sha="$(git rev-parse HEAD)"
-[ "$(git log -1 --format=%s)" = "Release $version" ] || fail "HEAD must be Release $version"
+head_sha="$(git rev-parse HEAD)"
+source_sha="$head_sha"
+point_subject="Point the package manifest at $version"
+[ "$(git log -1 --format=%s)" != "$point_subject" ] || source_sha="$(git rev-parse HEAD^)"
+[ "$(git log -1 --format=%s "$source_sha")" = "Release $version" ] || fail "HEAD must be Release $version"
 [ -z "$(git ls-files -- swift/Sources/DBlayer/dblayer.swift)" ] || fail 'generated Swift binding must not be tracked on master'
 run_id="$(date +%s)-$$-$RANDOM"
 export RELEASE_SOURCE_SHA="$source_sha" RELEASE_RUN_ID="$run_id"
 require_source() {
-  local head expected="$source_sha"
+  local head expected="$head_sha"
   head="$(git rev-parse HEAD)"
   [ "$head" = "$expected" ] || fail "source commit changed during the run: recorded $expected, HEAD is $head"
   [ -z "$(git status --porcelain -- . ':(exclude)swift/Sources/DBlayer/dblayer.swift')" ] || fail 'working tree changed during the run'
@@ -70,6 +73,9 @@ while IFS= read -r candidate; do
   fi
 done < <(git tag --list '[0-9]*' --sort=-v:refname)
 [ -n "$previous_tag" ] || fail 'previous tag not found'
+current_manifest="$(git rev-parse -q --verify "$source_sha:Package.swift" || true)"
+previous_manifest="$(git rev-parse -q --verify "$previous_tag:Package.swift" || true)"
+[ -n "$current_manifest" ] && [ "$current_manifest" = "$previous_manifest" ] || fail "Package.swift on master differs from the manifest of $previous_tag: master must carry the last published manifest (commit 'Point the package manifest at $previous_tag' first)"
 subjects="$(git log --format=%s "$previous_tag"..HEAD)" || fail 'cannot read commits since previous tag'
 [ "$(printf '%s\n' "$subjects" | grep -Fxc "Release $version" || true)" = 1 ] || fail "expected exactly one Release $version commit since $previous_tag"
 [ "$(sed -n '/^\[package\]/,/^\[/s/^version = "\([^"]*\)"$/\1/p' core/Cargo.toml)" = "$version" ] || fail 'core version does not match'
@@ -319,7 +325,7 @@ push_maven_branch() {
 }
 
 if [ "$publish" = --publish ]; then
-  git push origin "$source_sha:refs/heads/master"
+  [ "$head_sha" != "$source_sha" ] || git push origin "$source_sha:refs/heads/master"
   git push origin "$package_sha:refs/tags/$version"
   git push origin "$source_sha:refs/tags/release-$version"
   push_maven_branch "$(git remote get-url origin)"
@@ -332,4 +338,15 @@ if [ "$publish" = --publish ]; then
   mkdir "$tmp/download"
   gh release download "$version" --dir "$tmp/download"
   (cd "$tmp/download" && shasum -a 256 -c "$stage/SHA256SUMS")
+  if [ "$head_sha" = "$source_sha" ]; then
+    require_source
+    cp "$tmp/Package.swift" Package.swift
+    git add Package.swift
+    git commit -q -m "$point_subject" -- Package.swift
+    head_sha="$(git rev-parse HEAD)"
+  fi
+  [ "$(git rev-list --parents -n 1 "$head_sha")" = "$head_sha $source_sha" ] || fail "manifest commit $head_sha is not directly on source commit $source_sha"
+  [ "$(git diff-tree --no-commit-id --name-only -r "$head_sha")" = Package.swift ] || fail "manifest commit $head_sha must change exactly Package.swift"
+  git show "$head_sha:Package.swift" | cmp -s - "$tmp/Package.swift" || fail 'manifest commit differs from the release package'
+  git push origin "$head_sha:refs/heads/master"
 fi
