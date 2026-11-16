@@ -1,13 +1,13 @@
 # Changelog
 
-## Unreleased
+## 6.41.0 - 2026-11-16
 
 ### Changed
 
 - Take a duration for the operation option `expires_after`.
 - Keep rows of a scope with `query` fresh for 5 minutes when `freshness` is omitted.
 - Refuse `false` for the scope flags `keep_on_gap`, `stable_order`, `refresh_on_foreground` and `members_complete`.
-- Refuse `local: true` with `default:` or `merge:`, and a repeated `index`, `changes` or association.
+- Refuse `local: true` with `default:` or `merge:`.
 - Read the wrap of an operation from its document, the one input variable the root field takes.
 - Bind each input field of an operation to the parameter, attribute or row id of the same name.
 - Write the parameters named like attributes at once in an operation without `optimistic`.
