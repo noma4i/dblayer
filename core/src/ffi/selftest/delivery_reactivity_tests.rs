@@ -282,6 +282,14 @@ async fn next_rows(rig: &Rig, stream: &ReadStream, expected: i64) -> i64 {
     revision
 }
 
+/// The payment of the owed row releases the interest of the stream: a stream that shows the row takes one `State` frame with `settled`, the phase and the rows unchanged. The count of the window holds no interest in the row and takes none.
+async fn took_settled_state(name: &str, stream: &Arc<ReadStream>) {
+    match crate::test_wait::within_named(8, name, stream.pull_next()).await {
+        Some(ReadValue::State { state, .. }) => assert!(state.settled && state.phase == crate::ffi::ReadPhase::Loaded, "{name}: {state:?}"),
+        other => panic!("{name}: expected one State frame, got {other:?}"),
+    }
+}
+
 async fn assert_quiet(db: &Database, streams: &[&Arc<ReadStream>]) {
     let mut pulls: Vec<_> = streams.iter().map(|stream| Box::pin(stream.pull_next())).collect();
     for pull in &mut pulls {
@@ -401,6 +409,9 @@ async fn dlv_prop_one_change_every_view_related_row() {
     assert!(restored[0] > revisions[0] && restored[1] > revisions[1], "the restore follows the overlay on each stream");
     rig.clock.advance(1_000);
     crate::test_wait::settled(&rig, "the refusal owes the receiver one node read", || rig.world.count("UserNode") == nodes + 1).await;
+    let life = db.life_handle();
+    bound(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
+    for (name, stream) in [("list", &list), ("entity", &entity)] { took_settled_state(name, stream).await; }
     assert_quiet(db, &[&list, &entity, &count]).await;
     assert_eq!(restored[0], restored[1], "both streams end on one revision once settled (P-DLV-17)");
     db.close_now();

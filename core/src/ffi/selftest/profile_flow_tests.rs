@@ -42,6 +42,7 @@ async fn flow_current_user_profile() {
     settled(&rig, "the refusal brings the old name back everywhere", || places.iter().all(|rows| field(&rig, rows, "user", "name") == Some(text("A")))).await;
     rig.settle().await;
     let reloaded = rig.world.count("MyProfile");
+    rig.clock.advance(1_000);
 
     let hold = rig.world.hold_next("ProfileUpdate");
     let receipt = bound(rig.database.act(epoch, "User".into(), "user".into(), "update".into(), json!({"name": "New"}).to_string(), json!({"name": "New"}).to_string())).await.unwrap();
