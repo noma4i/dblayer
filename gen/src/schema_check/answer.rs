@@ -31,7 +31,10 @@ impl<'a> Typer<'a> {
         };
         let reached = self.schema.field(operation_type, followed.names[0])?;
         let mut answer = FieldSpec::object(name);
-        answer.fields = self.fields_of(reached.name(), &followed.selects, &|on| on.is_none_or(|on| on == reached.name()), &app_type)?;
+        let named = reached.name();
+        let (variants, _) = self.variants(named, &followed.selects);
+        let only = if let [only] = variants[..] { only } else { named };
+        answer.fields = self.fields_of(only, &followed.selects, &|on| on.is_none_or(|on| on == named || on == only), &app_type)?;
         answer.app_type = Some(app_type);
         Ok((!answer.fields.is_empty()).then_some(answer))
     }
@@ -104,11 +107,10 @@ impl<'a> Typer<'a> {
         Ok(if list { FieldSpec::list(key, kind) } else { FieldSpec::scalar(key, kind) })
     }
 
-    fn composite(&self, key: &str, named: &str, list: bool, selects: &[&'a Select], owner: &str) -> Result<FieldSpec, String> {
-        let app_type = format!("{owner}{}", camel(key));
-        let mut variants: Vec<&str> = Vec::new();
+    /// M53: the types of `... on T` under an interface or union field, and whether `__typename` is selected.
+    fn variants<'b>(&self, named: &str, selects: &[&'b Select]) -> (Vec<&'b str>, bool) where 'a: 'b {
         let abstract_type = matches!(self.schema.types.get(named), Some(TypeKind::Union(_))) || self.schema.is_interface(named);
-        let mut typename = false;
+        let (mut variants, mut typename) = (Vec::new(), false);
         for select in selects {
             self.documents.each_select(select, None, &mut |inner, on| {
                 typename |= inner.typename;
@@ -117,9 +119,18 @@ impl<'a> Typer<'a> {
                 }
             }, &mut Vec::new());
         }
-        if variants.is_empty() {
+        (variants, typename)
+    }
+
+    fn composite(&self, key: &str, named: &str, list: bool, selects: &[&'a Select], owner: &str) -> Result<FieldSpec, String> {
+        let app_type = format!("{owner}{}", camel(key));
+        let (variants, typename) = self.variants(named, selects);
+        if variants.len() <= 1 {
             let mut object = if list { FieldSpec::array(key) } else { FieldSpec::object(key) };
-            object.fields = self.fields_of(named, selects, &|_| true, &app_type)?;
+            object.fields = match variants.first() {
+                Some(only) => self.fields_of(only, selects, &|on| on.is_none_or(|on| on == named || on == *only), &app_type)?,
+                None => self.fields_of(named, selects, &|_| true, &app_type)?,
+            };
             object.app_type = Some(app_type);
             return Ok(object);
         }

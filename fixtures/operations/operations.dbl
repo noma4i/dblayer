@@ -50,3 +50,8 @@ end
 operation :peer_load do
   query "PeerLoad"
 end
+
+operation :chat_library do
+  query "ChatLibrary"
+  parameter :id, :id
+end

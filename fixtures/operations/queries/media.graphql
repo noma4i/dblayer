@@ -16,3 +16,13 @@ query chatMedia($chatId: ID!, $afterSequence: Int, $first: Int, $after: String) 
     }
   }
 }
+query ChatLibrary($id: ID!) {
+  node(id: $id) {
+    ... on Chat {
+      mediaLibrary {
+        visualCount
+        audioCount
+      }
+    }
+  }
+}
