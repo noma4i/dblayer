@@ -62,7 +62,7 @@ pub(super) fn end_error(error: DbError) -> DbError {
 }
 
 impl Database {
-    async fn outbox_answer(&self, waiter: crate::runtime::Waiter<LifeReply>, what: &str) -> Result<OutboxAnswer, DbError> {
+    pub(super) async fn outbox_answer(&self, waiter: crate::runtime::Waiter<LifeReply>, what: &str) -> Result<OutboxAnswer, DbError> {
         #[cfg(test)]
         {
             let gate = self.db.answer_gate.lock().unwrap_or_else(|error| error.into_inner()).clone();

@@ -175,7 +175,8 @@ pub fn specs_text(models: &[ModelSpec], operations: &[crate::operation::Operatio
             Some(result) => result.clone(),
             None => FieldSpec::raw(&operation.name),
         };
-        format!("{{\"name\":{},\"returns\":{}}}", serde_json::to_string(&operation.operation).unwrap(), serde_json::to_string(&returns).unwrap())
+        let lands = if operation.lands.is_empty() { String::new() } else { format!(",\"lands\":{}", serde_json::to_string(&operation.lands).unwrap()) };
+        format!("{{\"name\":{},\"returns\":{}{lands}}}", serde_json::to_string(&operation.operation).unwrap(), serde_json::to_string(&returns).unwrap())
     }).collect();
     format!("{{\"models\":{},\"operations\":[{}]}}", serde_json::to_string(models).unwrap(), declared.join(","))
 }

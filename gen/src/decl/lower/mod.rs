@@ -405,7 +405,7 @@ pub(crate) fn lower_calls(nodes: &[OperationNode], errors: &mut Vec<Found>) -> V
     for node in nodes {
         let mut cx = Cx { file: node.file, errors, schema: None, memory: false };
         let pos = Pos { line: node.line, column: node.column };
-        let mut decl = CallDecl { name: node.name.clone(), pos, file: node.file, kind: None, wrap: None, parameters: Vec::new(), answer: None, shape: None };
+        let mut decl = CallDecl { name: node.name.clone(), pos, file: node.file, kind: None, wrap: None, parameters: Vec::new(), answer: None, shape: None, upserts: Vec::new() };
         let mut seen: Vec<&str> = Vec::new();
         let mut named = 0;
         for call in &node.body {
@@ -438,7 +438,8 @@ pub(crate) fn lower_calls(nodes: &[OperationNode], errors: &mut Vec<Found>) -> V
                     Some(_) => cx.fail(line.pos, "an operation without a model has `response shape: :list` only"),
                     None => {}
                 },
-                other => cx.fail(line.pos, format!("unknown line `{other}` in an operation, expected one of mutation, query, parameter, response")),
+                "upsert" => decl.upserts.extend(upsert(&mut cx, call)),
+                other => cx.fail(line.pos, format!("unknown line `{other}` in an operation, expected one of mutation, query, parameter, response, upsert")),
             }
         }
         if named != 1 {

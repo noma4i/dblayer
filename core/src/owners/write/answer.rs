@@ -7,9 +7,9 @@ use serde_json::Value;
 
 use crate::store::Store;
 use crate::identity::ModelKey;
-use crate::owners::read::codec::{extract, normalize_nodes, root_value, CodecError};
+use crate::owners::read::codec::{extract, normalize_nodes, root_value, CodecError, Normalized};
 use crate::owners::store::RowValue;
-use crate::schema::{Coverage, RemoteShape};
+use crate::schema::{ActionLanding, Coverage, RemoteShape};
 use crate::value::read_id;
 
 /// What the executor needs to read the answer of one operation.
@@ -98,17 +98,10 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
         Err(CodecError::Malformed(_)) => return unreadable(),
         Err(error) => return refused(format!("{error:?}")),
     };
-    for landing in declared.iter().flat_map(|declared| &declared.lands) {
-        let shape = if root_value(&data, &landing.root).is_some_and(Value::is_array) { RemoteShape::List { coverage: Coverage::Complete } } else { RemoteShape::Single };
-        match read(&landing.model, &landing.root, &shape) {
-            Ok(landed) => {
-                let model = ModelKey::new(&landing.model);
-                normalized.related.extend(landed.roots.into_iter().map(|row| (model.clone(), row)));
-                normalized.related.extend(landed.related);
-            }
-            Err(CodecError::Malformed(_)) => return unreadable(),
-            Err(error) => return refused(format!("{error:?}")),
-        }
+    match read_landings(db, &data, declared.iter().flat_map(|declared| &declared.lands), &mut normalized) {
+        Ok(()) => {}
+        Err(CodecError::Malformed(_)) => return unreadable(),
+        Err(error) => return refused(format!("{error:?}")),
     }
     normalized.coalesce(&job.model);
     let mut missing = Vec::new();
@@ -125,18 +118,51 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
             (None, _) => Vec::new(),
         }
     };
-    let mut by_model: BTreeMap<String, Vec<RowValue>> = BTreeMap::new();
-    let related = normalized.related.iter().map(|(model, row)| (model.to_string(), row));
-    let roots = normalized.roots.iter().map(|row| (job.model.clone(), row));
-    for (model, row) in related.chain(roots) {
-        let Some(id) = row.get("id").and_then(read_id) else { continue };
-        by_model.entry(model).or_default().push(RowValue { row_id: id.to_string(), values: Value::Object(row.clone()).to_string() });
-    }
+    let rows = group_rows(&job.model, &normalized);
     let result = match declared.and_then(|declared| declared.returns.as_ref().map(|returns| returns_of(&data, default_root_of(declared.mutation.as_deref().and_then(root_of), root), returns))).transpose() {
         Ok(result) => result,
         Err(_) => return unreadable(),
     };
-    Decoded::Land { rows: by_model.into_iter().collect(), swaps, stale, result, missing }
+    Decoded::Land { rows, swaps, stale, result, missing }
+}
+
+/// Reads the rows the declared landings name into `normalized`: the one reading of `lands` for the actions of a model and for a standalone operation.
+fn read_landings<'a>(db: &Store, data: &Value, lands: impl IntoIterator<Item = &'a ActionLanding>, normalized: &mut Normalized) -> Result<(), CodecError> {
+    for landing in lands {
+        let shape = if root_value(data, &landing.root).is_some_and(Value::is_array) { RemoteShape::List { coverage: Coverage::Complete } } else { RemoteShape::Single };
+        let extracted = extract(data, &landing.root, &shape, None)?;
+        let landed = normalize_nodes(db, &landing.model, &extracted.nodes)?;
+        let model = ModelKey::new(&landing.model);
+        normalized.related.extend(landed.roots.into_iter().map(|row| (model.clone(), row)));
+        normalized.related.extend(landed.related);
+    }
+    Ok(())
+}
+
+/// The rows of a normalized answer by model: the related rows and the roots of `root_model`.
+fn group_rows(root_model: &str, normalized: &Normalized) -> Vec<(String, Vec<RowValue>)> {
+    let mut by_model: BTreeMap<String, Vec<RowValue>> = BTreeMap::new();
+    let related = normalized.related.iter().map(|(model, row)| (model.to_string(), row));
+    let roots = normalized.roots.iter().map(|row| (root_model.to_string(), row));
+    for (model, row) in related.chain(roots) {
+        let Some(id) = row.get("id").and_then(read_id) else { continue };
+        by_model.entry(model).or_default().push(RowValue { row_id: id.to_string(), values: Value::Object(row.clone()).to_string() });
+    }
+    by_model.into_iter().collect()
+}
+
+/// The rows a standalone operation lands: `root` is the root value of its answer, the paths of `lands` start with the name of the root field.
+pub fn landed_rows(db: &Store, root: &str, lands: &[ActionLanding]) -> Result<Vec<(String, Vec<RowValue>)>, String> {
+    let value: Value = serde_json::from_str(root).map_err(|error| format!("the answer is not JSON: {error}"))?;
+    let mut data = serde_json::Map::new();
+    for landing in lands {
+        let field = landing.root.split('.').next().unwrap_or_default();
+        data.entry(field.to_string()).or_insert_with(|| value.clone());
+    }
+    let mut normalized = Normalized::default();
+    read_landings(db, &Value::Object(data), lands, &mut normalized).map_err(|error| format!("the answer does not land: {error:?}"))?;
+    normalized.coalesce("");
+    Ok(group_rows("", &normalized))
 }
 
 /// The object that carries the `returns` fields: the root field of the mutation, else the parent of the row root.

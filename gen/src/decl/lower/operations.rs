@@ -414,22 +414,7 @@ pub(super) fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl)
             }
         }
         "optimistic" => decl.optimistic = optimistic(cx, call).map(|found| (found, line.pos)),
-        "upsert" => {
-            no_block(cx, call);
-            let model = match call.args.as_slice() {
-                [node] => konst(cx, node, "the upserted model"),
-                _ => {
-                    cx.fail(line.pos, "`upsert` needs a model like `upsert Container, from: \"path\"`");
-                    None
-                }
-            };
-            let from = line.opt(cx, "from").and_then(|pair| path(cx, &pair.value, "`from`"));
-            line.finish(cx);
-            let from = require(cx, &line, "from", from);
-            if let (Some(model), Some(from)) = (model, from) {
-                decl.upserts.push(UpsertDecl { pos: line.pos, model, from });
-            }
-        }
+        "upsert" => decl.upserts.extend(upsert(cx, call)),
         "refetch" => {
             no_block(cx, call);
             let scope = match call.args.as_slice() {
@@ -508,3 +493,20 @@ pub(super) fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl)
     }
 }
 
+
+/// `upsert Model, from: "path"`: the rows of the answer under the path land in the table of the model (a model operation and a standalone operation read it the same way).
+pub(super) fn upsert(cx: &mut Cx, call: &Call) -> Option<UpsertDecl> {
+    let mut line = Line::of(call);
+    no_block(cx, call);
+    let model = match call.args.as_slice() {
+        [node] => konst(cx, node, "the upserted model"),
+        _ => {
+            cx.fail(line.pos, "`upsert` needs a model like `upsert Container, from: \"path\"`");
+            None
+        }
+    };
+    let from = line.opt(cx, "from").and_then(|pair| path(cx, &pair.value, "`from`"));
+    line.finish(cx);
+    let from = require(cx, &line, "from", from);
+    Some(UpsertDecl { pos: line.pos, model: model?, from: from? })
+}

@@ -61,7 +61,7 @@ impl<'a> Run<'a> {
     }
 
     /// M75: a row of an operation response carries the membership field of each scope of its model that rows of a response enter.
-    fn require_membership_fields(&mut self, model: &'a ModelDecl, spot: Spot, operation: &str, root: &str, starts: &[&'a Select]) {
+    pub(super) fn require_membership_fields(&mut self, model: &'a ModelDecl, spot: Spot, operation: &str, root: &str, starts: &[&'a Select]) {
         let prefix: Vec<&str> = root.split('.').collect();
         let fields: BTreeSet<&str> = model.scopes.iter()
             .filter(|scope| scope.insert_on.as_ref().is_some_and(|insert| insert.item == crate::decl::InsertOn::Server))

@@ -6,6 +6,9 @@ use super::*;
 pub struct OperationSpec {
     pub name: String,
     pub returns: FieldSpec,
+    /// The rows of the answer that land before the call answers (`upsert Model, from:` of a standalone operation).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lands: Vec<ActionLanding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

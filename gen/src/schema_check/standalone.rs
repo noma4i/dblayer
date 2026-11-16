@@ -1,7 +1,7 @@
 use super::*;
 
-impl Run<'_> {
-    pub(super) fn check_standalone(&mut self, node: &CallDecl) {
+impl<'a> Run<'a> {
+    pub(super) fn check_standalone(&mut self, node: &CallDecl, models: &'a [ModelDecl]) {
         let Some((kind, name, pos)) = &node.kind else { return };
         let (name, pos) = (name.as_str(), *pos);
         let word = if *kind == CallKind::Query { "query" } else { "mutation" };
@@ -27,6 +27,14 @@ impl Run<'_> {
             if !ty.optional() && !node.parameters.iter().any(|arg| arg.name == key) {
                 self.fail(node.file, pos, format!("operation `{name}` requires input `{key}: {}`", ty.describe()));
             }
+        }
+        for landing in &node.upserts {
+            let Some(model) = models.iter().find(|candidate| candidate.name == landing.model) else {
+                self.fail(node.file, landing.pos, format!("`upsert` names unknown model `{}`", landing.model));
+                continue;
+            };
+            let Some(reached) = self.follow_operation(Spot { file: node.file, at: landing.from.pos, label: "upsert" }, name, &landing.from.item) else { continue };
+            self.require_membership_fields(model, Spot { file: node.file, at: landing.from.pos, label: "response field" }, name, &landing.from.item, &reached.selects);
         }
     }
 }

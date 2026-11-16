@@ -54,6 +54,7 @@ impl OutboxState {
             _ => StoreOp::LocalRows { model: model.into(), rows },
         };
         let ops = match kind {
+            LocalWriteKind::Landing(landing) => landing.iter().map(|(model, rows)| StoreOp::Rows { model: model.clone(), rows: rows.clone() }).collect(),
             LocalWriteKind::AttachCopy { .. } => vec![op, StoreOp::Show { model: model.into(), row_id: row.into() }],
             _ => vec![op],
         };

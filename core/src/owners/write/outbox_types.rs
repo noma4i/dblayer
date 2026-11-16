@@ -195,6 +195,8 @@ pub enum LocalWriteKind {
     AttachCopy { copy: crate::store::files::CopiedFile, name: String, mime: String },
     /// The final rows of a call on a local model or of an action without a mutation.
     Model(IntentEffects),
+    /// The rows of the answer of a standalone operation: they land in one batch before the call answers.
+    Landing(Vec<(String, Vec<RowValue>)>),
     /// A call that changes nothing: the row and the revision of one snapshot of the Store, without a new revision.
     Snapshot,
 }

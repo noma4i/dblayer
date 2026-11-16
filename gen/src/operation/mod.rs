@@ -16,6 +16,7 @@ pub struct OperationCall {
     pub args: Vec<(String, String)>,
     pub result: Option<FieldSpec>,
     pub list: bool,
+    pub lands: Vec<dblayer::schema::ActionLanding>,
 }
 
 pub(crate) fn element_name(kind: &str) -> &str {
@@ -70,7 +71,7 @@ pub(crate) fn build(nodes: &[CallDecl], errors: &mut Vec<Found>) -> Vec<Operatio
         if !seen.insert(node.name.as_str()) {
             errors.push(fail(node.pos, format!("operation `{}` is declared twice", node.name)));
         }
-        let mut call = OperationCall { name: node.name.clone(), operation: String::new(), wrap: node.wrap.clone(), args: Vec::new(), result: None, list: false };
+        let mut call = OperationCall { name: node.name.clone(), operation: String::new(), wrap: node.wrap.clone(), args: Vec::new(), result: None, list: false, lands: node.upserts.iter().map(|upsert| dblayer::schema::ActionLanding { model: upsert.model.clone(), root: upsert.from.item.clone() }).collect() };
         if let Some((_, name, _)) = &node.kind {
             call.operation = name.clone();
         }

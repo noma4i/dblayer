@@ -71,7 +71,7 @@ pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], 
         run.check_model(node, nodes);
         run.check_change_payloads(node, nodes);
     }
-    for node in standalone { run.check_standalone(node); }
+    for node in standalone { run.check_standalone(node, nodes); }
     let mut found = run.found;
     found.sort_by(|left, right| (&left.file, left.error.line, &left.error.message).cmp(&(&right.file, right.error.line, &right.error.message)));
     found.dedup();

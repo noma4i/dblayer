@@ -96,3 +96,17 @@ fn enum_values_come_from_the_schema() {
     let errors = compile(&[&call("values: [\"ACTIVE\"], ")]).err().unwrap_or_default();
     assert!(errors.iter().any(|error| error.contains("takes its values from the schema")), "{errors:?}");
 }
+
+/// D-485 M84: `upsert Model, from:` of a standalone operation declares the landing of its answer rows; an unknown model or a path outside the selection stops the generator.
+#[test]
+fn a_standalone_upsert_declares_its_landing() {
+    let chat = "model Chat do\n  attribute :pinned, :bool\nend\n";
+    let call = |upsert: &str| format!("operation :pin_chat do\n  mutation \"ChatPin\"\n  parameter :input, ChatPinInput\n  {upsert}\nend\n");
+    let declarations = compile(&[chat, &call("upsert Chat, from: \"chatPin.chat\"")]).unwrap_or_else(|errors| panic!("{errors:?}"));
+    let lands = &declarations.operations.iter().find(|call| call.name == "pin_chat").unwrap().lands;
+    assert_eq!(lands.iter().map(|landing| (landing.model.as_str(), landing.root.as_str())).collect::<Vec<_>>(), [("Chat", "chatPin.chat")]);
+    for (upsert, expected) in [("upsert Absent, from: \"chatPin.chat\"", "unknown model `Absent`"), ("upsert Chat, from: \"chatPin.missing\"", "missing")] {
+        let errors = compile(&[chat, &call(upsert)]).err().unwrap_or_default();
+        assert!(errors.iter().any(|error| error.contains(expected)), "{upsert}: {errors:?}");
+    }
+}

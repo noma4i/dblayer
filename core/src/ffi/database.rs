@@ -8,7 +8,7 @@ use tokio::runtime::Runtime;
 use crate::store::{OpenReport, Store};
 use crate::identity::RowId;
 use crate::runtime::{Clock, ManualClock, SystemClock};
-use crate::schema::{FieldSpec, ModelSpec, Specs};
+use crate::schema::{ModelSpec, Specs};
 use crate::transport::{self as core, EncryptedTransport, Exchange};
 use crate::owners::write::upload::UploadOperations;
 use super::open_slot::OpenLease;
@@ -187,7 +187,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { pub(super) me: std::sync::Weak<Database>, pub(super) order: Arc<crate::runtime::CallOrder>, pub(super) place: Option<Arc<crate::runtime::Place>>, pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(crate) life: Arc<crate::owners::life::Life>, pub(super) db: Arc<Store>, pub(super) remote: bool, pub(super) reads: crate::owners::read::ReadOperations, pub(super) returns: Arc<HashMap<String, crate::schema::FieldSpec>>, pub(super) uploads: Option<UploadOperations>, pub(super) preparer: Arc<OnceLock<Arc<dyn super::Preparer>>>, pub(super) partial_operations: Arc<std::sync::atomic::AtomicBool>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, pub(super) upload_config: crate::owners::write::upload::UploadConfig, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { pub(super) me: std::sync::Weak<Database>, pub(super) order: Arc<crate::runtime::CallOrder>, pub(super) place: Option<Arc<crate::runtime::Place>>, pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(crate) life: Arc<crate::owners::life::Life>, pub(super) db: Arc<Store>, pub(super) remote: bool, pub(super) reads: crate::owners::read::ReadOperations, pub(super) returns: Arc<HashMap<String, crate::schema::OperationSpec>>, pub(super) uploads: Option<UploadOperations>, pub(super) preparer: Arc<OnceLock<Arc<dyn super::Preparer>>>, pub(super) partial_operations: Arc<std::sync::atomic::AtomicBool>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, pub(super) upload_config: crate::owners::write::upload::UploadConfig, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) struct Wiring {
     pub transport: Option<Arc<dyn core::Upstream>>,
@@ -223,7 +223,7 @@ impl Database {
         wire: impl FnOnce(&Arc<Store>, &Arc<dyn Clock>) -> Result<Wiring, DbError>,
     ) -> Result<Arc<Self>, DbError> {
         let Specs { models, operations } = Specs::parse(&models_json)?;
-        let returns: Arc<HashMap<String, FieldSpec>> = Arc::new(operations.into_iter().map(|operation| (operation.name, operation.returns)).collect());
+        let returns: Arc<HashMap<String, crate::schema::OperationSpec>> = Arc::new(operations.into_iter().map(|operation| (operation.name.clone(), operation)).collect());
         let uploads = upload_steps_of(&models)?;
         let keys: Vec<String> = models.iter().map(|model| model.key.to_string()).collect();
         let db = Arc::new(Store::open_models(config.path.as_deref().map(Path::new), models, clock.clone())?);
@@ -436,11 +436,17 @@ impl Database {
     }
     pub async fn call(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
-        let Some(returns) = this_db.returns.get(&operation).cloned() else {
+        let Some(declared) = this_db.returns.get(&operation).cloned() else {
             return Err(DbError::Invalid { detail: format!("operation {operation} is not declared in the specs") });
         };
         let root = this_db.run(epoch, operation, variables_json).await?;
-        this_db.offload(move || crate::value::call_result::normalize(&root, &returns).map_err(|detail| DbError::Invalid { detail })).await
+        if !declared.lands.is_empty() {
+            let (db, text, lands) = (this_db.db.clone(), root.clone(), declared.lands.clone());
+            let rows = this_db.offload(move || crate::owners::write::answer::landed_rows(&db, &text, &lands).map_err(|detail| DbError::Invalid { detail })).await?;
+            let waiter = this_db.life.local_write(epoch, String::new(), crate::owners::write::outbox::LocalWriteKind::Landing(rows), String::new(), String::new());
+            this_db.outbox_answer(waiter, "land the answer").await?;
+        }
+        this_db.offload(move || crate::value::call_result::normalize(&root, &declared.returns).map_err(|detail| DbError::Invalid { detail })).await
     }).await? }
     pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<super::upload_wire::WireUploadSource>) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         let (row_id, transfer) = this_db.operation_target(epoch, &model, &row_id, action.as_deref(), source.is_some()).await?;
