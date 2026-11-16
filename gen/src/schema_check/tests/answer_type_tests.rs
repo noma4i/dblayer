@@ -84,3 +84,15 @@ fn an_answer_variant_does_not_take_the_name_of_a_model_variant() {
     let variants: Vec<&str> = peer["fields"].as_array().unwrap_or_else(|| panic!("no variants: {peer}")).iter().map(|variant| variant["app_type"].as_str().unwrap()).collect();
     assert_eq!(variants, vec!["CallPeerResultCallPeerPerson", "CallPeerResultCallPeerRobot"]);
 }
+
+/// D-484 M82: an enum the schema knows takes the values of the schema; a hand `values:` list of it stops the generator.
+#[test]
+fn enum_values_come_from_the_schema() {
+    let call = |values: &str| format!("model Call, storage: :local do\n  attribute :status, :enum, {values}as: CallStatus\nend\n");
+    let declarations = compile(&[&call("")]).unwrap_or_else(|errors| panic!("{errors:?}"));
+    let model = serde_json::to_value(&declarations.models[0]).unwrap();
+    let status = model["fields"].as_array().unwrap().iter().find(|field| field["name"] == "status").unwrap();
+    assert_eq!(status["kind"]["values"], serde_json::json!(["ACTIVE", "ENDED"]));
+    let errors = compile(&[&call("values: [\"ACTIVE\"], ")]).err().unwrap_or_default();
+    assert!(errors.iter().any(|error| error.contains("takes its values from the schema")), "{errors:?}");
+}
