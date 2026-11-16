@@ -77,9 +77,9 @@ Every public name of the Swift package and the Kotlin module, with the section t
 | `Prepare`, `VideoLimits`, `BitrateStep`, `PhotoEdit`, `PixelSize`, `CropFractions`, `ImageFormat`, `CannotDecode`, `SystemPreparer` (Swift) | [source preparation](files.md#source-preparation) |
 | `UploadInfo`, `UploadStatus`                                                                      | [state](files.md#state)                                                                                                                  |
 | `multipart`, `roots` for `initiate`, `presign`, `complete`                                                             | [uploads of a record](files.md#uploads-of-a-record)                                                                                       |
-| `TransferProgress`, `TransferItem`, `UploadStatusStream` (Swift), `AccountScope.uploadStatus` as a `ValueStream` (Kotlin)                                                                | [rules](files.md#rules-1)                                                                                                                |
+| `TransferProgress`, `TransferItem`, `UploadStatusStream` (Swift), `AccountScope.uploadStatus` as a `ValueStream` (Kotlin)                                                                | [rules](files.md#transfer-rules)                                                                                                                |
 | `AccountScope.stage`, `StagedUpload` (`id`, `action`, `commit`, `discard`), `AccountScope.uploadStatus(staged)`, `Model.stage<Action>` | [upload before the final mutation](files.md#upload-before-the-final-mutation) |
-| `cancelUpload`                                                                                                          | [rules](files.md#rules-1)                                                                                                                |
+| `cancelUpload`                                                                                                          | [rules](files.md#transfer-rules)                                                                                                                |
 
 ## Values inside generated code
 

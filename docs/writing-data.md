@@ -50,7 +50,7 @@ Attributes the server owns (ids, counters, dates) are left out of the call and t
 
 ## Values the row does not store
 
-A mutation may need a value that is not an attribute of the model, such as a signed upload id or the id of an attached record. Declare it with `parameter` inside `operation :create` or `operation :update`. Map it to a mutation variable with `variables`:
+A mutation may need a value that is not an attribute of the model, such as a signed upload id or the id of an attached record. Declare it with `parameter` inside `operation :create` or `operation :update`. The input field of the mutation with the same name takes it, and `variables` only renames (`variables fileId: :file`):
 
 ```ruby
 operation :create do
@@ -70,7 +70,7 @@ val message = Note.create(groupId = group.id, body = "hi", attachedUserId = "42"
 
 A parameter has a type (`:bool`, `:int`, `:num`, `:string`, `:id` or `[:id]`). `null: true` makes it optional: the call may leave it out and the variable is then not sent. The generated call takes the parameters after the attributes, in alphabetical order. The parameters of `update` are always optional.
 
-A parameter goes into the queued change and is never stored in the row, so no read shows it. The queue is durable: after a restart the change is sent with the same parameters. Every parameter must be used by a value of `variables`, and a parameter may not have the name of an attribute. An `:id` parameter that holds a whole number is sent as a JSON number, like an `:id` attribute. It fits a GraphQL `ID` and an `Int`. Custom operations take the same `parameter` lines (see Custom operations). `dblayer-gen --schema` checks each parameter against the input of the mutation (see [models](models.md#check-against-the-server-schema)).
+A parameter goes into the queued change and is never stored in the row, so no read shows it. The queue is durable: after a restart the change is sent with the same parameters. Every parameter must be used by an input field of the same name, a value of `variables` or an `optimistic` line, and a parameter may not have the name of an attribute. An `:id` parameter that holds a whole number is sent as a JSON number, like an `:id` attribute. It fits a GraphQL `ID` and an `Int`. Custom operations take the same `parameter` lines (see Custom operations). `dblayer-gen --schema` checks each parameter against the input of the mutation (see [models](models.md#check-against-the-server-schema)).
 
 ## What a write does
 
@@ -223,9 +223,9 @@ operation :like do
 end
 ```
 
-A named model operation without an `optimistic` line writes each parameter that has the name of an attribute at once, and takes it back when the server refuses. An `optimistic` block is the whole local change. Write `optimistic false` when only the server changes the row. `create`, `update` and `destroy` need none.
+A named model operation without an `optimistic` line writes each parameter that has the name of an attribute at once, and takes it back when the server refuses. Parameters named like a `local` or `derived` attribute write nothing, and a parameter without a value in a call leaves its field alone. An `optimistic` block is the whole local change. Write `optimistic false` when only the server changes the row. `create`, `update` and `destroy` need none.
 
-An operation can take parameters. `parameter` declares them (`:bool`, `:int`, `:num`, `:string`, `:id`). A parameter takes the input field or variable of the mutation with the same name, and `optimistic` can use it by name. A parameter that nothing uses is an error:
+An operation can take parameters. `parameter` declares them (`:bool`, `:int`, `:num`, `:string`, `:id`). A parameter takes the input field or variable of the mutation with the same name, `variables a: :b` only renames, and `optimistic` can use a parameter by name. A parameter with `null: true` that has no value in a call is not sent, so one operation with optional parameters replaces copies that differ in their set of parameters. A parameter that nothing uses is an error:
 
 ```ruby
 operation :mute do
@@ -291,7 +291,7 @@ group.mute(mute = true)
 ## Changes beyond the row
 
 An operation writes its own row. Before the server answers it changes other rows and lists only through the four effects `removes_receiver`, `copies_receiver_to`, `joins_scope` and `leaves_scope` (see [models](models.md#effects-of-an-operation-before-the-answer)).
-The rows the server answers with arrive through `upsert Model, from: "path"` and `response from:`. A scope that the answer changes is read again with `refetch :scope`.
+The rows the server answers with arrive through `upsert Model, from: "path"` and `response from:`, in a model operation and in an operation without a model. A scope that the answer changes is read again with `refetch :scope`.
 
 ```ruby
 operation :block do
@@ -340,10 +340,10 @@ val confirmed = sent.confirmed()             // throws Rejected, NoSession or Cl
 
 Every queued write shows in `operations()` with its status, and a refused write is retried from that list: see [the queue of operations](sync-state.md#the-queue-of-operations).
 
-An action that loses its meaning with time declares how long it may wait. `expires_after:` takes whole seconds:
+An action that loses its meaning with time declares how long it may wait. `expires_after:` takes a duration (`30.seconds`, `2.hours`):
 
 ```ruby
-operation :typing, expires_after: 30 do
+operation :typing, expires_after: 30.seconds do
   mutation "ChatTyping"
 end
 ```
@@ -355,7 +355,7 @@ A model with `storage: :local` writes rows that only this device holds, see [sto
 
 ## What the server answered
 
-`returns` gives the operation the answer type of its mutation document: the selection under the root field of the mutation, typed by the schema as for an operation without a model (see [server sync](server-sync.md#operations-without-a-model)). Every field is nullable. The confirmed result contains them as `answerJson` on Swift and `answerJson` on Kotlin. An operation without `returns` has no answer type: its receipt gives the row.
+`returns` gives the operation the answer type of its mutation document: the selection under the root field of the mutation, typed by the schema as for an operation without a model (see [server sync](server-sync.md#operations-without-a-model)). Every field is nullable. The confirmed result contains them as `answerJson` on Swift and `answerJson` on Kotlin. A bare `returns` is the whole line (`returns do ... end` is an error). An operation without `returns` has no answer type: its receipt gives the row.
 
 ```ruby
 operation :send_reward do

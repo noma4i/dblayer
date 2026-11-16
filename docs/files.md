@@ -372,7 +372,7 @@ An upload of a local record starts as `waiting` with `totalBytes` set from the f
 
 A finished upload closes its operation and removes its entry from `uploads`, . The record becomes `synced` when no other operation remains open. While `preparing`, `progress` is the share of the preparation. While `uploading`, it counts the bytes of the confirmed parts and the bytes in flight. A retried part, a lost connection and a restart keep the shown value, and it grows again when the real share passes it. It stays below 1 until the server confirmed the whole file.
 
-### Rules
+### Transfer rules
 
 - Transport errors retry with backoff. Offline waits for the network to return without starting another attempt.
 - Each step saves its attempt count before starting a network request. A restart or network change does not refund that attempt.
