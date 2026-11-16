@@ -181,23 +181,17 @@ async fn a_refusal_code_is_typed_and_keeps_the_credential() {
     }
 }
 
-/// P-LIFE-07, executor `ClearAccount`. Observable: the `CredentialStore` of the app (value and `clear` calls) and `encrypted_session`. `SessionReset` and `ServerEnded` clear the secret once, `IdentityChanged` and `Close` clear nothing.
+/// P-LIFE-07, executor `ClearAccount`. Observable: the `CredentialStore` of the app (value and `clear` calls) and `encrypted_session`. `SessionReset` and `ServerEnded` clear the secret once, `Close` clears nothing.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_credential_secret_is_cleared_only_by_session_reset_and_server_end() {
-    use crate::test_wait::{within, settled};
-    for end in ["identity_changed", "close", "session_reset", "server_ended"] {
+    use crate::test_wait::within;
+    for end in ["close", "session_reset", "server_ended"] {
         let rig = Rig::new();
         let database = rig.open_models(None, pin(), crate::ffi::specs(super::lifecycle_tests::models())).await.unwrap();
         within(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
         let credential = rig.credentials.inner.value();
         assert!(credential.is_some() && database.signed_in_digest().is_some() && rig.touched() == (1, 0), "{end}: signed in");
-        let life = database.life_handle();
-        let epoch = life.published().epoch;
         match end {
-            "identity_changed" => {
-                life.credential_committed(life.published().identity.expect("an identity") + 1);
-                settled(&database, "the next epoch was published", || life.published().epoch > epoch).await;
-            }
             "close" => within(database.close_database()).await.unwrap(),
             "session_reset" => within(database.session_reset()).await.unwrap(),
             _ => { within(database.session_call("logout".into(), "{}".into())).await.unwrap(); }

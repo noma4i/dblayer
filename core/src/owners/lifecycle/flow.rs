@@ -48,10 +48,6 @@ impl LifecycleState {
             (phase @ LifecyclePhase::NoSession { .. }, _) => phase,
 
             (LifecyclePhase::Session { epoch, identity }, LifecycleInput::CredentialCommitted(CredentialCommitted { identity: other })) if other == identity => LifecyclePhase::Session { epoch, identity },
-            (LifecyclePhase::Session { epoch, .. }, LifecycleInput::CredentialCommitted(CredentialCommitted { identity: other })) => {
-                self.ending(epoch, Cause::IdentityChanged, Some(other), Vec::new(), Vec::new(), fx);
-                return;
-            }
             (LifecyclePhase::Session { epoch, .. }, LifecycleInput::SessionReset { reply }) => {
                 self.ending(epoch, Cause::SessionReset, None, Vec::new(), reply.into_iter().collect(), fx);
                 return;
@@ -74,7 +70,7 @@ impl LifecycleState {
                     self.erase_again(epoch_old, Cause::SessionReset, reply.into_iter().collect(), &mut erases, fx);
                     LifecyclePhase::Ending { epoch_old, cause: Cause::SessionReset, next: None, failed: false, erase_credential: false, erases }
                 } else {
-                    let credential = erase_credential || cause == Cause::IdentityChanged;
+                    let credential = erase_credential;
                     if let Some(account) = erases.last_mut() {
                         account.replies.extend(reply);
                     }

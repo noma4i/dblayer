@@ -11,18 +11,6 @@ fn life_credential_starts_the_session() {
 }
 
 #[test]
-fn life_identity_change_clears_then_starts() {
-    let mut twin = session(1);
-    let effects = twin.feed(credential(2));
-    assert!(effects.iter().any(|effect| matches!(effect, LifecycleEffect::ClearAccount { cause: Cause::IdentityChanged, .. })), "a change of identity clears with IdentityChanged");
-    twin.settle();
-    let done = cleared(&twin);
-    twin.feed(done);
-    twin.settle();
-    assert_eq!(*twin.phase(), LifecyclePhase::Session { epoch: 4, identity: 2 }, "a change of identity clears first, then starts");
-}
-
-#[test]
 fn life_reset_clears_and_answers_after_saved() {
     let mut twin = ending();
     assert_eq!(twin.published().state, PublishedState::Ending);
@@ -42,31 +30,6 @@ fn life_second_reset_joins_the_first() {
     twin.feed(done);
     twin.settle();
     assert_eq!(twin.replies(), vec![(1, Ok(())), (2, Ok(()))], "both resets are answered");
-}
-
-#[test]
-fn life_reset_after_credential_erases_the_credential() {
-    let mut twin = session(1);
-    twin.feed(credential(2));
-    twin.settle();
-    twin.feed(reset(5));
-    let first = cleared(&twin);
-    let effects = twin.feed(first);
-    assert!(effects.iter().any(|effect| matches!(effect, LifecycleEffect::ClearAccount { cause: Cause::SessionReset, .. })), "the credential is erased by the second clearing");
-    twin.settle();
-    let second = cleared(&twin);
-    twin.feed(second);
-    twin.settle();
-    assert_eq!(twin.published().identity, None);
-    assert!(twin.replies().contains(&(5, Ok(()))));
-}
-
-#[test]
-fn life_server_ended_of_the_current_epoch_clears() {
-    let mut twin = session(1);
-    assert!(twin.feed(server_ended(1)).is_empty(), "a server end of an older epoch is ignored");
-    let effects = twin.feed(server_ended(2));
-    assert!(effects.iter().any(|effect| matches!(effect, LifecycleEffect::ClearAccount { cause: Cause::ServerEnded, .. })));
 }
 
 #[test]

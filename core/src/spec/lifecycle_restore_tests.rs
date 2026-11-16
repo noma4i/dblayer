@@ -1,4 +1,3 @@
-use crate::owners::contract::CredentialCommitted;
 use crate::owners::lifecycle::{Lifecycle, LifecycleEffect, LifecycleError, LifecycleInput, LifecycleState, Peer};
 use crate::runtime::{Effect, StateOwner};
 
@@ -6,9 +5,8 @@ fn step(state: &mut LifecycleState, input: LifecycleInput) -> Vec<LifecycleEffec
     Lifecycle::step(state, input, crate::runtime::Time(0)).into_iter().filter_map(|effect| match effect { Effect::Run(effect) => Some(effect), _ => None }).collect()
 }
 
-fn restore_ended(saved: bool, expected: [Result<(), LifecycleError>; 3]) {
+fn restore_ended(saved: bool, expected: [Result<(), LifecycleError>; 2]) {
     let inputs = [
-        LifecycleInput::CredentialCommitted(CredentialCommitted { identity: 10 }),
         LifecycleInput::SessionReset { reply: Some(8) },
         LifecycleInput::Close { reply: 9 },
     ];
@@ -26,10 +24,10 @@ fn restore_ended(saved: bool, expected: [Result<(), LifecycleError>; 3]) {
 }
 
 #[test]
-fn life_restoring_ended_saved() { restore_ended(true, [Ok(()), Ok(()), Err(LifecycleError::Closed)]); }
+fn life_restoring_ended_saved() { restore_ended(true, [Ok(()), Err(LifecycleError::Closed)]); }
 
 #[test]
-fn life_restoring_ended_unsaved() { restore_ended(false, [Err(LifecycleError::Interrupted), Err(LifecycleError::Interrupted), Err(LifecycleError::Closed)]); }
+fn life_restoring_ended_unsaved() { restore_ended(false, [Err(LifecycleError::Interrupted), Err(LifecycleError::Closed)]); }
 
 #[test]
 fn life_closing_executor_failed() {

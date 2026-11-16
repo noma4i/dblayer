@@ -291,6 +291,7 @@ fn life_start_goes_with_the_first_saved_record() {
     twin.feed(credential(1));
     let first = twin.publications()[0];
     twin.feed(save_failed(first));
+    twin.feed(reset(9));
     twin.feed(credential(2));
     let ending = twin.publications();
     twin.feed(save_failed(ending[0]));

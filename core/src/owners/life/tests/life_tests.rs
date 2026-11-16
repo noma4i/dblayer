@@ -209,6 +209,7 @@ async fn call_mutate_plain_goes_through_epoch_gate() {
     let epoch = life.published().epoch;
     let first = life.run(epoch, "Change".into(), "{}".into());
     crate::test_wait::signalled(&held.entered, "mutation entered the transport", || held.calls.load(Ordering::SeqCst) == 1).await;
+    assert_eq!(answer(life.session_reset()).await, Reply::Life(Ok(())));
     life.credential_committed(2);
     crate::test_wait::settled(&life, "the next epoch was published", || life.published().identity == Some(2)).await;
     assert!(matches!(crate::test_wait::within(first.wait()).await, crate::runtime::Outcome::EpochEnded(_)));
@@ -222,9 +223,9 @@ async fn call_mutate_plain_goes_through_epoch_gate() {
     closed(&life).await;
 }
 
-/// life_session_reset, life_prop_session_kept: `session_reset` erases the credential rows and ends the epoch, `IdentityChanged` keeps them.
+/// life_session_reset: `session_reset` erases the credential rows and ends the epoch.
 #[tokio::test(flavor = "multi_thread")]
-async fn life_session_reset_erases_the_credential_and_identity_change_keeps_it() {
+async fn life_session_reset_erases_the_credential() {
     let transport = Arc::new(MockTransport::new());
     let db = Store::open_models(None, vec![moments_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
     session_row(&db);
@@ -236,16 +237,6 @@ async fn life_session_reset_erases_the_credential_and_identity_change_keeps_it()
     assert_eq!((published.epoch, published.identity, published.generation), (2, None, 1));
     assert_eq!(stored_digest(&db), None, "SessionReset erases encrypted_session");
     assert!(db.revision_seq().unwrap() > revision, "the clearing is a commit");
-    closed(&life).await;
-
-    let other = Store::open_models(None, vec![moments_spec()], std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
-    session_row(&other);
-    let life = start(&other, &transport).await;
-    life.credential_committed(2);
-    crate::test_wait::settled(&life, "the third epoch was published", || life.published().epoch == 3).await;
-    let published = life.published();
-    assert_eq!((published.identity, published.generation), (Some(2), 1));
-    assert_eq!(stored_digest(&other).as_deref(), Some(DIGEST), "IdentityChanged keeps encrypted_session");
     closed(&life).await;
 }
 
@@ -284,6 +275,7 @@ async fn a_loaded_page_lands_through_the_store_and_the_caller_hears_loaded() {
     assert_eq!(answer(life.set_online(true, crate::ffi::next_stamp())).await, Reply::Online { closed: false });
     let key = crate::owners::read::windows::WindowKey::relation("moments", "mine", json!({"userId": "u1"}).as_object().unwrap());
     let epoch = life.published().epoch;
+    assert_eq!(answer(life.session_reset()).await, Reply::Life(Ok(())));
     life.credential_committed(2);
     crate::test_wait::settled(&life, "the next identity was published", || life.published().identity == Some(2)).await;
     let old_key = crate::owners::read::windows::WindowKey::relation("moments", "mine", json!({"userId": "old"}).as_object().unwrap());
