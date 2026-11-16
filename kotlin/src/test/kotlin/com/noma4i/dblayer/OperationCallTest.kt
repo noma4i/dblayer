@@ -133,7 +133,7 @@ class OperationCallTest {
         assertEquals(listOf("u1", null), result.map { it.url })
         assertEquals(listOf(true, null), result.map { it.isSticker })
         val sent = transport.calls.filter { it.operationName == "Giphy" }.map { it.variablesJson }
-        assertEquals(parseJson("""{"type":"gif"}"""), parseJson(sent[0]), "an unset optional parameter is not sent (M85)")
+        assertEquals("an unset optional parameter is not sent (M85)", parseJson("""{"type":"gif"}"""), parseJson(sent[0]))
     }
 
     @Test
