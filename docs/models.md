@@ -345,7 +345,7 @@ end
 | `optimistic ...` / `optimistic false`   | the whole local change, or none                                                                                                      |
 | `response from: "a.b"` / `:ignore`      | the row in the answer, by default the first field of the operation. `:ignore` skips the answer                                       |
 | `upsert Model, from: "a.b"`             | lands the objects at the path as rows of `Model` with the answer                                                                     |
-| `refetch :scope, model: Model`          | marks a scope stale after success and reloads it when read. Repeat the line per scope                                                |
+| `refetch :scope, model: Model`          | marks a scope stale after success or after a permanent refusal and rollback, and reloads it when read. Repeat the line per scope  |
 | `on_failure :keep`                      | keeps a refused change for `retry` or `discard` instead of the default rollback                                                      |
 | `returns`                               | types the answer, see below                                                                                                          |
 | `expires_after: 30.seconds` on the line | a duration: how long the operation may wait in the queue before its first send                                                       |
@@ -422,7 +422,7 @@ end
 
 ### Queue and failure
 
-A write that reaches the server waits in the queue while the network is away, survives a restart and is sent oldest first, one request at a time. See [writing data](writing-data.md) for retries, temporary ids and rollback. `expires_after:` takes a duration. When the library picks a queued operation after that time for its first send, it rolls the optimistic change back and ends the operation `rejected` with the failure kind `expired`. Without it an operation waits as long as needed.
+After a permanent server refusal and its rollback the library rereads the receiver row through the `node` scope of the model (when it has one) and marks the `refetch` scopes of the operation stale, as after success. A network failure and `Unauthorized` do not trigger it, and single-flight keeps it to 1 request. A write that reaches the server waits in the queue while the network is away, survives a restart and is sent oldest first, one request at a time. See [writing data](writing-data.md) for retries, temporary ids and rollback. `expires_after:` takes a duration. When the library picks a queued operation after that time for its first send, it rolls the optimistic change back and ends the operation `rejected` with the failure kind `expired`. Without it an operation waits as long as needed.
 
 ### Answer type
 
@@ -467,7 +467,7 @@ val code = Operations.qrCodeCreate(kind = "group", size = 3)
 
 ### Uploads
 
-`operation :name, upload: true do` declares a file upload. Each upload operation declares its own `response`, `upsert`, `parameter` and `returns`. The steps (`createBlob`, multipart) are declared once per project in an `uploads do ... end` block, see [uploads](files.md#uploads). `dimensions width: :width, height: :height` names the integer attributes that take the size of the uploaded image, and `processing :media.step, done: ["COMPLETED"], progress: :media.progress` follows server processing. The generator emits `<operationName>Variables` for an upload with parameters. Upload operations get no automatic variable binding: the library sets the upload variables.
+`operation :name, upload: true do` declares a file upload. Each upload operation declares its own `response`, `upsert`, `parameter` and `returns`. The steps (`createBlob`, multipart) are declared once per project in an `uploads do ... end` block, see [uploads](files.md#uploads). `dimensions width: :width, height: :height` names the integer attributes that take the size of the uploaded image. The generator emits `<operationName>Variables` for an upload with parameters. Upload operations get no automatic variable binding: the library sets the upload variables.
 
 ## Events
 
