@@ -10,10 +10,6 @@ codegen-units = 1
 strip = "symbols"
 panic = "unwind"
 
-[profile.ios-check]
-inherits = "release"
-codegen-units = 16
-
 [profile.dev.package.rsa]
 opt-level = 3
 
