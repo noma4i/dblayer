@@ -155,7 +155,7 @@ fn batch_and_validates_belong_together_and_only_to_uploads() {
         ("renumber position equals size", &many(&format!("{}{length}", batch.replace("group.size", "group.position"))), Some("name the same field")),
         ("renumber key unknown", &many(&format!("{}{length}", batch.replace("start: 0", "start: 0, base: 1"))), Some("unknown key `base` for `renumber`")),
         ("batch twice", &many(&format!("{batch}{batch}{length}")), Some("`batch` is declared twice")),
-        ("upload false", "  operation :one, upload: false do\n    mutation \"M\"\n    optimistic false\n  end", Some("`upload: false` is the default")),
+        ("upload false", "  operation :one, upload: false do\n    mutation \"M\"\n    optimistic false\n  end", Some("`upload` is only `true`")),
     ]);
 }
 

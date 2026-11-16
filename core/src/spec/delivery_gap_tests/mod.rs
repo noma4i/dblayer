@@ -234,7 +234,7 @@ impl Twin {
             Input::ModelLost { first, last } => self.post(d::DeliveryInput::ModelLost { stream, first: *first, last: *last }),
             Input::ModelGap => self.post(d::DeliveryInput::ModelGap { stream }),
             Input::Resync => self.call(d::DeliveryInput::Resync { stream }),
-            Input::Transfer { state, revision } => self.post(d::DeliveryInput::TransferStatus { stream, revision: *revision, blob: d::BlobStatus { state: state.clone(), wait_reason: None, progress: 0, error: None, local_url: None, processing: None } }),
+            Input::Transfer { state, revision } => self.post(d::DeliveryInput::TransferStatus { stream, revision: *revision, blob: d::BlobStatus { state: state.clone(), wait_reason: None, progress: 0, error: None, local_url: None } }),
             Input::Pull => {
                 let outcome = self.answers.register(EPOCH).id();
                 if !self.parked { self.pull = Some(outcome); }
@@ -269,7 +269,7 @@ impl Twin {
             });
             if asked.is_empty() { break; }
             for read_id in asked {
-                self.post(d::DeliveryInput::ReadDone { stream, read_id, revision: 0, position: 0, relevant: Some((0, 0)), touching: Vec::new(), data: d::ReadData::Upload { wait_reason: None, local_url: None, processing: None } });
+                self.post(d::DeliveryInput::ReadDone { stream, read_id, revision: 0, position: 0, relevant: Some((0, 0)), touching: Vec::new(), data: d::ReadData::Upload { wait_reason: None, local_url: None } });
             }
             entries.extend(take(&self.log));
         }
@@ -385,13 +385,12 @@ fn dlv_open_effects() {
 #[test]
 fn dlv_opening_status() {
     let mut full = open_as(Kind::Blob);
-    let blob = d::BlobStatus { state: "uploading".into(), wait_reason: None, progress: 42, error: None, local_url: None, processing: None };
+    let blob = d::BlobStatus { state: "uploading".into(), wait_reason: None, progress: 42, error: None, local_url: None };
     full.post(d::DeliveryInput::TransferStatus { stream: STREAM, revision: 11, blob });
     let read_id = full.read_id();
     let local_url = Some("file:///copy".to_string());
-    let processing = Some(crate::ffi::WireProcessing { progress: Some(0.5) });
-    full.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 11, position: 0, relevant: Some((11, 0)), touching: Vec::new(), data: d::ReadData::Upload { wait_reason: None, local_url: local_url.clone(), processing: processing.clone() } });
-    assert!(matches!(full.state().journal(STREAM).as_slice(), [d::Value::Status { revision: 11, blob }] if blob.local_url == local_url && blob.processing == processing && blob.progress == 42));
+    full.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 11, position: 0, relevant: Some((11, 0)), touching: Vec::new(), data: d::ReadData::Upload { wait_reason: None, local_url: local_url.clone() } });
+    assert!(matches!(full.state().journal(STREAM).as_slice(), [d::Value::Status { revision: 11, blob }] if blob.local_url == local_url && blob.progress == 42));
     let mut blob = open_as(Kind::Blob);
     assert!(blob.step(Input::Transfer { state: "uploading".into(), revision: 11 }).is_empty());
     assert_eq!(blob.read_all(), [Val::Status { revision: 11, state: "uploading".into() }]);

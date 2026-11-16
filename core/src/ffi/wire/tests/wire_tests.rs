@@ -141,7 +141,6 @@ fn the_row_carries_its_id_sync_state_and_upload() {
         attempts: 1,
         error: None,
         local_url: Some("file:///copy".to_string()),
-        processing: Some(crate::owners::write::upload::UploadProcessing { progress: Some(0.5) }),
         copy_file: None,
         share: 44,
         batch_share: None,
@@ -174,7 +173,6 @@ fn the_row_carries_its_id_sync_state_and_upload() {
                 attempts: 1,
                 error: None,
                 local_url: Some("file:///copy".into()),
-                processing: Some(WireProcessing { progress: Some(0.5) }),
             },
         }]
     );

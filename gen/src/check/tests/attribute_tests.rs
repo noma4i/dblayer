@@ -80,7 +80,7 @@ fn local_attributes_follow_their_own_rules() {
     run(&[
         ("local implies optional", "  attribute :a, :string, local: true", None),
         ("local null", "  attribute :a, :string, null: true, local: true", None),
-        ("local with default", "  attribute :a, :string, local: true, default: \"x\"", Some("cannot set `merge`, `default`, `from` or `id_from`")),
+        ("local with default", "  attribute :a, :string, local: true, default: \"x\"", Some("`local` and `default` exclude each other")),
         ("local with from", "  attribute :a, :string, local: true, from: \"x\"", Some("cannot set")),
     ]);
 }

@@ -50,25 +50,6 @@ fn xfer_steps_declared_in_dbl() {
     }
 }
 
-/// xfer_processing_by_event (M37): `processing` reaches the action and is checked against the attributes of the model.
-#[test]
-fn xfer_processing_by_event() {
-    let steps = "uploads do\n  create_blob :CreateBlob, root: \"blobCreate\"\nend\n";
-    let model = |processing: &str| format!("{steps}model Clip do\n  attribute :status, :enum, values: [\"WORKING\", \"READY\"]\n  attribute :percent, :num, null: true\n  operation :send, upload: true do\n    mutation \"ClipSend\"\n    optimistic false\n    response from: \"clipSend\"\n    {processing}\n  end\nend\n");
-    let models = parse_models(&model("processing \"status\", done: [\"READY\"], progress: \"percent\"")).unwrap();
-    let action = models[0].actions.iter().find(|action| action.name == "send").unwrap();
-    let declared = action.processing.as_ref().expect("the declaration reaches the action");
-    assert_eq!((declared.field.as_str(), declared.done.clone(), declared.progress.as_deref()), ("status", vec!["READY".to_string()], Some("percent")));
-    for (case, message) in [
-        ("processing \"status\", done: [\"GONE\"]", "is not a value"),
-        ("processing \"missing\", done: [\"READY\"]", "names no attribute"),
-        ("processing \"status\", done: []", "non-empty"),
-    ] {
-        let errors = parse_models(&model(case)).unwrap_err();
-        assert!(errors.iter().any(|error| error.message.contains(message)), "{case}: {errors:?}");
-    }
-}
-
 /// D-413: `dimensions` reaches the action and names integer attributes of the model only.
 #[test]
 fn xfer_dimensions_declared() {

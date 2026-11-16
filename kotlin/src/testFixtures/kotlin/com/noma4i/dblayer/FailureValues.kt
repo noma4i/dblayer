@@ -9,4 +9,4 @@ fun syncInfo(state: SyncState, error: OperationFailure? = null): SyncInfo = Sync
 
 /** The value of `uploads[action]`: the status, the sent share from 0 to 1 and the refusal. */
 fun uploadInfo(status: UploadStatus, progress: Double = 0.0, error: OperationFailure? = null): UploadInfo =
-    UploadInfo(status, "", 0UL, 0UL, progress, progress, null, 0, error, null, null)
+    UploadInfo(status, "", 0UL, 0UL, progress, progress, null, 0, error, null)

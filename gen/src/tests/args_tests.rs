@@ -77,10 +77,10 @@ fn gen_unknown_operation_key() {
 
 #[test]
 fn expires_after_is_lowered_into_the_operation_spec() {
-    let models = parse_models(&model("operation :create, expires_after: 90 do\n  mutation \"CreateSample\"\nend\n\noperation :update do\n  mutation \"UpdateSample\"\nend")).unwrap();
+    let models = parse_models(&model("operation :create, expires_after: 2.hours do\n  mutation \"CreateSample\"\nend\n\noperation :update do\n  mutation \"UpdateSample\"\nend")).unwrap();
     let expires: Vec<_> = models[0].actions.iter().map(|action| action.expires_after).collect();
-    assert_eq!(expires, [Some(90), None]);
-    assert!(failure("operation :create, expires_after: 0 do\n  mutation \"CreateSample\"\nend").1.contains("expires_after"));
+    assert_eq!(expires, [Some(7200), None]);
+    assert!(failure("operation :create, expires_after: 90 do\n  mutation \"CreateSample\"\nend").1.contains("duration"));
 }
 
 #[test]

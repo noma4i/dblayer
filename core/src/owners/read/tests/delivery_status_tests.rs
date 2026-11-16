@@ -38,19 +38,19 @@ fn statuses(state: &DeliveriesState) -> Vec<(i64, d::BlobStatus)> {
     state.journal(STREAM).into_iter().filter_map(|value| match value { d::Value::Status { revision, blob } => Some((revision, blob)), _ => None }).collect()
 }
 
-/// xfer_status_local_url, xfer_status_processing (P-XFER-23, P-XFER-26): the first value waits for the read of the row, the commit of the row of the key reads it again and a changed copy URL is a new value of the next revision.
+/// xfer_status_local_url (P-XFER-23): the first value waits for the read of the row, the commit of the row of the key reads it again and a changed copy URL is a new value of the next revision.
 #[test]
-fn a_blob_stream_shows_the_transfer_with_the_copy_url_and_the_processing_of_its_row() {
+fn a_blob_stream_shows_the_transfer_with_the_copy_url_of_its_row() {
     let mut state = opened();
     let asked = reads(Deliveries::step(&mut state, DeliveryInput::TransferStatus { stream: STREAM, revision: 3, blob: d::BlobStatus::of(&Shown::Queued { progress: 0 }) }, crate::runtime::Time(0)));
     assert_eq!(asked.len(), 1);
     assert!(statuses(&state).is_empty(), "no value before the row was read");
-    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 4, position: 0, relevant: Some((4, 0)), touching: Vec::new(), data: d::ReadData::Upload { wait_reason: None, local_url: None, processing: None } }, crate::runtime::Time(0));
+    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 4, position: 0, relevant: Some((4, 0)), touching: Vec::new(), data: d::ReadData::Upload { wait_reason: None, local_url: None } }, crate::runtime::Time(0));
     assert_eq!(statuses(&state), [(4, d::BlobStatus::of(&Shown::Queued { progress: 0 }))], "the value carries the revision of the row read that completed it");
 
     let asked = reads(Deliveries::step(&mut state, commit(&["r1"]), crate::runtime::Time(0)));
     assert_eq!(asked.len(), 1);
-    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 5, position: 0, relevant: Some((5, 0)), touching: Vec::new(), data: d::ReadData::Upload { wait_reason: None, local_url: Some("file:copy".into()), processing: None } }, crate::runtime::Time(0));
+    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 5, position: 0, relevant: Some((5, 0)), touching: Vec::new(), data: d::ReadData::Upload { wait_reason: None, local_url: Some("file:copy".into()) } }, crate::runtime::Time(0));
     let shown = statuses(&state);
     assert_eq!(shown.len(), 1, "the journal keeps the latest status only");
     assert_eq!((shown[0].0, shown[0].1.local_url.as_deref(), shown[0].1.state.as_str()), (5, Some("file:copy"), "queued"), "a re-read row gives the value its commit revision");
@@ -75,7 +75,7 @@ fn xfer_status_quiet_on_other_rows() {
 fn a_blob_stream_revision_never_goes_back() {
     let mut state = opened();
     let asked = reads(Deliveries::step(&mut state, DeliveryInput::TransferStatus { stream: STREAM, revision: 3, blob: d::BlobStatus::of(&Shown::Queued { progress: 0 }) }, crate::runtime::Time(0)));
-    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 8, position: 0, relevant: Some((8, 0)), touching: Vec::new(), data: d::ReadData::Upload { wait_reason: None, local_url: None, processing: None } }, crate::runtime::Time(0));
+    Deliveries::step(&mut state, DeliveryInput::ReadDone { stream: STREAM, read_id: asked[0], revision: 8, position: 0, relevant: Some((8, 0)), touching: Vec::new(), data: d::ReadData::Upload { wait_reason: None, local_url: None } }, crate::runtime::Time(0));
     Deliveries::step(&mut state, DeliveryInput::TransferStatus { stream: STREAM, revision: 6, blob: d::BlobStatus::of(&Shown::Uploading { progress: 40 }) }, crate::runtime::Time(0));
     let shown = statuses(&state);
     assert_eq!(shown.last().map(|(revision, blob)| (*revision, blob.state.as_str())), Some((8, "uploading")), "the new state shows at the newest revision seen: {shown:?}");

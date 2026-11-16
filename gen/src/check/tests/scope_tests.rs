@@ -152,7 +152,7 @@ fn freshness_is_one_declaration_with_durations() {
 fn insert_on_is_one_closed_value() {
     let joined = |options: &str, lines: &str| scope(options, &format!("{lines}    query \"S\"\n"));
     let node_read = |options: &str| format!("  scope :node, node: :one do\n    parameter :id, :id\n    query \"N\"\n    variables id: :id\n  end\n{}", joined(options, BY_OWNER));
-    const ONE_VALUE: &str = "`insert_on` takes one value, `:server` or `:create`";
+    const ONE_VALUE: &str = "`insert_on` must be `:server` or `:create`";
     run(&[
         ("create", &joined(", insert_on: :create", ""), None),
         ("server", &joined(", insert_on: :server", BY_OWNER), None),
@@ -176,8 +176,8 @@ fn refresh_on_foreground_needs_a_scope_with_query() {
     run(&[
         ("remote", &scope(", refresh_on_foreground: true", "    query \"S\"\n"), None),
         ("local", &scope(", refresh_on_foreground: true", "    order createdAt: :desc\n"), Some("needs a scope with `query`")),
-        ("false", &scope(", refresh_on_foreground: false", "    order createdAt: :desc\n"), None),
-        ("symbol", &scope(", refresh_on_foreground: :yes", "    order createdAt: :desc\n"), Some("`refresh_on_foreground` must be true or false")),
+        ("false", &scope(", refresh_on_foreground: false", "    order createdAt: :desc\n"), Some("only `true`")),
+        ("symbol", &scope(", refresh_on_foreground: :yes", "    order createdAt: :desc\n"), Some("only `true`")),
     ]);
 }
 
@@ -185,7 +185,7 @@ fn refresh_on_foreground_needs_a_scope_with_query() {
 fn keep_on_gap_needs_a_query_and_no_foreground_refresh() {
     run(&[
         ("remote", &scope(", keep_on_gap: true", "    query \"S\"\n"), None),
-        ("local", &scope(", keep_on_gap: true", "    order createdAt: :desc\n"), Some("scope `s`: `keep_on_gap` needs a `query`")),
+        ("local", &scope(", keep_on_gap: true", "    order createdAt: :desc\n"), Some("scope `s`: `keep_on_gap` needs `query`")),
         ("with foreground refresh", &scope(", keep_on_gap: true, refresh_on_foreground: true", "    query \"S\"\n"), Some("scope `s`: `keep_on_gap` and `refresh_on_foreground` contradict")),
     ]);
 }
@@ -225,8 +225,8 @@ fn stable_order_keeps_the_shown_order_of_the_rows_where_selects() {
         ("stable without order", &stable(", stable_order: true", BY_OWNER), Some("needs `order` and `where`")),
         ("stable without where", &stable(", stable_order: true", "    order createdAt: :asc\n"), Some("needs `order` and `where`")),
         ("stable with a server-only parameter", &stable(", stable_order: true", &format!("{BY_OWNER}    order createdAt: :asc\n    parameter :q, :string\n")), Some("without server-only parameters")),
-        ("stable false", &stable(", stable_order: false", ""), None),
-        ("stable is a symbol", &stable(", stable_order: :yes", ""), Some("`stable_order` must be true or false")),
+        ("stable false", &stable(", stable_order: false", ""), Some("only `true`")),
+        ("stable is a symbol", &stable(", stable_order: :yes", ""), Some("only `true`")),
     ]);
 }
 
