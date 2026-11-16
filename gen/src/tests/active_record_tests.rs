@@ -28,26 +28,18 @@ fn standalone_operations_match_document_names_kinds_and_inputs() {
         "mutation \"Save\"\n parameter :input, OtherInput",
         "mutation \"Save\"\n parameter :input, NoteInput, null: true",
         "mutation \"Save\"",
-        "mutation \"Save\"\n wrap \"input\"\n parameter :priority, :int",
-        "mutation \"Save\"\n wrap \"input\"\n parameter :text, :int",
-        "mutation \"Save\"\n wrap \"input\"\n parameter :text, :string\nparameter :extra, :string",
+        "mutation \"Save\"\n parameter :priority, :int",
+        "mutation \"Save\"\n parameter :text, :int",
+        "mutation \"Save\"\n parameter :text, :string\nparameter :extra, :string",
     ] {
         std::fs::write(&source, format!("operation :save do\n{body}\nend\n")).unwrap();
         if crate::compile_files(&[&source], Some(&schema), std::slice::from_ref(&document)).is_ok() { accepted.push(body); }
     }
     assert!(accepted.is_empty(), "accepted invalid operations: {accepted:?}");
-    for body in ["parameter :input, NoteInput", "wrap \"input\"\n parameter :text, :string\nparameter :priority, :int, null: true", "wrap \"input\"\n parameter :text, :string"] {
+    for body in ["parameter :input, NoteInput", "parameter :text, :string\nparameter :priority, :int, null: true", "parameter :text, :string"] {
         std::fs::write(&source, format!("operation :save do\n mutation \"Save\"\n{body}\nend\n")).unwrap();
         assert!(crate::compile_files(&[&source], Some(&schema), std::slice::from_ref(&document)).is_ok(), "{body}");
     }
-}
-
-#[test]
-fn operation_effect_requirements_do_not_depend_on_application_model_names() {
-    let accepted = ["Chat", "Group"].into_iter().filter(|model| {
-        parse_models(&format!("model {model} do\n operation :leave do\n mutation \"Leave\"\n end\nend\n")).is_ok()
-    }).collect::<Vec<_>>();
-    assert!(accepted.is_empty(), "models exempt from declaring their effect: {accepted:?}");
 }
 
 #[test]

@@ -56,7 +56,7 @@ fn typed_scope_params_are_int_and_bool_arguments_on_both_platforms() {
 #[test]
 fn typed_params_name_only_int_or_bool() {
     let source = MODEL.replace("parameter :afterSequence, :int", "parameter :afterSequence, :num");
-    let errors = compile(&source, None).unwrap_err();
+    let errors = compile(&source, Some(SCHEMA)).unwrap_err();
     assert!(errors.iter().any(|message| message.contains("a server-only parameter is")), "{errors:?}");
 }
 

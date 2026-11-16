@@ -25,9 +25,8 @@ fn standard_operation_parameters_reject_what_cannot_be_sent() {
     for (case, body, message) in [
         ("kind", "operation :create do\n  mutation \"A\"\n  parameter :x, :date\nend", crate::decl::PARAM_TYPES),
         ("attribute name", "operation :create do\n  mutation \"A\"\n  parameter :name, :string\nend", "parameter `name` has the name of an attribute"),
-        ("unused", "operation :create do\n  mutation \"A\"\n  parameter :x, :string\nend", "parameter `x` is used by neither `variables` nor `optimistic`"),
         ("destroy takes no parameter", "operation :destroy do\n  mutation \"A\"\n  parameter :x, :string\nend", "`parameter` does not apply to operation `destroy`"),
-        ("unknown variable source", "operation :create do\n  mutation \"A\"\n  parameter :y, :string\nend", "variable `ghost` names unknown attribute or parameter `ghost`"),
+        ("unknown variable source", "operation :create do\n  mutation \"A\"\n  parameter :y, :string\n  variables other: :ghost\nend", "variable `other` names unknown attribute or parameter `ghost`"),
     ] {
         let found = failure(body).1;
         assert!(found.contains(message), "{case}: {found}");
@@ -45,7 +44,7 @@ fn the_generated_calls_take_the_args_after_the_fields() {
     let models = parse_models(&model(PAIR)).unwrap();
     let swift = emit_swift(&models, &[], &SchemaTypes::default());
     for expected in [
-        "create(name: String, momentId: String? = nil, signedId: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self>",
+        "create(name: String, ownerId: String, momentId: String? = nil, signedId: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self>",
         "args_[\"signedId\"] = try JSONValue.encode(signedId)",
         "update(name: String? = nil, ownerId: String? = nil, signedId: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self>",
     ] {
@@ -53,7 +52,7 @@ fn the_generated_calls_take_the_args_after_the_fields() {
     }
     let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
     for expected in [
-        "suspend fun create(name: String, momentId: String? = null, signedId: String, account: AccountScope? = null): MutationReceipt<Sample>",
+        "suspend fun create(name: String, ownerId: String, momentId: String? = null, signedId: String, account: AccountScope? = null): MutationReceipt<Sample>",
         "suspend fun update(name: String? = null, ownerId: String? = null, signedId: String? = null, account: AccountScope? = null): MutationReceipt<Sample>",
     ] {
         assert!(kotlin.contains(expected), "kotlin lacks {expected}");

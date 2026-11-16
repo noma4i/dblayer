@@ -29,7 +29,7 @@ fn the_generated_output_of_every_fixture_declares_each_member_once() {
     let directory = crate::package_dir().join("../fixtures");
     let mut paths: Vec<PathBuf> = std::fs::read_dir(directory).unwrap().map(|entry| entry.unwrap().path()).filter(|path| path.extension().is_some_and(|extension| extension == "dbl")).collect();
     paths.sort();
-    let models = parse_files(&paths).unwrap();
+    let models = crate::compile_fixtures(&paths).unwrap().models;
     let swift = emit_swift(&models, &[], &SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
     for (platform, source) in [(Platform::Swift, swift), (Platform::Kotlin, kotlin)] {

@@ -55,7 +55,7 @@ fn model(lines: &str) -> String {
 }
 
 fn standard(name: &str, mutation: &str, root: &str) -> String {
-    format!("  operation :{name} do\n    mutation \"{mutation}\"\n    wrap \"input\"\n    response from: \"{root}\"\n  end\n")
+    format!("  operation :{name} do\n    mutation \"{mutation}\"\n    response from: \"{root}\"\n  end\n")
 }
 
 fn action(name: &str, mutation: &str, lines: &str) -> String {
@@ -101,7 +101,7 @@ fn stale_root_prefixes_of_model_operations_are_refused() {
     refused("create with the old prefix", &create, "response from: \"chatGroupCreate.chat\"", &["response from `chatGroupCreate.chat`", "`CreateChat`", "no `chatGroupCreate`", "top level", "createChat"]);
     let update = model(&standard("update", "UpdateChat", "chatGroupUpdate.chat"));
     refused("update with the old prefix", &update, "response from: \"chatGroupUpdate.chat\"", &["no `chatGroupUpdate`", "updateChat"]);
-    let leave = model(&action("leave", "LeaveChat", "    wrap \"input\"\n    response from: \"leaveChat.chat\"\n"));
+    let leave = model(&action("leave", "LeaveChat", "    response from: \"leaveChat.chat\"\n"));
     refused("answer carries removedChatId", &leave, "response from: \"leaveChat.chat\"", &["no `chat` under `leaveChat`", "removedChatId"]);
 }
 
@@ -114,7 +114,7 @@ fn a_root_inside_the_answer_is_accepted_through_every_form_of_selection() {
         ("inline fragment without a type", model(&standard("create", "PlainInlineChat", "createChat.chat"))),
         ("union branch", model(&standard("create", "TryChat", "tryChat.chat"))),
         ("update", model(&standard("update", "UpdateChat", "updateChat.chat"))),
-        ("second row of the payload", model(&action("send", "CreateChat", "    wrap \"input\"\n    response from: \"createChat.chat\"\n    upsert Message, from: \"createChat.message\"\n"))),
+        ("second row of the payload", model(&action("send", "CreateChat", "    response from: \"createChat.chat\"\n    upsert Message, from: \"createChat.message\"\n"))),
     ];
     for (name, source) in cases {
         if let Err(errors) = run(&source) {
@@ -131,17 +131,17 @@ fn a_root_that_names_the_schema_field_behind_an_alias_is_refused() {
 
 #[test]
 fn a_landing_path_the_answer_lacks_is_refused() {
-    let stale = model(&action("send", "CreateChat", "    wrap \"input\"\n    response from: \"createChat.chat\"\n    upsert Message, from: \"chatGroupCreate.message\"\n"));
+    let stale = model(&action("send", "CreateChat", "    response from: \"createChat.chat\"\n    upsert Message, from: \"chatGroupCreate.message\"\n"));
     refused("landing with the old prefix", &stale, "upsert Message", &["upsert `chatGroupCreate.message`", "no `chatGroupCreate`", "createChat"]);
-    let missing = model(&action("send", "UpdateChat", "    wrap \"input\"\n    response from: \"updateChat.chat\"\n    upsert Message, from: \"updateChat.message\"\n"));
+    let missing = model(&action("send", "UpdateChat", "    response from: \"updateChat.chat\"\n    upsert Message, from: \"updateChat.message\"\n"));
     refused("landing the document does not select", &missing, "upsert Message", &["no `message` under `updateChat`", "chat"]);
 }
 
 #[test]
 fn result_names_must_be_keys_of_the_payload() {
-    let good = model(&action("send", "CreateChat", "    wrap \"input\"\n    response from: \"createChat.chat\"\n    returns do\n      attribute :note, :string\n    end\n"));
+    let good = model(&action("send", "CreateChat", "    response from: \"createChat.chat\"\n    returns do\n      attribute :note, :string\n    end\n"));
     run(&good).unwrap();
-    let bad = model(&action("send", "CreateChat", "    wrap \"input\"\n    response from: \"createChat.chat\"\n    returns do\n      attribute :successMessage, :string\n    end\n"));
+    let bad = model(&action("send", "CreateChat", "    response from: \"createChat.chat\"\n    returns do\n      attribute :successMessage, :string\n    end\n"));
     refused("result key the payload lacks", &bad, "attribute :successMessage", &["returns `successMessage`", "no `successMessage` under `createChat`", "note"]);
 }
 

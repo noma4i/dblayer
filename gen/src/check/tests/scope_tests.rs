@@ -205,12 +205,9 @@ fn membership_checks_parameter_fields_types_and_conflicts() {
         ("where status: :list\n    membership list: { contains: :lists }", Some("conflicts with where")),
     ] {
         let source = format!("model Chat do\n  attribute :status, :enum, values: [\"PRIMARY\",\"SECONDARY\"], as: Kind\n  attribute :lists, [:enum], values: [\"PRIMARY\",\"SECONDARY\"], as: Kind\n  index :status\n  scope :node, node: :one do\n    parameter :id, :id\n    query \"ChatNode\"\n    variables id: :id\n  end\n  scope :list, insert_on: :server do\n    parameter :list, Kind\n    {rule}\n    query \"Chats\"\n    response shape: :list\n  end\nend");
-        let directory = tempfile::tempdir().unwrap();
-        let file = directory.path().join("chat.dbl");
-        std::fs::write(&file, source).unwrap();
-        match (crate::compile_files(&[file], None, &[]), expected) {
+        match (crate::parse_models(&source), expected) {
             (Ok(_), None) => {},
-            (Err(errors), Some(expected)) => assert!(errors.iter().any(|error| error.error.message.contains(expected)), "{rule}: {errors:?}"),
+            (Err(errors), Some(expected)) => assert!(errors.iter().any(|error| error.message.contains(expected)), "{rule}: {errors:?}"),
             (actual, expected) => panic!("{rule}: {actual:?}, expected {expected:?}"),
         }
     }

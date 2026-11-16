@@ -1,14 +1,9 @@
-use std::fs;
-
-use crate::{compile_files, emit_kotlin, emit_swift, Declarations};
+use crate::{emit_kotlin, emit_swift, Declarations};
 
 const MODEL: &str = "model Message do\n  attribute :chatId, :id\n  index :chatId\n  attribute :sequenceNumber, :int, null: true\n  attribute :createdAt, :date\n  scope :thread, insert_on: :server, stable_order: true do\n    parameter :chatId, :id\n    where chatId: :chatId\n    order sequenceNumber: :asc_nulls_last, createdAt: :asc\n    query \"messages\"\n    response from: \"chat.messages\"\n    paginate size: 30, direction: :forward\n  end\nend\n";
 
 fn compile(source: &str) -> Result<Declarations, Vec<String>> {
-    let directory = tempfile::tempdir().unwrap();
-    let file = directory.path().join("message.dbl");
-    fs::write(&file, source).unwrap();
-    compile_files(&[file], None, &[]).map_err(|errors| errors.into_iter().map(|error| error.error.message).collect())
+    crate::parse_all(&[source]).map_err(|errors| errors.into_iter().map(|(_, error)| error.message).collect())
 }
 
 #[test]

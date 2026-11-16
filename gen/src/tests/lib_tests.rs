@@ -12,7 +12,7 @@ fn fixture_paths() -> Vec<PathBuf> {
 
 #[test]
 fn fixtures_parse_into_models_that_are_valid_for_the_core() {
-    let models = parse_files(&fixture_paths()).unwrap();
+    let models = crate::compile_fixtures(&fixture_paths()).unwrap().models;
     assert!(dblayer::schema::validate_models(&models, &[]).is_empty());
 }
 
@@ -24,7 +24,7 @@ fn kotlin_models_are_immutable() {
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.extension().is_some_and(|extension| extension == "dbl")).collect();
     operation_paths.sort();
-    for declarations in [compile_files(&fixture_paths(), None, &[]).unwrap(),
+    for declarations in [crate::compile_fixtures(&fixture_paths()).unwrap(),
         compile_files(&operation_paths, Some(&operation_root.join("schema.graphql")), &[operation_root.join("mutations"), operation_root.join("queries")]).unwrap()] {
         let kotlin = emit_kotlin(&declarations.models, &declarations.operations, &declarations.inputs);
         let mut annotations = Vec::new();
@@ -51,7 +51,9 @@ fn unknown_model_across_files_is_reported_per_file() {
     let directory = tempfile::tempdir().unwrap();
     let only_moment = directory.path().join("moment.dbl");
     fs::copy(crate::package_dir().join("../fixtures/moment.dbl"), &only_moment).unwrap();
-    let errors = parse_files(std::slice::from_ref(&only_moment)).unwrap_err();
+    let scalars = directory.path().join("scalars.dbl");
+    fs::copy(crate::package_dir().join("../fixtures/scalars.dbl"), &scalars).unwrap();
+    let errors = crate::compile_fixtures(&[only_moment.clone(), scalars]).unwrap_err();
     assert!(errors.iter().all(|error| error.file == only_moment.display().to_string()));
     let source = fs::read_to_string(&only_moment).unwrap();
     let declarations = source.lines().enumerate().filter(|(_, line)| line.trim_start().starts_with("belongs_to") || line.trim_start().starts_with("has_many"))

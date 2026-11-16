@@ -17,7 +17,8 @@ fn generate(arguments: &[&str], sources: &[PathBuf]) -> String {
 #[test]
 fn every_generated_swift_entry_to_an_owner_runs_on_the_actor_of_the_caller() {
     let schema = PathBuf::from(".").join("../fixtures/operations/schema.graphql");
-    let models = generate(&["swift"], &fixtures(""));
+    let models_schema = PathBuf::from(".").join("../fixtures/graphql/schema.graphql");
+    let models = generate(&["--schema", models_schema.to_str().unwrap(), "swift"], &fixtures(""));
     let operations = generate(&["--schema", schema.to_str().unwrap(), "swift"], &fixtures("operations"));
     for (label, source) in [("models", models), ("operations", operations)] {
         let entries: Vec<&str> = source.lines().filter(|line| line.contains(") async throws") && line.trim_start().starts_with(['p', '@', 'n'])).collect();

@@ -67,8 +67,6 @@ fn string_and_enum_text_params_mix_in_declared_order() {
 
 #[test]
 fn a_scope_enum_param_names_its_schema_type_and_is_checked_against_the_document() {
-    let without = compile(MODEL, OPERATIONS, None).unwrap_err();
-    assert!(without.iter().any(|text| text.contains("`ChatList`") && text.contains("--schema")), "{without:?}");
     for (case, model, operations, error) in [
         ("missing type", MODEL.replace("parameter :list, ChatList", "parameter :list, Ghost"), OPERATIONS.to_string(), "`Ghost`"),
         ("input object", MODEL.replace("parameter :list, ChatList", "parameter :list, ChatFilter"), OPERATIONS.to_string(), "names `ChatFilter`, which is not an enum"),
@@ -102,6 +100,6 @@ fn joins_events_needs_columns_to_join_by() {
     let errors = compile(&model, OPERATIONS, Some(SCHEMA)).unwrap_err();
     assert!(errors.iter().any(|text| text.contains("insert_on: :server") && text.contains("`where`")), "{errors:?}");
     let strings = "model Chat do\n  attribute :title, :string\n  scope :search, insert_on: :server do\n    parameter :query, :string\n    query \"chats\"\n    response from: \"chats\"\n    paginate size: 25, direction: :forward\n  end\nend\n";
-    let errors = compile(strings, OPERATIONS, None).unwrap_err();
+    let errors = compile(strings, OPERATIONS, Some(SCHEMA)).unwrap_err();
     assert!(errors.iter().any(|text| text.contains("insert_on: :server") && text.contains("`where`")), "{errors:?}");
 }

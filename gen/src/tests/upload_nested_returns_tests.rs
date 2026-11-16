@@ -1,12 +1,7 @@
-use crate::compile_files;
-
 const RETURNS: &str = "    returns do\n      attribute :moment, PhotoMoment do\n        attribute :id, :id\n      end\n      attribute :userPhoto, PhotoResult do\n        attribute :reason, :string\n        attribute :media, PhotoMedia do\n          attribute :thumbUrl, :string\n        end\n      end\n    end\n";
 
 fn declared(body: &str) -> crate::Declarations {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("profile.dbl");
-    std::fs::write(&path, body).unwrap();
-    compile_files(&[path], None, &[]).unwrap_or_else(|errors| panic!("{errors:?}"))
+    crate::parse_all(&[body]).unwrap_or_else(|errors| panic!("{errors:?}"))
 }
 
 /// The text of the declaration of `name` in generated code: from its line to the next blank line.
@@ -38,7 +33,7 @@ fn gen_upload_action_nested_returns() {
 fn fixtures() -> crate::Declarations {
     let mut models: Vec<std::path::PathBuf> = std::fs::read_dir(crate::package_dir().join("../fixtures")).unwrap().map(|entry| entry.unwrap().path()).filter(|path| path.extension().is_some_and(|extension| extension == "dbl")).collect();
     models.sort();
-    compile_files(&models, None, &[]).unwrap_or_else(|errors| panic!("{errors:?}"))
+    crate::compile_fixtures(&models).unwrap_or_else(|errors| panic!("{errors:?}"))
 }
 
 /// D-287: an upload action has a call on the type of the model, so an upload needs no instance: a singleton takes no id, a model takes its id; the instance method calls the one on the type, with the same variables on both platforms.

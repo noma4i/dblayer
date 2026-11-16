@@ -121,24 +121,23 @@ fn action_with(lines: &str) -> String {
 
 #[test]
 fn args_are_checked_against_the_input_of_their_mutation() {
-    let create = |wrap: &str, input: &str, args: &str| with_lines(&format!("  operation :create do\n    mutation \"CreateItem\"\n    {wrap}\n    variables {input}\n{}  end\n", parameters(args)));
-    let wrapped = |input: &str, args: &str| create("wrap \"input\"", input, args);
-    let cases: [SchemaCase; 15] = [
-        ("string for String!", wrapped("title: :title, file: :file", "file: :string"), None),
-        ("nullable arg for a nullable input", wrapped("title: :title, note: :note", "note: :string?"), None),
-        ("a required arg may fill a nullable input", wrapped("title: :title, note: :note, file: :file", "note: :string, file: :string"), None),
-        ("id arg for an Int input", wrapped("title: :title, momentId: :momentId, file: :f", "momentId: :id?, f: :string"), None),
-        ("id arg for an ID input", wrapped("title: :title, ownerId: :ownerId, file: :f", "ownerId: :id?, f: :string"), None),
-        ("ids arg for [ID!]", wrapped("title: :title, ids: :ids, file: :f", "ids: :ids?, f: :string"), None),
-        ("input with a default is optional", wrapped("title: :title, withDefault: :withDefault, file: :f", "withDefault: :string?, f: :string"), None),
-        ("variable the input type lacks", wrapped("title: :title, ghost: :ghost", "ghost: :string"), Some((6, "`ghost` is not an input of `ItemInput`"))),
-        ("kind that does not fit", wrapped("title: :title, file: :file", "file: :bool"), Some((6, "parameter `file` of kind `:bool` does not fit `file: String!`"))),
-        ("string for an Int input", wrapped("title: :title, count: :count, file: :f", "count: :string?, f: :string"), Some((6, "does not fit `count: Int`"))),
-        ("nullable arg for a required input", wrapped("title: :title, file: :file", "file: :string?"), Some((6, "parameter `file` may be nil but `file: String!` is required"))),
+    let wrapped = |args: &str| with_lines(&format!("  operation :create do\n    mutation \"CreateItem\"\n{}  end\n", parameters(args)));
+    let renamed = |args: &str, variables: &str| with_lines(&format!("  operation :create do\n    mutation \"CreateItem\"\n    variables {variables}\n{}  end\n", parameters(args)));
+    let cases: [SchemaCase; 14] = [
+        ("string for String!", wrapped("file: :string"), None),
+        ("nullable arg for a nullable input", wrapped("note: :string?, file: :string"), None),
+        ("a required arg may fill a nullable input", wrapped("note: :string, file: :string"), None),
+        ("id arg for an Int input", renamed("momentId: :id?, f: :string", "file: :f"), None),
+        ("id arg for an ID input", renamed("ownerId: :id?, f: :string", "file: :f"), None),
+        ("ids arg for [ID!]", renamed("ids: :ids?, f: :string", "file: :f"), None),
+        ("input with a default is optional", renamed("withDefault: :string?, f: :string", "file: :f"), None),
+        ("variable the input type lacks", renamed("g: :string, file: :string", "ghost: :g"), Some((8, "`ghost` is not an input of `ItemInput`"))),
+        ("kind that does not fit", wrapped("file: :bool"), Some((6, "parameter `file` of kind `:bool` does not fit `file: String!`"))),
+        ("string for an Int input", renamed("count: :string?, f: :string", "file: :f"), Some((6, "does not fit `count: Int`"))),
+        ("nullable arg for a required input", wrapped("file: :string?"), Some((6, "parameter `file` may be nil but `file: String!` is required"))),
         ("operation that is not in the documents", with_lines("operation :create do\n  mutation \"Nope\"\n  parameter :a, :string\nend\n"), Some((6, "operation `Nope` is not in the operation documents"))),
-        ("unwrapped action takes the variables", action_with("    parameter :label, :string, null: true\nparameter :size, :int\n    variables itemId: :id, label: :label, size: :size"), None),
-        ("unwrapped action with a wrong kind", action_with("    parameter :size, :string\n    variables itemId: :id, size: :size"), Some((6, "parameter `size` of kind `:string` does not fit `size: Int!`"))),
-        ("wrap that is not a variable", with_lines("operation :create do\n  mutation \"CreateItem\"\n  parameter :file, :string\nend\n"), Some((6, "operation `CreateItem` has no variable `$payload`"))),
+        ("unwrapped action takes the variables", action_with("    parameter :label, :string, null: true\nparameter :size, :int\n    variables itemId: :id"), None),
+        ("unwrapped action with a wrong kind", action_with("    parameter :size, :string\n    variables itemId: :id"), Some((6, "parameter `size` of kind `:string` does not fit `size: Int!`"))),
     ];
     for (name, source, expected) in cases {
         match (run(&source), expected) {

@@ -82,7 +82,7 @@ fn upload_batch_declaration_reaches_the_core_spec() {
   end
 end
 "#)).unwrap();
-    let declarations = compile_files(&[path], None, &[]).unwrap();
+    let declarations = crate::parse_all(&[&std::fs::read_to_string(&path).unwrap()]).unwrap();
     let value = serde_json::to_value(&declarations.models[0]).unwrap();
     let action = value["actions"].as_array().unwrap().iter().find(|action| action["name"] == "create_files").unwrap();
     assert_eq!(action["batch"], serde_json::json!({"min":2,"max":10,"items":"items","single":"create_file","input":{"clientKey":"clientKey"}}));

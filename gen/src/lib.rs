@@ -4,6 +4,14 @@ pub(crate) fn package_dir() -> std::path::PathBuf {
     std::env::current_dir().expect("the test has a working directory")
 }
 
+#[cfg(test)]
+/// The fixtures compile against the library fixture schema and its operation documents.
+pub(crate) fn compile_fixtures(paths: &[std::path::PathBuf]) -> Result<Declarations, Vec<FileError>> {
+    let graphql = package_dir().join("../fixtures/graphql");
+    let documents: Vec<PathBuf> = ["queries", "mutations", "subscriptions", "fragments"].iter().map(|name| graphql.join(name)).collect();
+    compile_files(paths, Some(&graphql.join("schema.graphql")), &documents)
+}
+
 mod build;
 mod decl;
 mod check;

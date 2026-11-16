@@ -31,7 +31,6 @@ end
     assert_eq!(moment.associations[0].target.as_str(), "User");
     assert_eq!(moment.associations[0].foreign_key, "userId");
     assert!(moment.is_indexed("userId") && moment.is_indexed("createdAt"));
-    assert_eq!(moment.actions[0].variables["momentId"], "id");
     assert_eq!(moment.relations[1].remote.as_ref().unwrap().operation, "MomentsFeed");
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
@@ -62,7 +61,7 @@ fn kotlin_models_json_escapes_interpolation_markers() {
   operation :like do
     mutation "LikeMoment"
     parameter :liked, :bool
-    variables liked: :liked
+
     optimistic liked: :liked
   end
 end
@@ -109,16 +108,15 @@ fn action_args_become_parameters_of_the_generated_call() {
   operation :mute do
     mutation "ContainerMute"
     parameter :mute, :bool
-    variables containerId: :id, mute: :mute
+    variables containerId: :id
     optimistic muted: :mute
-    wrap "input"
+
     response from: "containerMute.container"
   end
 end
 "#).unwrap();
     let action = &models[0].actions[0];
     assert_eq!(action.args["mute"], "bool");
-    assert_eq!(action.wrap.as_deref(), Some("input"));
     assert_eq!(action.root.as_deref(), Some("containerMute.container"));
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
@@ -129,21 +127,30 @@ end
     assert!(kotlin.contains("\"muted\" to jsonValue(mute)"));
 }
 
+fn compiled(source: &str, schema: &str, documents: &str) -> dblayer_gen::Declarations {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    std::fs::write(root.join("schema.graphql"), schema).unwrap();
+    std::fs::create_dir(root.join("mutations")).unwrap();
+    std::fs::write(root.join("mutations/all.graphql"), documents).unwrap();
+    std::fs::write(root.join("model.dbl"), source).unwrap();
+    dblayer_gen::compile_files(&[root.join("model.dbl")], Some(&root.join("schema.graphql")), &[root.join("mutations")]).unwrap_or_else(|errors| panic!("{errors:?}"))
+}
+
 #[test]
 fn create_takes_only_the_fields_the_mutation_input_maps() {
-    let models = parse_models(r#"model Container do
+    let declared = compiled(r#"model Container do
   attribute :name, :string, null: true
   attribute :unreadCount, :int
   attribute :createdAt, :date
   operation :create do
     mutation "ContainerGroupCreate"
-    variables name: :name
     local :unreadCount
   end
 end
-"#).unwrap();
-    let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
-    let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
+"#, "type Query { a: Int }\ntype Mutation { containerGroupCreate(name: String): Int }\n", "mutation ContainerGroupCreate($name: String) { containerGroupCreate(name: $name) }\n");
+    let swift = emit_swift(&declared.models, &[], &dblayer_gen::SchemaTypes::default());
+    let kotlin = emit_kotlin(&declared.models, &[], &dblayer_gen::SchemaTypes::default());
     assert!(swift.contains("nonisolated(nonsending) public static func create(name: String? = nil, unreadCount: Int, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self>"));
     assert!(kotlin.contains("suspend fun create(name: String? = null, unreadCount: Long, account: AccountScope? = null): MutationReceipt<Container>"));
 }
@@ -222,13 +229,13 @@ fn models_and_nested_types_read_positional_cells_on_both_platforms() {
 
 #[test]
 fn a_local_attribute_with_a_source_is_optional_in_create_and_a_map_reaches_the_call() {
-    let models = parse_models(r#"model Container do
+    let declared = compiled(r#"model Container do
   attribute :name, :string
   attribute :unreadCount, :int
   attribute :stance, :string, null: true
   operation :create do
     mutation "ContainerGroupCreate"
-    variables name: :name
+
     local :unreadCount, from: { of: Counter, field: :total }
   end
   operation :move do
@@ -244,9 +251,9 @@ model Counter do
     query "CounterQuery"
   end
 end
-"#).unwrap();
-    let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
-    let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
+"#, "type Query { counterQuery: Counter }\nenum Shelf { PRIMARY SECONDARY }\ntype Counter { id: ID!, total: Int! }\ntype Mutation { containerGroupCreate(name: String!): Int, containerMove(containerId: ID!, shelf: Shelf!): Int }\n", "query CounterQuery { counterQuery { id total } }\nmutation ContainerGroupCreate($name: String!) { containerGroupCreate(name: $name) }\nmutation ContainerMove($containerId: ID!, $shelf: Shelf!) { containerMove(containerId: $containerId, shelf: $shelf) }\n");
+    let swift = emit_swift(&declared.models, &[], &dblayer_gen::SchemaTypes::default());
+    let kotlin = emit_kotlin(&declared.models, &[], &dblayer_gen::SchemaTypes::default());
     assert!(swift.contains("static func create(name: String, unreadCount: Int? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self>"));
     assert!(kotlin.contains("suspend fun create(name: String, unreadCount: Long? = null, account: AccountScope? = null): MutationReceipt<Container>"));
     let map = r#"{"stance":{"$map":{"from":"shelf","map":{"PRIMARY":"main","SECONDARY":"other"}}}}"#;
@@ -357,7 +364,7 @@ fn a_dbl_input_that_would_collide_with_generated_names_is_refused_with_a_diagnos
         ("trailing underscore model", "model Page_ do\n  attribute :title, :string\nend\n".to_string(), "ends with `_`"),
         ("scope parameter id on an edge scope", format!("model Page do\n  attribute :title, :string\n  scope :feed do\n    parameter :id, :id\n    where id: :id\n{edge}  end\nend\n"), "model `Page` scope `feed` edge accessor: parameter `id` has the name of the generated parameter `id`"),
         ("field account", "model Ledger do\n  attribute :account, :string\nend\n".to_string(), "model `Ledger` create: parameter `account` has the name of the generated parameter `account`"),
-        ("action argument account", "model Ledger do\n  attribute :title, :string\n  operation :move do\n    mutation \"Move\"\n    parameter :account, :string\n    variables account: :account\n    optimistic false\n  end\nend\n".to_string(), "model `Ledger` action `move`: parameter `account` has the name of the generated parameter `account`"),
+        ("action argument account", "model Ledger do\n  attribute :title, :string\n  operation :move do\n    mutation \"Move\"\n    parameter :account, :string\n    optimistic false\n  end\nend\n".to_string(), "model `Ledger` action `move`: parameter `account` has the name of the generated parameter `account`"),
         ("scope parameter account", format!("model Page do\n  attribute :title, :string\n  scope :feed do\n    parameter :account, :string\n{edge}  end\nend\n"), "scope `feed` edge accessor: parameter `account` has the name of the generated parameter `account`"),
         ("ephemeral field account", "model Page do\n  attribute :title, :string\n  ephemeral do\n    attribute :account, :string, null: true\n  end\nend\n".to_string(), "model `Page` set: parameter `account` has the name of the generated parameter `account`"),
         ("operation parameter account", "operation :load do\n  query \"Load\"\n  parameter :account, :string\nend\n".to_string(), "operation `load` call: parameter `account` has the name of the generated parameter `account`"),

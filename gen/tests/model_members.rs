@@ -1,5 +1,5 @@
 use dblayer::schema::{generated_member_names, reserved_member_names};
-use dblayer_gen::parse_files;
+use dblayer_gen::compile_files;
 use std::path::PathBuf;
 
 fn fixtures() -> Vec<PathBuf> {
@@ -43,7 +43,9 @@ fn a_relation_named_like_a_reserved_member_is_refused_naming_the_dbl_name() {
 
 #[test]
 fn every_schema_the_generator_accepts_opens() {
-    let models = parse_files(&fixtures()).unwrap();
+    let graphql = PathBuf::from(".").join("../fixtures/graphql");
+    let documents: Vec<PathBuf> = ["queries", "mutations", "subscriptions", "fragments"].iter().map(|name| graphql.join(name)).collect();
+    let models = compile_files(&fixtures(), Some(&graphql.join("schema.graphql")), &documents).unwrap().models;
     assert!(models.len() > 20, "the fixtures declare models: {}", models.len());
     dblayer::store::Store::open_models(None, models, std::sync::Arc::new(dblayer::runtime::SystemClock)).unwrap();
 }

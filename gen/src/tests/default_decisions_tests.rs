@@ -79,5 +79,4 @@ fn gen_default_action_policy() {
     let [create, poke] = &models[0].actions[..] else { panic!("two actions") };
     assert_eq!((create.on_failure, poke.on_failure), (OnFailure::Rollback, OnFailure::Rollback));
     assert!(create.has_optimistic && create.has_temp_row_retention);
-    assert_eq!(poke.variables["sampleId"], "id");
 }

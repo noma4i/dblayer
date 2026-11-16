@@ -93,23 +93,6 @@ fn gen_nullability_explicit_then_schema() {
 }
 
 #[test]
-fn gen_input_wrap_default() {
-    let source = |wrap: &str| format!("model Sample do\n  operation :poke do\n    mutation \"PokeSample\"\n    {wrap}\n    parameter :title, :string\n    optimistic false\n  end\nend\n");
-    let print = |source: &str| {
-        let declared = parse_all(&[source]).unwrap();
-        (emit_swift(&declared.models, &declared.operations, &Default::default()), emit_kotlin(&declared.models, &declared.operations, &Default::default()))
-    };
-    let plain = parse_models(&source("")).unwrap();
-    assert!(plain[0].actions[0].wrap.is_none());
-    let wrapped = parse_models(&source("wrap \"input\"")).unwrap();
-    assert_eq!(wrapped[0].actions[0].wrap.as_deref(), Some("input"));
-    let standalone = "operation :poke_send do\n  mutation \"PokeSend\"\n  parameter :title, :string\nend\noperation :poke_wrapped do\n  mutation \"PokeWrapped\"\n  parameter :title, :string\nend\n";
-    let (swift, kotlin) = print(standalone);
-    assert!(swift.contains("variables: variables_,") && swift.contains("variables: [\"input\": JSONValue.object(variables_)],"), "{swift}");
-    assert!(kotlin.contains("JsonObject(variables_)") && kotlin.contains("mapOf(\"input\" to JsonObject(variables_))"), "{kotlin}");
-}
-
-#[test]
 fn gen_case_affix_rule() {
     let union = |types: &[(&str, &str)]| {
         let blocks: String = types.iter().map(|(name, option)| format!("    on {name}{option} do\n      attribute :id, :id\n    end\n")).collect();

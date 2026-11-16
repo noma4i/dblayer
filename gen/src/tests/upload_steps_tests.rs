@@ -14,14 +14,14 @@ fn gen_multipart_roots() {
     ] {
         let source = format!("uploads do\n  multipart initiate: :Init, presign: :Presign, complete: :Complete, abort: :Abort{roots}\nend\n{MODEL}");
         std::fs::write(&file, source).unwrap();
-        let result = crate::parse_files(&[&file]);
+        let result = crate::parse_sources(&[&std::fs::read_to_string(&file).unwrap()]);
         if valid {
             let models = result.unwrap_or_else(|errors| panic!("{roots}: {errors:?}"));
             let steps = serde_json::to_value(models[0].upload_steps.as_ref().unwrap()).unwrap();
             assert_eq!(steps["multipart"]["initiate"]["root_path"].as_str(), expected, "{roots}: {steps}");
         } else {
             let errors = result.unwrap_err();
-            assert!(errors.iter().any(|error| error.file.ends_with("upload.dbl") && error.error.line == 2), "{roots}: {errors:?}");
+            assert!(errors.iter().any(|error| error.1.line == 2), "{roots}: {errors:?}");
         }
     }
 }
