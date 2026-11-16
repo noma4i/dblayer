@@ -8,9 +8,16 @@
 - Keep rows of a scope with `query` fresh for 5 minutes when `freshness` is omitted.
 - Refuse `false` for the scope flags `keep_on_gap`, `stable_order`, `refresh_on_foreground` and `members_complete`.
 - Refuse `local: true` with `default:` or `merge:`, and a repeated `index`, `changes` or association.
+- Read the wrap of an operation from its document, the one input variable the root field takes.
+- Bind each input field of an operation to the parameter, attribute or row id of the same name.
+- Write the parameters named like attributes at once in an operation without `optimistic`.
+- Stop the generator on an operation or a scope with `query` when `--schema` is missing.
 
 ### Removed
 
+- Remove the `wrap` operation line, and `variables` entries that repeat a name.
+- Remove the default binding of an operation without `variables` to its row id.
+- Remove the error for a named operation without an `optimistic` line.
 - Remove the `processing` operation line and the processing of an upload.
 - Remove the messages of removed model forms: they fail as unknown or invalid.
 

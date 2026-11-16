@@ -593,27 +593,24 @@ After a reconnect, Cable rereads the observed selections of models with `changed
 ```ruby
 operation :create do
   mutation "CreateMoment"
-  variables text: :text
 end
 ```
 
 Fields of the kind `id` that hold a whole number are sent as JSON numbers. A GraphQL `ID` accepts a number and so does an `Int`, while a string only fits an `ID`.
 
-Servers that take one input object and answer with a payload use `wrap` and `response from:`:
+Servers that take one input object and answer with a payload use `response from:`. The generator reads the operation document: when it has one variable, an input object that the root field takes, and no parameter has the name of that variable, the body goes under that variable. A parameter of the same name takes the whole input object instead (`parameter :input, StickerInput`), and the call keeps omitted, null and set nested fields:
 
 ```ruby
 operation :update do
   mutation "UpdateGroup"
-  wrap "input"
   response from: "groupUpdate.group"
 end
 operation :send_reward do
   mutation "RewardSend"
   parameter :rewardId, :string
   optimistic false
-  wrap "input"
   upsert Note, from: "rewardSend.message"
-  variables userId: :id, rewardId: :rewardId
+  variables userId: :id
   response from: "rewardSend.user"
   refetch :current, model: CurrentUser
 end
@@ -621,9 +618,9 @@ end
 
 `response :ignore` skips reading the response, for a mutation whose answer is not the model's row; add `refetch :profile` to reload the scope instead.
 
-`wrap "input"` sends `{ input: { ...variables } }`. `response from:` is the path of the row inside the response, by default the first field of the operation. `upsert Model, from: "a.b"` writes an object or every object in an array at that path into the declared model. The model must exist, and a path that the response lacks writes nothing. `refetch :scope, model: Model` marks a scope of another model stale after the operation succeeds and reloads it when someone reads it, for counters that live on another row. `refetch` is a set: write the line again for each scope.
+The operation document with one input variable sends `{ input: { ...fields } }`. `response from:` is the path of the row inside the response, by default the first field of the operation. `upsert Model, from: "a.b"` writes an object or every object in an array at that path into the declared model. The model must exist, and a path that the response lacks writes nothing. `refetch :scope, model: Model` marks a scope of another model stale after the operation succeeds and reloads it when someone reads it, for counters that live on another row. `refetch` is a set: write the line again for each scope.
 
-`create`, `update` and `destroy` call the named mutation. The `variables` line maps row attributes to variables (same names by default). A `parameter` line in a model operation declares a value that is sent but not stored (see [writing data](writing-data.md)). Its types are the types of an operation without a model: a scalar type or the name of a schema enum or input object (see [models](models.md#check-against-the-server-schema)). The response is normalized like any other response and replaces the optimistic row. See [writing data](writing-data.md) for the queue, retries and rollback.
+`create`, `update` and `destroy` call the named mutation. Each field of the input takes the parameter, then the attribute (`create`, `update`), then the row `id` (the name `id` or the name of the model followed by `Id`) with the same name. A field that is not null, has no default and finds no source is an error, and a nullable one is not sent. `variables a: :b` only renames: the field `a` takes the source `b`. A `parameter` line in a model operation declares a value that is sent but not stored (see [writing data](writing-data.md)). Its types are the types of an operation without a model: a scalar type or the name of a schema enum or input object (see [models](models.md#check-against-the-server-schema)). The response is normalized like any other response and replaces the optimistic row. See [writing data](writing-data.md) for the queue, retries and rollback.
 
 ## Operations without a model
 
@@ -632,7 +629,6 @@ Sign-in, sign-out, a QR code or a price list belong to no row. Declare each one 
 ```ruby
 operation :qr_code_create do
   mutation "QrCodeCreate"
-  wrap "input"
   parameter :kind, :string
   parameter :size, :int, null: true
   returns do
@@ -652,9 +648,9 @@ println(code.url)
 ```
 
 - `mutation "Name"` or `query "Name"` names the operation. Pass the operation type to `DB.open` (Swift) or `DBlayer.open` (Kotlin) like any other operation.
-- `parameter` lines are the variables, with the same types as the parameters of `create`. `null: true` makes one optional and an omitted one is not sent. `wrap "input"` sends them as `{ input: { ... } }`.
+- `parameter` lines are the variables, with the same types as the parameters of `create`. `null: true` makes one optional and an omitted one is not sent. An operation document with one input variable sends them as `{ input: { ... } }`, and the parameters are the fields of that input.
 - `returns do ... end` lists the attributes to read from the root field of the answer. Without `returns` the call returns nothing. An attribute is a scalar (`:bool`, `:int`, `:num`, `:string`, `:id`), a schema enum name (`WidgetKind`), `[:id]` or `[:string]` for a list of scalars, `:json` for a value you read yourself (`JSONValue` in Swift, `JsonElement` in Kotlin), a named type with a block for an object (`attribute :videoIntro, PricingLoadResultVideoIntro do ... end`), or `[Name]` with a block for a list of objects. Each object type has the name you give it. An `:id` attribute accepts a number or a string and arrives as a string. A `returns` attribute takes no `null`, `optional`, `default`, `from` or `local`.
-- `parameter :input, StickerInput` names a schema input object. The generator reads it and nested inputs from `--schema`.
+- `parameter :owner, OwnerInput` names a schema input object. The generator reads it and nested inputs from `--schema`.
 - Required inputs remain required. Nullable fields use `GraphQLNullable`: omitted by default, explicit null, or a supplied value. Lists preserve every dimension and element nullability.
 - A required input field with a schema default can be omitted. Nullable fields with defaults still distinguish omission from explicit null.
 - `parameter :kind, WidgetKind` and `attribute :kind, WidgetKind` name a schema enum. It becomes a typed enum with an `unknown` case, in inputs too (see [models](models.md#enums)). A custom scalar needs a `scalar` line (see [models](models.md#custom-scalars)). The `JSON` scalar uses `JSONValue` in Swift and `JsonElement` in Kotlin.

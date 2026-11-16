@@ -36,7 +36,7 @@ try await moment.update(text: .some(nil))
 moment.update(text = GraphQLNullable.Null)
 ```
 
-`create` takes the attributes that `operation :create` maps with `variables`, or every attribute when no mapping exists. Add `local :userId` inside `operation :create` for attributes you set locally but do not send. `local :userId, from: { of: CurrentUser, field: :id }` fills the attribute from a singleton row. Repeat `local` with different destinations and sources. Generated `create` makes each sourced argument optional. A non-null explicit value wins. An absent singleton leaves the attribute unset. Duplicate destinations and incompatible types fail generation. `update` accepts plain `local` and rejects `local from:`.
+`create` takes the attributes that the input of its mutation names, by the name of the attribute. Add `local :userId` inside `operation :create` for attributes you set locally but do not send. `local :userId, from: { of: CurrentUser, field: :id }` fills the attribute from a singleton row. Repeat `local` with different destinations and sources. Generated `create` makes each sourced argument optional. A non-null explicit value wins. An absent singleton leaves the attribute unset. Duplicate destinations and incompatible types fail generation. `update` accepts plain `local` and rejects `local from:`.
 
 ```swift
 let message = try await Message.create(text: "hello", in: scope).optimisticValue
@@ -55,8 +55,6 @@ A mutation may need a value that is not an attribute of the model, such as a sig
 ```ruby
 operation :create do
   mutation "SendNote"
-  wrap "input"
-  variables groupId: :groupId, body: :body, file: :file, attachedUserId: :attachedUserId
   parameter :file, :string, null: true
   parameter :attachedUserId, :id, null: true
 end
@@ -225,17 +223,16 @@ operation :like do
 end
 ```
 
-Every named model operation declares `optimistic` attributes, or `optimistic false` when only the server changes the row. The generator rejects a missing declaration. `create`, `update` and `destroy` need none.
+A named model operation without an `optimistic` line writes each parameter that has the name of an attribute at once, and takes it back when the server refuses. An `optimistic` block is the whole local change. Write `optimistic false` when only the server changes the row. `create`, `update` and `destroy` need none.
 
-An operation can take parameters. `parameter` declares them (`:bool`, `:int`, `:num`, `:string`, `:id`). `variables` and `optimistic` can use a parameter by name. A parameter that nothing uses is an error:
+An operation can take parameters. `parameter` declares them (`:bool`, `:int`, `:num`, `:string`, `:id`). A parameter takes the input field or variable of the mutation with the same name, and `optimistic` can use it by name. A parameter that nothing uses is an error:
 
 ```ruby
 operation :mute do
   mutation "GroupMute"
   parameter :mute, :bool
-  variables groupId: :id, mute: :mute
+  variables groupId: :id
   optimistic muted: :mute
-  wrap "input"
   response from: "groupMute.group"
 end
 ```
@@ -248,7 +245,7 @@ A bool parameter can set a list and a counter. `include:` puts the id of a row, 
 operation :react do
   mutation "MomentReact"
   parameter :reacted, :bool
-  variables momentId: :id, reacted: :reacted
+  variables momentId: :id
   optimistic reacted: :reacted,
              visitorIds: { include: { of: CurrentUser, field: :id }, when: :reacted },
              visitsCount: { at_least: 1, when: :reacted }
@@ -272,7 +269,7 @@ operation :react do
   mutation "NoteReact"
   parameter :userId, :id
   parameter :reactionBody, :string
-  variables messageId: :id, reactionBody: :reactionBody
+  variables messageId: :id
   optimistic reactions: { by: :userId, element: { userId: :userId, body: :reactionBody } }
 end
 ```
@@ -300,7 +297,6 @@ The rows the server answers with arrive through `upsert Model, from: "path"` and
 operation :block do
   mutation "UserBlock"
   variables userId: :id
-  wrap "input"
   response :ignore
   refetch :blocked
 end
@@ -309,8 +305,7 @@ operation :send_gift do
   mutation "GiftSend"
   parameter :giftId, :string
   parameter :chatId, :id
-  variables userId: :id, giftId: :giftId
-  wrap "input"
+  variables userId: :id
   upsert Message, from: "giftSend.message"
   returns do
     attribute :successMessage, :string
@@ -352,7 +347,6 @@ An action that loses its meaning with time declares how long it may wait. `expir
 ```ruby
 operation :typing, expires_after: 30 do
   mutation "ChatTyping"
-  variables chatId: :chatId
 end
 ```
 
@@ -369,9 +363,8 @@ A model with `storage: :local` writes rows that only this device holds, see [sto
 operation :send_reward do
   mutation "RewardSend"
   parameter :rewardId, :string
-  variables userId: :id, rewardId: :rewardId
+  variables userId: :id
   optimistic false
-  wrap "input"
   returns do
     attribute :successNote, :string
   end

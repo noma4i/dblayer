@@ -1115,7 +1115,7 @@ model Club do
   operation :add_member do
     mutation "AddClubMember"
     parameter :userIds, [:id]
-    variables clubId: :id, userIds: :userIds
+    variables clubId: :id
     optimistic false
     joins_scope :club_members, model: Person, rows: :userIds, with: { clubId: :id }, order: :order, orders: ["JOINED", "OWNER_FIRST"]
     response from: "addClubMember"
@@ -1172,7 +1172,7 @@ A path the document does not select is an error with the file and line of the de
 group.dbl:125: response `groupGroupLeave.group`: operation `GroupGroupLeave` has no `group` under `groupGroupLeave`, it has: removedGroupId
 ```
 
-A path may not be empty and may not have an empty segment, with or without `--schema`. Operation documents come only with `--schema`. Without them the check stops at the shape of the path. A default response path (the first field of the operation) is not followed, because the declaration did not write it. `refetch`, `optimistic`, `match_by` and the effect lines name scopes, models and row attributes and are not paths into the response.
+A path may not be empty and may not have an empty segment, with or without `--schema`. The generator needs `--schema` and the operation documents for every operation and every scope with `query`, and stops with ``operation `name` needs `--schema` `` without them. A default response path (the first field of the operation) is not followed, because the declaration did not write it. `refetch`, `optimistic`, `match_by` and the effect lines name scopes, models and row attributes and are not paths into the response.
 
 Every attribute of the model, every `from:` path, every `id_from:` and every attribute of a nested type must exist on that type. The check reports:
 
@@ -1183,7 +1183,7 @@ Every attribute of the model, every `from:` path, every `id_from:` and every att
 - a scope that paginates, lists or returns one row against a schema field of another shape;
 - an association `from:` path of the wrong shape.
 
-Each `parameter` declared inside a model operation is checked against the mutation that sends it. With `wrap :input`, the check reads the input type of the wrapped variable. Without it, the check reads the variables of the operation. The check needs the mutation in the operation documents and reports:
+Each `parameter` declared inside a model operation is checked against the mutation that sends it. When the document has one input object variable that the root field takes, the check reads the fields of that input type. Otherwise it reads the variables of the document. The check needs the mutation in the operation documents and reports:
 
 - a variable that `variables` binds to a parameter but the input type or the operation does not have;
 - a parameter whose type does not fit the schema type: `:string` fits `String`, `ID` or a scalar mapped to `:string` or `:date`, `:id` fits `ID`, `Int`, `String` or a scalar mapped to `:string`, `:int` or `:long`, `:int` fits `Int` or a scalar mapped to `:int` or `:long`, `:long` fits a scalar mapped to `:long`, `:num` fits `Float`, `Int` or a scalar mapped to `:num`, `:bool` fits `Boolean`, `[:id]` fits a list of `ID`, `Int` or `String`, and the name of an input object or enum (`WidgetKind`) fits that type;
@@ -1191,7 +1191,7 @@ Each `parameter` declared inside a model operation is checked against the mutati
 
 A list type (`[WidgetInput]`) fits a list of that type. `null_items: true` allows nil items and needs a schema item without `!`. `null: true` makes the list optional and needs a schema variable without `!`.
 
-A `parameter` inside a model operation takes the same types as an operation without a model, including the name of a schema enum or input object. The call gets a typed parameter, and an `optimistic` line can write an enum parameter into an enum attribute of the model. Without `--schema` the generator stops and names the type.
+A `parameter` inside a model operation takes the same types as an operation without a model, including the name of a schema enum or input object. The call gets a typed parameter, and an `optimistic` line can write an enum parameter into an enum attribute of the model. 
 
 A top-level `operation` outside a model takes only its name and block. Named options produce a generator error naming the option.
 
@@ -1205,7 +1205,6 @@ operation :answer_connection do
   parameter :decision, ConnectionAction
   variables userId: :id, action: :decision
   optimistic connection: { from: :decision, map: { ACCEPT: "CONNECTED", REJECT: "NEVER_MET", REMOVE: "NEVER_MET", REQUEST: "SENT_PENDING" } }
-  wrap "input"
 end
 ```
 
