@@ -1,5 +1,6 @@
 //! Direction C: owners `Outbox` and `Transfers` with the executors of their effects.
 
+mod alias_map;
 pub mod answer;
 pub mod failure;
 pub mod outbox;

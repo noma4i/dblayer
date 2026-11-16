@@ -1,6 +1,7 @@
 //! Owner `Outbox`: the answers of the Store to the batches of an operation (`Committed`, `Rejected`).
 
 
+use super::alias_map::AliasMap;
 use super::outbox::{Batch, LocalCall, Outbox, OutboxState};
 use super::outbox_types::*;
 
@@ -203,10 +204,10 @@ impl OutboxState {
 
     /// The row `temp` became `real`: the open operations of the row address `real`.
     pub(super) fn swap_row(&mut self, model: &str, temp: &str, real: &str) {
-        if alias_in(&self.aliases, model, temp).is_some_and(|known| known == real) { return; }
+        if self.aliases.real(model, temp).is_some_and(|known| known == real) { return; }
         self.bump_selection_row(model, temp);
         self.bump_selection_row(model, real);
-        self.aliases.insert(temp.to_string(), (model.to_string(), real.to_string()));
+        self.aliases.insert(model, temp, real);
         for operation in self.ops.values_mut().filter(|operation| operation.stage != Stage::Done && Self::addresses_row(operation, model, temp)) {
             Self::resolve_operation(&self.aliases, &mut operation.op);
             let temps = Self::body_temps(operation);
@@ -216,14 +217,14 @@ impl OutboxState {
 
     pub(super) fn resolve_operation(aliases: &AliasMap, op: &mut NewOp) {
         let resolve = |model: &str, row: &mut String| {
-            if let Some(real) = alias_in(aliases, model, row) { *row = real.clone(); }
+            if let Some(real) = aliases.real(model, row) { *row = real.clone(); }
         };
         resolve(&op.model, &mut op.row_id);
         if !aliases.is_empty() && op.body.contains(crate::identity::TEMP_ID_PREFIX) {
             if let Ok(mut body) = serde_json::from_str::<serde_json::Value>(&op.body) {
                 let mut changed = false;
                 crate::identity::walk_temp_ids(&mut body, &mut |text| {
-                    if let Some((_, real)) = aliases.get(text.as_str()) { text.clone_from(real); changed = true; }
+                    if let Some(real) = aliases.real_of_temp(text.as_str()) { text.clone_from(real); changed = true; }
                 });
                 if changed { op.body = body.to_string(); }
             }

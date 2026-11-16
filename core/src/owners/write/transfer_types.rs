@@ -311,6 +311,7 @@ pub enum TransferInput {
     ReservedFloor { transfer_id: TransferId },
     /// The rows of the Store that got a server id: the keys of the transfers of those rows follow, the asked temporary id keeps finding them.
     AliasFacts { swaps: Vec<(String, String, String)> },
+    AliasesRestored { aliases: BTreeMap<(String, String), String> },
     /// The PUT of the step is sent to the network: the timer of the step starts.
     PutStarted { transfer_id: TransferId, attempt_id: AttemptId },
     /// The answer to `abort` of a removed transfer: `Ok` when the server removed the upload or has none, else the refusal.
@@ -791,7 +792,7 @@ pub struct TransferState {
     pub(super) round_sent: Option<u32>,
     /// `upload_id` -> the write the Store refused.
     pub(super) minted: BTreeMap<String, MintedDebt>,
-    pub(super) aliases: BTreeMap<(String, String), String>,
+    pub(super) aliases: super::alias_map::AliasMap,
     /// The orphans whose `Online(true)` or `RestoreReady` came while their abort was in flight.
     pub(super) orphan_owed: BTreeSet<String>,
     /// `attempt_id` of the retry timer -> the refused write batch: its kind and its elements.
@@ -848,7 +849,7 @@ impl TransferState {
             round_active: BTreeSet::new(),
             round_sent: None,
             minted: BTreeMap::new(),
-            aliases: BTreeMap::new(),
+            aliases: super::alias_map::AliasMap::default(),
             orphan_owed: BTreeSet::new(),
             retrying: BTreeMap::new(),
             open_groups: BTreeSet::new(),
@@ -882,31 +883,24 @@ impl TransferState {
 
     pub fn stage_of(&self, id: TransferId) -> Option<TransferStage> { self.transfers.get(&id).map(|transfer| transfer.stage) }
 
-    /// The key `model:row:action` with the server id of its row when a swap of the Store gave one.
-    pub(super) fn canonical_key(&self, key: &str) -> Key {
-        let Some((model, rest)) = key.split_once(':') else { return key.to_string() };
-        let Some((row, action)) = rest.rsplit_once(':') else { return key.to_string() };
-        self.aliases.get(&(model.to_string(), row.to_string())).map_or_else(|| key.to_string(), |real| format!("{model}:{real}:{action}"))
-    }
-
     /// The rows `temp` became `real`: every key the owner holds follows.
     pub(super) fn swap_keys(&mut self, swaps: Vec<(String, String, String)>) {
-        self.aliases.extend(swaps.into_iter().map(|(model, temp, real)| ((model, temp), real)));
-        let keys: Vec<(TransferId, Key)> = self.transfers.iter().map(|(id, transfer)| (*id, self.canonical_key(&transfer.key))).collect();
+        for (model, temp, real) in swaps { self.aliases.insert(&model, &temp, &real); }
+        let keys: Vec<(TransferId, Key)> = self.transfers.iter().map(|(id, transfer)| (*id, self.aliases.canonical_key(&transfer.key))).collect();
         for (id, key) in keys { if let Some(transfer) = self.transfers.get_mut(&id) { transfer.key = key; } }
-        for (upload_id, key) in self.orphans.clone() { self.orphans.insert(upload_id, self.canonical_key(&key)); }
-        let minted: Vec<(String, Key)> = self.minted.iter().map(|(upload_id, debt)| (upload_id.clone(), self.canonical_key(&debt.key))).collect();
+        for (upload_id, key) in self.orphans.clone() { self.orphans.insert(upload_id, self.aliases.canonical_key(&key)); }
+        let minted: Vec<(String, Key)> = self.minted.iter().map(|(upload_id, debt)| (upload_id.clone(), self.aliases.canonical_key(&debt.key))).collect();
         for (upload_id, key) in minted { if let Some(debt) = self.minted.get_mut(&upload_id) { debt.key = key; } }
-        for (key, streams) in std::mem::take(&mut self.subscribers) { self.subscribers.entry(self.canonical_key(&key)).or_default().extend(streams); }
+        for (key, streams) in std::mem::take(&mut self.subscribers) { self.subscribers.entry(self.aliases.canonical_key(&key)).or_default().extend(streams); }
         for (key, shown) in std::mem::take(&mut self.published) {
-            let key = self.canonical_key(&key);
+            let key = self.aliases.canonical_key(&key);
             if self.published.get(&key).is_none_or(|held| held.1 <= shown.1) { self.published.insert(key, shown); }
         }
     }
 
     /// The keys of the call carry the ids the app used: the asked key and the held key meet at the server id.
     pub(super) fn canonical(&self, input: TransferInput) -> TransferInput {
-        let key = |key: Key| self.canonical_key(&key);
+        let key = |key: Key| self.aliases.canonical_key(&key);
         match input {
             TransferInput::Accept { epoch, mut item, reply } => { item.key = key(item.key); TransferInput::Accept { epoch, item, reply } }
             TransferInput::AcceptBatch { epoch, mut items, joint, reply } => { for item in &mut items { item.key = key(std::mem::take(&mut item.key)); } TransferInput::AcceptBatch { epoch, items, joint, reply } }

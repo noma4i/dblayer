@@ -960,6 +960,7 @@ impl TransferState {
             TransferInput::AcceptBatch { epoch, items, joint, reply } => self.accept(now, epoch, items, Some(*joint), reply, fx),
             TransferInput::Restored { .. } | TransferInput::RestoreFailed { .. } | TransferInput::ReservedFloor { .. } => {}
             TransferInput::AliasFacts { swaps } => self.swap_keys(swaps),
+            TransferInput::AliasesRestored { aliases } => self.aliases = super::alias_map::AliasMap::restored(aliases),
             TransferInput::AbortDone { upload_id, result } => self.abort_done(upload_id, result, fx),
             TransferInput::RegisterOperations { declarations, complete } => self.register(now, declarations, complete, fx),
             TransferInput::RestoreReady { epoch } => self.restore_ready(now, epoch, fx),
@@ -1086,7 +1087,7 @@ impl TransferState {
     /// A new epoch starts a new instance of the table: the declarations of the operations and the counters of ids stay, the rest of the state of the older epoch goes.
     fn begin_epoch(&mut self, epoch: Epoch) {
         let fresh = Self::new(epoch, self.slots, self.peers);
-        let kept = Self { abort_root: std::mem::take(&mut self.abort_root), init_root: std::mem::take(&mut self.init_root),orphans: std::mem::take(&mut self.orphans), minted: std::mem::take(&mut self.minted), pending: std::mem::take(&mut self.pending), declarations: std::mem::take(&mut self.declarations), complete: self.complete, next_id: self.next_id, next_seq: self.next_seq, next_group: self.next_group, next_batch: self.next_batch, next_attempt: self.next_attempt, next_timer: self.next_timer, put_timeout: self.put_timeout, sizing: self.sizing, aliases: BTreeMap::new(), ..fresh };
+        let kept = Self { abort_root: std::mem::take(&mut self.abort_root), init_root: std::mem::take(&mut self.init_root),orphans: std::mem::take(&mut self.orphans), minted: std::mem::take(&mut self.minted), pending: std::mem::take(&mut self.pending), declarations: std::mem::take(&mut self.declarations), complete: self.complete, next_id: self.next_id, next_seq: self.next_seq, next_group: self.next_group, next_batch: self.next_batch, next_attempt: self.next_attempt, next_timer: self.next_timer, put_timeout: self.put_timeout, sizing: self.sizing, ..fresh };
         *self = kept;
     }
 

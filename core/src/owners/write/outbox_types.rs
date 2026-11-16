@@ -336,14 +336,6 @@ pub enum Phase {
     Ready,
 }
 
-/// The swaps the Store committed, by temp id (a temp id names one row): the model and the real id.
-pub(super) type AliasMap = BTreeMap<String, (String, String)>;
-
-/// The real id of `row` in `model` when its `create` landed.
-pub(super) fn alias_in<'a>(aliases: &'a AliasMap, model: &str, row: &str) -> Option<&'a String> {
-    aliases.get(row).filter(|(swapped, _)| swapped == model).map(|(_, real)| real)
-}
-
 #[derive(Clone, Debug)]
 pub struct QueuedOperation {
     pub op_id: OpId,

@@ -10,6 +10,7 @@ use crate::owners::session::{SessionInput, OUTBOX_AUTHOR};
 use crate::owners::store::{OutcomeOwner, StoreBatch, StoreInput, StoreOp};
 use crate::runtime::RetryPolicy;
 use crate::schema::OnFailure;
+use super::alias_map::AliasMap;
 use crate::owners::store::StoreWriter;
 use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
 
@@ -149,7 +150,7 @@ impl OutboxState {
             removed: BTreeSet::new(),
             orphan_transfers: BTreeSet::new(),
             removing: BTreeSet::new(),
-            aliases: BTreeMap::new(),
+            aliases: AliasMap::default(),
             ended_creates: std::collections::BTreeSet::new(),
         }
     }
@@ -208,7 +209,7 @@ impl OutboxState {
     fn temp_dependency(&self, operation: &QueuedOperation) -> TempDependency {
         let holds = |temp: &String| matches!(operation.op.origin, OpSource::Transfer { .. }) && &operation.op.row_id == temp;
         let Ok(awaited) = Self::awaited_temps(operation) else { return TempDependency::Open };
-        let unknown = awaited.iter().any(|temp| !holds(temp) && !self.ended_creates.contains(temp) && !self.aliases.contains_key(temp));
+        let unknown = awaited.iter().any(|temp| !holds(temp) && !self.ended_creates.contains(temp) && self.aliases.real_of_temp(temp).is_none());
         if unknown { TempDependency::Open } else { TempDependency::Clear }
     }
 
@@ -758,13 +759,13 @@ impl OutboxState {
     }
 
     pub(super) fn open_on_row(&self, model: &str, row: &str, action: Option<&str>) -> Option<OpId> {
-        let row = alias_in(&self.aliases, model, row).map_or(row, String::as_str);
+        let row = self.aliases.real(model, row).map_or(row, String::as_str);
         self.ops.values().filter(|operation| Self::addresses_row(operation, model, row) && action.is_none_or(|action| operation.op.action == action) && operation.stage != Stage::Done).min_by_key(|operation| operation.sequence).map(|operation| operation.op_id)
     }
 
     /// A call without an action asks Transfer, which holds the transfers that have no operation yet: the smallest open operation of the row here is the bound.
     fn select_row(&mut self, (model, row_id): (String, String), kind: SelectKind, reply: ReplyId, fx: &mut Effects<Outbox>) {
-        let resolved = alias_in(&self.aliases, &model, &row_id).cloned();
+        let resolved = self.aliases.real(&model, &row_id).cloned();
         let outbox_min = self.open_on_row(&model, &row_id, None).map(|op_id| (op_id, self.ops[&op_id].op.action.clone()));
         let Some(transfer) = self.peers.transfer else {
             return match outbox_min {
@@ -795,7 +796,7 @@ impl OutboxState {
     }
 
     fn selection_key(&self, model: &str, row: &str) -> (String, String) {
-        (model.to_string(), alias_in(&self.aliases, model, row).cloned().unwrap_or_else(|| row.to_string()))
+        (model.to_string(), self.aliases.real(model, row).cloned().unwrap_or_else(|| row.to_string()))
     }
 
     fn selection_version(&self, model: &str, row: &str) -> u64 { self.selection_versions.get(&self.selection_key(model, row)).copied().unwrap_or(0) }
@@ -1015,7 +1016,7 @@ impl StateOwner for Outbox {
             return fx;
         }
         if let OutboxInput::Resolve { model, row, reply } = input {
-            let resolved = alias_in(&state.aliases, &model, &row).cloned().unwrap_or(row);
+            let resolved = state.aliases.real(&model, &row).cloned().unwrap_or(row);
             OutboxState::reply(&mut fx, reply, OutboxAnswer::Resolved(resolved));
             return fx;
         }
