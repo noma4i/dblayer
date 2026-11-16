@@ -7,7 +7,11 @@ use serde_json::json;
 use crate::check::check_source;
 
 fn build_one(body: &str) -> ModelSpec {
-    let source = format!("model Sample do\n  attribute :ownerId, :id\n  attribute :createdAt, :date\n  index :ownerId, :createdAt\n{body}\nend\n");
+    build_one_after("", body)
+}
+
+fn build_one_after(top_level: &str, body: &str) -> ModelSpec {
+    let source = format!("{top_level}model Sample do\n  attribute :ownerId, :id\n  attribute :createdAt, :date\n  index :ownerId, :createdAt\n{body}\nend\n");
     let mut models = check_source(&source).unwrap();
     assert_eq!(models.len(), 1);
     models.remove(0)
@@ -231,9 +235,9 @@ fn insert_on_server_joins_events() {
 fn insert_on_server_joins_node_only_with_the_node_read_and_a_node_change() {
     let node = "  scope :node, node: :one do\n    parameter :id, :id\n    query \"SampleNode\"\n    variables id: :id\n  end\n";
     let list = "  scope :mine, insert_on: :server do\n    parameter :ownerId, :id\n    where ownerId: :ownerId\n    query \"Mine\"\n  end\n";
-    let changed = "  changes \"SampleEvents\", from: \"sampleEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n  changed_by \"SAMPLE\", via: :node\n";
+    let changed = "  changed_by \"SAMPLE\", via: :node\n";
     let flags = |body: String| {
-        let model = build_one(&body);
+        let model = build_one_after("changes \"SampleEvents\", from: \"sampleEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n", &body);
         let relation = model.relations.iter().find(|relation| relation.name == "mine").unwrap();
         (relation.joins_events, relation.joins_node)
     };

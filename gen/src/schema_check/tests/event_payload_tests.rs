@@ -2,7 +2,7 @@ use std::fs;
 
 use crate::{compile_files, parse_models};
 
-const MODEL: &str = "model Chat do\n  attribute :title, :string\n  attribute :serverRevision, :int, from: \"revision\"\n  server_revision :serverRevision\n  scope :node, node: :one do\n    parameter :id, :id\n    query \"ChatNode\"\n    variables id: :id\n  end\n  changes \"Changes\", from: \"changes.entries\", area: \"area\", kind: \"kind\", id: \"id\"\n  changed_by \"MESSAGE\", via: :node, payload: \"chat\"\nend\n";
+const MODEL: &str = "changes \"Changes\", from: \"changes.entries\", area: \"area\", kind: \"kind\", id: \"id\"\nmodel Chat do\n  attribute :title, :string\n  attribute :serverRevision, :int, from: \"revision\"\n  server_revision :serverRevision\n  scope :node, node: :one do\n    parameter :id, :id\n    query \"ChatNode\"\n    variables id: :id\n  end\n  changed_by \"MESSAGE\", via: :node, payload: \"chat\"\nend\n";
 const SCHEMA: &str = "scalar Int64\ninterface Node { id: ID! }\ntype Chat implements Node { id: ID! title: String! revision: Int64! }\ntype Message { id: ID! }\ntype Query { node(id: ID!): Node }\ntype Subscription { changes: Changes! }\ntype Changes { entries: [Change!]! }\ntype Change { area: String! kind: String! id: ID! chat: Chat message: Message }\n";
 const DOCUMENTS: &str = "query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision } } }\nsubscription Changes { changes { entries { area kind id chat { id title revision } message { id } } } }\n";
 

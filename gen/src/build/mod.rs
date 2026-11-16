@@ -80,7 +80,7 @@ fn build_model(node: &ModelDecl) -> ModelSpec {
     model.relations = node.scopes.iter().map(|scope| build_scope(scope, reads_node)).collect();
     model.listens = node.subscriptions.iter().map(updates_spec).collect();
     model.removed_by = node.removed_by.iter().map(|removal| dblayer::schema::RemovedBy { model: removal.model.clone(), matches: removal.matches.iter().cloned().collect() }).collect();
-    model.change_feed = node.changes.first().map(|feed| dblayer::schema::ChangeFeed {
+    model.change_feed = node.changes.as_ref().map(|feed| dblayer::schema::ChangeFeed {
         subscription: feed.subscription.clone(),
         root: feed.from.item.clone(),
         area: feed.area.item.clone(),

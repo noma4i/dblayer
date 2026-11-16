@@ -1,3 +1,5 @@
+changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
+
 model Container do
   attribute :title, :string
   attribute :lastRecordAt, :date, derived: true
@@ -13,7 +15,6 @@ model Container do
     query "ContainerNode"
     variables id: :id
   end
-  changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
   changed_by "CONTAINER", via: :node, removes_on: ["DELETED", "ACCESS_REVOKED"]
   scope :nodes, node: :many do
     query "ContainersByIds"

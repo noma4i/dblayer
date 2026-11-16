@@ -1,5 +1,6 @@
+changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
+
 model Notebook do
-  changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
   attribute :title, :string
   attribute :serverRevision, :int, from: "revision"
   server_revision :serverRevision

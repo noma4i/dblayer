@@ -515,7 +515,7 @@ pub struct ModelDecl {
     pub associations: Vec<AssociationDecl>,
     pub scopes: Vec<ScopeDecl>,
     pub subscriptions: Vec<SubscribeDecl>,
-    pub changes: Vec<ChangesDecl>,
+    pub changes: Option<ChangesDecl>,
     pub changed_by: Vec<ChangedByDecl>,
     pub removed_by: Vec<RemovedByDecl>,
     pub server_revision: Option<String>,

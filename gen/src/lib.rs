@@ -96,7 +96,7 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
     let loaded = schema.map(schema_check::Schema::load).transpose().map_err(|message| vec![FileError {
         file: schema.unwrap().display().to_string(), error: ParseError::new(1, 1, message),
     }])?;
-    let mut models = decl::lower_models(&parsed.models, loaded.as_ref()).map_err(locate)?;
+    let mut models = decl::lower_models(&parsed.models, &parsed.changes, loaded.as_ref()).map_err(locate)?;
     let mut call_errors = Vec::new();
     let mut calls = decl::lower_calls(&parsed.operations, &mut call_errors);
     if !call_errors.is_empty() {
@@ -186,7 +186,7 @@ fn parse_sources(sources: &[&str]) -> Result<Vec<ModelSpec>, Vec<(usize, ParseEr
 fn parse_all(sources: &[&str]) -> Result<Declarations, Vec<(usize, ParseError)>> {
     let parsed = parse_tree(sources)?;
     let scalars = scalars::build(&parsed.scalars)?;
-    let models = decl::lower_models(&parsed.models, None)?;
+    let models = decl::lower_models(&parsed.models, &parsed.changes, None)?;
     let mut call_errors = Vec::new();
     let calls = decl::lower_calls(&parsed.operations, &mut call_errors);
     if !call_errors.is_empty() {
@@ -221,6 +221,7 @@ fn parse_tree(sources: &[&str]) -> Result<parser::Parsed, Vec<(usize, ParseError
     let mut nodes = Vec::new();
     let mut operation_nodes = Vec::new();
     let mut scalar_nodes = Vec::new();
+    let mut change_nodes = Vec::new();
     let mut upload_nodes = Vec::new();
     let mut errors = Vec::new();
     for (file, source) in sources.iter().enumerate() {
@@ -229,6 +230,7 @@ fn parse_tree(sources: &[&str]) -> Result<parser::Parsed, Vec<(usize, ParseError
                 nodes.extend(parsed.models);
                 operation_nodes.extend(parsed.operations);
                 scalar_nodes.extend(parsed.scalars);
+                change_nodes.extend(parsed.changes);
                 upload_nodes.extend(parsed.uploads);
             }
             Err(error) => errors.push((file, error)),
@@ -237,7 +239,7 @@ fn parse_tree(sources: &[&str]) -> Result<parser::Parsed, Vec<(usize, ParseError
     if !errors.is_empty() {
         return Err(errors);
     }
-    Ok(parser::Parsed { models: nodes, operations: operation_nodes, scalars: scalar_nodes, uploads: upload_nodes })
+    Ok(parser::Parsed { models: nodes, changes: change_nodes, operations: operation_nodes, scalars: scalar_nodes, uploads: upload_nodes })
 }
 
 fn build_declarations(declared_models: &[decl::ModelDecl], calls: &[decl::CallDecl]) -> Result<Declarations, Vec<(usize, ParseError)>> {

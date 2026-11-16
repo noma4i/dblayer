@@ -9,7 +9,7 @@ pub(super) fn segments_of(path: &str) -> Option<Vec<&str>> {
 
 impl<'a> Run<'a> {
     pub(super) fn check_change_payloads(&mut self, node: &'a ModelDecl, nodes: &'a [ModelDecl]) {
-        let Some(feed) = nodes.iter().find_map(|node| node.changes.first()) else { return };
+        let Some(feed) = nodes.iter().find_map(|node| node.changes.as_ref()) else { return };
         let operation = feed.subscription.as_str();
         for (change, path) in node.changed_by.iter().flat_map(|change| change.payload.as_deref().map(|path| (change, path))) {
             let Some(event) = self.follow_operation(Spot { file: node.file, at: change.pos, label: "changes" }, operation, &feed.from.item) else {

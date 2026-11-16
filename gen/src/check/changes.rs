@@ -5,10 +5,6 @@ use super::{at, Found};
 use crate::decl::ModelDecl;
 
 pub(super) fn check_changes(nodes: &[ModelDecl], models: &[ModelSpec], errors: &mut Vec<Found>) {
-    let feeds: Vec<_> = nodes.iter().flat_map(|node| node.changes.iter().map(move |feed| (node, feed))).collect();
-    for (node, feed) in feeds.iter().skip(1) {
-        errors.push(at(node.file, feed.pos, "duplicate changes subscription"));
-    }
     let mut seen: std::collections::HashMap<(usize, &str, bool), (usize, usize, usize)> = std::collections::HashMap::new();
     for (index, (node, model)) in nodes.iter().zip(models).enumerate() {
         if let Some(field) = &model.server_revision {
@@ -32,9 +28,6 @@ pub(super) fn check_changes(nodes: &[ModelDecl], models: &[ModelSpec], errors: &
                 report(format!("duplicate change area `{}`, first declaration at file {file}:{line}:{column}", change.area));
             } else {
                 seen.insert((index, &change.area, change.observed), (node.file, decl.pos.line, decl.pos.column));
-            }
-            if feeds.is_empty() {
-                report("changed_by requires a changes subscription".into());
             }
             if let Some(path) = &change.payload {
                 if path.split('.').any(str::is_empty) { report("payload path has an empty segment".into()); }

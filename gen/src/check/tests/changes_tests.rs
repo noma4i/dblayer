@@ -1,6 +1,7 @@
 use super::check_source;
 use crate::parse_models;
 
+const CHANNEL: &str = "changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n";
 const NODE: &str = "  scope :node, node: :one do\n    parameter :id, :id\n    query \"RecordNode\"\n    variables id: :id\n  end\n";
 
 fn subscription(apply: &str) -> String {
@@ -75,7 +76,7 @@ fn apply_values_need_an_ephemeral_attribute_that_resets() {
 
 #[test]
 fn changes_declares_the_subscription_and_payload_paths() {
-    let source = format!("model Record do\n  attribute :title, :string\n{NODE}  changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n  changed_by \"RECORD\", via: :node, removes_on: [\"ERASED\"]\nend");
+    let source = format!("{CHANNEL}model Record do\n  attribute :title, :string\n{NODE}  changed_by \"RECORD\", via: :node, removes_on: [\"ERASED\"]\nend");
     let models = parse_models(&source).unwrap();
     let value = serde_json::to_value(&models[0]).unwrap();
     assert_eq!(value["change_feed"], serde_json::json!({"subscription":"RecordEvents", "root":"recordEvents.entries", "area":"topic", "kind":"action", "id":"recordId"}));
@@ -92,15 +93,15 @@ fn changes_declares_the_subscription_and_payload_paths() {
         let errors = parse_models(&source.replace(replaced, with)).unwrap_err();
         assert!(errors.iter().any(|error| error.message.contains(expected)), "{replaced}: {errors:?}");
     }
-    let twice = format!("{source}\nmodel Other do\n  changes \"OtherEvents\", from: \"a.b\", area: \"topic\", kind: \"action\", id: \"id\"\nend");
+    let twice = format!("{source}\nchanges \"OtherEvents\", from: \"a.b\", area: \"topic\", kind: \"action\", id: \"id\"\n");
     let errors = parse_models(&twice).unwrap_err();
-    assert!(errors.iter().any(|error| error.message.contains("duplicate changes subscription")), "{errors:?}");
+    assert!(errors.iter().any(|error| error.message.contains("changes is declared twice")), "{errors:?}");
 }
 
 #[test]
 fn removes_on_needs_a_via_scope_declared_as_a_node_whatever_its_name() {
-    let source = "model Record do\n  changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n  attribute :title, :string\n  scope :by_id, node: :one do\n    parameter :id, :id\n    query \"RecordNode\"\n    variables id: :id\n  end\n  scope :current do\n    query \"CurrentRecord\"\n  end\n  changed_by \"RECORD\", via: :by_id, removes_on: [\"DELETED\", \"ACCESS_REVOKED\"]\nend";
-    let models = parse_models(source).unwrap();
+    let source = format!("{CHANNEL}model Record do\n  attribute :title, :string\n  scope :by_id, node: :one do\n    parameter :id, :id\n    query \"RecordNode\"\n    variables id: :id\n  end\n  scope :current do\n    query \"CurrentRecord\"\n  end\n  changed_by \"RECORD\", via: :by_id, removes_on: [\"DELETED\", \"ACCESS_REVOKED\"]\nend");
+    let models = parse_models(&source).unwrap();
     assert_eq!(serde_json::to_value(&models[0]).unwrap()["changes"][0]["removes_on"], serde_json::json!(["DELETED", "ACCESS_REVOKED"]));
     let errors = parse_models(&source.replace("via: :by_id", "via: :current")).unwrap_err();
     assert!(errors.iter().any(|error| error.message.contains("removes_on requires a via scope declared with `node: :one`") && error.line == 12 && error.column > 0), "{errors:?}");
@@ -108,7 +109,7 @@ fn removes_on_needs_a_via_scope_declared_as_a_node_whatever_its_name() {
 
 #[test]
 fn changed_by_resolves_remote_reads_and_rejects_ambiguous_targets() {
-    let model = |declaration: &str| format!("model Record do\n  attribute :title, :string\n  scope :read do\n    query \"Read\"\n  end\n  changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n  {declaration}\nend\n");
+    let model = |declaration: &str| format!("{CHANNEL}model Record do\n  attribute :title, :string\n  scope :read do\n    query \"Read\"\n  end\n  {declaration}\nend\n");
     let models = check_source(&model("changed_by \"RECORD\", via: :read")).unwrap();
     let serialized = serde_json::to_value(&models[0]).unwrap();
     assert_eq!(serialized["changes"][0]["area"], "RECORD");
@@ -138,8 +139,7 @@ fn changed_by_needs_a_changes_subscription() {
 #[test]
 fn one_area_on_several_models_is_accepted_and_twice_in_one_model_is_refused() {
     let scopes = "  scope :by_id, node: :one do\n    parameter :id, :id\n    query \"ById\"\n    variables id: :id\n  end\n  scope :read do\n    query \"Read\"\n  end\n";
-    let feed = "  changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n";
-    let sources = |first: &str, second: &str| format!("model First do\n  attribute :title, :string\n{scopes}{feed}  {first}\nend\n\nmodel Second do\n  attribute :title, :string\n{scopes}  {second}\nend\n");
+    let sources = |first: &str, second: &str| format!("{CHANNEL}model First do\n  attribute :title, :string\n{scopes}  {first}\nend\n\nmodel Second do\n  attribute :title, :string\n{scopes}  {second}\nend\n");
     for (declaration, area) in [("changed_by \"WALLET\", via: :observed", "WALLET"), ("changed_by \"REACTION\", via: :by_id", "REACTION"), ("changed_by \"MOOD\", via: :read", "MOOD")] {
         let models = check_source(&sources(declaration, declaration)).unwrap();
         assert!(models.iter().all(|model| model.changes.len() == 1 && model.changes[0].area == area), "{declaration}");
@@ -166,7 +166,7 @@ fn local_updates_require_memory_storage_and_unique_subscription_names() {
 
 #[test]
 fn observed_rereads_need_a_remote_read_and_take_no_node_arguments() {
-    let model = |declaration: &str| format!("model Record do\n  attribute :title, :string\n  scope :read do\n    query \"Read\"\n  end\n  changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n  {declaration}\nend\n");
+    let model = |declaration: &str| format!("{CHANNEL}model Record do\n  attribute :title, :string\n  scope :read do\n    query \"Read\"\n  end\n  {declaration}\nend\n");
     let models = check_source(&model("changed_by \"WALLET\", via: :observed")).unwrap();
     let serialized = serde_json::to_value(&models[0]).unwrap();
     assert_eq!(serialized["changes"][0]["observed"], true);
@@ -178,14 +178,14 @@ fn observed_rereads_need_a_remote_read_and_take_no_node_arguments() {
         let errors = check_source(&model(declaration)).unwrap_err();
         assert!(errors.iter().any(|error| error.message.contains(message)), "{declaration}: {errors:?}");
     }
-    let local = "model Record do\n  attribute :title, :string\n  changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n  changed_by \"WALLET\", via: :observed\nend\n";
-    let errors = check_source(local).unwrap_err();
+    let local = format!("{CHANNEL}model Record do\n  attribute :title, :string\n  changed_by \"WALLET\", via: :observed\nend\n");
+    let errors = check_source(&local).unwrap_err();
     assert!(errors.iter().any(|error| error.message.contains("requires a model with a remote read")), "{errors:?}");
 }
 
 #[test]
 fn node_and_observed_forms_share_an_area_and_equal_forms_stay_refused() {
-    let source = |lines: &str| format!("model Record do\n  attribute :title, :string\n  scope :by_id, node: :one do\n    parameter :id, :id\n    query \"ById\"\n    variables id: :id\n  end\n  scope :read do\n    query \"Read\"\n  end\n  changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n  {lines}\nend\n");
+    let source = |lines: &str| format!("{CHANNEL}model Record do\n  attribute :title, :string\n  scope :by_id, node: :one do\n    parameter :id, :id\n    query \"ById\"\n    variables id: :id\n  end\n  scope :read do\n    query \"Read\"\n  end\n  {lines}\nend\n");
     let models = check_source(&source("changed_by \"CHAT\", via: :by_id, removes_on: [\"DELETED\"]\n  changed_by \"CHAT\", via: :observed")).unwrap();
     let forms: Vec<_> = models[0].changes.iter().map(|change| (change.area.as_str(), change.observed)).collect();
     assert_eq!(forms, [("CHAT", false), ("CHAT", true)]);
@@ -198,8 +198,7 @@ fn node_and_observed_forms_share_an_area_and_equal_forms_stay_refused() {
 #[test]
 fn id_of_names_the_source_row_attribute_that_holds_the_target_id() {
     let node = "  scope :by_id, node: :one do\n    parameter :id, :id\n    query \"ById\"\n    variables id: :id\n  end\n";
-    let feed = "  changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n";
-    let sources = |target: &str, source_area: &str, field_type: &str| format!("model Chat do\n  attribute :title, :string\n{node}{feed}  {target}\nend\n\nmodel Message do\n  attribute :chatId, {field_type}\n{node}  changed_by \"{source_area}\", via: :by_id\nend\n");
+    let sources = |target: &str, source_area: &str, field_type: &str| format!("{CHANNEL}model Chat do\n  attribute :title, :string\n{node}  {target}\nend\n\nmodel Message do\n  attribute :chatId, {field_type}\n{node}  changed_by \"{source_area}\", via: :by_id\nend\n");
     let valid = "changed_by \"MESSAGE\", via: :by_id, id_of: { of: Message, field: :chatId }";
     let models = check_source(&sources(valid, "MESSAGE", ":id")).unwrap();
     assert_eq!(serde_json::to_value(&models[0]).unwrap()["changes"][0]["id_of"], serde_json::json!({"model": "Message", "field": "chatId"}));

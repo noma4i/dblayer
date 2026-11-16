@@ -4,7 +4,7 @@ use dblayer::value::{ScalarKind, SortDirection};
 use serde_json::{Map, Number, Value as Json};
 
 use super::*;
-use crate::parser::{Call, ModelNode, Node, OperationNode, Pair, UploadsNode, Value};
+use crate::parser::{Call, ChangesNode, ModelNode, Node, OperationNode, Pair, UploadsNode, Value};
 use crate::schema_check::{Schema, Ty, TyKind, TypeKind};
 use crate::ParseError;
 
@@ -242,7 +242,7 @@ fn model(cx: &mut Cx, node: &ModelNode) -> ModelDecl {
     let owner = Owner(cx.schema.map(|_| node.name.clone()));
     let mut decl = ModelDecl {
         name: node.name.clone(), pos: Pos { line: node.line, column: node.column }, file: node.file, storage, expires_in, attributes: Vec::new(), ephemeral: Vec::new(),
-        indexes: Vec::new(), search: Vec::new(), associations: Vec::new(), scopes: Vec::new(), subscriptions: Vec::new(), changes: Vec::new(), changed_by: Vec::new(), removed_by: Vec::new(), server_revision: None, cable_when: None, operations: Vec::new(),
+        indexes: Vec::new(), search: Vec::new(), associations: Vec::new(), scopes: Vec::new(), subscriptions: Vec::new(), changes: None, changed_by: Vec::new(), removed_by: Vec::new(), server_revision: None, cable_when: None, operations: Vec::new(),
     };
     for call in &node.body {
         let mut line = Line::of(call);
@@ -279,23 +279,7 @@ fn model(cx: &mut Cx, node: &ModelNode) -> ModelDecl {
             "references" => decl.associations.extend(association(cx, call, AssociationKind::References)),
             "scope" => decl.scopes.extend(scope(cx, call)),
             "subscribe" => decl.subscriptions.extend(subscribe(cx, call)),
-            "changes" => {
-                no_block(cx, call);
-                let arg = exactly_one_arg(cx, &line, "a subscription name like `changes \"RecordChanges\"`");
-                let name = arg.and_then(|arg| string(cx, arg, "the subscription name"));
-                let from = line.opt(cx, "from").and_then(|pair| path(cx, &pair.value, "`from`"));
-                let area = line.opt(cx, "area").and_then(|pair| path(cx, &pair.value, "`area`"));
-                let kind = line.opt(cx, "kind").and_then(|pair| path(cx, &pair.value, "`kind`"));
-                let id = line.opt(cx, "id").and_then(|pair| path(cx, &pair.value, "`id`"));
-                line.finish(cx);
-                let from = require(cx, &line, "from", from);
-                let area = require(cx, &line, "area", area);
-                let kind = require(cx, &line, "kind", kind);
-                let id = require(cx, &line, "id", id);
-                if let (Some(subscription), Some(from), Some(area), Some(kind), Some(id)) = (name, from, area, kind, id) {
-                    decl.changes.push(ChangesDecl { pos: line.pos, subscription, from, area, kind, id });
-                }
-            }
+            "changes" => cx.fail(line.pos, "unknown word `changes` in a model: declare the channel once at the top level of a file"),
             "server_revision" => {
                 no_block(cx, call);
                 let arg = exactly_one_arg(cx, &line, "an integer attribute");
@@ -360,14 +344,60 @@ fn model(cx: &mut Cx, node: &ModelNode) -> ModelDecl {
     decl
 }
 
-pub(crate) fn lower_models(nodes: &[ModelNode], schema: Option<&Schema>) -> Result<Vec<ModelDecl>, Vec<Found>> {
+pub(crate) fn lower_models(nodes: &[ModelNode], channels: &[ChangesNode], schema: Option<&Schema>) -> Result<Vec<ModelDecl>, Vec<Found>> {
     let mut errors = Vec::new();
     let mut models = Vec::new();
     for node in nodes {
         let mut cx = Cx { file: node.file, errors: &mut errors, schema, memory: false };
         models.push(model(&mut cx, node));
     }
+    attach_channel(&mut models, channels, &mut errors);
     if errors.is_empty() { Ok(models) } else { Err(errors) }
+}
+
+/// The one `changes` channel of the project rides on the first model that reads it; a `changed_by` without the channel is an error.
+fn attach_channel(models: &mut [ModelDecl], channels: &[ChangesNode], errors: &mut Vec<Found>) {
+    let mut found = None;
+    for node in channels {
+        let mut cx = Cx { file: node.file, errors, schema: None, memory: false };
+        let channel = changes(&mut cx, &node.call);
+        if found.is_some() {
+            cx.fail(Pos::of(&node.call), "changes is declared twice");
+        } else {
+            found = channel;
+        }
+    }
+    let readers = models.iter_mut().filter(|model| !model.changed_by.is_empty());
+    match found {
+        Some(channel) => {
+            if let Some(model) = readers.into_iter().next() {
+                model.changes = Some(channel);
+            }
+        }
+        None if channels.is_empty() => {
+            for model in readers {
+                errors.extend(model.changed_by.iter().map(|change| (model.file, ParseError::new(change.pos.line, change.pos.column, "changed_by requires a changes subscription: declare `changes \"Name\", from:, area:, kind:, id:` at the top level of a file"))));
+            }
+        }
+        None => {}
+    }
+}
+
+fn changes(cx: &mut Cx, call: &Call) -> Option<ChangesDecl> {
+    let mut line = Line::of(call);
+    no_block(cx, call);
+    let arg = exactly_one_arg(cx, &line, "a subscription name like `changes \"RecordChanges\"`");
+    let name = arg.and_then(|arg| string(cx, arg, "the subscription name"));
+    let from = line.opt(cx, "from").and_then(|pair| path(cx, &pair.value, "`from`"));
+    let area = line.opt(cx, "area").and_then(|pair| path(cx, &pair.value, "`area`"));
+    let kind = line.opt(cx, "kind").and_then(|pair| path(cx, &pair.value, "`kind`"));
+    let id = line.opt(cx, "id").and_then(|pair| path(cx, &pair.value, "`id`"));
+    line.finish(cx);
+    let from = require(cx, &line, "from", from);
+    let area = require(cx, &line, "area", area);
+    let kind = require(cx, &line, "kind", kind);
+    let id = require(cx, &line, "id", id);
+    Some(ChangesDecl { pos: line.pos, subscription: name?, from: from?, area: area?, kind: kind?, id: id? })
 }
 
 pub(crate) fn lower_calls(nodes: &[OperationNode], errors: &mut Vec<Found>) -> Vec<CallDecl> {

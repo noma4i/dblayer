@@ -29,7 +29,7 @@ type Found = (usize, ParseError);
 pub(crate) fn check_source(source: &str) -> Result<Vec<ModelSpec>, Vec<ParseError>> {
     crate::parse_tree(&[source])
         .map_err(|errors| errors.into_iter().map(|(_, error)| error).collect::<Vec<_>>())
-        .and_then(|parsed| crate::decl::lower_models(&parsed.models, None).map_err(|errors| errors.into_iter().map(|(_, error)| error).collect::<Vec<_>>()))
+        .and_then(|parsed| crate::decl::lower_models(&parsed.models, &parsed.changes, None).map_err(|errors| errors.into_iter().map(|(_, error)| error).collect::<Vec<_>>()))
         .and_then(|models| check(&models).map_err(|errors| errors.into_iter().map(|(_, error)| error).collect()))
 }
 
@@ -126,9 +126,6 @@ fn check_model(node: &ModelDecl, all: &[ModelDecl], errors: &mut Vec<Found>) {
         if !all.iter().any(|candidate| candidate.name == target) {
             report(association.pos, format!("association `{}` targets unknown model `{target}`", association.name));
         }
-    }
-    if node.changes.len() > 1 {
-        report(node.changes[1].pos, "duplicate changes subscription".into());
     }
     for (index, index_decl) in node.indexes.iter().enumerate() {
         if node.indexes[..index].iter().any(|earlier| earlier.columns == index_decl.columns) {

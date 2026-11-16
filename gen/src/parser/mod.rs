@@ -77,8 +77,14 @@ pub struct UploadsNode {
     pub body: Vec<Call>,
 }
 
+pub struct ChangesNode {
+    pub file: usize,
+    pub call: Call,
+}
+
 pub struct Parsed {
     pub models: Vec<ModelNode>,
+    pub changes: Vec<ChangesNode>,
     pub operations: Vec<OperationNode>,
     pub scalars: Vec<ScalarNode>,
     pub uploads: Vec<UploadsNode>,
@@ -156,7 +162,7 @@ fn describe(kind: &Kind) -> String {
 
 pub fn parse(tokens: &[Token], file: usize) -> Result<Parsed, ParseError> {
     let mut reader = Reader { tokens, index: 0 };
-    let mut parsed = Parsed { models: Vec::new(), operations: Vec::new(), scalars: Vec::new(), uploads: Vec::new() };
+    let mut parsed = Parsed { models: Vec::new(), changes: Vec::new(), operations: Vec::new(), scalars: Vec::new(), uploads: Vec::new() };
     loop {
         reader.skip_newlines();
         if reader.peek().is_none() {
@@ -167,6 +173,8 @@ pub fn parse(tokens: &[Token], file: usize) -> Result<Parsed, ParseError> {
             parsed.operations.push(operation_from(call, file)?);
         } else if call.word == "scalar" {
             parsed.scalars.push(scalar_from(call, file)?);
+        } else if call.word == "changes" {
+            parsed.changes.push(ChangesNode { file, call });
         } else if call.word == "uploads" {
             parsed.uploads.push(uploads_from(call, file)?);
         } else {
@@ -216,7 +224,7 @@ fn operation_from(call: Call, file: usize) -> Result<OperationNode, ParseError> 
 fn model_from(call: Call, file: usize) -> Result<ModelNode, ParseError> {
     let at = |message: String| ParseError::new(call.line, call.column, message);
     if call.word != "model" {
-        return Err(at(format!("expected `model`, `operation`, `scalar` or `uploads`, found `{}`", call.word)));
+        return Err(at(format!("expected `model`, `operation`, `scalar`, `changes` or `uploads`, found `{}`", call.word)));
     }
     let name = match call.args.as_slice() {
         [Node { item: Value::Const(name), .. }] => name.clone(),
