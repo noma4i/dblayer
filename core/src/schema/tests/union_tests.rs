@@ -21,6 +21,6 @@ fn a_union_declares_each_variant_and_case_once() {
     model.fields[1].fields[1].name = "v0".to_string();
     assert_eq!(model.validate(&[]), Err(DeclarationError::DuplicateVariant("attachment".to_string())));
     let mut model = wide(2, 1);
-    model.fields[1].fields[1].app_type = Some("Variant0".to_string());
+    model.fields[1].fields[1].from = Some("Variant0".to_string());
     assert_eq!(model.validate(&[]), Err(DeclarationError::DuplicateVariant("attachment".to_string())));
 }
