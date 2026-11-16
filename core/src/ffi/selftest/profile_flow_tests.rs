@@ -40,6 +40,8 @@ async fn flow_current_user_profile() {
     refused.release();
     assert!(matches!(bound(rig.database.confirmed(receipt, false)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
     settled(&rig, "the refusal brings the old name back everywhere", || places.iter().all(|rows| field(&rig, rows, "user", "name") == Some(text("A")))).await;
+    rig.settle().await;
+    let reloaded = rig.world.count("MyProfile");
 
     let hold = rig.world.hold_next("ProfileUpdate");
     let receipt = bound(rig.database.act(epoch, "User".into(), "user".into(), "update".into(), json!({"name": "New"}).to_string(), json!({"name": "New"}).to_string())).await.unwrap();
@@ -50,7 +52,7 @@ async fn flow_current_user_profile() {
     one_revision(&rig, &places.map(|rows| &**rows)).await;
     hold.release();
     assert!(bound(rig.database.confirmed(receipt, false)).await.is_ok());
-    settled(&rig, "the refetch of the profile keeps the name", || rig.world.count("MyProfile") >= 2).await;
+    settled(&rig, "the refetch of the profile keeps the name", || rig.world.count("MyProfile") > reloaded).await;
     rig.settle().await;
     assert!(places.iter().all(|rows| field(&rig, rows, "user", "name") == Some(text("New"))));
 

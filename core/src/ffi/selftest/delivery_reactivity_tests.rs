@@ -375,6 +375,8 @@ async fn dlv_prop_one_change_every_view_related_row() {
     let entity = db.subscribe_values(epoch, ReadRequest::Entity { model: "Message".into(), id: "m1".into(), fetch: ReadFetch::Never });
     let count = db.subscribe_values(epoch, ReadRequest::Count { query: crate::ffi::QuerySpec::json(r#"{"model":"Message"}"#) });
     for stream in [&list, &entity, &count] { bound(stream.pull_next()).await.unwrap(); }
+    rig.world.answer_with("UserNode", json!({"data":{"node":{"__typename":"User","id":"u2","name":"Bob"}}}));
+    let nodes = rig.world.count("UserNode");
     let hold = rig.world.hold_then("ProfileUpdate", Fault::Business);
     let receipt = bound(db.act(epoch, "User".into(), "u2".into(), "update".into(), json!({"name":"Robert"}).to_string(), json!({"name":"Robert"}).to_string())).await.unwrap();
     hold.entered().await;
@@ -397,6 +399,8 @@ async fn dlv_prop_one_change_every_view_related_row() {
         restored.push(revision);
     }
     assert!(restored[0] > revisions[0] && restored[1] > revisions[1], "the restore follows the overlay on each stream");
+    rig.clock.advance(1_000);
+    crate::test_wait::settled(&rig, "the refusal owes the receiver one node read", || rig.world.count("UserNode") == nodes + 1).await;
     assert_quiet(db, &[&list, &entity, &count]).await;
     assert_eq!(restored[0], restored[1], "both streams end on one revision once settled (P-DLV-17)");
     db.close_now();
