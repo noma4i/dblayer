@@ -129,24 +129,40 @@ async fn drive(path: Path, faults: Vec<Fault>) -> String {
     format!("{result}|{sent}")
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn every_answer_kind_ends_every_request_path_with_the_table_outcome() {
+async fn path_ends_every_answer_kind_with_the_table_outcome(path: Path) {
     let mut matrix = Cases::new("answer kind x request path");
-    let paths = [Path::CallMutation, Path::CallQuery, Path::OutboxSend, Path::SessionCall, Path::WindowRead, Path::UploadStep, Path::UploadFinal, Path::Node];
-    let running: Vec<_> = paths.into_iter().map(|path| tokio::spawn(async move {
-        let mut observed = Vec::new();
-        for kind in kinds() {
-            let expected = if path == Path::SessionCall && kind.name.starts_with("PERSISTED_QUERY_NOT_FOUND") { None } else if path.sequenced() { kind.sequenced } else { kind.plain };
-            let Some(expected) = expected else { continue };
-            observed.push((kind.name, expected, bound(drive(path, (kind.fault)())).await));
-        }
-        observed
-    })).collect();
-    for (path, handle) in paths.into_iter().zip(running) {
-        for (kind, expected, observed) in handle.await.unwrap_or_else(|error| panic!("{}: {error}", path.name())) { cell(&mut matrix, path, kind, expected, observed); }
+    for kind in kinds() {
+        let expected = if path == Path::SessionCall && kind.name.starts_with("PERSISTED_QUERY_NOT_FOUND") { None } else if path.sequenced() { kind.sequenced } else { kind.plain };
+        let Some(expected) = expected else { continue };
+        let observed = bound(drive(path, (kind.fault)())).await;
+        cell(&mut matrix, path, kind.name, expected, observed);
     }
     matrix.finish();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn call_mutation_ends_every_answer_kind_with_the_table_outcome() { path_ends_every_answer_kind_with_the_table_outcome(Path::CallMutation).await }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn call_query_ends_every_answer_kind_with_the_table_outcome() { path_ends_every_answer_kind_with_the_table_outcome(Path::CallQuery).await }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn outbox_send_ends_every_answer_kind_with_the_table_outcome() { path_ends_every_answer_kind_with_the_table_outcome(Path::OutboxSend).await }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn session_call_ends_every_answer_kind_with_the_table_outcome() { path_ends_every_answer_kind_with_the_table_outcome(Path::SessionCall).await }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn window_read_ends_every_answer_kind_with_the_table_outcome() { path_ends_every_answer_kind_with_the_table_outcome(Path::WindowRead).await }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn node_ends_every_answer_kind_with_the_table_outcome() { path_ends_every_answer_kind_with_the_table_outcome(Path::Node).await }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn upload_step_ends_every_answer_kind_with_the_table_outcome() { path_ends_every_answer_kind_with_the_table_outcome(Path::UploadStep).await }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn upload_final_ends_every_answer_kind_with_the_table_outcome() { path_ends_every_answer_kind_with_the_table_outcome(Path::UploadFinal).await }
 
 fn cell(matrix: &mut Cases, path: Path, kind: &str, expected: &str, observed: String) {
     let outcome_only = matches!(path, Path::OutboxSend | Path::UploadStep | Path::UploadFinal);
