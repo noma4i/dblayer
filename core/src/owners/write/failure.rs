@@ -7,6 +7,9 @@ use crate::transport::{GraphqlExtensions, SessionCode, TransportError};
 
 fn text(failure: &OperationFailure) -> String { serde_json::to_string(failure).unwrap_or_else(|_| failure.message.clone()) }
 
+/// The answer is above the limit: the message is the text of `TransportError::ResponseTooLarge`.
+fn response_too_large(limit: u64) -> String { text(&OperationFailure::new(FailureKind::ResponseTooLarge { limit }, TransportError::ResponseTooLarge { limit }.to_string())) }
+
 /// A refusal of Session: its code when it has one, the class of the error otherwise.
 pub fn of_session(error: &SessionError, class: ErrorClass) -> String {
     if let SessionError::Session { code, body } = error {
@@ -16,7 +19,7 @@ pub fn of_session(error: &SessionError, class: ErrorClass) -> String {
         return text(&OperationFailure::new(FailureKind::Session(SessionCode::SessionEnded), body.clone()));
     }
     if let SessionError::ResponseTooLarge { limit } = error {
-        return text(&OperationFailure::new(FailureKind::ResponseTooLarge { limit: *limit }, format!("the answer is above the limit of {limit} bytes")));
+        return response_too_large(*limit);
     }
     if let SessionError::TooLarge { size, limit } = error {
         return text(&OperationFailure::new(FailureKind::RequestTooLarge { size: *size, limit: *limit }, format!("the request is {size} bytes, the limit is {limit} bytes")));
@@ -56,7 +59,7 @@ pub fn of_transport(error: &TransportError) -> String {
         TransportError::GraphqlAnswer { response } => of_graphql(response.errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>().join("; "), response.extensions()),
         TransportError::Session { code, detail } => text(&OperationFailure::new(FailureKind::Session(*code), if detail.is_empty() { code.name().to_string() } else { detail.clone() })),
         TransportError::RequestTooLarge { size, limit } => text(&OperationFailure::new(FailureKind::RequestTooLarge { size: *size, limit: *limit }, error.to_string())),
-        TransportError::ResponseTooLarge { limit } | TransportError::SentAnswerTooLarge { limit } => text(&OperationFailure::new(FailureKind::ResponseTooLarge { limit: *limit }, error.to_string())),
+        TransportError::ResponseTooLarge { limit } | TransportError::SentAnswerTooLarge { limit } => response_too_large(*limit),
         TransportError::Network(_) | TransportError::Interrupted(_) => text(&OperationFailure::new(FailureKind::Network, error.to_string())),
         TransportError::Http { status, .. } if *status >= 500 => text(&OperationFailure::new(FailureKind::Server, error.to_string())),
         _ => text(&OperationFailure::new(FailureKind::Rejected, error.to_string())),
@@ -66,7 +69,7 @@ pub fn of_transport(error: &TransportError) -> String {
 /// The kept cause of a failed attempt as the text of its failure.
 pub fn of_cause(kind: FailureKind) -> String {
     match kind {
-        FailureKind::ResponseTooLarge { limit } => text(&OperationFailure::new(kind, format!("the answer is above the limit of {limit} bytes"))),
+        FailureKind::ResponseTooLarge { limit } => response_too_large(limit),
         _ => text(&OperationFailure::new(kind, "refused")),
     }
 }
