@@ -91,30 +91,20 @@ fn xfer_an_invalid_or_stale_accept_is_refused_without_a_write() {
 }
 
 #[test]
-fn xfer_accept_failed_batch_member_stays_inflight() {
+fn xfer_accept_replaces_a_failed_member_of_a_batch_with_a_shared_operation() {
     let mut twin = Twin::new();
     let ids = twin.batch_mutating(&[KEY, OTHER]);
     twin.mutation_outcome("batch:1", OutboxOutcome::Failed { error: "refused".into() });
     twin.commit();
     assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Failed));
-    let before: Vec<_> = ids.iter().map(|id| {
-        let transfer = twin.t(*id);
-        (transfer.key.clone(), transfer.source.clone(), transfer.batch_id, transfer.op_id, transfer.cycle_id, transfer.error.clone(), transfer.last_shown.clone())
-    }).collect();
-    let (reply, outcome) = twin.outcome(ids[0], 1);
-    let original = outcome.replies(reply);
-    assert!(matches!(original.as_slice(), [TransferAnswer::Outcome(OutboxOutcome::Failed { .. }, _)]));
     let reply = twin.reply();
     let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 2)), reply });
-    assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight));
-    assert_eq!((out.writes(), out.copies(), out.deletes(), out.outbox.len()), (0, 0, 0, 0));
-    for (index, id) in ids.iter().enumerate() {
-        let transfer = twin.t(*id);
-        assert_eq!((transfer.key.clone(), transfer.source.clone(), transfer.batch_id, transfer.op_id, transfer.cycle_id, transfer.error.clone(), transfer.last_shown.clone()), before[index]);
-        assert_eq!(twin.stage(*id), TransferStage::Failed);
-    }
-    let (reply, outcome) = twin.outcome(ids[0], 1);
-    assert_eq!(outcome.replies(reply), original);
+    assert!(out.replies(reply).is_empty(), "the failed member must not block its key: {:?}", out.replies(reply));
+    assert!(out.outbox.iter().any(|input| matches!(input, OutboxInput::ReserveReplacement { transfer_id, .. } if *transfer_id == ids[0])), "the shared operation is asked to go with the replaced member");
+    let new = out.outbox.iter().find_map(|input| match input { OutboxInput::ReserveReplacement { target: ReserveTarget::Transfer(id), .. } => Some(*id), _ => None }).expect("the new upload reserves its operation");
+    twin.post(TransferInput::ReplacementReserved { target: ReserveTarget::Transfer(new), result: Ok((8, None)) });
+    twin.commit();
+    assert_eq!((twin.state().open_id(KEY), twin.stage(ids[1])), (Some(new), TransferStage::Failed), "the other member of the shared operation stays Failed");
 }
 
 /// xfer_accept_batch_invalid (D-196): the size of a batch has one predicate; the owner refuses min-1 and max+1 without a write, and accepts min and max. The call of the platform asks the same predicate before it plans the rows.

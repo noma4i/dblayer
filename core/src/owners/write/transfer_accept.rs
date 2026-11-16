@@ -179,7 +179,7 @@ impl TransferState {
             return reply(fx, rep, TransferAnswer::Err(Fault::Rejected(crate::owners::contract::RejectReason::Invalid(format!("the key {} is twice in the call", item.key)))));
         }
         let old: Vec<_> = items.iter().map(|item| self.open_id(&item.key)).collect();
-        if old.iter().flatten().any(|id| self.transfers.get(id).is_none_or(|transfer| transfer.stage != TransferStage::Failed || transfer.batch_id.is_some())) {
+        if old.iter().flatten().any(|id| self.transfers.get(id).is_none_or(|transfer| transfer.stage != TransferStage::Failed)) {
             return reply(fx, rep, TransferAnswer::Err(Fault::InFlight));
         }
         let ids: Vec<TransferId> = items.into_iter().map(|item| {

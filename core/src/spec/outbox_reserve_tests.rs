@@ -322,6 +322,24 @@ fn out_group_member_removed_keeps_group() {
 }
 
 #[test]
+fn out_failed_group_member_replaced_leaves_alone() {
+    use super::outbox_harness::St;
+    let mut twin = Twin::new();
+    let group = group_on_rows(&mut twin, "b", Policy::Keep);
+    group_sending(&mut twin, group);
+    twin.post(OutboxInput::Refused { op_id: group, temporary: false, detail: "refused".into() });
+    twin.committed(group);
+    assert_eq!(twin.stage(group), Some(St::Failed));
+    twin.post(OutboxInput::ReserveReplacement { epoch: EPOCH, target: ReserveTarget::Transfer(77), transfer_id: 12, cycle_id: 4 });
+    let membership = StoreOp::IntentOrigin { op_id: group, origin: IntentOrigin::TransferGroup { batch_id: 9, transfer_ids: vec![11] } };
+    assert_eq!((twin.batch_ops(), twin.stage(group)), (vec![membership, StoreOp::RemoveUploadByTransferId { transfer_id: 12 }], Some(St::Failed)), "only member 12 leaves, the shared operation is not rolled back: {:?}", twin.store_ops);
+    let batch = twin.stores[0].0;
+    let done = twin.commit_batch(batch);
+    assert!(done.iter().any(|effect| matches!(effect, OutboxEffect::TransferOutcome { outcome: OutboxOutcome::Discarded })), "member 12 ends Discarded: {done:?}");
+    assert_eq!(twin.stage(group), Some(St::Failed), "the shared operation stays Failed for member 11");
+}
+
+#[test]
 fn out_group_last_member_removed() {
     use super::outbox_harness::{St, RWhy};
     let mut twin = Twin::new();

@@ -403,3 +403,36 @@ fn xfer_batch_element_without_a_row_fails_before_the_batch_confirms() {
     assert_eq!(twin.stage(ids[1]), TransferStage::PersistingFailure, "the element the answer lacks keeps its failure, the confirmation of the batch skips it");
     assert_ne!(twin.stage(ids[0]), TransferStage::PersistingFailure, "the others are confirmed");
 }
+
+#[test]
+fn xfer_accept_replaces_a_failed_member_of_a_batch() {
+    let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
+    twin.step_error(ids[0], false);
+    twin.commit();
+    assert_eq!(twin.stage(ids[0]), TransferStage::Failed);
+    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 2)), reply: 90 });
+    assert!(out.replies(90).is_empty(), "the failed member must not block its key: {:?}", out.replies(90));
+    let new = out.outbox.iter().find_map(|input| match input {
+        crate::owners::write::outbox::OutboxInput::ReserveReplacement { target: ReserveTarget::Transfer(id), .. } if *id != ids[0] => Some(*id),
+        _ => None,
+    }).expect("the new upload reserves its operation in place of the failed member");
+    let out = twin.post(TransferInput::ReplacementReserved { target: ReserveTarget::Transfer(new), result: Ok((8, None)) });
+    assert_eq!((out.removed(), out.outcomes_written()), (vec![KEY.to_string()], vec![(ids[0], 1, OutboxOutcome::Discarded)]), "the failed member goes in the batch of the new upload");
+    twin.commit();
+    assert_eq!((twin.state().open_id(KEY), twin.stage(ids[1])), (Some(new), TransferStage::Uploading), "the other member keeps uploading");
+}
+
+#[test]
+fn xfer_batch_member_without_a_row_is_discarded_after_the_batch_confirmed() {
+    let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
+    file_done(&mut twin, ids[0]);
+    file_done(&mut twin, ids[1]);
+    let members = vec![(ids[0], 1, OutboxOutcome::Confirmed { revision: 9, result: None, row_id: None }), (ids[1], 1, OutboxOutcome::Failed { error: "protocol".into() })];
+    twin.post(TransferInput::MutationOutcomes { batch_id: 1, members, intent_removed: true });
+    twin.commit();
+    assert_eq!(twin.stage(ids[1]), TransferStage::Failed);
+    let (reply, out) = twin.discard(OTHER);
+    assert!(out.replies(reply).is_empty(), "the discard answers after its write: {:?}", out.replies(reply));
+    let out = twin.commit();
+    assert_eq!((out.replies(reply), twin.stage(ids[1])), (vec![TransferAnswer::Ok], TransferStage::Done), "a failed member is no `InFlight` once the batch ended");
+}

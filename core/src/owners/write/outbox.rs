@@ -933,6 +933,7 @@ impl OutboxState {
             OutboxInput::Discard { model, row_id, action: None, reply } => self.select_row((model, row_id), SelectKind::Discard, reply, fx),
             OutboxInput::Discard { model, row_id, action, reply } => self.discard(&model, &row_id, action.as_deref(), reply, fx),
             OutboxInput::DiscardTransfer { transfer_id, cycle_id, reply } => match self.open_for_transfer(transfer_id, cycle_id) {
+                Some(op_id) if self.stage_of(op_id) == Some(Stage::Failed) && self.member_leaves(op_id, transfer_id, cycle_id, OutboxInput::DiscardTransfer { transfer_id, cycle_id, reply }, fx).is_some() => {}
                 Some(op_id) => {
                     if self.stage_of(op_id).is_some_and(|stage| stage == Stage::Failed || Self::defers_discard(stage)) { self.transfer_discards.insert(op_id, (transfer_id, cycle_id)); }
                     self.discard_op(op_id, reply, fx);

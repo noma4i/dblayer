@@ -287,6 +287,18 @@ impl OutboxState {
         }
     }
 
+    pub(super) fn member_leaves(&mut self, op_id: OpId, transfer_id: u64, cycle_id: u64, again: OutboxInput, fx: &mut Effects<Outbox>) -> Option<bool> {
+        let OpSource::TransferGroup { members, .. } = &self.ops.get(&op_id)?.op.origin else { return None };
+        let Some(member) = members.iter().find(|member| member.transfer_id == transfer_id && member.cycle_id == cycle_id).filter(|_| members.len() > 1).cloned() else { return None };
+        if let Some(pending) = self.member_removals.get_mut(&op_id) {
+            pending.deferred.push(again);
+            return Some(false);
+        }
+        self.member_removals.insert(op_id, MemberRemoval { member, in_flight: false, storage_failures: 0, land_after_storage: false, deferred: Vec::new() });
+        self.store_member(op_id, fx);
+        Some(true)
+    }
+
     pub(super) fn store_member(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
         let Some(pending) = self.member_removals.get_mut(&op_id).filter(|pending| !pending.in_flight) else { return };
         pending.in_flight = true;
@@ -418,6 +430,12 @@ impl OutboxState {
             let old = self.open_for_transfer(transfer_id, cycle_id);
             if old.is_some_and(|id| self.stage_of(id) != Some(Stage::Failed)) {
                 Err(Fault::InFlight)
+            } else if let Some(started) = old.and_then(|id| self.member_leaves(id, transfer_id, cycle_id, OutboxInput::ReserveReplacement { epoch, target, transfer_id, cycle_id }, fx)) {
+                if !started { return; }
+                self.replacements.insert(new_id, None);
+                let op_id = self.next_op;
+                self.next_op += 1;
+                Ok((op_id, None))
             } else {
                 let operation = old.and_then(|id| self.ops.get_mut(&id)).map(|operation| {
                     operation.stage = Stage::RollingBack(Why::Discarded);
