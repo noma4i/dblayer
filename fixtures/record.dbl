@@ -115,14 +115,7 @@ model CurrentUser do
     mutation "UserPhotoUpdate"
     parameter :keepOld, :bool, null: true
     parameter :skipAssign, :bool, null: true
-    returns do
-      attribute :userPhoto, FixturePhoto do
-        attribute :reason, :string
-        attribute :media, FixturePhotoMedia do
-          attribute :thumbUrl, :string
-        end
-      end
-    end
+    returns
     response from: "userPhotoUpdate.viewer.user"
   end
 end

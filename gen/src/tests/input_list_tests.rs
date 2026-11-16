@@ -25,7 +25,7 @@ fn parameter_line(name: &str, kind: &str) -> String {
 }
 
 fn operation(arg: &str) -> String {
-    format!("operation :widgets_send do\n  mutation \"WidgetsSend\"\n  {}\n  returns do\n    attribute :id, :string\n  end\nend\n", parameter_line("widgets", arg))
+    format!("operation :widgets_send do\n  mutation \"WidgetsSend\"\n  {}\nend\n", parameter_line("widgets", arg))
 }
 
 fn upload(arg: &str) -> String {

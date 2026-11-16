@@ -3,21 +3,12 @@ scalar :DateTime, as: :date
 operation :when do
   query "KeywordCall"
   parameter :class, :string
-  returns do
-    attribute :default, :string
-    attribute :when, :string
-    attribute :container, :string
-    attribute :r, :string
-  end
 end
 
 operation :qr_code_create do
   mutation "QrCodeCreate"
   parameter :kind, :string
   parameter :size, :int, null: true
-  returns do
-    attribute :url, :string
-  end
 end
 
 operation :sign_out do
@@ -27,35 +18,15 @@ end
 operation :sticker_send do
   mutation "StickerSend"
   parameter :input, StickerInput
-  returns do
-    attribute :id, :string
-  end
 end
 
 operation :pricing_load do
   query "Pricing"
-  returns do
-    attribute :rewards, [PricingLoadResultRewards] do
-      attribute :id, :id
-      attribute :name, :string
-      attribute :price, :int
-    end
-    attribute :videoIntro, PricingLoadResultVideoIntro do
-      attribute :enabled, :bool
-    end
-    attribute :tags, [:string]
-    attribute :spec, :json
-  end
 end
 
 operation :moment_create do
   mutation "MomentCreate"
   parameter :input, MomentInput
-  returns do
-    attribute :moment, MomentCreateResultMoment do
-      attribute :id, :id
-    end
-  end
 end
 
 operation :giphy_load do
@@ -63,29 +34,19 @@ operation :giphy_load do
   response shape: :list
   parameter :type, :string
   parameter :limit, :int, null: true
-  returns do
-    attribute :id, :id
-    attribute :url, :string
-    attribute :isSticker, :bool
-  end
 end
 
 operation :widgets_send do
   mutation "WidgetsSend"
   parameter :widgets, [StickerWidgetInput], null: true
-  returns do
-    attribute :id, :string
-  end
 end
 
 operation :container_media_load do
   query "containerMedia"
   parameter :containerId, :id
   parameter :upToSequence, :int, null: true
-  returns do
-    attribute :visualCount, :int
-    attribute :audioCount, :int
-    attribute :rewardCount, :int
-    attribute :latestSequence, :int
-  end
+end
+
+operation :peer_load do
+  query "PeerLoad"
 end

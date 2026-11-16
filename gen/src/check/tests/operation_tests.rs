@@ -39,7 +39,7 @@ fn standard_operations_take_a_closed_set_of_lines() {
         ("destroy takes no match_by", &op("destroy", "    match_by \"clientKey\"\n"), Some("`match_by` does not apply to operation `destroy`")),
         ("create takes no optimistic", &op("create", "    optimistic false\n"), Some("`optimistic` does not apply to operation `create`")),
         ("create takes no upsert", &op("create", "    upsert Sample, from: \"a.b\"\n"), Some("`upsert` does not apply to operation `create`")),
-        ("create takes no returns", &op("create", "    returns do\n      attribute :ok, :bool\n    end\n"), Some("`returns` does not apply to operation `create`")),
+        ("create takes no returns", &op("create", "    returns\n"), Some("`returns` does not apply to operation `create`")),
         ("create takes no batch", &op("create", "    batch items: \"items\", single: :act\n"), Some("`batch` does not apply to operation `create`")),
         ("update takes no upload", "  operation :update, upload: true do\n    mutation \"M\"\n  end", Some("`upload: true` belongs to a named operation")),
         ("a name used twice", &format!("{}\n{}", op("create", ""), op("create", "")), Some("name `create` is declared twice")),
@@ -111,13 +111,10 @@ fn upsert_and_returns_belong_to_named_operations() {
         ("upsert without from", &custom("    upsert Sample\n"), Some("`upsert` needs `from:`")),
         ("upsert without a model", &custom("    upsert from: \"a.b\"\n"), Some("`upsert` needs a model")),
         ("old lands", &custom("    lands Sample, root: \"a.b\"\n"), Some("unknown word `lands` in an operation")),
-        ("returns scalars", &custom("    returns do\n      attribute :ok, :bool\n      attribute :note, :string\n    end\n"), None),
-        ("returns an object", &custom("    returns do\n      attribute :thing, Thing do\n        attribute :x, :int\n      end\n    end\n"), None),
-        ("returns null is implicit", &custom("    returns do\n      attribute :ok, :bool, null: true\n    end\n"), Some("every returned attribute is nullable")),
-        ("returns empty", &custom("    returns do\n    end\n"), Some("`returns` block needs at least 1 attribute")),
-        ("returns without a block", &custom("    returns\n"), Some("`returns` needs a `do ... end` block")),
+        ("returns", &custom("    returns\n"), None),
+        ("returns takes no block", &custom("    returns do\n      attribute :ok, :bool\n    end\n"), Some("`returns` takes no block")),
         ("old result", &custom("    result ok: :bool\n"), Some("unknown word `result` in an operation")),
-        ("returns twice", &custom("    returns do\n      attribute :ok, :bool\n    end\n    returns do\n      attribute :ok, :bool\n    end\n"), Some("`returns` is declared twice")),
+        ("returns twice", &custom("    returns\n    returns\n"), Some("`returns` is declared twice")),
     ]);
 }
 

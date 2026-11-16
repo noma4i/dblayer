@@ -5,7 +5,7 @@ use crate::{compile_files, emit_kotlin, emit_swift};
 
 const SCHEMA: &str = "type Query { a: Int }\nenum ConnectionAction { ACCEPT DECLINE }\nenum ConnectionStatus { CONNECTED NEVER_MET }\ninput NoteInput { text: String! }\ninput ConnectionInput { userId: ID!, action: ConnectionAction!, note: NoteInput }\ntype Mutation { connectionUpdate(input: ConnectionInput!): Int }\n";
 const OPERATIONS: &str = "mutation ConnectionUpdate($input: ConnectionInput!) { connectionUpdate(input: $input) }\n";
-const MODEL: &str = "model Sample do\n  attribute :name, :string\n  attribute :connectionStatus, :enum, values: [\"CONNECTED\", \"NEVER_MET\"], as: ConnectionStatus, null: true\n  operation :answer_connection do\n    mutation \"ConnectionUpdate\"\n    parameter :decision, ConnectionAction\n    parameter :status, ConnectionStatus\n    parameter :note, NoteInput, null: true\n    variables userId: :id, action: :decision\n    optimistic connectionStatus: :status\n  end\nend\n";
+const MODEL: &str = "model Sample do\n  attribute :name, :string\n  attribute :connectionStatus, :enum, as: ConnectionStatus, null: true\n  operation :answer_connection do\n    mutation \"ConnectionUpdate\"\n    parameter :decision, ConnectionAction\n    parameter :status, ConnectionStatus\n    parameter :note, NoteInput, null: true\n    variables userId: :id, action: :decision\n    optimistic connectionStatus: :status\n  end\nend\n";
 
 fn compile(source: &str, schema: Option<&str>) -> Result<crate::Declarations, Vec<String>> {
     let directory = tempfile::tempdir().unwrap();

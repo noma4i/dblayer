@@ -3,7 +3,7 @@ use std::fs;
 use crate::{emit_kotlin, emit_swift, load_schema_types, parse_all, SchemaTypes, InputField, Ty, TyKind};
 
 const SCHEMA: &str = "type Query { a: Int }\nscalar DateTime\nenum Mood { HAPPY SAD }\ninput StickerInput { name: String!, mood: Mood, tags: [String!]!, notes: [String], size: Int, scale: Float, pinned: Boolean!, sentAt: DateTime, owner: OwnerInput!, helpers: [OwnerInput!] }\ninput OwnerInput { id: ID!, nickname: String }\ninput Unused { x: Int }\n";
-const SEND: &str = "scalar :DateTime, as: :date\n\noperation :sticker_send do\n  mutation \"StickerSend\"\n  parameter :input, StickerInput\n  returns do\n    attribute :id, :string\n  end\nend\n";
+const SEND: &str = "scalar :DateTime, as: :date\n\noperation :sticker_send do\n  mutation \"StickerSend\"\n  parameter :input, StickerInput\nend\n";
 
 fn field(name: &str, base: &str, list: bool, item_optional: bool, optional: bool) -> InputField {
     let scalar = Ty { kind: TyKind::Named(base.into()), nullable: if list { item_optional } else { optional }, has_default: false };
@@ -65,7 +65,7 @@ fn input_objects_become_structs_and_the_call_takes_them_on_both_platforms() {
         "    public let helpers: GraphQLNullable<[OwnerInput]>",
         "    public init(name: String, mood: GraphQLNullable<Mood> = .omitted, tags: [String], notes: GraphQLNullable<[String?]> = .omitted, size: GraphQLNullable<Int> = .omitted, scale: GraphQLNullable<Double> = .omitted, pinned: Bool, sentAt: GraphQLNullable<String> = .omitted, owner: OwnerInput, helpers: GraphQLNullable<[OwnerInput]> = .omitted) {",
         "public struct OwnerInput: Encodable, Sendable, Equatable {",
-        "public static func stickerSend(input: StickerInput, in scope_: AccountScope? = nil) async throws -> StickerSendResult {",
+        "public static func stickerSend(input: StickerInput, in scope_: AccountScope? = nil) async throws {",
         "variables_[\"input\"] = try JSONValue.encode(input)",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
@@ -75,7 +75,7 @@ fn input_objects_become_structs_and_the_call_takes_them_on_both_platforms() {
         "@OptIn(ExperimentalSerializationApi::class)\n@Serializable\ndata class StickerInput(val name: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val mood: GraphQLNullable<Mood> = GraphQLNullable.Omitted, val tags: List<String>, @EncodeDefault(EncodeDefault.Mode.NEVER) val notes: GraphQLNullable<List<String?>> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val size: GraphQLNullable<Long> = GraphQLNullable.Omitted, @EncodeDefault(EncodeDefault.Mode.NEVER) val scale: GraphQLNullable<Double> = GraphQLNullable.Omitted, val pinned: Boolean, @EncodeDefault(EncodeDefault.Mode.NEVER) val sentAt: GraphQLNullable<String> = GraphQLNullable.Omitted, val owner: OwnerInput, @EncodeDefault(EncodeDefault.Mode.NEVER) val helpers: GraphQLNullable<List<OwnerInput>> = GraphQLNullable.Omitted)",
         "@OptIn(ExperimentalSerializationApi::class)\n@Serializable\ndata class OwnerInput(val id: String, @EncodeDefault(EncodeDefault.Mode.NEVER) val nickname: GraphQLNullable<String> = GraphQLNullable.Omitted)",
         "import kotlinx.serialization.EncodeDefault\nimport kotlinx.serialization.ExperimentalSerializationApi\n",
-        "suspend fun stickerSend(input: StickerInput, account: AccountScope? = null): StickerSendResult {",
+        "suspend fun stickerSend(input: StickerInput, account: AccountScope? = null) {",
         "variables_[\"input\"] = jsonValue(input)",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
@@ -83,7 +83,7 @@ fn input_objects_become_structs_and_the_call_takes_them_on_both_platforms() {
 }
 
 const MOMENT_SCHEMA: &str = "type Query { a: Int }\nscalar JSON\nenum Kind { EMOJI GIF }\ninput PointInput { x: Float, y: Float }\ninput SettingsInput { itemProps: JSON!, extras: [JSON!], offset: PointInput, rotate: Float }\ninput WidgetInput { kind: Kind!, settings: SettingsInput! }\ninput MomentInput { file: String!, widgets: [WidgetInput!] = [] }\n";
-const MOMENT: &str = "operation :moment_create do\n  mutation \"MomentCreate\"\n  parameter :input, MomentInput\n  returns do\n    attribute :moment, MomentCreateResultMoment do\n      attribute :id, :id\n    end\n  end\nend\n";
+const MOMENT: &str = "operation :moment_create do\n  mutation \"MomentCreate\"\n  parameter :input, MomentInput\nend\n";
 
 #[test]
 fn nested_input_lists_keep_every_dimension_and_nullability_in_both_languages() {

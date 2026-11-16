@@ -64,7 +64,7 @@ type SchemaCase = (&'static str, String, Option<(usize, &'static str)>);
 
 #[test]
 fn declarations_are_checked_against_the_schema() {
-    let valid = "    attribute :title, :string\n    attribute :note, :string, null: true\n    attribute :count, :int\n    attribute :tags, [:string]\n    attribute :kind, :enum, values: [\"A\", \"B\"]\n    attribute :createdAt, :date\n    attribute :ownerName, :string, null: true, from: \"owner.name\"\n    attribute :meta, MetaBox, null: true do\n      attribute :label, :string\n      attribute :inner, InnerBox, null: true do\n        attribute :x, :int\n      end\n    end\n    attribute :ghost, :string, local: true, null: true\n";
+    let valid = "    attribute :title, :string\n    attribute :note, :string, null: true\n    attribute :count, :int\n    attribute :tags, [:string]\n    attribute :kind, :enum\n    attribute :createdAt, :date\n    attribute :ownerName, :string, null: true, from: \"owner.name\"\n    attribute :meta, MetaBox, null: true do\n      attribute :label, :string\n      attribute :inner, InnerBox, null: true do\n        attribute :x, :int\n      end\n    end\n    attribute :ghost, :string, local: true, null: true\n";
     let cases: [SchemaCase; 19] = [
         ("every kind fits", model(valid, REMOTE), None),
         ("missing field", model("    attribute :ghost, :string\n", REMOTE), Some((3, "type `Item` has no field `ghost`"))),
@@ -72,7 +72,7 @@ fn declarations_are_checked_against_the_schema() {
         ("list declared as scalar", model("    attribute :tags, :string\n", REMOTE), Some((3, "which is a list"))),
         ("scalar declared as list", model("    attribute :title, [:string]\n", REMOTE), Some((3, "not a list"))),
         ("wrong scalar kind", model("    attribute :title, :bool\n", REMOTE), Some((3, "does not fit the schema type"))),
-        ("enum value the schema lacks", model("    attribute :kind, :enum, values: [\"A\", \"Z\"]\n", REMOTE), Some((3, "enum `Kind` does not have"))),
+        ("values of a schema enum", model("    attribute :kind, :enum, values: [\"A\", \"Z\"]\n", REMOTE), Some((3, "enum `Kind` takes its values from the schema; omit `values:`"))),
         ("from path missing", model("    attribute :ownerName, :string, null: true, from: \"owner.ghost\"\n", REMOTE), Some((3, "type `Owner` has no field `ghost`"))),
         ("nested field missing", model("    attribute :meta, MetaBox, null: true do\n      attribute :gone, :string\n    end\n", REMOTE), Some((4, "type `Meta` has no field `gone`"))),
         ("unknown root field", model("    attribute :title, :string\n", "  scope :all do\n    query \"nothing\"\n    paginate size: 20, direction: :forward\n  end\n"), Some((7, "operation `nothing` is not in the operation documents"))),

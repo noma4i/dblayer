@@ -74,11 +74,11 @@ fn check(fields: &str) -> Result<(), Vec<String>> {
 
 #[test]
 fn a_list_of_enum_values_is_checked_against_the_schema_enum_list() {
-    let good = "  attribute :lists, [:enum], values: [\"PRIMARY\", \"SECONDARY\"], as: ChatList\n  attribute :maybe, [:enum], values: [\"PRIMARY\", \"SECONDARY\"], as: ChatList, null: true\n";
+    let good = "  attribute :lists, [:enum], as: ChatList\n  attribute :maybe, [:enum], as: ChatList, null: true\n";
     check(good).unwrap();
     for (case, fields, error) in [
-        ("value the schema lacks", good.replace("[\"PRIMARY\", \"SECONDARY\"]", "[\"PRIMARY\", \"TERTIARY\"]"), "lists values TERTIARY that enum `ChatList` does not have"),
-        ("not a list in the declaration", good.replace("[:enum], values: [\"PRIMARY\", \"SECONDARY\"]", ":enum, values: [\"PRIMARY\", \"SECONDARY\"]"), "does not fit"),
+        ("values of a schema enum", good.replace("[:enum], as", "[:enum], values: [\"PRIMARY\"], as"), "enum `ChatList` takes its values from the schema; omit `values:`"),
+        ("not a list in the declaration", good.replace("[:enum], as", ":enum, as"), "does not fit"),
         ("nullable list without null", good.replace(", null: true", ", null: false"), "is nullable in the schema"),
     ] {
         let errors = check(&fields).expect_err(case);

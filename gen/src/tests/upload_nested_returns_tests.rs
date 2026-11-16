@@ -1,5 +1,3 @@
-const RETURNS: &str = "    returns do\n      attribute :moment, PhotoMoment do\n        attribute :id, :id\n      end\n      attribute :userPhoto, PhotoResult do\n        attribute :reason, :string\n        attribute :media, PhotoMedia do\n          attribute :thumbUrl, :string\n        end\n      end\n    end\n";
-
 fn declared(body: &str) -> crate::Declarations {
     crate::parse_all(&[body]).unwrap_or_else(|errors| panic!("{errors:?}"))
 }
@@ -10,24 +8,30 @@ fn declaration(text: &str, name: &str) -> String {
     text.lines().skip(start).take_while(|line| !line.is_empty()).collect::<Vec<_>>().join("\n")
 }
 
-/// models.md M53, D-287: an upload action declares no `file` field and its `returns` takes nested objects with the syntax and the normalizer of a standalone operation: the same fields and the same generated types in Swift and Kotlin.
+/// models.md M53, D-287, D-484: an upload action with `returns` and a standalone operation over the same document get the same fields and the same generated types in Swift and Kotlin, named by their owner.
 #[test]
 fn gen_upload_action_nested_returns() {
-    let action = format!("{}model Profile do\n  attribute :id, :id\n  attribute :name, :string\n  operation :upload_photo, upload: true do\n    mutation \"UserPhotoUpdate\"\n    optimistic false\n    response from: \"userPhotoUpdate.viewer\"\n{RETURNS}  end\nend\n", crate::TEST_UPLOADS);
-    let standalone = format!("operation :upload_photo do\n  mutation \"UserPhotoUpdate\"\n{}end\n", RETURNS.replace("\n    ", "\n  ").trim_start_matches("  "));
-    let (found, call) = (declared(&action), declared(&standalone));
-    let returns = found.models[0].actions[0].returns.clone().expect("the action carries its returns");
-    let result = call.operations[0].result.clone().expect("the standalone result");
-    assert_eq!(returns.fields, result.fields, "one normalizer: the fields of the action are the fields of the standalone operation");
-    assert!(returns.fields.iter().all(|field| field.nullable), "every returned field is nullable");
+    let directory = tempfile::tempdir().unwrap();
+    let call = directory.path().join("call.dbl");
+    std::fs::write(&call, "operation :photo_call do\n  mutation \"UserPhotoUpdate\"\n  parameter :keepOld, :bool, null: true\n  parameter :skipAssign, :bool, null: true\nend\n").unwrap();
+    let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(crate::package_dir().join("../fixtures")).unwrap().map(|entry| entry.unwrap().path()).filter(|path| path.extension().is_some_and(|extension| extension == "dbl")).collect();
+    paths.sort();
+    paths.push(call);
+    let found = crate::compile_fixtures(&paths).unwrap_or_else(|errors| panic!("{errors:?}"));
+    let model = found.models.iter().find(|model| model.key.as_str() == "CurrentUser").expect("the model");
+    let returns = model.actions.iter().find(|action| action.name == "update_photo").and_then(|action| action.returns.clone()).expect("the action carries its answer type");
+    let result = found.operations.iter().find(|operation| operation.name == "photo_call").and_then(|operation| operation.result.clone()).expect("the standalone answer type");
+    let renamed = |text: String| text.replace("CurrentUserUpdatePhotoResult", "PhotoCallResult");
+    assert_eq!(renamed(serde_json::to_string(&returns.fields).unwrap()), serde_json::to_string(&result.fields).unwrap(), "one inference: the fields of the action are the fields of the standalone operation");
+    assert!(returns.fields.iter().all(|field| field.nullable), "every answer field is nullable");
     let (swift, kotlin) = (crate::emit_swift(&found.models, &found.operations, &found.inputs), crate::emit_kotlin(&found.models, &found.operations, &found.inputs));
-    let (swift_call, kotlin_call) = (crate::emit_swift(&call.models, &call.operations, &call.inputs), crate::emit_kotlin(&call.models, &call.operations, &call.inputs));
-    for type_name in ["PhotoMoment", "PhotoResult", "PhotoMedia"] {
-        assert_eq!(declaration(&swift, type_name), declaration(&swift_call, type_name), "swift type {type_name}");
-        assert_eq!(declaration(&kotlin, type_name), declaration(&kotlin_call, type_name), "kotlin type {type_name}");
+    for type_name in ["UserPhoto", "UserPhotoMedia"] {
+        let (action_type, call_type) = (format!("CurrentUserUpdatePhotoResult{type_name}"), format!("PhotoCallResult{type_name}"));
+        assert_eq!(renamed(declaration(&swift, &action_type)), declaration(&swift, &call_type), "swift type {type_name}");
+        assert_eq!(renamed(declaration(&kotlin, &action_type)), declaration(&kotlin, &call_type), "kotlin type {type_name}");
     }
-    assert!(declaration(&swift, "PhotoMedia").contains("thumbUrl: String?"), "{}", declaration(&swift, "PhotoMedia"));
-    assert!(declaration(&kotlin, "PhotoMedia").contains("val thumbUrl: String? = null"), "{}", declaration(&kotlin, "PhotoMedia"));
+    assert!(declaration(&swift, "CurrentUserUpdatePhotoResultUserPhotoMedia").contains("thumbUrl: String?"));
+    assert!(declaration(&kotlin, "CurrentUserUpdatePhotoResultUserPhotoMedia").contains("val thumbUrl: String? = null"));
 }
 
 fn fixtures() -> crate::Declarations {

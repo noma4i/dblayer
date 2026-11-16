@@ -5,7 +5,7 @@ model Container do
   attribute :lastSequenceNumber, :int, derived: true
   attribute :shareUrl, :string, null: true
   attribute :isPublic, :bool, null: true
-  attribute :shelves, [:enum], values: ["PRIMARY", "SECONDARY"], as: ContainerShelf, null: true
+  attribute :shelves, [:enum], as: ContainerShelf, null: true
   has_many :records, dependent: :destroy
   belongs_to :lastRecord, class_name: Record
   scope :node, node: :one do

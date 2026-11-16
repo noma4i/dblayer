@@ -50,7 +50,7 @@ fn an_enum_default_outside_its_values_is_an_error_with_a_line_at_every_position(
 
 const SCHEMA: &str = "type Query { a: Int }\ntype Mutation { widgetsSend(input: EmojiInput!): Reply }\nenum WidgetKind { EMOJI GIF }\ninput EmojiInput { code: String!, kinds: [WidgetKind!] }\ntype Reply { kinds: [WidgetKind!]!, nested: Inner }\ntype Inner { many: [WidgetKind!] }\n";
 const OPERATION: &str = "mutation WidgetsSend($input: EmojiInput!) { widgetsSend(input: $input) { kinds nested { many } } }\n";
-const CALL: &str = "operation :widgets_send do\n  mutation \"WidgetsSend\"\n  parameter :input, EmojiInput\n  returns do\n    attribute :kinds, [WidgetKind]\n    attribute :nested, WidgetsSendResultNested do\n      attribute :many, [WidgetKind]\n    end\n  end\nend\n";
+const CALL: &str = "operation :widgets_send do\n  mutation \"WidgetsSend\"\n  parameter :input, EmojiInput\nend\n";
 
 fn compile(source: &str, schema: Option<&str>) -> Result<Declarations, Vec<String>> {
     let directory = tempfile::tempdir().unwrap();
@@ -85,6 +85,4 @@ fn an_operation_takes_a_list_of_schema_enums_in_its_input_object_and_its_result(
     }
     let without = compile(CALL, None).unwrap_err();
     assert!(without.iter().any(|text| text.contains("--schema")), "{without:?}");
-    let wrong = compile(&CALL.replace("attribute :kinds, [WidgetKind]", "attribute :kinds, [EmojiInput]"), Some(SCHEMA)).unwrap_err();
-    assert!(wrong.iter().any(|text| text.contains("`EmojiInput`") && text.contains("not an enum")), "{wrong:?}");
 }

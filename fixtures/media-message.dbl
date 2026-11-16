@@ -1,7 +1,7 @@
 model MediaMessage do
   attribute :chatId, :id
-  attribute :kind, :enum, values: ["TEXT", "GIFT"], as: MediaMessageKind
-  attribute :mediaKind, :enum, values: ["AUDIO", "IMAGE", "VIDEO"], as: MediaKindValue, null: true
+  attribute :kind, :enum, as: MediaMessageKind
+  attribute :mediaKind, :enum, as: MediaKindValue, null: true
   attribute :sequenceNumber, :int, null: true
   index :chatId, :sequenceNumber
   scope :node, node: :one do

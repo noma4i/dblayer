@@ -110,6 +110,21 @@ extension BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
+  func aUnionAnswerIsDecodedByItsTypenameIntoTheVariantOfTheOperation() async throws {
+    _ = try await Self.openOperationRig("PeerLoad", document: "query PeerLoad { peerLoad { peer { __typename ... on Person { name } ... on Robot { serial } } } }", reply: #"{"data":{"peerLoad":{"peer":{"__typename":"Robot","serial":"r2"}}}}"#)
+
+    let result = try await Operations.peerLoad()
+
+    guard case let .robot(robot)? = result.peer else {
+      Issue.record("the peer is not a robot: \(String(describing: result.peer))")
+      return
+    }
+    #expect(robot.serial == "r2")
+    #expect(result.peer?.kind == .robot)
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
   func aListOperationReturnsOneGeneratedResultPerElementOfTheRootList() async throws {
     _ = try await Self.openOperationRig("Giphy", document: "query Giphy($type: String!, $limit: Int) { giphy(type: $type, limit: $limit) { id url isSticker } }", reply: #"{"data":{"giphy":[{"id":1,"url":"u1","isSticker":true},{"id":"2"}]}}"#)
 

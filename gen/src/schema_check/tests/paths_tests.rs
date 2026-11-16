@@ -138,14 +138,6 @@ fn a_landing_path_the_answer_lacks_is_refused() {
 }
 
 #[test]
-fn result_names_must_be_keys_of_the_payload() {
-    let good = model(&action("send", "CreateChat", "    response from: \"createChat.chat\"\n    returns do\n      attribute :note, :string\n    end\n"));
-    run(&good).unwrap();
-    let bad = model(&action("send", "CreateChat", "    response from: \"createChat.chat\"\n    returns do\n      attribute :successMessage, :string\n    end\n"));
-    refused("result key the payload lacks", &bad, "attribute :successMessage", &["returns `successMessage`", "no `successMessage` under `createChat`", "note"]);
-}
-
-#[test]
 fn a_fetch_root_the_document_does_not_select_is_refused() {
     let broken = "model Message do\n  attribute :body, :string, null: true\n  scope :messages do\n    parameter :chatId, :string\n    query \"ChatMessages\"\n    response from: \"node.messages\", shape: :list\n  end\nend\n";
     refused("root past what the document selects", broken, "response from: \"node.messages\"", &["response from `node.messages`", "no `messages` under `node`", "title"]);
@@ -186,13 +178,4 @@ fn listen_and_event_id_paths_follow_the_documents() {
     run(&listen(", from: \"chatChanged.chat\", id: \"id\"")).unwrap();
     refused("listen root", &listen(", from: \"chatChanged.room\""), "subscribe \"ChatChanged\"", &["subscribe from `chatChanged.room`", "no `room` under `chatChanged`"]);
     refused("listen id", &listen(", from: \"chatChanged.chat\", id: \"chatId\""), "subscribe \"ChatChanged\"", &["subscribe id `chatId`", "no `chatId` under `chatChanged.chat`", "id, title"]);
-}
-
-#[test]
-fn standalone_result_keys_follow_the_payload_down_to_nested_objects() {
-    let call = |result: &str| format!("operation :pricing_load do\n  query \"Pricing\"\n  returns do\n{result}  end\nend\n");
-    let gifts = |inner: &str| format!("    attribute :gifts, [PricingGifts] do\n{inner}    end\n");
-    run(&call(&format!("{}    attribute :flag, :bool\n", gifts("      attribute :id, :id\n      attribute :name, :string\n")))).unwrap();
-    refused("top level key", &call("    attribute :ghost, :string\n"), "attribute :ghost", &["returns `ghost`", "no `ghost` under `pricing`", "flag, gifts"]);
-    refused("key inside a list of objects", &call(&gifts("      attribute :id, :id\n      attribute :title, :string\n")), "attribute :title", &["returns `title`", "no `title` under `pricing.gifts`", "id, name"]);
 }

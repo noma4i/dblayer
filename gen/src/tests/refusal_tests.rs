@@ -1,6 +1,6 @@
 use std::fs;
 
-use super::default_decisions_tests::{refused, refused_at};
+use super::default_decisions_tests::refused_at;
 use crate::{compile_files, emit_kotlin, emit_swift, load_schema_types, parse_all, specs_text};
 
 const SCHEMA: &str = "type Query { a: Int }\nenum Mood { HAPPY SAD }\ninput PostInput { title: String!, note: String, count: Int! = 3, mood: Mood }\ninput PickInput @oneOf { id: ID, name: String }\n";
@@ -34,15 +34,6 @@ fn gen_input_oneof_parity() {
     let (swift, kotlin) = outputs();
     assert!(swift.contains("case id(String)") && swift.contains("case name(String)") && swift.contains("case .name(let value): try container.encode(value, forKey: .name)"), "{swift}");
     assert!(kotlin.contains("data class Id(val value: String) : PickInput") && kotlin.contains("is PickInput.Name -> \"name\" to jsonValue(value.value)"), "{kotlin}");
-}
-
-#[test]
-fn gen_returns_policy() {
-    for option in ["null: true", "optional: true", "default: \"a\"", "from: \"b\"", "local: true"] {
-        let error = refused(&format!("operation :send do\n  mutation \"Send\"\n  returns do\n    attribute :id, :string, {option}\n  end\nend\n"));
-        assert!(error.file.ends_with("m.dbl") && error.error.line == 4, "{option}: {error}");
-    }
-    assert!(parse_all(&["operation :send do\n  mutation \"Send\"\n  returns do\n    attribute :id, :string\n  end\nend\n"]).is_ok());
 }
 
 #[test]

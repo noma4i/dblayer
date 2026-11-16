@@ -1,11 +1,14 @@
 use crate::SchemaTypes;
 use crate::{emit_kotlin, emit_swift, parse_all};
+use super::result_tests::compile_calls;
 
-const QR: &str = "operation :qr_code_create do\n  mutation \"QrCodeCreate\"\n  parameter :kind, :string\n  parameter :size, :int, null: true\n  returns do\n    attribute :url, :string\n  end\nend\n\noperation :sign_out do\n  mutation \"SignOut\"\nend\n";
+const QR_SCHEMA: &str = "type Query { a: Int }\ntype Mutation { qrCodeCreate(kind: String!, size: Int): QrCode, signOut: Boolean }\ntype QrCode { url: String }\n";
+const QR_DOCUMENTS: &str = "mutation QrCodeCreate($kind: String!, $size: Int) { qrCodeCreate(kind: $kind, size: $size) { url } }\nmutation SignOut { signOut }\n";
+const QR: &str = "operation :qr_code_create do\n  mutation \"QrCodeCreate\"\n  parameter :kind, :string\n  parameter :size, :int, null: true\nend\n\noperation :sign_out do\n  mutation \"SignOut\"\nend\n";
 
 #[test]
 fn an_operation_without_a_model_becomes_a_typed_call_on_both_platforms() {
-    let declared = parse_all(&[QR]).unwrap();
+    let declared = compile_calls(QR_SCHEMA, QR_DOCUMENTS, QR).unwrap_or_else(|errors| panic!("{errors:?}"));
     assert!(declared.models.is_empty());
     let swift = emit_swift(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
@@ -34,12 +37,12 @@ fn an_operation_without_a_model_becomes_a_typed_call_on_both_platforms() {
 #[test]
 fn a_wrong_operation_declaration_is_named_with_its_line() {
     let cases = [
-        ("operation :a do\n  mutation \"A\"\n  returns do\n    attribute :first, :string\n  end\n  returns do\n    attribute :second, :int\n  end\nend\n", "`returns` is declared twice"),
+        ("operation :a do\n  mutation \"A\"\n  returns do\n    attribute :first, :string\n  end\nend\n", "`returns` takes no block: the answer type comes from the document"),
+        ("operation :a do\n  mutation \"A\"\n  returns\nend\n", "always answers with the type of its document: delete `returns`"),
         ("operation :a do\n  mutation \"A\"\n  parameter :x, :string\n  parameter :x, :int\nend\n", "parameter `x` is declared twice"),
         ("operation :a do\n  parameter :x, :id\nend\n", "needs exactly one `mutation` or `query` line"),
         ("operation :a do\n  mutation \"A\"\n  query \"B\"\nend\n", "needs exactly one `mutation` or `query` line"),
         ("operation :a do\n  mutation \"A\"\n  parameter :x, :uuid\nend\n", "the name of a schema input object or enum like QrCodeInput"),
-        ("operation :a do\n  mutation \"A\"\n  returns do\n    attribute :x, :date\n  end\nend\n", "a returned attribute is :bool, :int, :num, :string, :id, :json"),
         ("operation :a do\n  mutation \"A\"\n  frob :x\nend\n", "unknown line `frob`"),
         ("operation :a do\n  mutation \"A\"\n  args x: :string\nend\n", "unknown line `args`"),
         ("operation :a do\n  mutation \"A\"\n  result x: :string\nend\n", "unknown line `result`"),
@@ -55,11 +58,13 @@ fn a_wrong_operation_declaration_is_named_with_its_line() {
     }
 }
 
-const GIPHY: &str = "operation :giphy_load do\n  query \"Giphy\"\n  response shape: :list\n  parameter :type, :string\n  parameter :limit, :int, null: true\n  returns do\n    attribute :id, :id\n    attribute :url, :string\n  end\nend\n";
+const GIPHY: &str = "operation :giphy_load do\n  query \"Giphy\"\n  response shape: :list\n  parameter :type, :string\n  parameter :limit, :int, null: true\nend\n";
+const GIPHY_SCHEMA: &str = "type Query { giphy(type: String!, limit: Int): [Giphy!]! }\ntype Giphy { id: ID!, url: String! }\n";
+const GIPHY_DOCUMENTS: &str = "query Giphy($type: String!, $limit: Int) { giphy(type: $type, limit: $limit) { id url } }\n";
 
 #[test]
 fn a_list_operation_returns_one_result_type_per_element_on_both_platforms() {
-    let declared = parse_all(&[GIPHY]).unwrap();
+    let declared = compile_calls(GIPHY_SCHEMA, GIPHY_DOCUMENTS, GIPHY).unwrap_or_else(|errors| panic!("{errors:?}"));
     let swift = emit_swift(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
         "public struct GiphyLoadResult: Codable, Sendable, Equatable {",
@@ -80,7 +85,7 @@ fn a_list_operation_returns_one_result_type_per_element_on_both_platforms() {
 #[test]
 fn a_list_line_without_a_result_is_named_with_its_line() {
     let errors = parse_all(&["operation :a do\n  query \"A\"\n  response shape: :list\nend\n"]).expect_err("accepted");
-    assert!(errors.iter().any(|(_, error)| error.message.contains("`response shape: :list` needs a `returns` block")), "{errors:?}");
+    assert!(errors.iter().any(|(_, error)| error.message.contains("`response shape: :list` needs the document to select the fields of one element")), "{errors:?}");
 }
 
 /// M64: a standalone operation whose document takes one input object sends its body under that variable.

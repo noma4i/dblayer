@@ -58,9 +58,7 @@ model Moment do
   operation :upload_clip, upload: true do
     mutation "CreateMoment"
     optimistic false
-    returns do
-      attribute :successMessage, :string
-    end
+    returns
     response from: "createMoment"
   end
   operation :destroy do
@@ -76,10 +74,7 @@ model Moment do
     mutation "ShareMoment"
     optimistic false
     variables momentId: :id
-    returns do
-      attribute :successMessage, :string
-      attribute :copies, :int
-    end
+    returns
     response from: "shareMoment.moment"
   end
 end

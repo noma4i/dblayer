@@ -28,11 +28,11 @@ fn note_model(attributes: &str) -> String {
 fn gen_names_one_rule() {
     assert_eq!(crate::naming::camel("post-send_id"), "PostSendId");
     assert_eq!(crate::naming::member("post-send_id"), "postSendId");
-    let source = "model Sample do\n  attribute :media_info, :json, null: true\n  attribute :detail, SampleDetail, null: true do\n    attribute :id, :id\n  end\n  scope :recent_posts do\n    query \"RecentPosts\"\n  end\n  operation :send_note do\n    mutation \"SendNote\"\n    optimistic false\n    returns do\n      attribute :id, :string\n    end\n  end\nend\n";
+    let source = "model Sample do\n  attribute :media_info, :json, null: true\n  attribute :detail, SampleDetail, null: true do\n    attribute :id, :id\n  end\n  scope :recent_posts do\n    query \"RecentPosts\"\n  end\n  operation :send_note do\n    mutation \"SendNote\"\n    optimistic false\n  end\nend\n";
     let declared = parse_all(&[source]).unwrap();
     let inputs = Default::default();
     for output in [emit_swift(&declared.models, &declared.operations, &inputs), emit_kotlin(&declared.models, &declared.operations, &inputs)] {
-        assert!(output.contains("recentPosts") && output.contains("sendNote") && output.contains("SampleSendNoteResult"), "{output}");
+        assert!(output.contains("recentPosts") && output.contains("sendNote"), "{output}");
         assert!(!output.contains("RecentPosts") || output.contains("\"RecentPosts\""), "{output}");
     }
 }

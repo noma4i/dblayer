@@ -3,6 +3,7 @@ package com.noma4i.dblayer
 import com.noma4i.dblayer.models.Operations
 import com.noma4i.dblayer.models.MomentInput
 import com.noma4i.dblayer.models.OwnerInput
+import com.noma4i.dblayer.models.PeerLoadResultPeer
 import com.noma4i.dblayer.models.PricingLoadResultRewards
 import com.noma4i.dblayer.models.KeywordInput
 import com.noma4i.dblayer.models.KeywordChoice
@@ -111,6 +112,15 @@ class OperationCallTest {
         assertEquals(true, result.videoIntro?.enabled)
         assertEquals(listOf("a", "b"), result.tags)
         assertEquals(parseJson("""{"k":[1,2]}"""), result.spec)
+    }
+
+    @Test
+    fun aUnionAnswerIsDecodedByItsTypenameIntoTheVariantOfTheOperation() = bounded {
+        rig("PeerLoad", "query PeerLoad { peerLoad { peer { __typename ... on Person { name } ... on Robot { serial } } } }", """{"data":{"peerLoad":{"peer":{"__typename":"Robot","serial":"r2"}}}}""")
+
+        val result = withTimeout(5000) { Operations.peerLoad() }
+
+        assertEquals("r2", (result.peer as PeerLoadResultPeer.Robot).value.serial)
     }
 
     @Test

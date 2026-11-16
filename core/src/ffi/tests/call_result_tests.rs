@@ -20,7 +20,7 @@ impl FakeTransport for Answers {
 
 fn declaration() -> String {
     let gift = FieldSpec::variant("gift", "GiftAttachment", vec![FieldSpec::scalar("tier", ScalarKind::Str).nullable()]);
-    let moment = FieldSpec::variant("moment", "MomentAttachment", vec![FieldSpec::scalar("momentId", ScalarKind::Id).nullable()]);
+    let moment = FieldSpec { from: Some("MomentAttachment".into()), ..FieldSpec::variant("moment", "ProfileAttachmentMomentAttachment", vec![FieldSpec::scalar("momentId", ScalarKind::Id).nullable()]) };
     let mut root = FieldSpec::object("Profile");
     root.fields = vec![
         FieldSpec::scalar("id", ScalarKind::Id).nullable(),

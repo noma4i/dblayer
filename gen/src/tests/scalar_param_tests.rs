@@ -17,7 +17,7 @@ const OPERATIONS: &str = "query messagesSince($chatId: ID!, $afterSequence: Int,
 
 const MODEL: &str = "model Message do\n  attribute :text, :string, null: true\n  scope :since do\n    parameter :chatId, :string\n    parameter :afterSequence, :int\n    parameter :includeGifts, :bool\n    query \"messagesSince\"\n    response from: \"chat.messages\"\n    paginate size: 50, direction: :forward\n  end\nend\n";
 
-const MEDIA_STATE: &str = "operation :chat_media_state do\n  query \"chatMediaState\"\n  parameter :chatId, :id\n  parameter :upToSequence, :int, null: true\n  returns do\n    attribute :mediaLibrary, ChatMediaStateResultMediaLibrary do\n      attribute :visualCount, :int\n      attribute :audioCount, :int\n      attribute :giftCount, :int\n      attribute :latestSequence, :int\n    end\n  end\nend\n";
+const MEDIA_STATE: &str = "operation :chat_media_state do\n  query \"chatMediaState\"\n  parameter :chatId, :id\n  parameter :upToSequence, :int, null: true\nend\n";
 
 fn compile(source: &str, schema: Option<&str>) -> Result<Declarations, Vec<String>> {
     let directory = tempfile::tempdir().unwrap();

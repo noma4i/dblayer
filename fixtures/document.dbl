@@ -4,7 +4,7 @@ model Document do
   attribute :cover, DocumentCover, null: true, merge: { imageUrl: :non_empty, width: :positive, stage: [[:PENDING, :RUNNING], [:DONE, :FAILED]], progress: :monotonic } do
     attribute :imageUrl, :string, null: true
     attribute :width, :num, null: true
-    attribute :stage, :enum, values: ["DONE", "FAILED", "PENDING", "RUNNING"], as: CoverStage, null: true
+    attribute :stage, :enum, as: CoverStage, null: true
     attribute :progress, :num, null: true
   end
   references :previews, class_name: Record, foreign_key: :previewIds, from: "previews"

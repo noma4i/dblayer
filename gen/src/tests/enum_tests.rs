@@ -81,7 +81,7 @@ fn one_enum_name_with_different_values_and_bad_values_fail_at_their_line() {
 pub(crate) const SCHEMA: &str = "type Query { a: Int }\nscalar Cursor\nscalar Wide\nscalar Mystery\nenum WidgetKind { EMOJI GIF }\ninput WidgetInput { kind: WidgetKind!, after: Cursor, size: Wide! }\ntype Mutation { widgetSend(input: WidgetInput!, kind: WidgetKind!): WidgetSent }\ntype WidgetSent { kind: WidgetKind! size: Wide! }\n";
 const OPERATIONS: &str = "mutation WidgetSend($input: WidgetInput!, $kind: WidgetKind!) { widgetSend(input: $input, kind: $kind) { kind size } }\n";
 pub(crate) const SCALARS: &str = "scalar :Cursor, as: :string\nscalar :Wide, as: :long\n";
-pub(crate) const SEND: &str = "operation :widget_send do\n  mutation \"WidgetSend\"\n  parameter :input, WidgetInput\n  parameter :kind, WidgetKind\n  returns do\n    attribute :kind, WidgetKind\n    attribute :size, :int\n  end\nend\n";
+pub(crate) const SEND: &str = "operation :widget_send do\n  mutation \"WidgetSend\"\n  parameter :input, WidgetInput\n  parameter :kind, WidgetKind\nend\n";
 
 pub(crate) fn compile(files: &[&str], schema: &str) -> Result<crate::Declarations, Vec<String>> {
     let directory = tempfile::tempdir().unwrap();
@@ -127,7 +127,9 @@ fn schema_enums_become_typed_enums_in_inputs_args_and_results_and_scalars_follow
 
 #[test]
 fn an_unmapped_custom_scalar_a_string_arg_over_an_enum_and_a_result_enum_without_schema_fail_with_a_reason() {
-    let unmapped = compile(&[SEND], SCHEMA).unwrap_err();
+    let answer = compile(&[SEND], SCHEMA).unwrap_err();
+    assert!(answer.iter().any(|message| message.contains("operation `widget_send`: the answer type: field `size`: custom scalar `Wide` has no mapping")), "{answer:?}");
+    let unmapped = compile(&["scalar :Wide, as: :long\n", SEND], SCHEMA).unwrap_err();
     assert!(unmapped.iter().any(|message| message.contains("custom scalar `Cursor` has no mapping: add `scalar :Cursor, as: :string`")), "{unmapped:?}");
     let string_arg = compile(&[SCALARS, &SEND.replace("parameter :kind, WidgetKind", "parameter :kind, :string")], SCHEMA).unwrap_err();
     assert!(string_arg.iter().any(|message| message.contains("does not fit `WidgetKind!`")), "{string_arg:?}");
