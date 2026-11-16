@@ -590,8 +590,28 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         run(["bash", "scripts/check_sequences.sh", str(stage), "--lane", "swift"], root, env, expected=1, contains="1 of 2 listed tests passed")
         print("ok the Swift lane counts passed tests from the xunit report and fails a failed one")
 
+    def block_21():
+        root = base / "consumers"
+        for name in ("stage", "maven", "repo"):
+            (root / name).mkdir(parents=True)
+        with zipfile.ZipFile(root / "stage/DBlayerFFI.xcframework.zip", "w") as archive:
+            archive.writestr("DBlayerFFI.xcframework/Info.plist", "info")
+        for name in ("dblayer.swift", "dblayer-gen-macos-universal"):
+            (root / "stage" / name).write_text("x")
+        for suffix in ("aar", "pom", "module"):
+            (root / f"maven/dblayer-{version}.{suffix}").write_text("x")
+        manifest = root / "Package.swift"
+        manifest.write_text(f'.binaryTarget(\n  name: "dblayerFFI",\n  url: "https://example.test/{version}/DBlayerFFI.xcframework.zip",\n  checksum: "abc"\n),\n')
+        git_env = dict(os.environ, GIT_AUTHOR_NAME="n", GIT_AUTHOR_EMAIL="n@n", GIT_COMMITTER_NAME="n", GIT_COMMITTER_EMAIL="n@n")
+        run([real_git, "init", "-q", "-b", "master", str(root / "repo")], root, git_env)
+        run([real_git, "-C", str(root / "repo"), "commit", "-q", "--allow-empty", "-m", "i"], root, git_env)
+        check = 'test -d "$DBLAYER_PACKAGE/dblayerFFI.xcframework" && grep -q \'path: "dblayerFFI.xcframework"\' "$DBLAYER_PACKAGE/Package.swift"'
+        env = dict(os.environ, CONSUMER_REPO=str(root / "repo"), CONSUMER_IOS_COMMAND=check, CONSUMER_WORK_ROOT=str(root))
+        run(["bash", str(source / "scripts/check_consumers.sh"), str(root / "stage"), "--version", version, "--maven", str(root / "maven"), "--package-swift", str(manifest), "--lane", "ios"], root, env, contains="lane ios green")
+        print("ok the app lanes get an XCFramework named after the binary target")
+
     with ThreadPoolExecutor(max_workers=6) as blocks:
-        futures = [blocks.submit(block) for block in (block_1, block_2, block_3, block_4, block_5, block_6, block_7, block_8, block_9, block_10, block_11, block_12, block_13, block_14, block_15, block_16, block_17, block_18, block_19, block_20)]
+        futures = [blocks.submit(block) for block in (block_1, block_2, block_3, block_4, block_5, block_6, block_7, block_8, block_9, block_10, block_11, block_12, block_13, block_14, block_15, block_16, block_17, block_18, block_19, block_20, block_21)]
         for future in futures:
             future.result()
 PY

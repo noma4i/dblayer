@@ -87,13 +87,18 @@ mkdir -p "$package/swift/Sources"
 unzip -q "$stage/DBlayerFFI.xcframework.zip" -d "$package" || fail 'cannot unzip the staged XCFramework'
 git -C "$root" archive HEAD core gen Cargo.toml Cargo.lock swift/Sources | tar -x -C "$package" || fail 'cannot export the release sources'
 cp "$stage/dblayer.swift" "$package/swift/Sources/DBlayer/dblayer.swift"
-python3 -I - "$package_swift" "$package/Package.swift" <<'PY' || fail 'cannot rewrite the binary target of Package.swift'
+target_name="$(python3 -I - "$package_swift" "$package/Package.swift" <<'PY'
 import re, sys
 text = open(sys.argv[1]).read()
-text, count = re.subn(r'url: "[^"]+",\s*checksum: "[^"]+"', 'path: "DBlayerFFI.xcframework"', text)
-assert count == 1, "binaryTarget url not found"
+pattern = r'(\.binaryTarget\(\s*name:\s*"([^"]+)",\s*)url: "[^"]+",\s*checksum: "[^"]+"'
+match = re.search(pattern, text)
+assert match, "binaryTarget not found"
+text = text.replace(match.group(0), match.group(1) + 'path: "%s.xcframework"' % match.group(2), 1)
 open(sys.argv[2], "w").write(text)
+print(match.group(2))
 PY
+)" || fail 'cannot rewrite the binary target of Package.swift'
+mv "$package/DBlayerFFI.xcframework" "$package/.unzipped-xcframework" && mv "$package/.unzipped-xcframework" "$package/$target_name.xcframework" || fail 'cannot name the XCFramework after its binary target'
 : > "$package/.fetched-$version"
 
 new_tree() {
