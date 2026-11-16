@@ -502,7 +502,7 @@
             "default": null,
             "fields": [
               {
-                "app_type": "FixturePhoto",
+                "app_type": "CurrentUserUpdatePhotoResultUserPhoto",
                 "default": null,
                 "fields": [
                   {
@@ -518,7 +518,7 @@
                     "optional": false
                   },
                   {
-                    "app_type": "FixturePhotoMedia",
+                    "app_type": "CurrentUserUpdatePhotoResultUserPhotoMedia",
                     "default": null,
                     "fields": [
                       {
@@ -550,6 +550,58 @@
                 "kind": { "type": "object" },
                 "merge": null,
                 "name": "userPhoto",
+                "nullable": true,
+                "optional": false
+              },
+              {
+                "app_type": "CurrentUserUpdatePhotoResultViewer",
+                "default": null,
+                "fields": [
+                  {
+                    "app_type": "CurrentUserUpdatePhotoResultViewerUser",
+                    "default": null,
+                    "fields": [
+                      {
+                        "app_type": null,
+                        "default": null,
+                        "from": null,
+                        "id_from_parent": null,
+                        "indexed": false,
+                        "kind": { "kind": "id", "type": "scalar" },
+                        "merge": null,
+                        "name": "id",
+                        "nullable": true,
+                        "optional": false
+                      },
+                      {
+                        "app_type": null,
+                        "default": null,
+                        "from": null,
+                        "id_from_parent": null,
+                        "indexed": false,
+                        "kind": { "kind": "str", "type": "scalar" },
+                        "merge": null,
+                        "name": "name",
+                        "nullable": true,
+                        "optional": false
+                      }
+                    ],
+                    "from": null,
+                    "id_from_parent": null,
+                    "indexed": false,
+                    "kind": { "type": "object" },
+                    "merge": null,
+                    "name": "user",
+                    "nullable": true,
+                    "optional": false
+                  }
+                ],
+                "from": null,
+                "id_from_parent": null,
+                "indexed": false,
+                "kind": { "type": "object" },
+                "merge": null,
+                "name": "viewer",
                 "nullable": true,
                 "optional": false
               }
@@ -1010,7 +1062,7 @@
                   "optional": false
                 }
               ],
-              "from": null,
+              "from": "RewardAttachment",
               "id_from_parent": null,
               "indexed": false,
               "kind": { "type": "object" },
@@ -1048,7 +1100,7 @@
                   "optional": false
                 }
               ],
-              "from": null,
+              "from": "MomentAttachment",
               "id_from_parent": null,
               "indexed": false,
               "kind": { "type": "object" },
@@ -1100,7 +1152,7 @@
                   "optional": false
                 }
               ],
-              "from": null,
+              "from": "ProfileAttachment",
               "id_from_parent": null,
               "indexed": false,
               "kind": { "type": "object" },
@@ -1126,7 +1178,7 @@
                   "optional": false
                 }
               ],
-              "from": null,
+              "from": "ReactionAttachment",
               "id_from_parent": null,
               "indexed": false,
               "kind": { "type": "object" },

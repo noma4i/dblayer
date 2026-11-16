@@ -313,7 +313,7 @@
                   "optional": false
                 }
               ],
-              "from": null,
+              "from": "KindWord",
               "id_from_parent": null,
               "indexed": false,
               "kind": { "type": "object" },
@@ -339,7 +339,7 @@
                   "optional": false
                 }
               ],
-              "from": null,
+              "from": "KindNumber",
               "id_from_parent": null,
               "indexed": false,
               "kind": { "type": "object" },
@@ -379,7 +379,7 @@
                   "optional": false
                 }
               ],
-              "from": null,
+              "from": "KindChip",
               "id_from_parent": null,
               "indexed": false,
               "kind": { "type": "object" },
@@ -405,7 +405,7 @@
                   "optional": false
                 }
               ],
-              "from": null,
+              "from": "KindCount",
               "id_from_parent": null,
               "indexed": false,
               "kind": { "type": "object" },

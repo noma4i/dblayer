@@ -511,6 +511,63 @@ data class ContainerMediaLoadResult(
     val latestSequence: Long? = null,
 )
 
+@Immutable
+@Serializable
+data class PeerLoadResult(
+    val peer: PeerLoadResultPeer? = null,
+)
+
+@Immutable
+@Serializable(with = PeerLoadResultPeerSerializer::class)
+sealed class PeerLoadResultPeer {
+    @Immutable
+    data class Person(val value: PeerLoadResultPeerPerson) : PeerLoadResultPeer()
+    @Immutable
+    data class Robot(val value: PeerLoadResultPeerRobot) : PeerLoadResultPeer()
+    @Immutable
+    data class Unknown(val typename: String) : PeerLoadResultPeer()
+
+    val kind: PeerLoadResultPeerKind?
+        get() = when (this) {
+            is Person -> PeerLoadResultPeerKind.Person
+            is Robot -> PeerLoadResultPeerKind.Robot
+            is Unknown -> null
+        }
+
+}
+
+object PeerLoadResultPeerSerializer : UnionSerializer<PeerLoadResultPeer>("PeerLoadResultPeer") {
+    override fun read(typename: String, body: JsonObject): PeerLoadResultPeer = when (typename) {
+        "Person" -> PeerLoadResultPeer.Person(dbJson.decodeFromJsonElement(PeerLoadResultPeerPerson.serializer(), body))
+        "Robot" -> PeerLoadResultPeer.Robot(dbJson.decodeFromJsonElement(PeerLoadResultPeerRobot.serializer(), body))
+        else -> PeerLoadResultPeer.Unknown(typename)
+    }
+
+    override fun write(value: PeerLoadResultPeer): Pair<String, JsonElement> = when (value) {
+        is PeerLoadResultPeer.Person -> "Person" to dbJson.encodeToJsonElement(PeerLoadResultPeerPerson.serializer(), value.value)
+        is PeerLoadResultPeer.Robot -> "Robot" to dbJson.encodeToJsonElement(PeerLoadResultPeerRobot.serializer(), value.value)
+        is PeerLoadResultPeer.Unknown -> value.typename to JsonObject(emptyMap())
+    }
+}
+
+@Serializable
+enum class PeerLoadResultPeerKind {
+    @SerialName("Person") Person,
+    @SerialName("Robot") Robot,
+}
+
+@Immutable
+@Serializable
+data class PeerLoadResultPeerPerson(
+    val name: String? = null,
+)
+
+@Immutable
+@Serializable
+data class PeerLoadResultPeerRobot(
+    val serial: String? = null,
+)
+
 object Operations {
     suspend fun `when`(`class`: String, account: AccountScope? = null): WhenResult {
         val variables_ = mutableMapOf<String, JsonElement>()
@@ -557,5 +614,9 @@ object Operations {
         variables_["containerId"] = jsonValue(containerId)
         if (upToSequence != null) variables_["upToSequence"] = jsonValue(upToSequence)
         return DBlayer.call("containerMedia", JsonObject(variables_), ContainerMediaLoadResult.serializer(), account)
+    }
+    suspend fun peerLoad(account: AccountScope? = null): PeerLoadResult {
+        val variables_ = mutableMapOf<String, JsonElement>()
+        return DBlayer.call("PeerLoad", JsonObject(variables_), PeerLoadResult.serializer(), account)
     }
 }

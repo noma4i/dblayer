@@ -842,6 +842,78 @@ public struct ContainerMediaLoadResult: Codable, Sendable, Equatable {
     }
 }
 
+public struct PeerLoadResult: Codable, Sendable, Equatable {
+    public let peer: PeerLoadResultPeer?
+
+    public init(peer: PeerLoadResultPeer? = nil) {
+        self.peer = peer
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case peer = "peer"
+    }
+}
+
+public enum PeerLoadResultPeer: Codable, Sendable, Equatable {
+    case person(PeerLoadResultPeerPerson)
+    case robot(PeerLoadResultPeerRobot)
+    case unknown(typename: String)
+
+    public init(from decoder: Decoder) throws {
+        let typename = try decoder.container(keyedBy: UnionTypenameKey.self).decode(String.self, forKey: .typename)
+        switch typename {
+        case "Person": self = .person(try PeerLoadResultPeerPerson(from: decoder))
+        case "Robot": self = .robot(try PeerLoadResultPeerRobot(from: decoder))
+        default: self = .unknown(typename: typename)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        switch self {
+        case let .person(value): try JSONValue.tagged("Person", value).encode(to: encoder)
+        case let .robot(value): try JSONValue.tagged("Robot", value).encode(to: encoder)
+        case let .unknown(typename): try JSONValue.tagged(typename, [String: String]()).encode(to: encoder)
+        }
+    }
+
+    public var kind: PeerLoadResultPeerKind? {
+        switch self {
+        case .person: return .person
+        case .robot: return .robot
+        case .unknown: return nil
+        }
+    }
+}
+
+public enum PeerLoadResultPeerKind: String, Codable, Sendable {
+    case person = "Person"
+    case robot = "Robot"
+}
+
+public struct PeerLoadResultPeerPerson: Codable, Sendable, Equatable {
+    public let name: String?
+
+    public init(name: String? = nil) {
+        self.name = name
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name = "name"
+    }
+}
+
+public struct PeerLoadResultPeerRobot: Codable, Sendable, Equatable {
+    public let serial: String?
+
+    public init(serial: String? = nil) {
+        self.serial = serial
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case serial = "serial"
+    }
+}
+
 public enum Operations {
     nonisolated(nonsending) public static func when(`class`: String, in scope_: AccountScope? = nil) async throws -> WhenResult {
         var variables_: [String: JSONValue] = [:]
@@ -888,5 +960,9 @@ public enum Operations {
         variables_["containerId"] = try JSONValue.encode(containerId)
         if let value = upToSequence { variables_["upToSequence"] = try JSONValue.encode(value) }
         return try await DB.call("containerMedia", variables: variables_, as: ContainerMediaLoadResult.self, in: scope_)
+    }
+    nonisolated(nonsending) public static func peerLoad(in scope_: AccountScope? = nil) async throws -> PeerLoadResult {
+        let variables_: [String: JSONValue] = [:]
+        return try await DB.call("PeerLoad", variables: variables_, as: PeerLoadResult.self, in: scope_)
     }
 }
