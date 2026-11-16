@@ -683,9 +683,11 @@ edge?.rank                                                // FeedRank?
 
 ### Reading after a declared event
 
-Declare one shared change subscription beside the model reads. The application registers its GraphQL document through the existing operations argument.
+Declare one shared change subscription at the top level of a file, beside `model`. The application registers its GraphQL document through the existing operations argument.
 
 ```ruby
+changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
+
 model Notebook do
   attribute :title, :string
   scope :node, node: :one do
@@ -693,7 +695,6 @@ model Notebook do
     query "NotebookNode"
     variables id: :id
   end
-  changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
   changed_by "NOTEBOOK", via: :node, removes_on: ["ERASED", "HIDDEN"]
 end
 ```
@@ -702,8 +703,8 @@ end
 `area`, `kind` and `id` name response paths within each entry.
 A model removes its own rows when a row of another model lands with `removed_by Message, match: { chatId: :chatId, userId: :authorId }`. The rows of this model whose fields equal the listed fields of the new row go in the same commit, whether the new row comes from a local write, an answer or an event. The generator refuses an unknown model, an unknown field and fields of another type.
 
-Declare `changes` once across the input files. Every `changed_by` declaration uses that subscription.
-Missing declarations, duplicate subscriptions and empty paths produce generator errors.
+Declare `changes` once across the input files, outside any model. Every `changed_by` declaration uses that subscription.
+`changes` inside a model, a second `changes`, a `changed_by` without `changes` and empty paths produce generator errors.
 
 A node read uses the declared change ID. The `via` scope declared with `node: :one` has 1 parameter. The parameter name `nodeId` belongs to the node read: another scope that declares it fails generation.
 A singleton read needs no parameter: `changed_by "TOTALS", via: :current`.
@@ -712,13 +713,14 @@ An event of a row through `via: :node` rereads the row that a read shows through
 `via: :observed` rereads every observed read of the model, parameterized ones included, with the same reread that follows a reconnect. It takes no parameter and no `removes_on`, and the model needs a remote read. A read that nobody observes is not requested.
 
 ```ruby
+changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
+
 model WalletTransaction do
   scope :by_kind do
     parameter :kind, :string
     query "WalletTransactions"
     variables kind: :kind
   end
-  changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
   changed_by "WALLET", via: :observed
 end
 ```
@@ -749,6 +751,8 @@ Area and removal values are strings that belong to the application.
 An area can repeat on several models, for `via: :observed`, node reads and named reads. One event rereads the read of each of those models and gives each model its own item on `events`. A model declares an area once per form: `via: :node` (or a named read) and `via: :observed` may both name the same area, and the event does one reread for each form and gives the model one item. A repeat of the same form inside one model is rejected.
 
 ```ruby
+changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
+
 model Chat do
   attribute :title, :string
   scope :node, node: :one do
@@ -756,7 +760,6 @@ model Chat do
     query "ChatNode"
     variables id: :id
   end
-  changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
   changed_by "CHAT", via: :node, removes_on: ["DELETED", "ACCESS_REVOKED"]
   changed_by "CHAT", via: :observed
 end
@@ -765,6 +768,8 @@ end
 Full event rows use `payload` paths relative to each item in `changes`:
 
 ```ruby
+changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
+
 model Chat do
   attribute :title, :string
   attribute :serverRevision, :int, from: "revision"
@@ -775,7 +780,6 @@ model Chat do
     query "ChatNode"
     variables id: :id
   end
-  changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
   changed_by "MESSAGE", via: :node, payload: "chat"
   scope :list, insert_on: :server do
     parameter :list, :string
@@ -829,13 +833,14 @@ No app refetch follows a MESSAGE.
 For an identifier-only event, explicitly declare `id_of: { of: Message, field: :chatId }` to reread `Chat.node(chatId)`:
 
 ```ruby
+changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
+
 model Chat do
   scope :node, node: :one do
     parameter :id, :id
     query "ChatNode"
     variables id: :id
   end
-  changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
   changed_by "MESSAGE", via: :node, id_of: { of: Message, field: :chatId }
 end
 
@@ -1193,6 +1198,17 @@ A list type (`[WidgetInput]`) fits a list of that type. `null_items: true` allow
 A `parameter` inside a model operation takes the same types as an operation without a model, including the name of a schema enum or input object. The call gets a typed parameter, and an `optimistic` line can write an enum parameter into an enum attribute of the model. 
 
 A top-level `operation` outside a model takes only its name and block. Named options produce a generator error naming the option.
+
+`upsert Model, from: "path"` in a top-level operation lands the rows of the answer under the path before the call returns, in one batch of the session of the call, with the parsing of `upsert` in a model operation. The call then gives the typed answer. A refused landing fails the call and gives no answer. An unknown model or a path outside the selection of the document stops the generator.
+
+```ruby
+operation :viewer_load do
+  query "ViewerLoad"
+  upsert Viewer, from: "viewerLoad.viewer"
+end
+```
+
+A parameter with `null: true` that has no value in a call is not sent: the variables hold no key for it, an input field bound to it included. One operation with optional parameters replaces copies that differ in the set of parameters.
 
 For file uploads, name each operation and declare it with `operation :name, upload: true`. Each operation declares its own `response`, `upsert` and `parameter` lines. The sent mutation selects that declaration for the same response processing used by other actions. The generator emits `<operationName>Variables` on Swift and Kotlin when the operation has parameters. The steps of the upload (`createBlob`, multipart) are declared once per project in `uploads do ... end`, see [uploads](files.md#uploads).
 

@@ -16,6 +16,9 @@
 - Give a model operation an answer type only with the line `returns`.
 - Take the values of an enum from the schema when the schema has its type.
 - Refuse `values:` on an enum that the schema knows.
+- Declare the event channel `changes` at the top level of a file, not inside a model.
+- Land the answer rows of an operation without a model with `upsert Model, from:`.
+- Leave an optional parameter without a value out of the variables of an action call.
 
 ### Removed
 
