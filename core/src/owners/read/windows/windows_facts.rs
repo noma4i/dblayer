@@ -378,9 +378,13 @@ impl Facts {
         Handled
     }
 
+    pub(super) fn previous_answer(&self) -> WindowOutcome {
+        WindowOutcome::Loaded { revision: self.landed_revision, has_more: self.can_load_next(), fetched: false }
+    }
+
     pub(super) fn idle_load(&mut self, ctx: &mut Ctx<'_>, id: InterestId, goal: Goal, force: bool) -> Outcome<WinState> {
         let fresh = self.is_fresh(ctx.now);
-        let loaded = WindowOutcome::Loaded { revision: self.landed_revision, has_more: self.can_load_next(), fetched: false };
+        let loaded = self.previous_answer();
         let next_page = self.page + 1;
         match goal {
             Goal::First if fresh && !force => {

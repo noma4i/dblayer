@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Answer an app load inside the request gap at once while a reread is deferred.
+
 ## 6.39.0 - 2026-11-16
 
 ### Added

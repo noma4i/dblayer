@@ -311,6 +311,10 @@ impl Facts {
                 self.announce();
                 Handled
             }
+            Ev::Load { id, goal, .. } if self.gap_wait && *goal != Goal::Next && self.in_gap(context.now) => {
+                let answer = self.previous_answer();
+                self.immediate(*id, answer)
+            }
             Ev::Load { id, goal, force: wider, .. } => {
                 self.join_load(*id, *goal, *page);
                 if *wider && *goal != Goal::Next { *force = true; *reason = RequestReason::Refresh; }
