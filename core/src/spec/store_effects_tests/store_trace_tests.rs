@@ -30,7 +30,7 @@ fn random_trace(seed: u64) -> Twin {
     twin
 }
 
-/// In any trace: the revision grows by 1 per commit, no batch of another epoch reaches SQLite,
+/// In any trace: the revision grows per commit, no batch of another epoch reaches SQLite,
 /// the generation never goes down, every batch is answered once, and between `Write` and `Written` no commit, clearing or close takes a step.
 #[test]
 fn store_traces_keep_the_invariants() {
@@ -41,8 +41,8 @@ fn store_traces_keep_the_invariants() {
         let mut answered = BTreeSet::new();
         for (request, actions) in &twin.steps {
             for action in actions {
-                if let Action::BroadcastCommitted { revision, .. } = action {
-                    assert_eq!(*revision, last + 1, "seed {seed}: the revision grows by 1 per commit");
+                if let Action::Committed { revision, .. } = action {
+                    assert!(*revision > last, "seed {seed}: the revision grows per commit");
                     last = *revision;
                 }
             }

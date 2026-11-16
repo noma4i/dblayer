@@ -24,7 +24,6 @@ fn store_clear_account_raises_the_generation() {
     let mut twin = Twin::live();
     let actions = twin.clear_account(Cause::IdentityChanged, 4, true);
     assert!(actions.contains(&Action::Cleared { epoch_old: 1, erase_id: 1 }));
-    assert!(actions.contains(&Action::BroadcastCommitted { revision: 1, all: true, tables: Default::default(), models: Default::default(), rows: None }));
     assert_eq!(twin.state().generation(), 4, "after ClearAccount the generation is generation_new");
 }
 

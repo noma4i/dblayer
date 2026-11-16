@@ -358,8 +358,6 @@ pub enum StoreEffect {
     ClearFailed { erase_id: u64, error: String },
     Saved { publication_id: u64 },
     SaveFailed { publication_id: u64, error: String },
-    /// Broadcast the one notice `Committed{revision, tables, rows, models, position}`.
-    BroadcastCommitted(crate::owners::contract::CommittedBroadcast),
     Observed { epoch: Epoch, batch: BatchId, payloads: Vec<String> },
     ArmExpiry { epoch: Epoch, model: String, row_id: String, revision: u64, deadline: u64 },
     DisarmExpiry { epoch: Epoch, model: String, row_id: String },

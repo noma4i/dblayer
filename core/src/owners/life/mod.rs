@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use super::calls::{CallAnswer, Calls, CallsInput, CallsState};
-use super::contract::{BatchAuthor, BatchId, Committed, CommittedBroadcast, NetworkEvent, Published, Rejected, RequestId};
+use super::contract::{BatchAuthor, BatchId, Committed, NetworkEvent, Published, Rejected, RequestId};
 use super::session::{AuthorId, AuthorOutcome, SessionAnswer, SessionCalls, SessionInput, SessionState};
 use super::lifecycle::{Lifecycle, LifecycleError, LifecycleInput, LifecycleState, Peer};
 use super::network::{Network, NetworkInput, NetworkState};
@@ -113,7 +113,6 @@ pub(crate) struct Wiring {
     store_sinks: AppendLog<(BatchAuthor, StoreSink)>,
     network_sinks: AppendLog<(Peer, NetworkSink)>,
     /// Every subscriber of the Store broadcast `Committed`, in the order of subscription.
-    committed_sinks: AppendLog<CommittedSink>,
     restore_failures: AppendLog<(Peer, String)>,
 }
 
@@ -140,7 +139,6 @@ impl Wiring {
             mutations: Outcomes::new(),
             store_sinks: AppendLog::default(),
             network_sinks: AppendLog::default(),
-            committed_sinks: AppendLog::default(),
             restore_failures: AppendLog::default(),
         }
     }
@@ -209,16 +207,6 @@ impl Wiring {
     pub fn tell_network(&self, owners: &[Peer], event: NetworkEvent) {
         for (_, sink) in self.network_sinks.iter().filter(|(owner, _)| owners.contains(owner)) {
             crate::lock::effect(|| sink(event));
-        }
-    }
-
-    pub fn on_committed(&self, sink: impl Fn(CommittedBroadcast) + Send + Sync + 'static) {
-        self.committed_sinks.push(Arc::new(sink));
-    }
-
-    pub fn tell_committed(&self, broadcast: CommittedBroadcast) {
-        for sink in self.committed_sinks.iter() {
-            crate::lock::effect(|| sink(broadcast.clone()));
         }
     }
 
@@ -338,7 +326,6 @@ pub enum LifeError {
 
 type StoreSink = Arc<dyn Fn(BatchId, StoreReply) + Send + Sync>;
 type NetworkSink = Arc<dyn Fn(NetworkEvent) + Send + Sync>;
-type CommittedSink = Arc<dyn Fn(CommittedBroadcast) + Send + Sync>;
 
 pub struct Life {
     wiring: Arc<Wiring>,
@@ -607,9 +594,6 @@ impl Life {
     pub fn restore_failures(&self) -> Vec<(Peer, String)> { self.wiring.restore_failures.iter().cloned().collect() }
 
     pub fn on_network(&self, owner: Peer, sink: impl Fn(NetworkEvent) + Send + Sync + 'static) { self.wiring.on_network(owner, sink); }
-
-    /// Subscribes to the Store broadcast `Committed`: one call per committed batch, clear and models reset, in the order of revisions.
-    pub fn on_committed(&self, sink: impl Fn(CommittedBroadcast) + Send + Sync + 'static) { self.wiring.on_committed(sink); }
 
     #[cfg(test)]
     pub(crate) fn outcomes(&self) -> &Outcomes<LifeReply> { &self.wiring.outcomes }

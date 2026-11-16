@@ -67,8 +67,7 @@ fn store_commit_ok() {
     assert_eq!(Twin::committed(&actions), Some(1));
     let rows = Some([("row_Moment".to_string(), "a".to_string())].into());
     assert!(actions.contains(&Action::Committed { id: 1, revision: 1, rows: rows.clone() }));
-    assert!(actions.contains(&Action::BroadcastCommitted { revision: 1, all: false, tables: ["row_Moment".to_string()].into(), models: ["Moment".to_string()].into(), rows }));
-    assert_eq!(twin.commit(1, &["b"]).len(), 3);
+    assert_eq!(twin.commit(1, &["b"]).len(), 2);
     assert_eq!(twin.state().revision(), 2);
 }
 

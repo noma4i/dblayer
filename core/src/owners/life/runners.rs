@@ -205,7 +205,6 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 wiring.to_outbox_at(EpochStamp::Epoch(epoch), OutboxInput::AliasFacts { swaps, ended });
             }
             StoreEffect::OperationsGone { epoch, ops } => wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::RowsGone { ops }),
-            StoreEffect::BroadcastCommitted(notice) => wiring.tell_committed(notice),
             StoreEffect::Cleared { erase_id, .. } => wiring.to_lifecycle(LifecycleInput::Cleared { erase_id }),
             StoreEffect::ClearFailed { erase_id, error } => wiring.to_lifecycle(LifecycleInput::ClearFailed { erase_id, error }),
             StoreEffect::Saved { publication_id } => wiring.to_lifecycle(LifecycleInput::Saved { publication_id }),

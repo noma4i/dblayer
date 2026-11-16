@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use std::collections::VecDeque;
 
-use super::contract::{BatchAuthor, BatchId, CommittedBroadcast, EpochEnded, Published, PublishedState, RejectReason};
+use super::contract::{BatchAuthor, BatchId, EpochEnded, Published, PublishedState, RejectReason};
 use super::session::PendingCall;
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
@@ -276,7 +276,6 @@ impl StoreState {
                         if !swaps.is_empty() || !ended_temps.is_empty() { fx.push(StoreEffect::AliasFacts { epoch: written_epoch, swaps, ended: ended_temps }); }
                         for (model, row_id) in removed_memory { fx.push(StoreEffect::DisarmExpiry { epoch: written_epoch, model, row_id }); }
                         for item in expiring { fx.push(StoreEffect::ArmExpiry { epoch: written_epoch, model: item.model, row_id: item.row_id, revision, deadline: item.written_at.saturating_add(item.expires_after) }); }
-                        if let Some(notice) = notice { fx.push(StoreEffect::BroadcastCommitted(notice)); }
                     }
                 }
                 self.drain(fx);
@@ -310,12 +309,10 @@ impl StoreState {
                         }
                         self.revision = revision;
                         fx.push(StoreEffect::Cleared { epoch_old, erase_id });
-                        fx.push(StoreEffect::BroadcastCommitted(CommittedBroadcast::of_reset(revision, None)));
                     }
                     (IoKind::Secret { epoch_old, erase_id, revision }, Ok(_) | Err(_)) => {
                         self.revision = revision;
                         fx.push(StoreEffect::Cleared { epoch_old, erase_id });
-                        fx.push(StoreEffect::BroadcastCommitted(CommittedBroadcast::of_reset(revision, None)));
                     }
                     (IoKind::Save { publication_id, published }, Ok(_)) => {
                         if matches!(published.state, PublishedState::NoSession | PublishedState::Session) {
