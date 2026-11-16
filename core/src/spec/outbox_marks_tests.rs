@@ -75,9 +75,8 @@ fn out_sending_response_ignore() {
     let id = sending(&mut twin, Policy::Rollback, false);
     twin.waiter(id);
     twin.post(response_with(id, Vec::new(), Vec::new()));
-    assert!(has_op!(twin, StoreOp::RemoveIntent { .. }) && !has_op!(twin, StoreOp::Rows { .. } | StoreOp::LocalRows { .. } | StoreOp::EphemeralRows { .. } | StoreOp::RemoveRows { .. } | StoreOp::RemoveServerRows { .. }), "the intent goes, the optimistic fields stay, no row of the answer: {:?}", twin.store_ops);
     let request_id = twin.state().ops[&id].request_id;
-    assert!(twin.store_ops.contains(&StoreOp::RemoveAnswer { request_id }), "{:?}", twin.store_ops);
+    assert_eq!(twin.batch_ops(), vec![StoreOp::RemoveIntent { op_id: id }, StoreOp::RemoveAnswer { request_id }], "the intent goes, the optimistic fields stay, no row of the answer");
     let effects = twin.committed(id);
     assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. }))), "{effects:?}");
 }
@@ -92,7 +91,7 @@ fn out_sending_refused_without_effects() {
     twin.post(response_errors(id, false));
     let request_id = twin.state().ops[&id].request_id;
     assert_eq!(twin.stores.len(), 1);
-    assert!(twin.store_ops.contains(&StoreOp::RemoveIntent { op_id: id }) && twin.store_ops.contains(&StoreOp::RemoveAnswer { request_id }), "{:?}", twin.store_ops);
+    assert_eq!(twin.batch_ops(), vec![StoreOp::RollBack { op_id: id }, StoreOp::RemoveIntent { op_id: id }, StoreOp::RemoveAnswer { request_id }]);
     let effects = twin.committed(id);
     assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Rejected { .. }))), "the rollback of nothing still gives the outcome: {effects:?}");
     let effects = retry(&mut twin);

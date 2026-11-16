@@ -28,7 +28,7 @@ fn releases(sends: &[SessionInput]) -> Vec<RequestId> { sends.iter().filter_map(
 fn out_discard_releases_pending() {
     let (mut twin, id, req_id) = queued_after_answer(true);
     twin.post(discard(None, DISCARD));
-    assert!(twin.store_ops.contains(&StoreOp::ReleasePendingOwner { request_id: req_id }), "the rollback batch hands the pair to Session: {:?}", twin.store_ops);
+    assert_eq!(twin.batch_ops(), vec![StoreOp::RollBack { op_id: id }, StoreOp::RemoveIntent { op_id: id }, StoreOp::RemoveAnswer { request_id: req_id }, StoreOp::ReleasePendingOwner { request_id: req_id }], "the rollback batch hands the pair to Session");
     assert_eq!(releases(&twin.session_sends), Vec::<RequestId>::new(), "Release waits for the commit of the rollback");
     twin.committed(id);
     assert_eq!(releases(&twin.session_sends), vec![req_id], "{:?}", twin.session_sends);
@@ -54,7 +54,7 @@ fn out_discard_pending_owner_crash() {
     twin.post(OutboxInput::Restored { ops: vec![restored], pending_lost: false });
     twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
     twin.post(discard(None, DISCARD));
-    assert!(twin.store_ops.contains(&StoreOp::ReleasePendingOwner { request_id: 41 }), "a pair restored from the base is released by the rollback batch: {:?}", twin.store_ops);
+    assert_eq!(twin.batch_ops(), vec![StoreOp::RollBack { op_id: 7 }, StoreOp::RemoveIntent { op_id: 7 }, StoreOp::RemoveAnswer { request_id: 41 }, StoreOp::ReleasePendingOwner { request_id: 41 }], "a pair restored from the base is released by the rollback batch");
     twin.rejected(7, super::outbox_harness::RReason::Storage);
     assert!(twin.state().ops[&7].pending_owned, "a refused batch leaves the owner as it was");
     assert_eq!(releases(&twin.session_sends), Vec::<RequestId>::new(), "no Release without the commit");

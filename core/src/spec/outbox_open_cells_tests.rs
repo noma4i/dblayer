@@ -95,7 +95,8 @@ fn out_open_format_change() {
     assert_eq!((kinds(&readied), sends(&readied)), (vec![], 1));
     twin.respond(7);
     let (model, rows) = server_rows().remove(0);
-    assert!(twin.store_ops.contains(&StoreOp::Rows { model, rows }), "the row comes from the server answer: {:?}", twin.store_ops);
+    let request_id = twin.state().ops[&7].request_id;
+    assert_eq!(twin.batch_ops(), vec![StoreOp::Rows { model, rows }, StoreOp::RemoveIntent { op_id: 7 }, StoreOp::RemoveAnswer { request_id }], "the row comes from the server answer");
 }
 
 enum Step {

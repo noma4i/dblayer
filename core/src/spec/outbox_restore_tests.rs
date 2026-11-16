@@ -350,7 +350,7 @@ fn out_restore_removed_row_removes_saved_answer() {
     let item = StoredOp { answered: Some((41, StoredAnswer::Ok("{}".into()))), removed_rows: vec![("Moment".into(), "r".into(), 20)], ..stored(7, "r") };
     let effects = restore(&mut twin, vec![item]);
     assert_eq!((twin.stores.len(), sends(&effects)), (1, 0), "{effects:?}");
-    assert!(twin.store_ops.contains(&StoreOp::RemoveIntent { op_id: 7 }) && twin.store_ops.contains(&StoreOp::RemoveAnswer { request_id: 41 }), "{:?}", twin.store_ops);
+    assert_eq!(twin.batch_ops(), vec![StoreOp::RemoveIntent { op_id: 7 }, StoreOp::ReleasePendingOwner { request_id: 41 }, StoreOp::RemoveAnswer { request_id: 41 }]);
     let completed = twin.committed(7);
     assert_eq!((twin.stage(7), sends(&completed)), (Some(St::Done), 0));
 }

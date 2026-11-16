@@ -161,8 +161,7 @@ fn out_sending_response() {
     let request_id = twin.state().ops[&id].request_id;
     let effects = twin.respond(id);
     assert_eq!((twin.stage(id), kinds(&effects), effects.len()), (Some(St::Landing), vec![CommitKind::Land], 1));
-    assert!(twin.store_ops.contains(&StoreOp::RemoveIntent { op_id: id }) && twin.store_ops.contains(&StoreOp::RemoveAnswer { request_id }), "{:?}", twin.store_ops);
-    assert!(has_op!(twin, StoreOp::Rows { model, rows } if model == "Moment" && rows.iter().any(|row| row.values.contains("state"))), "{:?}", twin.store_ops);
+    assert!(matches!(twin.batch_ops().as_slice(), [StoreOp::Rows { model, rows }, StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: answered }] if model == "Moment" && rows.iter().any(|row| row.values.contains("state")) && *op_id == id && *answered == request_id), "{:?}", twin.store_ops);
 }
 
 #[test]
@@ -423,9 +422,8 @@ fn out_server_removed_row_all_stages() {
         if matches!(stage, St::Submitting | St::PersistingAttempt | St::Landing | St::RollingBack(_) | St::MarkingFailed | St::MarkingRetry) {
             twin.committed(id);
         }
-        assert!(has_op!(twin, StoreOp::RemoveIntent { .. }) && has_op!(twin, StoreOp::ReleasePendingOwner { .. }) && !has_op!(twin, StoreOp::RollBack { .. }), "{stage:?}: {:?}", twin.store_ops);
         let request_id = twin.state().ops[&id].request_id;
-        assert!(twin.store_ops.contains(&StoreOp::RemoveIntent { op_id: id }) && twin.store_ops.contains(&StoreOp::ReleasePendingOwner { request_id }) && twin.store_ops.contains(&StoreOp::RemoveAnswer { request_id }), "{stage:?}: {:?}", twin.store_ops);
+        assert_eq!(twin.batch_ops(), vec![StoreOp::RemoveIntent { op_id: id }, StoreOp::ReleasePendingOwner { request_id }, StoreOp::RemoveAnswer { request_id }], "{stage:?}");
         twin.post(input);
         let effects = twin.committed(id);
         let answers = if stage == St::Failed {
@@ -480,7 +478,7 @@ fn out_persisting_attempt_invalid() {
     let effects = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
     assert_eq!(twin.state().ops[&id].error.as_deref(), Some("Internal(Invalid): bad row"));
-    assert!(twin.store_ops.contains(&StoreOp::MarkError { op_id: id, error: Some("Internal(Invalid): bad row".into()) }), "{:?}", twin.store_ops);
+    assert!(matches!(twin.batch_ops().as_slice(), [StoreOp::MarkError { op_id, error: Some(error) }, StoreOp::RemoveAnswer { .. }] if *op_id == id && error == "Internal(Invalid): bad row"), "{:?}", twin.store_ops);
 }
 
 #[test]
@@ -531,7 +529,7 @@ fn out_rollback_invalid() {
     let effects = refuse(&mut twin, id, RejectReason::Invalid("bad row".into()));
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
     assert_eq!(answers(&effects, DISCARD_REPLY), vec![OutboxAnswer::Err(Fault::Rejected(RejectReason::Invalid("bad row".into())))], "the waiting Discard gets Err(Invalid) with the text of the error");
-    assert!(twin.store_ops.contains(&StoreOp::MarkError { op_id: id, error: Some("Internal(Invalid): bad row".into()) }), "{:?}", twin.store_ops);
+    assert!(matches!(twin.batch_ops().as_slice(), [StoreOp::MarkError { op_id, error: Some(error) }, StoreOp::RemoveAnswer { .. }] if *op_id == id && error == "Internal(Invalid): bad row"), "{:?}", twin.store_ops);
 }
 
 fn discarded(effects: &[OutboxEffect]) -> usize { answers(effects, WAITER).iter().filter(|answer| **answer == OutboxAnswer::Outcome(OutboxOutcome::Discarded)).count() }
