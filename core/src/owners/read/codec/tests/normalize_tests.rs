@@ -36,6 +36,21 @@ fn nested_author_with_only_an_id_still_sets_the_foreign_key_when_the_user_row_ne
     assert!(db.spec("users").unwrap().merged(None, &normalized.related[0].1).is_none());
 }
 
+/// P-DATA-27 (owner: `has_one` stays with a behaviour test): the nested object of a `has_one` in the parent answer lands as the child row with the foreign key of the parent, and the parent row keeps no copy of it.
+#[test]
+fn a_has_one_object_in_the_parent_answer_lands_as_the_child_row_of_that_parent() {
+    let profiles = ModelSpec::new("profiles", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("bio", ScalarKind::Str).nullable(), FieldSpec::scalar("userId", ScalarKind::Id).nullable().indexed()]);
+    let mut users = ModelSpec::new("users", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("name", ScalarKind::Str).nullable()]);
+    users.associations.push(AssociationSpec::new("profile", AssociationKind::HasOne, "profiles", "userId"));
+    let db = Store::open_models(None, vec![profiles, users], std::sync::Arc::new(crate::runtime::SystemClock)).map(std::sync::Arc::new).unwrap();
+    let normalized = normalize_nodes(&db, "users", &nodes(json!([{"id": "u1", "name": "Ann", "profile": {"id": "p1", "bio": "hi"}}]))).unwrap();
+    assert_eq!(normalized.related.len(), 1);
+    assert_eq!(normalized.related[0].0.as_str(), "profiles");
+    assert_eq!(normalized.related[0].1["userId"], json!("u1"));
+    assert_eq!(normalized.related[0].1["bio"], json!("hi"));
+    assert!(!normalized.roots[0].contains_key("profile"));
+}
+
 #[test]
 fn data_id_from_parent() {
     let hit = ModelSpec::new(
