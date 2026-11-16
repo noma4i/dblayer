@@ -4,7 +4,7 @@ use super::upload_batch_shift_tests::{blob, items, OPERATIONS};
 use super::upload_stand::Stand;
 use crate::ffi::upload_wire::WireUploadBatch;
 
-const ASSETS: &str = r#"{"data":{"createAssets":{"assets":[{"id":"a0","clientKey":"key-0","size":3,"position":0},{"id":"a1","clientKey":"key-1","size":3,"position":1},{"id":"a2","clientKey":"key-2","size":3,"position":2}]}}}"#;
+pub(super) const ASSETS: &str = r#"{"data":{"createAssets":{"assets":[{"id":"a0","clientKey":"key-0","size":3,"position":0},{"id":"a1","clientKey":"key-1","size":3,"position":1},{"id":"a2","clientKey":"key-2","size":3,"position":2}]}}}"#;
 
 fn landed(database: &crate::ffi::Database) -> usize {
     ["a0", "a1", "a2"].iter().filter(|id| database.peek_row_now(database.session_epoch(), "Asset".into(), id.to_string()).unwrap().is_some()).count()

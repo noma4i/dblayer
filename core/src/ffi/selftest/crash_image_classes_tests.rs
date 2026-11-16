@@ -20,7 +20,7 @@ struct Settled {
     repeated: Vec<String>,
 }
 
-fn rows(image: &Path, table: &str) -> Vec<String> {
+pub(super) fn rows(image: &Path, table: &str) -> Vec<String> {
     let connection = rusqlite::Connection::open(image).unwrap();
     let mut statement = connection.prepare(&format!("SELECT id FROM {table}")).unwrap();
     statement.query_map([], |row| row.get::<_, String>(0)).unwrap().collect::<Result<_, _>>().unwrap()
@@ -42,7 +42,7 @@ async fn settle_at_every_cut(capture: &Capture, kept: &Path, secret: String, ope
 }
 
 /// The cuts flip from one outcome to the other at most the number of times the scenario names, and never back.
-fn flips(outcome: &[bool]) -> usize { outcome.windows(2).filter(|pair| pair[0] != pair[1]).count() }
+pub(super) fn flips(outcome: &[bool]) -> usize { outcome.windows(2).filter(|pair| pair[0] != pair[1]).count() }
 
 fn moment_script(fresh: &Stand) {
     for _ in 0..2 { fresh.script.data("CreateBlob", BLOB); }

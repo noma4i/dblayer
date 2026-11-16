@@ -519,6 +519,24 @@ impl Rig {
 
     /// A signed rig whose specs also carry standalone operation specs.
     pub(super) async fn signed_with_operations(first: Arc<World>, invalid: bool, edit: impl FnOnce(&mut Value), operations: Value) -> Rig {
+        Self::signed_opened(config(), Arc::new(WatchedHeld::default()), first, invalid, edit, operations, true).await
+    }
+
+    /// A signed-in rig whose database is the file `path`, and the store of its credential for a process that opens the file later.
+    pub(super) async fn signed_on_file(path: &std::path::Path, first: Arc<World>, edit: impl FnOnce(&mut Value)) -> (Rig, Arc<WatchedHeld>) {
+        let credentials = Arc::new(WatchedHeld::default());
+        let rig = Self::signed_opened(Config { path: Some(path.to_string_lossy().into_owned()) }, credentials.clone(), first, false, edit, Value::Array(Vec::new()), true).await;
+        (rig, credentials)
+    }
+
+    /// A fresh process on the file `path`: the session is the one the killed process saved, so no login call is made.
+    pub(super) async fn reopened_on_file(path: &std::path::Path, secret: &str, first: Arc<World>, edit: impl FnOnce(&mut Value)) -> Rig {
+        let credentials = Arc::new(WatchedHeld::default());
+        crate::ffi::CredentialStore::set(credentials.as_ref(), secret.to_string()).unwrap();
+        Self::signed_opened(Config { path: Some(path.to_string_lossy().into_owned()) }, credentials, first, false, edit, Value::Array(Vec::new()), false).await
+    }
+
+    async fn signed_opened(config: Config, credentials: Arc<WatchedHeld>, first: Arc<World>, invalid: bool, edit: impl FnOnce(&mut Value), operations: Value, login: bool) -> Rig {
         let switch = Switchable::new(Some(first.clone()), invalid);
         let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
         encrypted.endpoints.session_operations.insert("login_link".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
@@ -526,10 +544,10 @@ impl Rig {
         let opener = OpenDatabase::new();
         let mut models: Value = serde_json::from_str(&plain_models()).unwrap();
         edit(&mut models);
-        let database = opener.open_with_clock(config(), json!({"models": models, "operations": operations}).to_string(), crate::ffi::OpenPorts { partial_operations: true, transport: Some(switch.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(WatchedHeld::default())), http: Some(first.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
+        let database = opener.open_with_clock(config, json!({"models": models, "operations": operations}).to_string(), crate::ffi::OpenPorts { partial_operations: true, transport: Some(switch.clone()), encrypted: Some(encrypted), credentials: Some(credentials), http: Some(first.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
         database.register_operations(plain_operations()).await.unwrap();
         database.set_online(true).await.unwrap();
-        bound(database.session_call("login_link".into(), json!({"account": first.account()}).to_string())).await.unwrap();
+        if login { bound(database.session_call("login_link".into(), json!({"account": first.account()}).to_string())).await.unwrap(); }
         Rig { opener, database, world: first, switch, clock }
     }
 
