@@ -61,5 +61,9 @@ printf '%s\n' "$kotlin_operations" > "$kotlin_operations_out"
 for entry in "${snapshots[@]}"; do
   target="$root/${entry%% *}"
   fresh="$(snapshot_of "$entry")"
-  printf '%s' "$fresh" | python3 -I -c 'import json, sys; sys.exit(json.load(sys.stdin) != json.load(open(sys.argv[1])))' "$target" || printf '%s' "$fresh" > "$target"
+  printf '%s' "$fresh" | python3 -I -c 'import json, sys; sys.exit(json.load(sys.stdin) != json.load(open(sys.argv[1])))' "$target" && continue
+  case "$target" in
+    *.json) printf '%s' "$fresh" | python3 -I "$root/scripts/format_snapshot.py" > "$target" ;;
+    *) printf '%s' "$fresh" > "$target" ;;
+  esac
 done

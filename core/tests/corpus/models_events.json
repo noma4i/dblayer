@@ -151,12 +151,7 @@
           "root": null,
           "root_shape": "upsert",
           "upload": false,
-          "variables": {
-            "isPublic": "isPublic",
-            "shareUrl": "shareUrl",
-            "shelves": "shelves",
-            "title": "title"
-          },
+          "variables": { "isPublic": "isPublic", "shareUrl": "shareUrl", "shelves": "shelves", "title": "title" },
           "wrap": null
         },
         {
