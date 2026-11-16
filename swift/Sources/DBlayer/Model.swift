@@ -16,6 +16,15 @@ public protocol DBModel: Sendable, Identifiable, Hashable {
 
 public protocol DBSingleton: DBModel { static var singleton: Query<Self> { get } }
 
+extension DBSingleton {
+  /// Calls an action on the type: it works on the stored row, or sends the mutation when there is none and the answer writes the row.
+  nonisolated(nonsending) public static func actOnSingleton(_ action: String, values: [String: JSONValue], args: [String: JSONValue], in scope: AccountScope? = nil) async throws -> MutationReceipt<Self> {
+    try await DB.ordered(scope) { root, database, epoch in
+      return try MutationReceipt(database: root, wire: await database.act(epoch: epoch, model: modelName, rowId: "singleton", action: action, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text))
+    }
+  }
+}
+
 extension DBModel {
   public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 

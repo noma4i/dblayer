@@ -118,6 +118,10 @@ suspend fun <Model : DBModel> Model.act(action: String, values: kotlinx.serializ
     return onAccountOf(account) { database, ordered, epoch -> MutationReceipt(database, decoder, ordered.act(epoch, modelName, id, action, values.jsonText(), args.jsonText())) }
 }
 
+suspend fun <Model : DBModel> ModelDecoder<Model>.actOnSingleton(action: String, values: kotlinx.serialization.json.JsonObject, args: kotlinx.serialization.json.JsonObject, account: AccountScope? = null): MutationReceipt<Model> {
+    return onAccountOf(account) { database, ordered, epoch -> MutationReceipt(database, this, ordered.act(epoch, modelName, "singleton", action, values.jsonText(), args.jsonText())) }
+}
+
 data class Confirmed<Model : DBModel>(val value: Model?, val answerJson: String?)
 
 class MutationReceipt<Model : DBModel>(private val database: Database, private val decoder: ModelDecoder<Model>, private val wire: WireOperationReceipt) {

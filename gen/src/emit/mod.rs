@@ -384,16 +384,16 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             for association in &model.associations { writeln!(out, "        public static let {} = Association<{class}, {}>(\"{}\")", identifier(&association.name, true), association.target, association.name).unwrap(); }
             out.push_str("    }\n");
         }
-        for action in model.actions.iter().filter(|action| !action.upload && !["create", "update", "destroy"].contains(&action.name.as_str())) {
+        for (action, on_type) in model.actions.iter().filter(|action| !action.upload && !["create", "update", "destroy"].contains(&action.name.as_str())).flat_map(|action| [(action, false)].into_iter().chain(singleton_relation(model).map(|_| (action, true)))) {
             let params = action.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, true), arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
             let returns = "MutationReceipt<Self>";
             let params = swift_scope(&params, &scope);
-            writeln!(out, "    nonisolated(nonsending) public func {}({params}) async throws -> {returns} {{", identifier(&name(&action.name), true)).unwrap();
+            writeln!(out, "    nonisolated(nonsending) public {} {}({params}) async throws -> {returns} {{", if on_type { "static func" } else { "func" }, identifier(&name(&action.name), true)).unwrap();
             writeln!(out, "        {} {values} = try JSONValue.readObject(#\"{}\"#)", if action.optimistic.values().any(|value| value.get("$arg").is_some()) { "var" } else { "let" }, serde_json::to_string(&literals).unwrap()).unwrap();
             for (field, value) in &action.optimistic { if let Some(arg) = value.get("$arg").and_then(|arg| arg.as_str()) { writeln!(out, "        {values}[\"{field}\"] = try JSONValue.encode({printed})", printed = identifier(arg, true)).unwrap(); } }
             let args = action.args.keys().map(|arg| format!("\"{arg}\": try JSONValue.encode({printed})", printed = identifier(arg, true))).collect::<Vec<_>>().join(", ");
-            writeln!(out, "        return try await self.act(\"{}\", values: {values}, args: [{}], in: {scope})\n    }}", action.name, if args.is_empty() { ":" } else { &args }).unwrap();
+            writeln!(out, "        return try await {}(\"{}\", values: {values}, args: [{}], in: {scope})\n    }}", if on_type { "Self.actOnSingleton" } else { "self.act" }, action.name, if args.is_empty() { ":" } else { &args }).unwrap();
         }
         for action in model.actions.iter().filter(|action| action.upload && action.batch.is_none()) {
             let method = identifier(&name(&action.name), true);
@@ -432,6 +432,16 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
 
 fn swift_scope(params: &str, scope: &str) -> String {
     if params.is_empty() { format!("in {scope}: AccountScope? = nil") } else { format!("{params}, in {scope}: AccountScope? = nil") }
+}
+
+/// The parameter list of a Kotlin action method and its call arguments up to the account: name, values, args.
+fn kotlin_action_call(action: &dblayer::schema::ActionDeclaration, account: &str) -> (String, String) {
+    let params = action.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
+    let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
+    let from_args = action.optimistic.iter().flat_map(|(field, value)| value.get("$arg").and_then(|arg| arg.as_str()).map(|arg| format!("\"{field}\" to jsonValue({printed})", printed = identifier(arg, false)))).collect::<Vec<_>>().join(", ");
+    let args = action.args.keys().map(|arg| format!("\"{arg}\" to jsonValue({printed})", printed = identifier(arg, false))).collect::<Vec<_>>().join(", ");
+    let call = format!("\"{}\", JsonObject(parseJsonObject(\"\"\"{}\"\"\") + mapOf({from_args})), JsonObject(mapOf({args}))", action.name, serde_json::to_string(&literals).unwrap().replace('$', "${'$'}"));
+    (kotlin_scope(&params, account), call)
 }
 
 fn kotlin_scope(params: &str, account: &str) -> String {
@@ -494,6 +504,12 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             writeln!(out, "        suspend fun {method}({ACCOUNT}: AccountScope{id_param}, source: String{params}, prepare: Prepare? = null, maxBytes: ULong? = null): MutationReceipt<{class}> =\n            {ACCOUNT}.upload(this, {}, \"{}\", UploadRequest(source, variables = buildJsonObject {{ {variables} }}, prepare = prepare, maxBytes = maxBytes))", if singleton { "\"singleton\"" } else { "id" }, action.name).unwrap();
             writeln!(out, "        suspend fun stage{}({ACCOUNT}: AccountScope, source: String, prepare: Prepare? = null, maxBytes: ULong? = null): StagedUpload<{class}> =\n            {ACCOUNT}.stage({class}, \"{}\", UploadRequest(source, prepare = prepare, maxBytes = maxBytes))", upper_first(&method), action.name).unwrap();
         }
+        if singleton_relation(model).is_some() {
+            for action in model.actions.iter().filter(|action| !action.upload && !["create", "update", "destroy"].contains(&action.name.as_str())) {
+                let (params, call) = kotlin_action_call(action, &account);
+                writeln!(out, "        suspend fun {}({params}): MutationReceipt<{class}> = this.actOnSingleton({call}, {account})", identifier(&name(&action.name), false)).unwrap();
+            }
+        }
         let fields = writable_fields(model);
         let create_fields = create_fields(model, &fields);
         let args = "args_".to_string();
@@ -543,13 +559,8 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             out.push_str("        }.jsonText()) }\n    }\n");
         }
         for action in model.actions.iter().filter(|action| !action.upload && !["create", "update", "destroy"].contains(&action.name.as_str())) {
-            let params = action.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
-            let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
-            let from_args = action.optimistic.iter().flat_map(|(field, value)| value.get("$arg").and_then(|arg| arg.as_str()).map(|arg| format!("\"{field}\" to jsonValue({printed})", printed = identifier(arg, false)))).collect::<Vec<_>>().join(", ");
-            let args = action.args.keys().map(|arg| format!("\"{arg}\" to jsonValue({printed})", printed = identifier(arg, false))).collect::<Vec<_>>().join(", ");
-            let call = format!("\"{}\", JsonObject(parseJsonObject(\"\"\"{}\"\"\") + mapOf({from_args})), JsonObject(mapOf({args})), {class}", action.name, serde_json::to_string(&literals).unwrap().replace('$', "${'$'}"));
-            let params = kotlin_scope(&params, &account);
-            writeln!(out, "    suspend fun {}({params}): MutationReceipt<{class}> = this.act({call}, {account})", identifier(&name(&action.name), false)).unwrap();
+            let (params, call) = kotlin_action_call(action, &account);
+            writeln!(out, "    suspend fun {}({params}): MutationReceipt<{class}> = this.act({call}, {class}, {account})", identifier(&name(&action.name), false)).unwrap();
         }
         for action in model.actions.iter().filter(|action| action.upload && action.batch.is_none()) {
             writeln!(out, "    suspend fun {}({ACCOUNT}: AccountScope, request: UploadRequest): MutationReceipt<{class}> = {ACCOUNT}.upload({class}, id, \"{}\", request)", identifier(&name(&action.name), false), action.name).unwrap();
