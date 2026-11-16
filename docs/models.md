@@ -804,6 +804,8 @@ The payload must contain every required model field, including nullable fields. 
 `server_revision` names one required, non-local integer attribute. The generator rejects other fields and repeated declarations.
 `cable_when :field` on a singleton model opens the cable only while the stored row of that model has the bool attribute `field` true. No row, null or false keeps the cable closed.
 The generator rejects the line on a model that is not a singleton, on an unknown or non-bool attribute, and a second declaration in the project.
+
+An action of a singleton model is also generated on the type (`Viewer.complete(in: scope)` in Swift, `Viewer.complete(account)` in Kotlin). It works on the stored row, or, with no row, sends the mutation and the answer writes the row with its real id; `confirmed` gives the row.
 Map GraphQL Int64 with `scalar :Int64, as: :long`.
 SQLite stores the attribute as an integer, Swift reads a 64-bit `Int`, and Kotlin reads `Long`.
 An incoming server revision below the stored value drops the row before writing data or membership.

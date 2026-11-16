@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Call actions of a singleton model on the type, with or without a stored row.
+
 ### Fixed
 
 - Answer an app load inside the request gap at once while a reread is deferred.
