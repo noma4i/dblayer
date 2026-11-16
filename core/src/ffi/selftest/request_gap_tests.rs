@@ -88,3 +88,29 @@ async fn a_hundred_identical_reads_in_two_seconds_send_two_requests() {
     assert_eq!((answered, world.count("PresenceNode")), (100, 2), "(calls answered with the row, requests)");
     bound(database.close_database()).await.unwrap();
 }
+
+/// P-WIN-37 (consumer report on 6.39.0): an app call while an event reread waits for the end of the gap is answered at once from the last answer and sends nothing; the deferred reread still goes once at the end of the gap.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_app_call_during_a_deferred_reread_is_answered_at_once() {
+    let world = World::new("server", "A", true);
+    let (database, cable, clock) = open(world.clone()).await;
+    let epoch = database.session_epoch();
+    let rows = Arc::new(Rows::default());
+    let reader = database.watch(ReadRequest::Entity { model: "Presence".into(), id: "p1".into(), fetch: ReadFetch::Never }, rows.clone());
+    world.answer_with("PresenceNode", node_answer(true));
+    bound(database.node(epoch, "Presence".into(), "node".into(), "p1".into(), true)).await.unwrap();
+    bound(reader.wait_for_initial_load()).await.unwrap();
+    crate::test_wait::signalled(&cable.opened, "the subscription opens", || cable.token.lock().unwrap().is_some()).await;
+    let token = cable.token.lock().unwrap().clone().unwrap();
+    let asked = world.count("PresenceNode");
+    world.answer_with("PresenceNode", node_answer(false));
+    assert!(cable.peer.event(&token, json!({"data": {"recordEvents": {"entries": [{"topic": "PRESENCE", "action": "UPDATED", "recordId": "p1"}]}}})));
+    crate::test_wait::settled(&database, "the event reread is deferred", || true).await;
+    let answered = bound(database.node(epoch, "Presence".into(), "node".into(), "p1".into(), true)).await.unwrap().map(|row| row.id);
+    let during = (answered, world.count("PresenceNode") - asked);
+    clock.advance(1_000);
+    crate::test_wait::settled(&database, "the deferred reread lands", || online_of(&rows) == Some(false)).await;
+    assert_eq!((during, world.count("PresenceNode") - asked), ((Some("p1".to_string()), 0), 1), "((the app call answer, requests during the gap), requests after the gap)");
+    drop(reader);
+    bound(database.close_database()).await.unwrap();
+}

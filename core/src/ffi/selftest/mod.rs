@@ -42,6 +42,7 @@ mod node_absent_tests;
 mod cable_close_tests;
 mod request_gap_tests;
 mod request_log_tests;
+mod singleton_action_tests;
 mod rig_held;
 mod rig_models;
 mod rig_tests;
