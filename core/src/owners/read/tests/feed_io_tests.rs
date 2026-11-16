@@ -50,6 +50,7 @@ impl Drop for WakeOnDrop {
 
 struct Line {
     incoming: tokio::sync::Mutex<mpsc::UnboundedReceiver<Incoming>>,
+    shut: tokio::sync::Notify,
     sent: Arc<Mutex<Vec<(u64, Value)>>>,
     closed: Arc<AtomicUsize>,
     cancels: Arc<AtomicUsize>,
@@ -65,10 +66,11 @@ impl CableLine for Line {
 
     async fn next(&self) -> Incoming {
         let _wake = WakeOnDrop;
-        crate::test_wait::within(async { self.incoming.lock().await.recv().await }).await.unwrap_or(Incoming::Closed { code: None, reason: None, failure: None })
+        let ended = || Incoming::Closed { code: None, reason: None, failure: None };
+        crate::test_wait::within(async { tokio::select! { frame = async { self.incoming.lock().await.recv().await } => frame.unwrap_or_else(ended), () = self.shut.notified() => ended() } }).await
     }
 
-    async fn close(&self) { self.closed.fetch_add(1, Ordering::SeqCst); crate::runtime::wake_pumps(); }
+    async fn close(&self) { self.closed.fetch_add(1, Ordering::SeqCst); self.shut.notify_one(); crate::runtime::wake_pumps(); }
 
     async fn cancel(&self) { self.cancels.fetch_add(1, Ordering::SeqCst); crate::runtime::wake_pumps(); }
 }
@@ -93,7 +95,7 @@ struct Peer {
 fn line() -> (Arc<Line>, Peer) {
     let (frames, incoming) = mpsc::unbounded_channel();
     let (sent, closed, cancels) = (Arc::new(Mutex::new(Vec::new())), Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
-    (Arc::new(Line { incoming: tokio::sync::Mutex::new(incoming), sent: sent.clone(), closed: closed.clone(), cancels: cancels.clone() }), Peer { frames, sent, closed, cancels })
+    (Arc::new(Line { incoming: tokio::sync::Mutex::new(incoming), shut: tokio::sync::Notify::new(), sent: sent.clone(), closed: closed.clone(), cancels: cancels.clone() }), Peer { frames, sent, closed, cancels })
 }
 
 fn confirmed(counter: u64) -> Incoming { Incoming::Frame { counter, body: json!({"t":"subscribed", "id":"1"}) } }

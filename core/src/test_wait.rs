@@ -309,6 +309,16 @@ pub(crate) fn permutations<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
     }).collect()
 }
 
+/// Runs `body` for every item on scoped threads, in contiguous chunks: the independent cases of one test (a store each) share the cores instead of queueing behind each other.
+pub(crate) fn each_in_parallel<T: Sync>(items: &[T], body: impl Fn(&T) + Sync) {
+    let width = std::thread::available_parallelism().map_or(4, usize::from).min(8);
+    std::thread::scope(|scope| {
+        for chunk in items.chunks(items.len().div_ceil(width).max(1)) {
+            scope.spawn(|| chunk.iter().for_each(&body));
+        }
+    });
+}
+
 /// The orders of `events` in which every pair `(first, second)` of `before` keeps its order: the causal filter of a permutation test.
 pub(crate) fn orders_of<T: Copy + PartialEq>(events: &[T], before: &[(T, T)]) -> Vec<Vec<T>> {
     let at = |order: &[T], event: T| order.iter().position(|found| *found == event);

@@ -170,13 +170,13 @@ fn data_orders_equal_keys_in_every_insertion_order() {
     let ids = ["b", "a", "temp-00000000-0000-0000-0000-390000000000", "temp-00000000-0000-0000-0000-310000000000", "c"];
     let orders = permutations(&ids);
     assert_eq!(orders.len(), 120);
-    for order in orders {
+    crate::test_wait::each_in_parallel(&orders, |order| {
         let db = open();
-        for id in &order { put(&db, "moments", json!({"id": id, "userId": "u1", "text": "same"})); }
+        for id in order { put(&db, "moments", json!({"id": id, "userId": "u1", "text": "same"})); }
         let ordered = Query { order: vec![Order::new("text", SortDirection::Asc)], ..Query::new("moments") };
         let found: Vec<String> = db.query(&ordered).unwrap().iter().map(|row| row.get("id").and_then(Value::as_str).unwrap().to_string()).collect();
         assert_eq!(found, ["temp-00000000-0000-0000-0000-310000000000", "temp-00000000-0000-0000-0000-390000000000", "a", "b", "c"], "insertion order {order:?}");
-    }
+    });
 }
 
 fn intent_on(op_id: u64, row_id: &str) -> StoreOp {
@@ -194,11 +194,11 @@ fn data_orders_row_sync_follows_the_open_operations() {
     let orders: Vec<_> = permutations(&events).into_iter().filter(|order| rows.iter().all(|(op, _)| order.iter().position(|e| *e == Open(*op)) < order.iter().position(|e| *e == Close(*op)))).collect();
     assert_eq!(orders.len(), 90);
     let pending = Query::new("moments").filtered(Where::equal("sync", json!("pending")));
-    for order in orders {
+    crate::test_wait::each_in_parallel(&orders, |order| {
         let db = open();
         for id in ["m1", "m2"] { put(&db, "moments", json!({"id": id, "userId": "u1", "text": "old"})); }
         let mut open_ops: Vec<u64> = Vec::new();
-        for event in &order {
+        for event in order {
             match *event {
                 Open(op) => { let row = rows.iter().find(|(id, _)| *id == op).unwrap().1; write(&db, BatchAuthor::Outbox, Vec::new(), vec![intent_on(op, row)]); open_ops.push(op); }
                 Close(op) => { write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RemoveIntent { op_id: op }]); open_ops.retain(|open| *open != op); }
@@ -209,7 +209,7 @@ fn data_orders_row_sync_follows_the_open_operations() {
             found.sort();
             assert_eq!((found, db.count(&pending).unwrap()), (expected.iter().map(|id| id.to_string()).collect(), expected.len() as i64), "{order:?} after {event:?}");
         }
-    }
+    });
 }
 
 #[test]

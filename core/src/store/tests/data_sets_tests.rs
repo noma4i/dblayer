@@ -137,18 +137,20 @@ fn shown(id: &str, at: i64, seq: Option<i64>, body: &str) -> Sets {
     Sets { id: Some(id.into()), at: Some(at), seq, body: Some(body.into()) }
 }
 
+const IDS: [&str; 14] = ["0", "7", "9", "10", "007", "+5", "-3", "m1", "m2", "1a", "Z", "18446744073709551615", "18446744073709551616", "99999999999999999999"];
+
+fn winner(first: &str, second: &str) -> String {
+    let db = open();
+    land_children(&db, vec![child(first, "c1", 5, None)]);
+    land_children(&db, vec![child(second, "c1", 5, None)]);
+    sets(&db).id.unwrap()
+}
+
 #[test]
-fn data_id_order_is_total() {
-    let ids = ["0", "7", "9", "10", "007", "+5", "-3", "m1", "m2", "1a", "Z", "18446744073709551615", "18446744073709551616", "99999999999999999999"];
-    let winner = |first: &str, second: &str| {
-        let db = open();
-        land_children(&db, vec![child(first, "c1", 5, None)]);
-        land_children(&db, vec![child(second, "c1", 5, None)]);
-        sets(&db).id.unwrap()
-    };
+fn data_id_order_pairs_have_one_winner_in_both_landing_orders_and_are_transitive() {
     let mut beats = std::collections::BTreeSet::new();
-    for (index, a) in ids.iter().enumerate() {
-        for b in &ids[index + 1..] {
+    for (index, a) in IDS.iter().enumerate() {
+        for b in &IDS[index + 1..] {
             let (forward, backward) = (winner(a, b), winner(b, a));
             let expected = if by_id(a, b) == std::cmp::Ordering::Greater { a } else { b };
             assert_eq!((forward.as_str(), backward.as_str()), (*expected, *expected), "{a} against {b}");
@@ -162,15 +164,25 @@ fn data_id_order_is_total() {
             }
         }
     }
-    for group in [["9", "10", "m1", "007"], ["18446744073709551615", "18446744073709551616", "99999999999999999999", "7"], ["+5", "-3", "1a", "Z"]] {
-        let first = group.iter().max_by(|a, b| by_id(a, b)).unwrap();
-        for order in permutations(&[0, 1, 2, 3]) {
-            let db = open();
-            order.iter().for_each(|index| land_children(&db, vec![child(group[*index], "c1", 5, None)]));
-            assert_eq!(sets(&db).id.as_deref(), Some(*first), "landed as {order:?} of {group:?}");
-        }
+}
+
+fn group_lands_the_greatest_id_in_every_order(group: [&str; 4]) {
+    let first = group.iter().max_by(|a, b| by_id(a, b)).unwrap();
+    for order in permutations(&[0, 1, 2, 3]) {
+        let db = open();
+        order.iter().for_each(|index| land_children(&db, vec![child(group[*index], "c1", 5, None)]));
+        assert_eq!(sets(&db).id.as_deref(), Some(*first), "landed as {order:?} of {group:?}");
     }
 }
+
+#[test]
+fn data_id_order_numbers_and_text_land_the_same_in_every_order() { group_lands_the_greatest_id_in_every_order(["9", "10", "m1", "007"]); }
+
+#[test]
+fn data_id_order_long_numbers_land_the_same_in_every_order() { group_lands_the_greatest_id_in_every_order(["18446744073709551615", "18446744073709551616", "99999999999999999999", "7"]); }
+
+#[test]
+fn data_id_order_signed_numbers_and_text_land_the_same_in_every_order() { group_lands_the_greatest_id_in_every_order(["+5", "-3", "1a", "Z"]); }
 
 fn permutations(items: &[usize]) -> Vec<Vec<usize>> {
     if items.len() <= 1 {
