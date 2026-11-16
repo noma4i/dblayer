@@ -6,19 +6,21 @@ use crate::compile_files;
 
 const SCHEMA: &str = r#"
 type Query { chat(id: ID!): Chat }
-type Mutation { chatPin(input: ChatPinInput!): ChatPinPayload chatRename(chatId: ID!, title: String!, note: String): Chat }
+type Mutation { chatPin(input: ChatPinInput!): ChatPinPayload chatRename(chatId: ID!, title: String!, note: String): Chat chatLabel(input: ChatLabelInput!): Chat }
+input ChatLabelInput { title: String }
 input ChatPinInput { chatId: ID! pinned: Boolean! clientMutationId: String }
 type ChatPinPayload { chat: Chat }
 type Chat { id: ID! title: String! pinned: Boolean! }
 "#;
 
-const DOCUMENTS: &str = "mutation ChatPin($input: ChatPinInput!) { chatPin(input: $input) { chat { id title pinned } } }\nmutation ChatRename($chatId: ID!, $title: String!, $note: String) { chatRename(chatId: $chatId, title: $title, note: $note) { id title pinned } }\n";
+const DOCUMENTS: &str = "mutation ChatPin($input: ChatPinInput!) { chatPin(input: $input) { chat { id title pinned } } }\nmutation ChatRename($chatId: ID!, $title: String!, $note: String) { chatRename(chatId: $chatId, title: $title, note: $note) { id title pinned } }\nmutation ChatLabel($input: ChatLabelInput!) { chatLabel(input: $input) { id title pinned } }\n";
 
 fn model(operations: &str) -> String {
     format!("model Chat do\n  attribute :title, :string\n  attribute :pinned, :bool\n{operations}end\n")
 }
 
 const PIN: &str = "  operation :pin do\n    mutation \"ChatPin\"\n    parameter :pinned, :bool\n    response from: \"chatPin.chat\"\n  end\n";
+const LABEL: &str = "  operation :label do\n    mutation \"ChatLabel\"\n    parameter :input, ChatLabelInput\n    optimistic false\n  end\n";
 const RENAME: &str = "  operation :rename do\n    mutation \"ChatRename\"\n    parameter :title, :string\n    optimistic false\n  end\n";
 
 fn generate(source: &str, schema: bool) -> Result<Value, Vec<String>> {
@@ -49,18 +51,21 @@ fn refused(source: &str, expected: &str) -> Option<String> {
 /// D-483 M64: the body goes under the one input variable of the document; a document with plain variables sends them as they are; `wrap` is no word.
 #[test]
 fn wrap_comes_from_the_operation_document() {
-    let model = generate(&model(&format!("{PIN}{RENAME}")), true).unwrap_or_else(|errors| panic!("{errors:?}"));
-    assert_eq!(action(&model, "pin")["wrap"], "input");
-    assert_eq!(action(&model, "rename")["wrap"], Value::Null);
+    let built = generate(&model(&format!("{PIN}{RENAME}")), true).unwrap_or_else(|errors| panic!("{errors:?}"));
+    assert_eq!(action(&built, "pin")["wrap"], "input");
+    assert_eq!(action(&built, "rename")["wrap"], Value::Null);
+    let labelled = generate(&model(LABEL), true).unwrap_or_else(|errors| panic!("{errors:?}"));
+    assert_eq!(action(&labelled, "label")["wrap"], Value::Null, "a variable with a parameter of its name takes it whole");
+    assert_eq!(action(&labelled, "label")["variables"], json!({"input": "input"}));
     assert_eq!(refused(&model(&PIN.replace("    parameter", "    wrap \"input\"\n    parameter")), "unknown word `wrap`"), None);
 }
 
 /// D-483 M80: a field of the input takes the parameter, then the attribute, then the row id by its name; `variables` only renames.
 #[test]
 fn variables_bind_by_name() {
-    let model = generate(&model(&format!("{PIN}{RENAME}")), true).unwrap_or_else(|errors| panic!("{errors:?}"));
-    assert_eq!(action(&model, "pin")["variables"], json!({"chatId": "id", "pinned": "pinned"}));
-    assert_eq!(action(&model, "rename")["variables"], json!({"chatId": "id", "title": "title"}), "the nullable `note` without a source is not sent");
+    let built = generate(&model(&format!("{PIN}{RENAME}")), true).unwrap_or_else(|errors| panic!("{errors:?}"));
+    assert_eq!(action(&built, "pin")["variables"], json!({"chatId": "id", "pinned": "pinned"}));
+    assert_eq!(action(&built, "rename")["variables"], json!({"chatId": "id", "title": "title"}), "the nullable `note` without a source is not sent");
     let missed: Vec<String> = [
         (model(&PIN.replace("    parameter :pinned, :bool\n", "    parameter :pinned, :bool\n    variables pinned: :pinned\n")), "repeats the name"),
         (model(&PIN.replace("    parameter :pinned, :bool\n", "")).replace("  attribute :pinned, :bool\n", ""), "pinned"),

@@ -185,21 +185,6 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
             }
         }
     }
-    let written = crate::build::written_by_default(node, operation);
-    for parameter in &operation.parameters {
-        let in_variables = operation.variables.iter().flatten().any(|binding| matches!(&binding.value, VariableValue::Parameter(source) if *source == parameter.name));
-        let in_optimistic = matches!(&operation.optimistic, Some((OptimisticDecl::Fields(fields), _)) if fields.iter().any(|(_, value, _)| match value {
-            OptimisticValue::Parameter(name) => *name == parameter.name,
-            OptimisticValue::Keyed { element, .. } => element.iter().any(|(_, part)| matches!(part, OptimisticElement::Parameter(name) if *name == parameter.name)),
-            OptimisticValue::Mapped { from, .. } => *from == parameter.name,
-            OptimisticValue::Include { when, .. } | OptimisticValue::AtLeast { when, .. } => *when == parameter.name,
-            OptimisticValue::Literal(_) => false,
-        }));
-        let implicit = operation.upload.is_some() && operation.variables.is_none();
-        if !(in_variables || in_optimistic || implicit || written.contains(&parameter.name)) {
-            report(parameter.pos, format!("parameter `{}` is used by neither `variables` nor `optimistic`", parameter.name));
-        }
-    }
     if let Some((OptimisticDecl::Fields(fields), _)) = &operation.optimistic {
         for (field, value, pos) in fields {
             if !attributes.contains(field.as_str()) {
@@ -245,6 +230,17 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
     }
     check_batch(node, operation, report);
     check_dimensions(node, operation, report);
+}
+
+/// Whether an explicit `optimistic` block reads the parameter.
+pub(crate) fn optimistic_reads(operation: &OperationDecl, parameter: &str) -> bool {
+    matches!(&operation.optimistic, Some((OptimisticDecl::Fields(fields), _)) if fields.iter().any(|(_, value, _)| match value {
+        OptimisticValue::Parameter(name) => name == parameter,
+        OptimisticValue::Keyed { element, .. } => element.iter().any(|(_, part)| matches!(part, OptimisticElement::Parameter(name) if name == parameter)),
+        OptimisticValue::Mapped { from, .. } => from == parameter,
+        OptimisticValue::Include { when, .. } | OptimisticValue::AtLeast { when, .. } => when == parameter,
+        OptimisticValue::Literal(_) => false,
+    }))
 }
 
 fn check_optimistic_value(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDecl, (field, value): (&str, &OptimisticValue), pos: Pos, report: &mut impl FnMut(Pos, String)) {

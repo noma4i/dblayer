@@ -326,12 +326,12 @@ fn updates_spec(update: &SubscribeDecl) -> UpdatesSpec {
 }
 
 /// M81: an operation of a server model without an `optimistic` line writes each parameter named like an attribute at once.
-pub(crate) fn written_by_default(node: &ModelDecl, operation: &OperationDecl) -> Vec<String> {
+pub(crate) fn written_by_default(attributes: &[AttributeDecl], operation: &OperationDecl) -> Vec<String> {
     let effect = operation.removes_receiver.is_some() || operation.copies_receiver_to.is_some() || !operation.scope_effects.is_empty();
     if operation.kind != OperationKind::Custom || operation.optimistic.is_some() || effect {
         return Vec::new();
     }
-    let written = |name: &str| node.attributes.iter().any(|attribute| attribute.name == name && !attribute.local && !attribute.derived);
+    let written = |name: &str| attributes.iter().any(|attribute| attribute.name == name && !attribute.local && !attribute.derived);
     operation.parameters.iter().map(|parameter| parameter.name.clone()).filter(|name| written(name)).collect()
 }
 
@@ -388,7 +388,7 @@ fn build_operation(operation: &OperationDecl, node: &ModelDecl) -> ActionDeclara
     if let Some((OptimisticDecl::Fields(fields), _)) = &operation.optimistic {
         action.optimistic = fields.iter().map(|(name, value, _)| (name.clone(), optimistic_json(value))).collect();
     }
-    action.optimistic.extend(written_by_default(node, operation).into_iter().map(|name| (name.clone(), json!({ "$arg": name }))));
+    action.optimistic.extend(written_by_default(&node.attributes, operation).into_iter().map(|name| (name.clone(), json!({ "$arg": name }))));
     action.expires_after = operation.expires_after;
     action.dimensions = operation.dimensions.as_ref().map(|dimensions| dblayer::schema::DimensionsDeclaration { width: dimensions.width.clone(), height: dimensions.height.clone() });
     action.removes_receiver = operation.removes_receiver.is_some();
