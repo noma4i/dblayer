@@ -307,9 +307,7 @@ operation :send_gift do
   parameter :chatId, :id
   variables userId: :id
   upsert Message, from: "giftSend.message"
-  returns do
-    attribute :successMessage, :string
-  end
+  returns
   response from: "giftSend.user"
 end
 ```
@@ -357,7 +355,7 @@ A model with `storage: :local` writes rows that only this device holds, see [sto
 
 ## What the server answered
 
-`returns` declares the attributes of the mutation payload that the app needs, such as a success message. An attribute may be an object with its own `do ... end` block, with the same syntax as the `returns` of a standalone operation; every field is nullable. The confirmed result contains them as `answerJson` on Swift and `answerJson` on Kotlin.
+`returns` gives the operation the answer type of its mutation document: the selection under the root field of the mutation, typed by the schema as for an operation without a model (see [server sync](server-sync.md#operations-without-a-model)). Every field is nullable. The confirmed result contains them as `answerJson` on Swift and `answerJson` on Kotlin. An operation without `returns` has no answer type: its receipt gives the row.
 
 ```ruby
 operation :send_reward do
@@ -365,9 +363,7 @@ operation :send_reward do
   parameter :rewardId, :string
   variables userId: :id
   optimistic false
-  returns do
-    attribute :successNote, :string
-  end
+  returns
   response from: "rewardSend.user"
 end
 ```

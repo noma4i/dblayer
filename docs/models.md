@@ -145,7 +145,7 @@ when (val kind = vibe.kind) {
 }
 ```
 
-The check against the server schema compares the declared values with the schema enum. A field declared `:string` over a schema enum does not fit: declare `:enum`.
+An enum whose type the schema knows (the schema type of the field, or `as:`) takes its values from the schema at every depth: attribute, nested field, answer and parameter. Omit `values:` there: a `values:` list on such an enum stops the generator. `values:` belongs to an enum that the schema lacks. A field declared `:string` over a schema enum does not fit: declare `:enum`.
 
 A list of enum values is `[:enum]` with the same `values:` and `as:`. It is stored as a list of strings and reads back as a list of the enum, each value outside the declaration as `unknown`. The schema check needs a list type (`[GroupList!]!`), and `null: true` for a nullable one. A `default:` lists values from `values`. The block form of a nested type takes the same line.
 
@@ -1127,7 +1127,7 @@ end
 - `copies_receiver_to :target, field: :chatId, set: { isForwarded: true, authorId: { of: User, field: :id }, originId: { owner: :authorId } }` adds a copy of the row with `chatId` set to the argument `target`. `set:` puts a literal, a field of the copied row (`owner:`) or a field of the singleton row of a model (`of:`) on the copy. The answer row replaces the copy, a refusal removes it.
 - `joins_scope` adds the rows named by `rows:` to the end of the scope list, and `leaves_scope` takes them out. A row that is not cached is skipped by both; the answer and the next read of the list bring it. `orders:` lists every value of the order parameter, so all sort orders of the list change together. A refusal restores the ids and the order of every list.
 - The call returns after the answer. While the network is away it waits in the queue and the request goes out when the network returns. A refusal restores the lists.
-- The core reads the answer of an operation call by the `returns` block of the `.dbl`, which the generator writes into the specs next to the models (`modelsJSON`): an `:id` is text, `:int` and `:num` are numbers (a number sent as text becomes a number), an absent field is `null`, a field outside the block is dropped, and a value of another type fails the call with `Invalid`. An operation without a `returns` block is declared raw: its answer arrives as the server sent it. A call of an operation that is not in the `.dbl` fails with `Invalid` before any request. Generated types decode the normalized form and refuse any other.
+- The core reads the answer of an operation call by the answer type of its document, which the generator infers from the selection and the schema and writes into the specs next to the models (`modelsJSON`): an `:id` is text, `:int` and `:num` are numbers (a number sent as text becomes a number), an absent field is `null`, a field outside the selection is dropped, and a value of another type fails the call with `Invalid`. An operation without an answer type (a model operation without `returns`, a document that selects nothing) is declared raw: its answer arrives as the server sent it. A call of an operation that is not in the `.dbl` fails with `Invalid` before any request. Generated types decode the normalized form and refuse any other.
 
 ```swift
 let left = try await club.leave()
@@ -1161,7 +1161,6 @@ A path that a declaration writes names keys of the response, so the check follow
 | --------------------------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------- |
 | `response from:` of a scope, of a model `operation` and of a standalone operation | top of the operation                                   | the path                                                        |
 | `upsert Model, from:`                                                             | top of the operation                                   | the path                                                        |
-| `returns` attributes of an `operation` block                                      | the first part of `response from:`, or the first field | each key, and the keys of nested objects and lists              |
 | `total from:`                                                                     | top of the operation                                   | the path, an alias of the document resolves to its schema field |
 | `paginate ..., from:`                                                             | the connection                                         | the path                                                        |
 | `from:` and `id:` of `subscribe` and `changes`                                    | top of the subscription, or the row                    | the path                                                        |

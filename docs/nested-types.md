@@ -78,7 +78,7 @@ An object cycle without an array cannot form a Swift struct and is rejected. Arr
 
 ## ID conversion
 
-The core turns a numeric id into text before it hands a value to Swift or Kotlin: a model reads ids from cells, and an operation answer is read by its `returns` block (id as text, number as number, an absent field as `null`, a field outside the block dropped). Generated Swift and Kotlin types decode these values as they are and refuse any other form.
+The core turns a numeric id into text before it hands a value to Swift or Kotlin: a model reads ids from cells, and an operation answer is read by its answer type (id as text, number as number, an absent field as `null`, a field outside the selection dropped). Generated Swift and Kotlin types decode these values as they are and refuse any other form.
 
 ## Storage
 

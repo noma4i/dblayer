@@ -624,16 +624,13 @@ The operation document with one input variable sends `{ input: { ...fields } }`.
 
 ## Operations without a model
 
-Sign-in, sign-out, a QR code or a price list belong to no row. Declare each one with an `operation` block. The generator writes a typed call for Swift and Kotlin, and the call sends the operation and reads the attributes you name in `returns`:
+Sign-in, sign-out, a QR code or a price list belong to no row. Declare each one with an `operation` block. The generator writes a typed call for Swift and Kotlin, and the call sends the operation and reads the answer type of its document:
 
 ```ruby
 operation :qr_code_create do
   mutation "QrCodeCreate"
   parameter :kind, :string
   parameter :size, :int, null: true
-  returns do
-    attribute :url, :string
-  end
 end
 ```
 
@@ -649,11 +646,11 @@ println(code.url)
 
 - `mutation "Name"` or `query "Name"` names the operation. Pass the operation type to `DB.open` (Swift) or `DBlayer.open` (Kotlin) like any other operation.
 - `parameter` lines are the variables, with the same types as the parameters of `create`. `null: true` makes one optional and an omitted one is not sent. An operation document with one input variable sends them as `{ input: { ... } }`, and the parameters are the fields of that input.
-- `returns do ... end` lists the attributes to read from the root field of the answer. Without `returns` the call returns nothing. An attribute is a scalar (`:bool`, `:int`, `:num`, `:string`, `:id`), a schema enum name (`WidgetKind`), `[:id]` or `[:string]` for a list of scalars, `:json` for a value you read yourself (`JSONValue` in Swift, `JsonElement` in Kotlin), a named type with a block for an object (`attribute :videoIntro, PricingLoadResultVideoIntro do ... end`), or `[Name]` with a block for a list of objects. Each object type has the name you give it. An `:id` attribute accepts a number or a string and arrives as a string. A `returns` attribute takes no `null`, `optional`, `default`, `from` or `local`.
+- The answer type is the selection of the document under its root field, typed by the schema. A field is the selected field (an alias names it). Its type follows the schema type: a scalar (`Int`, `Float`, `Boolean`, `String`, `ID` or a custom scalar with a `scalar` line), a schema enum with its values, `JSON` for a value you read yourself (`JSONValue` in Swift, `JsonElement` in Kotlin), a list as the schema declares it, an object as a type named by the owner and the field (`PricingLoadResultVideoIntro`). Selected `... on T` fragments on a union or an interface make a union type, and the selection must include `__typename`. Every field is nullable. An `ID` field accepts a number or a string and arrives as a string. A document that selects nothing under its root field (`signOut`) returns nothing. An operation without a model takes no `returns` line, and `returns do ... end` is an error.
 - `parameter :owner, OwnerInput` names a schema input object. The generator reads it and nested inputs from `--schema`.
 - Required inputs remain required. Nullable fields use `GraphQLNullable`: omitted by default, explicit null, or a supplied value. Lists preserve every dimension and element nullability.
 - A required input field with a schema default can be omitted. Nullable fields with defaults still distinguish omission from explicit null.
-- `parameter :kind, WidgetKind` and `attribute :kind, WidgetKind` name a schema enum. It becomes a typed enum with an `unknown` case, in inputs too (see [models](models.md#enums)). A custom scalar needs a `scalar` line (see [models](models.md#custom-scalars)). The `JSON` scalar uses `JSONValue` in Swift and `JsonElement` in Kotlin.
+- `parameter :kind, WidgetKind` names a schema enum, and an answer field of that schema type is the same enum. It becomes a typed enum with an `unknown` case, in inputs too (see [models](models.md#enums)). A custom scalar needs a `scalar` line (see [models](models.md#custom-scalars)). The `JSON` scalar uses `JSONValue` in Swift and `JsonElement` in Kotlin.
 - The call does not enter the outbox and returns Offline when started offline. Before the first network value of the system the call waits for it and fails with a network error after 30 seconds.
 - Encrypted calls follow the [retry policy](#retries). A numbered mutation stores Pending before HTTP, including for a standalone operation.
 - Cancelling a standalone encrypted mutation preserves Pending and leaves its result unconfirmed.
@@ -687,18 +684,6 @@ An operation that reads lists, objects and JSON from the answer:
 ```ruby
 operation :pricing_load do
   query "Pricing"
-  returns do
-    attribute :rewards, [PricingLoadResultRewards] do
-      attribute :id, :id
-      attribute :name, :string
-      attribute :price, :int
-    end
-    attribute :videoIntro, PricingLoadResultVideoIntro do
-      attribute :enabled, :bool
-    end
-    attribute :tags, [:string]
-    attribute :spec, :json
-  end
 end
 ```
 
@@ -712,7 +697,7 @@ val pricing = Operations.pricingLoad()
 val names = pricing.rewards?.mapNotNull { it.name }.orEmpty()
 ```
 
-An operation whose root field is a list, such as a search that returns the matching items, declares `response shape: :list`. `returns` then describes one element and the call returns a list of it:
+An operation whose root field is a list, such as a search that returns the matching items, declares `response shape: :list`. The selection then describes one element and the call returns a list of it:
 
 ```ruby
 operation :giphy_load do
@@ -720,11 +705,6 @@ operation :giphy_load do
   response shape: :list
   parameter :type, :string
   parameter :limit, :int, null: true
-  returns do
-    attribute :id, :id
-    attribute :url, :string
-    attribute :isSticker, :bool
-  end
 end
 ```
 
@@ -738,23 +718,15 @@ val found = Operations.giphyLoad(type = "gif", limit = 20)
 val urls = found.mapNotNull { it.url }
 ```
 
-`response shape: :list` needs a `returns` block.
+`response shape: :list` needs a document that selects the fields of one element.
 
-An aggregate that is not a row of a model, such as the counters of a group library, is an operation without a model. The call returns the fields as a value and writes no row. When the answer nests the aggregate under `node(id:)`, declare the nested attribute in `returns`:
+An aggregate that is not a row of a model, such as the counters of a group library, is an operation without a model. The call returns the fields as a value and writes no row. When the answer nests the aggregate under `node(id:)`, the type of the nested selection is part of the answer type:
 
 ```ruby
 operation :group_media_state do
   query "groupMediaState"
   parameter :groupId, :id
   parameter :upToSequence, :int, null: true
-  returns do
-    attribute :mediaLibrary, GroupMediaStateResultMediaLibrary do
-      attribute :visualCount, :int
-      attribute :audioCount, :int
-      attribute :rewardCount, :int
-      attribute :latestSequence, :int
-    end
-  end
 end
 ```
 
@@ -774,9 +746,6 @@ An operation that takes a schema input object:
 operation :sticker_send do
   mutation "StickerSend"
   parameter :input, StickerInput
-  returns do
-    attribute :id, :string
-  end
 end
 ```
 
@@ -796,9 +765,6 @@ A list of schema input objects or enums takes the name in brackets. `[WidgetInpu
 operation :widgets_send do
   mutation "WidgetsSend"
   parameter :widgets, [StickerWidgetInput], null: true
-  returns do
-    attribute :id, :string
-  end
 end
 ```
 

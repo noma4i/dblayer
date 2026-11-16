@@ -429,11 +429,7 @@ An upload may target a row that is not in the base yet, such as the avatar of th
 operation :update_photo, upload: true do
   optimistic false
   mutation "UserPhotoUpdate"
-  returns do
-    attribute :userPhoto, AvatarPhoto do
-      attribute :status, :string
-    end
-  end
+  returns
   response from: "userPhotoUpdate.viewer"
 end
 ```

@@ -12,9 +12,14 @@
 - Bind each input field of an operation to the parameter, attribute or row id of the same name.
 - Write the parameters named like attributes at once in an operation without `optimistic`.
 - Stop the generator on an operation or a scope with `query` when `--schema` is missing.
+- Read the answer type of an operation from its document and the schema.
+- Give a model operation an answer type only with the line `returns`.
+- Take the values of an enum from the schema when the schema has its type.
+- Refuse `values:` on an enum that the schema knows.
 
 ### Removed
 
+- Remove the `returns do ... end` block of an operation.
 - Remove the `wrap` operation line, and `variables` entries that repeat a name.
 - Remove the default binding of an operation without `variables` to its row id.
 - Remove the error for a named operation without an `optimistic` line.
