@@ -55,7 +55,6 @@ model Record do
   end
   operation :create do
     mutation "CreateRecord"
-    variables containerId: :containerId, text: :text, signedId: :signedId, attachedUserId: :attachedUserId
     parameter :signedId, :string, null: true
     parameter :attachedUserId, :id, null: true
     local :authorId, from: { of: CurrentUser, field: :id }
@@ -116,7 +115,6 @@ model CurrentUser do
     mutation "UserPhotoUpdate"
     parameter :keepOld, :bool, null: true
     parameter :skipAssign, :bool, null: true
-    variables keepOld: :keepOld, skipAssign: :skipAssign
     returns do
       attribute :userPhoto, FixturePhoto do
         attribute :reason, :string

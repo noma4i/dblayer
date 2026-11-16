@@ -1,0 +1,12 @@
+scalar DateTime
+scalar JSON
+type Query { clubMembers(clubId: ID!, order: String, first: Int, after: String): ClubNode }
+type Mutation { createClub(name: String!): Club, leaveClub(clubId: ID!): Boolean, addClubMember(clubId: ID!, userIds: [ID!]!): Club, removeClubMember(clubId: ID!, userIds: [ID!]!): Club, sendLetter(chatId: ID!, text: String!, at: Int!): Letter, forwardLetter(letterId: ID!, chatId: ID!): ForwardLetterPayload }
+type Club { id: ID!, name: String! }
+type Letter { id: ID!, chatId: ID!, text: String!, at: Int! }
+type ForwardLetterPayload { letter: Letter }
+type ClubNode { id: ID!, members(first: Int, after: String): PersonConnection! }
+type Person { id: ID!, name: String! }
+type PersonConnection { nodes: [Person!]!, edges: [PersonEdge!]!, pageInfo: PageInfo! }
+type PersonEdge { cursor: String!, node: Person! }
+type PageInfo { hasNextPage: Boolean!, endCursor: String }

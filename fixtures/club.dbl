@@ -2,7 +2,6 @@ model Club do
   attribute :name, :string
   operation :create do
     mutation "CreateClub"
-    variables name: :name
   end
   operation :leave do
     mutation "LeaveClub"
@@ -15,7 +14,7 @@ model Club do
     mutation "AddClubMember"
     optimistic false
     parameter :userIds, [:id]
-    variables clubId: :id, userIds: :userIds
+    variables clubId: :id
     joins_scope :club_members, model: Person, rows: :userIds, with: { clubId: :id }, order: :order, orders: ["JOINED", "OWNER_FIRST"]
     refetch :club_members, model: Person
     response from: "addClubMember"
@@ -24,7 +23,7 @@ model Club do
     mutation "RemoveClubMember"
     optimistic false
     parameter :userIds, [:id]
-    variables clubId: :id, userIds: :userIds
+    variables clubId: :id
     leaves_scope :club_members, model: Person, rows: :userIds, with: { clubId: :id }, order: :order, orders: ["JOINED", "OWNER_FIRST"]
     refetch :club_members, model: Person
     response from: "removeClubMember"
@@ -53,7 +52,6 @@ model Letter do
   end
   operation :create do
     mutation "SendLetter"
-    variables chatId: :chatId, text: :text, at: :at
   end
   operation :forward do
     mutation "ForwardLetter"

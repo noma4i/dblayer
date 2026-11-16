@@ -10,7 +10,7 @@ fn club(operations: &str) -> Result<Vec<dblayer::schema::ModelSpec>, Vec<String>
 
 #[test]
 fn the_four_effect_kinds_reach_the_action_declaration() {
-    let models = club("  operation :leave do\n    mutation \"LeaveClub\"\n    variables clubId: :id\n    optimistic false\n    removes_receiver\n    response :ignore\n  end\n  operation :add_member do\n    mutation \"AddClubMember\"\n    parameter :userIds, [:id]\n    variables clubId: :id, userIds: :userIds\n    optimistic false\n    joins_scope :club_members, model: Person, rows: :userIds, with: { clubId: :id }, order: :order, orders: [\"JOINED\", \"OWNER_FIRST\"]\n    response from: \"addClubMember\"\n  end\n  operation :copy do\n    mutation \"CopyClub\"\n    parameter :target, :id\n    variables clubId: :id, target: :target\n    optimistic false\n    copies_receiver_to :target, field: :name\n    response from: \"copyClub\"\n  end\n").unwrap();
+    let models = club("  operation :leave do\n    mutation \"LeaveClub\"\n    variables clubId: :id\n    optimistic false\n    removes_receiver\n    response :ignore\n  end\n  operation :add_member do\n    mutation \"AddClubMember\"\n    parameter :userIds, [:id]\n    variables clubId: :id\n    optimistic false\n    joins_scope :club_members, model: Person, rows: :userIds, with: { clubId: :id }, order: :order, orders: [\"JOINED\", \"OWNER_FIRST\"]\n    response from: \"addClubMember\"\n  end\n  operation :copy do\n    mutation \"CopyClub\"\n    parameter :target, :id\n    variables clubId: :id\n    optimistic false\n    copies_receiver_to :target, field: :name\n    response from: \"copyClub\"\n  end\n").unwrap();
     let actions = &models.iter().find(|model| model.key.as_str() == "Club").unwrap().actions;
     let action = |name: &str| actions.iter().find(|action| action.name == name).unwrap();
     assert!(action("leave").removes_receiver);
@@ -36,7 +36,7 @@ fn an_operation_cannot_combine_effects_or_name_an_unknown_scope() {
 #[test]
 fn a_copy_sets_literals_and_sources_and_names_only_known_attributes() {
     use dblayer::schema::{CopyValue, EffectSource};
-    let copy = |set: &str| format!("  operation :copy do\n    mutation \"CopyClub\"\n    parameter :target, :id\n    variables clubId: :id, target: :target\n    optimistic false\n    copies_receiver_to :target, field: :name, set: {set}\n    response from: \"copyClub\"\n  end\n");
+    let copy = |set: &str| format!("  operation :copy do\n    mutation \"CopyClub\"\n    parameter :target, :id\n    variables clubId: :id\n    optimistic false\n    copies_receiver_to :target, field: :name, set: {set}\n    response from: \"copyClub\"\n  end\n");
     let models = club(&copy("{ name: \"x\" }")).unwrap();
     let declared = models.iter().find(|model| model.key.as_str() == "Club").unwrap().actions.iter().find(|action| action.name == "copy").unwrap();
     assert_eq!(declared.copies_receiver_to.as_ref().unwrap().set.get("name"), Some(&CopyValue::Literal(serde_json::json!("x"))));

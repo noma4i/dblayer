@@ -23,9 +23,9 @@ fn custom(lines: &str) -> String {
 #[test]
 fn standard_operations_take_a_closed_set_of_lines() {
     run(&[
-        ("create", &op("create", "    variables name: :name\n    wrap \"input\"\n    response from: \"a.b\"\n    match_by \"clientKey\"\n    local :ownerId\n    on_failure :keep\n    refetch :feed\n"), None),
+        ("create", &op("create", "    variables name: :name\n    response from: \"a.b\"\n    match_by \"clientKey\"\n    local :ownerId\n    on_failure :keep\n    refetch :feed\n"), None),
         ("update", &op("update", "    variables sampleId: :id, name: :name\n    on_failure :rollback\n"), None),
-        ("destroy", &op("destroy", "    variables sampleId: :id\n    wrap \"input\"\n    response from: \"a.b\"\n"), None),
+        ("destroy", &op("destroy", "    variables sampleId: :id\n    response from: \"a.b\"\n"), None),
         ("no mutation", "  operation :create do\n  end", Some("operation `create` needs a `mutation` line")),
         ("mutation is a constant", "  operation :create do\n    mutation CreateSample\n  end", Some("the operation name must be a string")),
         ("mutation twice", &op("create", "    mutation \"N\"\n"), Some("`mutation` is declared twice")),
@@ -49,18 +49,18 @@ fn standard_operations_take_a_closed_set_of_lines() {
 #[test]
 fn parameters_and_variables_are_checked_against_attributes() {
     run(&[
-        ("typed parameter", &op("create", "    parameter :token, :string, null: true\n    variables name: :name, token: :token\n"), None),
-        ("parameter with an attribute name", &op("create", "    parameter :name, :string\n    variables name: :name\n"), Some("parameter `name` has the name of an attribute")),
-        ("parameter twice", &op("create", "    parameter :t, :string\n    parameter :t, :string\n    variables t: :t\n"), Some("parameter `t` is declared twice")),
+        ("typed parameter", &op("create", "    parameter :token, :string, null: true\n"), None),
+        ("parameter with an attribute name", &op("create", "    parameter :name, :string\n"), Some("parameter `name` has the name of an attribute")),
+        ("parameter twice", &op("create", "    parameter :t, :string\n    parameter :t, :string\n"), Some("parameter `t` is declared twice")),
         ("parameter unused", &op("create", "    parameter :t, :string\n"), Some("parameter `t` is used by neither `variables` nor `optimistic`")),
-        ("parameter with a default", &op("create", "    parameter :t, :string, default: \"x\"\n    variables t: :t\n"), Some("an operation parameter has no `default`")),
-        ("parameter of an unknown type", &op("create", "    parameter :t, :date\n    variables t: :t\n"), Some("parameter type must be")),
+        ("parameter with a default", &op("create", "    parameter :t, :string, default: \"x\"\n"), Some("an operation parameter has no `default`")),
+        ("parameter of an unknown type", &op("create", "    parameter :t, :date\n"), Some("parameter type must be")),
         ("variable names unknown source", &op("create", "    variables ghost: :ghost\n"), Some("variable `ghost` names unknown attribute or parameter `ghost`")),
         ("variable is a literal", &op("create", "    variables name: \"x\"\n"), Some("a variable is bound to an attribute or parameter symbol")),
-        ("variables twice", &op("create", "    variables name: :name\n    variables name: :name\n"), Some("`variables` is declared twice")),
-        ("list of ids", &custom("    parameter :ids, [:id]\n    variables ids: :ids\n"), None),
-        ("list of inputs with nullable items", &custom("    parameter :w, [WidgetInput], null_items: true\n    variables w: :w\n"), None),
-        ("null_items on a scalar", &custom("    parameter :w, :string, null_items: true\n    variables w: :w\n"), Some("`null_items` applies to a list of schema inputs or enums")),
+        ("variables twice", &op("create", "    variables name: :name\n"), Some("`variables` is declared twice")),
+        ("list of ids", &custom("    parameter :ids, [:id]\n"), None),
+        ("list of inputs with nullable items", &custom("    parameter :w, [WidgetInput], null_items: true\n"), None),
+        ("null_items on a scalar", &custom("    parameter :w, :string, null_items: true\n"), Some("`null_items` applies to a list of schema inputs or enums")),
         ("local names unknown attribute", &op("create", "    local :ghost\n"), Some("`local` names unknown attribute `ghost`")),
         ("local without names", &op("create", "    local\n"), Some("`local` needs 1 or more attribute names")),
         ("wrap is a symbol", &op("create", "    wrap :input\n"), Some("the variable path must be a string")),

@@ -138,7 +138,7 @@ fn args_are_checked_against_the_input_of_their_mutation() {
         ("operation that is not in the documents", with_lines("operation :create do\n  mutation \"Nope\"\n  parameter :a, :string\nend\n"), Some((6, "operation `Nope` is not in the operation documents"))),
         ("unwrapped action takes the variables", action_with("    parameter :label, :string, null: true\nparameter :size, :int\n    variables itemId: :id, label: :label, size: :size"), None),
         ("unwrapped action with a wrong kind", action_with("    parameter :size, :string\n    variables itemId: :id, size: :size"), Some((6, "parameter `size` of kind `:string` does not fit `size: Int!`"))),
-        ("wrap that is not a variable", with_lines("operation :create do\n  mutation \"CreateItem\"\n  wrap \"payload\"\n  parameter :file, :string\nend\n"), Some((6, "operation `CreateItem` has no variable `$payload`"))),
+        ("wrap that is not a variable", with_lines("operation :create do\n  mutation \"CreateItem\"\n  parameter :file, :string\nend\n"), Some((6, "operation `CreateItem` has no variable `$payload`"))),
     ];
     for (name, source, expected) in cases {
         match (run(&source), expected) {
@@ -152,7 +152,7 @@ fn args_are_checked_against_the_input_of_their_mutation() {
 
 #[test]
 fn an_optimistic_map_covers_every_value_of_its_schema_enum() {
-    let kinded = |map: &str| with_lines(&format!("  operation :kinded do\n    mutation \"KindItem\"\n    parameter :kind, Kind\n    variables itemId: :id, kind: :kind\n    optimistic title: {{ from: :kind, map: {{ {map} }} }}\n  end\n"));
+    let kinded = |map: &str| with_lines(&format!("  operation :kinded do\n    mutation \"KindItem\"\n    parameter :kind, Kind\n    variables itemId: :id\n    optimistic title: {{ from: :kind, map: {{ {map} }} }}\n  end\n"));
     let cases: [SchemaCase; 3] = [
         ("every value mapped", kinded("A: \"a\", B: \"b\""), None),
         ("a value left out", kinded("A: \"a\""), Some((6, "the map does not cover B of `Kind`"))),

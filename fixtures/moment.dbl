@@ -51,7 +51,6 @@ model Moment do
   end
   operation :create do
     mutation "CreateMoment"
-    variables text: :text, media: :media
   end
   operation :update do
     mutation "UpdateMoment"

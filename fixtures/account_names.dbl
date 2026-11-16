@@ -10,7 +10,6 @@ model Ledger do
   operation :move do
     mutation "LikeMoment"
     parameter :scope, :string
-    variables scope: :scope
     optimistic false
   end
 end
@@ -62,7 +61,6 @@ model Mailbox do
   operation :mark do
     mutation "LikeMoment"
     parameter :put, :string
-    variables put: :put
     optimistic false
   end
   scope :entries do

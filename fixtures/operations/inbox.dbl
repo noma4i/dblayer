@@ -4,7 +4,6 @@ model Inbox do
   operation :move do
     mutation "InboxMove"
     parameter :list, ContainerShelfKind
-    variables id: :id, list: :list
     optimistic stance: { from: :list, map: { PRIMARY: "main", SECONDARY: "other" } }
     response from: "inboxMove"
   end

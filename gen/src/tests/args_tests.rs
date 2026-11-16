@@ -11,7 +11,7 @@ fn failure(body: &str) -> (usize, String) {
     (errors[0].line, errors[0].message.clone())
 }
 
-const PAIR: &str = "operation :create do\n  mutation \"CreateSample\"\n  parameter :signedId, :string\n  parameter :momentId, :id, null: true\n  variables name: :name, signedId: :signedId, momentId: :momentId\nend\n\noperation :update do\n  mutation \"UpdateSample\"\n  parameter :signedId, :string, null: true\n  variables sampleId: :id, signedId: :signedId\nend";
+const PAIR: &str = "operation :create do\n  mutation \"CreateSample\"\n  parameter :signedId, :string\n  parameter :momentId, :id, null: true\nend\n\noperation :update do\n  mutation \"UpdateSample\"\n  parameter :signedId, :string, null: true\n  variables sampleId: :id\nend";
 
 #[test]
 fn standard_operation_parameters_are_typed_values_that_variables_may_name() {
@@ -23,11 +23,11 @@ fn standard_operation_parameters_are_typed_values_that_variables_may_name() {
 #[test]
 fn standard_operation_parameters_reject_what_cannot_be_sent() {
     for (case, body, message) in [
-        ("kind", "operation :create do\n  mutation \"A\"\n  parameter :x, :date\n  variables x: :x\nend", crate::decl::PARAM_TYPES),
-        ("attribute name", "operation :create do\n  mutation \"A\"\n  parameter :name, :string\n  variables name: :name\nend", "parameter `name` has the name of an attribute"),
+        ("kind", "operation :create do\n  mutation \"A\"\n  parameter :x, :date\nend", crate::decl::PARAM_TYPES),
+        ("attribute name", "operation :create do\n  mutation \"A\"\n  parameter :name, :string\nend", "parameter `name` has the name of an attribute"),
         ("unused", "operation :create do\n  mutation \"A\"\n  parameter :x, :string\nend", "parameter `x` is used by neither `variables` nor `optimistic`"),
         ("destroy takes no parameter", "operation :destroy do\n  mutation \"A\"\n  parameter :x, :string\nend", "`parameter` does not apply to operation `destroy`"),
-        ("unknown variable source", "operation :create do\n  mutation \"A\"\n  parameter :y, :string\n  variables y: :y, ghost: :ghost\nend", "variable `ghost` names unknown attribute or parameter `ghost`"),
+        ("unknown variable source", "operation :create do\n  mutation \"A\"\n  parameter :y, :string\nend", "variable `ghost` names unknown attribute or parameter `ghost`"),
     ] {
         let found = failure(body).1;
         assert!(found.contains(message), "{case}: {found}");
@@ -36,7 +36,7 @@ fn standard_operation_parameters_reject_what_cannot_be_sent() {
 
 #[test]
 fn a_named_operation_accepts_a_nullable_kind() {
-    let source = model("operation :forward do\n  mutation \"Forward\"\n  optimistic false\n  parameter :momentId, :id, null: true\n  parameter :note, :string\n  variables momentId: :momentId, note: :note\nend");
+    let source = model("operation :forward do\n  mutation \"Forward\"\n  optimistic false\n  parameter :momentId, :id, null: true\n  parameter :note, :string\nend");
     assert_eq!(parse_models(&source).unwrap()[0].actions[0].args["momentId"], "id?");
 }
 
@@ -85,7 +85,7 @@ fn expires_after_is_lowered_into_the_operation_spec() {
 
 #[test]
 fn gen_create_maps_own_id_refused() {
-    let errors = parse_models(&model("operation :create do\n  mutation \"A\"\n  variables name: :name, ownerId: :id\nend")).unwrap_err();
+    let errors = parse_models(&model("operation :create do\n  mutation \"A\"\n  variables ownerId: :id\nend")).unwrap_err();
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(errors[0].message.contains("create") && errors[0].message.contains("`id`"), "{}", errors[0].message);
 }

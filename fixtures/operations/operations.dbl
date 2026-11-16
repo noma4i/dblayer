@@ -13,7 +13,6 @@ end
 
 operation :qr_code_create do
   mutation "QrCodeCreate"
-  wrap "input"
   parameter :kind, :string
   parameter :size, :int, null: true
   returns do

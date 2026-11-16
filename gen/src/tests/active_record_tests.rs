@@ -163,7 +163,7 @@ end
 /// B4 (old line emit/mod.rs creates_locally): a model whose create the server answers gets the typed `create` in both languages, so the app never writes the generic call.
 #[test]
 fn a_create_the_server_answers_generates_a_typed_create_in_both_languages() {
-    let models = parse_models("model Club do\n  attribute :name, :string\n  operation :create do\n    mutation \"CreateClub\"\n    variables name: :name\n  end\nend\n").unwrap();
+    let models = parse_models("model Club do\n  attribute :name, :string\n  operation :create do\n    mutation \"CreateClub\"\n  end\nend\n").unwrap();
     let swift = emit_swift(&models, &[], &SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
     assert!(swift.contains("static func create(name: String") && !swift.contains("static func send("), "{swift}");

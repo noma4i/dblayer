@@ -189,7 +189,7 @@ fn a_string_cursor_is_not_numeric() {
 
 #[test]
 fn standard_operations_bind_mutations_and_variables() {
-    let model = build_one("  operation :create do\n    mutation \"CreateSample\"\n    variables text: :createdAt, ownerId: :ownerId\n  end\n  operation :update do\n    mutation \"UpdateSample\"\n  end\n  operation :destroy do\n    mutation \"DeleteSample\"\n  end");
+    let model = build_one("  operation :create do\n    mutation \"CreateSample\"\n    variables text: :createdAt\n  end\n  operation :update do\n    mutation \"UpdateSample\"\n  end\n  operation :destroy do\n    mutation \"DeleteSample\"\n  end");
     let names: Vec<_> = model.actions.iter().map(|action| action.name.as_str()).collect();
     assert_eq!(names, vec!["create", "update", "destroy"]);
     let create = &model.actions[0];
