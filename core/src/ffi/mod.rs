@@ -122,7 +122,7 @@ pub enum DbError {
     Http { status: u16, detail: String },
     #[error("request is {size} bytes, exceeding the local limit of {limit} bytes")]
     RequestTooLarge { size: u64, limit: u64 },
-    #[error("the answer is above the limit of {limit} bytes")]
+    #[error("{}", crate::transport::TransportError::response_too_large_text(.limit))]
     ResponseTooLarge { limit: u64 },
     #[error("graphql: {}", messages.join("\n"))]
     Graphql { messages: Vec<String>, extensions: Option<crate::transport::GraphqlExtensions> },

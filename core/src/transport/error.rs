@@ -37,6 +37,9 @@ pub enum TransportError {
 }
 
 impl TransportError {
+    /// The message of `ResponseTooLarge`, for the errors of other layers that say the same.
+    pub(crate) fn response_too_large_text(limit: &u64) -> String { Self::ResponseTooLarge { limit: *limit }.to_string() }
+
     pub(crate) fn graphql_answer(code: String, body: String) -> Self {
         match serde_json::from_str::<super::Response>(&body) {
             Ok(response) if !response.errors.is_empty() => Self::GraphqlAnswer { response: Box::new(response) },
