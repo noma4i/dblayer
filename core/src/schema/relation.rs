@@ -347,6 +347,16 @@ impl RelationSpec {
         }
     }
 
+    /// P-DATA-100: whether the row enters a loaded window: a `Create` batch only adds a row the store did not hold.
+    pub fn joins(&self, source: RowSource, row_is_new: bool) -> bool {
+        self.remote.is_some() && self.admits(source) && (source != RowSource::Create || row_is_new)
+    }
+
+    /// P-DATA-100: a row of an event or a node reread is whole, so a membership field it lacks is an error.
+    pub fn requires_membership_fields(source: RowSource) -> bool {
+        matches!(source, RowSource::Event | RowSource::NodeReread)
+    }
+
     pub fn lists_every_row_of_its_params(&self) -> bool {
         let Some(_) = &self.remote else { return false };
         (!self.by_columns.is_empty() || !self.membership.is_empty())
