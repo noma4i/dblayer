@@ -128,6 +128,7 @@ mod sess_unavailable_secret_tests;
 mod life_storage_failed_exit_tests;
 mod sess_held_pair_origin_tests;
 mod crash_image_group_tests;
+mod crash_image_classes_tests;
 mod crash_image_multipart_tests;
 mod xfer_parts_tests;
 mod crash_image_server_tests;

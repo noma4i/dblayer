@@ -3,8 +3,9 @@
 use serde_json::json;
 
 use super::rig_events::events;
-use super::rig_tests::{Rig, World};
-use crate::ffi::SessionStanding;
+use super::rig_tests::{bound, Rig, World};
+use crate::ffi::{ReadClaim, ReadValue, SessionStanding};
+use crate::owners::read::feed::CableCloseInitiator;
 
 /// A signed rig whose cable is open for message events.
 async fn subscribed() -> Rig {
@@ -44,6 +45,24 @@ async fn cable_close_4429_waits_for_the_server_pause() {
         rig.database.close_now();
     }
     assert!(missed.is_empty(), "{missed:#?}");
+}
+
+/// D-479 (5): the public `cable_closes` stream gives the close of the server with its code, reason and initiator, without a session ending for 4429.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_cable_closes_stream_shows_the_server_close() {
+    let rig = subscribed().await;
+    let closes = rig.database.cable_closes();
+    let ReadClaim::Claimed { reader } = closes.claim_reader().await else { panic!("the cable closes reader claim ended") };
+    rig.close_cable(4429, "hello_blocked").await;
+    let close = loop {
+        match bound(closes.pull(reader)).await {
+            Some(ReadValue::CableClose { event, .. }) => break event,
+            Some(ReadValue::Ready) => {}
+            other => panic!("the cable closes stream gave {other:?}"),
+        }
+    };
+    assert_eq!((close.code, close.reason.as_deref(), close.initiator), (Some(4429), Some("hello_blocked"), CableCloseInitiator::Server));
+    rig.database.close_now();
 }
 
 /// D-479 (3): a sealed `RATE_LIMITED` with `retryAfter` fails the call at once and holds every request of the session until the pause ends.
