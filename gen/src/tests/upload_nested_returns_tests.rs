@@ -67,3 +67,17 @@ fn gen_swift_variables_binding_is_mutated() {
     let never: Vec<usize> = lines.iter().enumerate().filter(|(_, line)| line.trim_start().starts_with("var variables_")).filter(|(at, _)| !lines[at + 1..].iter().take_while(|line| !line.contains("return ")).any(|line| line.contains("variables_[\""))).map(|(at, _)| at + 1).collect();
     assert!(never.is_empty(), "`var variables_` is never assigned at generated lines {never:?}");
 }
+
+/// D-480: a non-upload action of a singleton model has a call on the type that needs no row, on both platforms; a model that is no singleton gets none.
+#[test]
+fn gen_singleton_action_type_call() {
+    let source = "model Viewer do\n  attribute :id, :id\n  attribute :registered, :bool, null: true\n  scope :current do\n    query \"ViewerQuery\"\n  end\n  operation :complete do\n    mutation \"ViewerComplete\"\n    optimistic false\n    response from: \"viewerComplete.viewer\"\n  end\nend\nmodel Item do\n  attribute :id, :id\n  attribute :done, :bool, null: true\n  operation :finish do\n    mutation \"ItemFinish\"\n    optimistic false\n    response from: \"itemFinish.item\"\n  end\nend\n";
+    let found = declared(source);
+    let (swift, kotlin) = (crate::emit_swift(&found.models, &found.operations, &found.inputs), crate::emit_kotlin(&found.models, &found.operations, &found.inputs));
+    let swift_type = |name: &str| { let start = swift.find(&format!("public struct {name}:")).expect("the model"); &swift[start..start + swift[start..].find("\npublic struct ").unwrap_or(swift.len() - start)] };
+    let viewer = swift_type("Viewer");
+    assert!(viewer.contains("public static func complete(") && viewer.contains("actOnSingleton(\"complete\""), "swift singleton call on the type: {viewer}");
+    assert!(!swift_type("Item").contains("actOnSingleton"), "a model that is no singleton has no call on the type");
+    assert!(kotlin.contains("this.actOnSingleton(\"complete\""), "kotlin singleton call on the type");
+    assert_eq!(kotlin.matches("actOnSingleton(").count(), 1, "kotlin: only the singleton action is called on the type");
+}
