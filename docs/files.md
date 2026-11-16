@@ -367,11 +367,10 @@ The final content mutation does not hold a file permit.
 | `attempts`                | saved attempts for the current unfinished step, preserved across restarts                                                                                                                                                                                                    |
 | `error`                   | an `OperationFailure`: `kind`, `sessionCode`, `requestSize`, `requestLimit`, `message`, `extensions`, `responseLimit` and `reason`                                                                                                                                           |
 | `localUrl`                | the file URL of the file the transfer reads now, from the first frame of the row: the file of the caller during the call, then the copy of the library; `nil` without a file. Show the preview from it only                                                                  |
-| `processing`              | `processing.progress`: the progress the server reports while it works on the file after the transfer, `nil` before                                                                                                                                                           |
 
 An upload of a local record starts as `waiting` with `totalBytes` set from the file size and `sentBytes` and `progress` at zero. When the `create` is confirmed the real id replaces the local id in the upload variables and the status moves on through `preparing` or `queued` to `uploading`, `sending` and the end. If the `create` is refused the upload is discarded with the record. Every change of status, stage, bytes or reason reaches observers as a new row.
 
-A finished upload closes its operation and removes its entry from `uploads`, except that an action with a declared `processing` keeps an entry with status `done` and the `processing` progress while the server works on the file. The record becomes `synced` when no other operation remains open. While `preparing`, `progress` is the share of the preparation. While `uploading`, it counts the bytes of the confirmed parts and the bytes in flight. A retried part, a lost connection and a restart keep the shown value, and it grows again when the real share passes it. It stays below 1 until the server confirmed the whole file.
+A finished upload closes its operation and removes its entry from `uploads`, . The record becomes `synced` when no other operation remains open. While `preparing`, `progress` is the share of the preparation. While `uploading`, it counts the bytes of the confirmed parts and the bytes in flight. A retried part, a lost connection and a restart keep the shown value, and it grows again when the real share passes it. It stays below 1 until the server confirmed the whole file.
 
 ### Rules
 
@@ -392,7 +391,7 @@ A finished upload closes its operation and removes its entry from `uploads`, exc
 - After the content mutation starts, cancelling a single upload returns `false` immediately. Cancelling a batch member returns `InFlight`.
 - One record has one upload in progress per declared action. A new upload replaces a failed upload of that action.
 - `upload` on a row that does not exist is accepted: it opens a transfer with no optimistic value and the answer of the final mutation writes the row. A call checks its arguments in this order: `Closed` or `NoSession` first, then `Invalid` (an empty or unreadable file, an undeclared action or variables). A missing row is no refusal.
-- `scope.uploadStatus(row, action)` streams the status of one transfer (`TransferProgress`: `state`, `progress`, `error`, `localUrl`, `processing`). Its last item is `ended` with the cause.
+- `scope.uploadStatus(row, action)` streams the status of one transfer (`TransferProgress`: `state`, `progress`, `error`, `localUrl`). Its last item is `ended` with the cause.
 - `cancelUpload(action)` returns `true` when it stopped the transfer, in any stage of the transfer: a call that meets a step of the library waits for the end of that step and gets the outcome of the removal, so the call is never repeated. It returns `false` once the final mutation left. `retry(action)` sends a failed transfer again and `discard(action)` removes it with its optimistic row.
 
 ## Upload before the final mutation

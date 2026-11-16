@@ -24,7 +24,6 @@ gen/src/decl/lower/scopes.rs	Value::Array(nodes) => PreloadChoice::Listed(nodes.
 gen/src/decl/lower/scopes.rs	decl.edges = children.iter().filter_map(|child| attribute(cx, child, Site::Edge, &owner)).collect();	M55
 gen/src/decl/lower/scopes.rs	decl.touch = line.opt(cx, "touch").and_then(|pair| boolean(cx, &pair.value, "`touch`")).unwrap_or(false);	M48
 gen/src/decl/lower/scopes.rs	let fields = call.options.iter().filter_map(|pair| sort_direction(cx, &pair.value).map(|direction| (pair.key.clone(), direction, pair_pos(pair)))).collect();	M55
-gen/src/decl/lower/scopes.rs	let members_complete = line.opt(cx, "members_complete").and_then(|pair| boolean(cx, &pair.value, "`members_complete`")).unwrap_or(false);	M48
 gen/src/decl/lower/scopes.rs	let values = items.iter().filter_map(|item| string(cx, item, "a `matches` list item")).collect();	M55
 gen/src/decl/lower/scopes.rs	pairs.iter().filter_map(|inner| symbol(cx, &inner.value, what).map(|value| (inner.key.clone(), value))).collect()	M55
 gen/src/parser/mod.rs	self.tokens.last().map_or((1, 1), |token| (token.line, token.column))	M55

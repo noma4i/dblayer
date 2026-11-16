@@ -73,15 +73,15 @@ impl Store {
         for (id, record) in stored {
             let data = record.row;
             let mut sync = syncs.remove(&id).unwrap_or_default();
-            self.finish_uploads(spec, &data, &mut sync);
+            self.finish_uploads(&mut sync);
             built.insert(id, Arc::new(Record { id: record.id, revision: record.revision, data, sync }));
         }
         if linked { self.resolve_nested_refs(reader, spec, &mut built)?; }
         Ok((built, syncs))
     }
 
-    /// `uploads[action]` of a row: the file URL of the copy while the transfer holds one, and the processing the server reports in the row after the transfer.
-    fn finish_uploads(&self, spec: &crate::schema::ModelSpec, data: &Map<String, Value>, sync: &mut crate::value::sync::SyncInfo) {
+    /// `uploads[action]` of a row: the file URL of the copy while the transfer holds one.
+    fn finish_uploads(&self, sync: &mut crate::value::sync::SyncInfo) {
         let files = self.files();
         for info in sync.uploads.values_mut() {
             if let Some(file) = info.copy_file.take() {
@@ -90,16 +90,6 @@ impl Store {
                     TransferFile::Caller(path) => Some(std::path::PathBuf::from(path)).filter(|path| path.exists()),
                 };
                 info.local_url = path.map(|path| format!("file://{}", path.display()));
-            }
-        }
-        for action in spec.actions.iter().filter(|action| action.upload) {
-            let Some(progress) = action.processing.as_ref().and_then(|processing| processing.progress_in(data)) else { continue };
-            let processing = Some(crate::owners::write::upload::UploadProcessing { progress });
-            match sync.uploads.get_mut(&action.name) {
-                Some(info) => info.processing = processing,
-                None => {
-                    sync.uploads.insert(action.name.clone(), crate::owners::write::upload::UploadInfo { status: crate::owners::write::upload::UploadStatus::Done, stage: crate::owners::write::upload::UploadStage::Mutation, sent_bytes: 0, total_bytes: 0, wait_reason: None, attempts: 0, error: None, local_url: None, processing, copy_file: None, share: 100, batch_share: None });
-                }
             }
         }
     }
@@ -210,7 +200,7 @@ impl Store {
                 let (rows, mut syncs) = self.load_with_sync(reader, &model, &ids)?;
                 for (id, row) in rows { shown.insert((model.clone(), id), row.sync.uploads.clone()); }
                 for (id, mut sync) in syncs.drain() {
-                    self.finish_uploads(self.spec(&model)?, &Map::new(), &mut sync);
+                    self.finish_uploads(&mut sync);
                     shown.insert((model.clone(), id), sync.uploads);
                 }
             }
@@ -238,7 +228,7 @@ impl Store {
         let (mut rows, mut syncs) = self.load_with_sync(reader, model, &ids)?;
         if let Some(row) = rows.remove(row_id) { return Ok(row.sync.uploads.get(action).cloned()); }
         let Some(mut sync) = syncs.remove(row_id) else { return Ok(None) };
-        self.finish_uploads(self.spec(model)?, &Map::new(), &mut sync);
+        self.finish_uploads(&mut sync);
         Ok(sync.uploads.remove(action))
     }
 

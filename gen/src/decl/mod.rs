@@ -439,15 +439,6 @@ pub struct DimensionsDecl {
     pub height: String,
 }
 
-/// `processing "status", done: ["READY"], progress: "percent"`: the server works on the file after the transfer.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ProcessingDecl {
-    pub pos: Pos,
-    pub field: String,
-    pub done: Vec<String>,
-    pub progress: Option<String>,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct OperationDecl {
     pub pos: Pos,
@@ -455,7 +446,6 @@ pub struct OperationDecl {
     pub kind: OperationKind,
     pub upload: Option<Pos>,
     pub expires_after: Option<u64>,
-    pub processing: Option<ProcessingDecl>,
     pub dimensions: Option<DimensionsDecl>,
     pub mutation: Option<Spanned<String>>,
     pub parameters: Vec<ParameterDecl>,

@@ -124,7 +124,6 @@ pub fn info_at(row: &Row<'_>, first: usize) -> Result<Option<UploadInfo>> {
         attempts: row.get::<_, i64>(first + 5)? as u32,
         error,
         local_url: None,
-        processing: None,
         copy_file: None,
         share: 0,
         batch_share: None,

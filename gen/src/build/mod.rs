@@ -378,7 +378,6 @@ fn build_operation(operation: &OperationDecl, owner: &str) -> ActionDeclaration 
         action.optimistic = fields.iter().map(|(name, value, _)| (name.clone(), optimistic_json(value))).collect();
     }
     action.expires_after = operation.expires_after;
-    action.processing = operation.processing.as_ref().map(|processing| dblayer::schema::ProcessingDeclaration { field: processing.field.clone(), done: processing.done.clone(), progress: processing.progress.clone() });
     action.dimensions = operation.dimensions.as_ref().map(|dimensions| dblayer::schema::DimensionsDeclaration { width: dimensions.width.clone(), height: dimensions.height.clone() });
     action.removes_receiver = operation.removes_receiver.is_some();
     action.copies_receiver_to = operation.copies_receiver_to.as_ref().map(|copy| ReceiverCopy {

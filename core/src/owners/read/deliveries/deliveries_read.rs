@@ -217,7 +217,7 @@ impl Delivery {
         if !self.sink_open() { return; }
         if read_id == self.read_id { self.read_inflight = false; }
         if read_id == self.read_id && self.view.kind == Kind::Blob {
-            if let ReadData::Upload { wait_reason, local_url, processing } = data { self.upload_read(Ok((wait_reason, local_url, processing)), version.revision, fx); }
+            if let ReadData::Upload { wait_reason, local_url } = data { self.upload_read(Ok((wait_reason, local_url)), version.revision, fx); }
             return;
         }
         if read_id != self.read_id || !self.view.kind.reads_rows() {

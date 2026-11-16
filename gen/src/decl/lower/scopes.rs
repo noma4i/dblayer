@@ -146,11 +146,22 @@ pub(super) fn insert_on(cx: &mut Cx, pair: &Pair) -> Option<Spanned<InsertOn>> {
         Value::Symbol(name) if name == "server" => InsertOn::Server,
         Value::Symbol(name) if name == "create" => InsertOn::Create,
         _ => {
-            cx.fail(at(&pair.value), "`insert_on` takes one value, `:server` or `:create`, the list form was removed");
+            cx.fail(at(&pair.value), "`insert_on` must be `:server` or `:create`");
             return None;
         }
     };
     Some(Spanned::new(source, at(&pair.value)))
+}
+
+fn true_flag(cx: &mut Cx, line: &mut Line, key: &str) -> Option<Pos> {
+    let pair = line.opt(cx, key)?;
+    match &pair.value.item {
+        Value::Bool(true) => Some(pair_pos(pair)),
+        _ => {
+            cx.fail(at(&pair.value), format!("`{key}` is only `true`: omit it for the default"));
+            None
+        }
+    }
 }
 
 pub(super) fn scope(cx: &mut Cx, call: &Call) -> Option<ScopeDecl> {
@@ -171,10 +182,10 @@ pub(super) fn scope(cx: &mut Cx, call: &Call) -> Option<ScopeDecl> {
         }
     });
     let insert = line.opt(cx, "insert_on").and_then(|pair| insert_on(cx, pair));
-    let stable = line.opt(cx, "stable_order").and_then(|pair| boolean(cx, &pair.value, "`stable_order`").filter(|flag| *flag).map(|_| pair_pos(pair)));
-    let foreground = line.opt(cx, "refresh_on_foreground").and_then(|pair| boolean(cx, &pair.value, "`refresh_on_foreground`").filter(|flag| *flag).map(|_| pair_pos(pair)));
-    let keep_on_gap = line.opt(cx, "keep_on_gap").and_then(|pair| boolean(cx, &pair.value, "`keep_on_gap`").filter(|flag| *flag).map(|_| pair_pos(pair)));
-    let members_complete = line.opt(cx, "members_complete").and_then(|pair| boolean(cx, &pair.value, "`members_complete`")).unwrap_or(false);
+    let stable = true_flag(cx, &mut line, "stable_order");
+    let foreground = true_flag(cx, &mut line, "refresh_on_foreground");
+    let keep_on_gap = true_flag(cx, &mut line, "keep_on_gap");
+    let members_complete = true_flag(cx, &mut line, "members_complete").is_some();
     line.finish(cx);
     let lines = block(cx, call)?;
     let mut decl = ScopeDecl {
@@ -488,10 +499,6 @@ pub(super) fn apply(cx: &mut Cx, pair: &Pair) -> Option<ApplyDecl> {
                     Value::Symbol(name) if name == "upsert" => Effect::Upsert,
                     Value::Symbol(name) if name == "delete" => Effect::Delete,
                     Value::Symbol(name) if name == "ephemeral" => Effect::Ephemeral,
-                    Value::Symbol(name) if name == "reread" => {
-                        cx.fail(at(&entry.value), "`effect: :reread` is removed: declare `changed_by` with `via:` on the model");
-                        continue;
-                    }
                     Value::Symbol(name) if name == "ignore" => Effect::Ignore,
                     _ => {
                         cx.fail(at(&entry.value), "`effect` must be `:upsert`, `:delete`, `:ephemeral` or `:ignore`");
@@ -540,14 +547,12 @@ pub(super) fn apply(cx: &mut Cx, pair: &Pair) -> Option<ApplyDecl> {
                     }
                 }
             }
-            "via" => cx.fail(pair_pos(entry), "`apply` `via` is removed: declare `changed_by` with `via:` on the model"),
             "delete_if" => {
                 decl.delete_if = match &entry.value.item {
                     Value::Hash(parts) if parts.len() == 1 && parts[0].key == "not" => path(cx, &parts[0].value, "`delete_if`").map(|found| (found, true)),
                     _ => path(cx, &entry.value, "`delete_if`").map(|found| (found, false)),
                 };
             }
-            "delete_unless" => cx.fail(pair_pos(entry), "`delete_unless` is removed: use `delete_if: { not: path }`"),
             other => cx.fail(pair_pos(entry), format!("unknown key `{other}` for `apply`")),
         }
     }

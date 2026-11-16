@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Take a duration for the operation option `expires_after`.
+- Keep rows of a scope with `query` fresh for 5 minutes when `freshness` is omitted.
+- Refuse `false` for the scope flags `keep_on_gap`, `stable_order`, `refresh_on_foreground` and `members_complete`.
+- Refuse `local: true` with `default:` or `merge:`, and a repeated `index`, `changes` or association.
+
+### Removed
+
+- Remove the `processing` operation line and the processing of an upload.
+- Remove the messages of removed model forms: they fail as unknown or invalid.
+
 ## 6.40.0 - 2026-11-16
 
 ### Added

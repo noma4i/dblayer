@@ -70,8 +70,8 @@ pub enum ReadData {
     Count(u64),
     Owed(Box<ReadData>, BTreeSet<Debt>),
     Operations(Vec<crate::ffi::OperationInfo>),
-    /// The copy URL and the processing that the row of a transfer shows.
-    Upload { wait_reason: Option<crate::owners::write::upload::WaitReason>, local_url: Option<String>, processing: Option<crate::ffi::WireProcessing> },
+    /// The copy URL that the row of a transfer shows.
+    Upload { wait_reason: Option<crate::owners::write::upload::WaitReason>, local_url: Option<String> },
     Overflow,
 }
 
@@ -99,7 +99,7 @@ pub struct ReadVersion {
     pub touching: Touching,
 }
 
-type UploadRowRead = Result<(Option<crate::owners::write::upload::WaitReason>, Option<String>, Option<crate::ffi::WireProcessing>), String>;
+type UploadRowRead = Result<(Option<crate::owners::write::upload::WaitReason>, Option<String>), String>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct View {
@@ -178,11 +178,10 @@ pub struct BlobStatus {
     pub progress: u64,
     pub error: Option<String>,
     pub local_url: Option<String>,
-    pub processing: Option<crate::ffi::WireProcessing>,
 }
 
 impl BlobStatus {
-    /// The state and the progress of a transfer; the row of the transfer gives the copy URL and the processing.
+    /// The state and the progress of a transfer; the row of the transfer gives the copy URL.
     pub fn of(shown: &crate::owners::write::transfer::Shown) -> Self {
         use crate::owners::write::transfer::Shown;
         let (state, progress, error) = match shown {
@@ -194,7 +193,7 @@ impl BlobStatus {
             Shown::Uploading { progress } => ("uploading", u64::from(*progress), None),
             Shown::Failed { error } => ("failed", 0, Some(error.clone())),
         };
-        Self { state: state.into(), wait_reason: shown.wait_reason(), progress, error, local_url: None, processing: None }
+        Self { state: state.into(), wait_reason: shown.wait_reason(), progress, error, local_url: None }
     }
 }
 

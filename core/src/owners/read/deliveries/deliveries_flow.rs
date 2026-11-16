@@ -229,7 +229,7 @@ impl Delivery {
         if self.view.kind != Kind::Blob || !self.sink_open() {
             return;
         }
-        let changed_reason = self.upload_row.as_ref().and_then(|row| row.as_ref().ok()).is_none_or(|(reason, _, _)| *reason != blob.wait_reason);
+        let changed_reason = self.upload_row.as_ref().and_then(|row| row.as_ref().ok()).is_none_or(|(reason, _)| *reason != blob.wait_reason);
         self.transfer = Some(blob);
         self.status_revision = self.status_revision.max(revision);
         if changed_reason { fx.push(self.new_read(self.read_revision)); } else if !self.upload_inflight { self.show_status(fx); }
@@ -242,12 +242,12 @@ impl Delivery {
         self.show_status(fx);
     }
 
-    /// The value of a `Blob` stream: the state of the transfer with the copy URL and the processing of its row, pushed when it differs from the last one.
+    /// The value of a `Blob` stream: the state of the transfer with the copy URL of its row, pushed when it differs from the last one.
     fn show_status(&mut self, fx: &mut Vec<Emit>) {
         let (Some(transfer), Some(row)) = (&self.transfer, &self.upload_row) else { return };
         let blob = match row {
-            Ok((wait_reason, local_url, processing)) => BlobStatus { wait_reason: *wait_reason, local_url: local_url.clone(), processing: processing.clone(), ..transfer.clone() },
-            Err(error) => BlobStatus { state: "failed".into(), wait_reason: None, progress: 0, error: Some(error.clone()), local_url: None, processing: None },
+            Ok((wait_reason, local_url)) => BlobStatus { wait_reason: *wait_reason, local_url: local_url.clone(), ..transfer.clone() },
+            Err(error) => BlobStatus { state: "failed".into(), wait_reason: None, progress: 0, error: Some(error.clone()), local_url: None },
         };
         let blob = if matches!(blob.state.as_str(), "gone" | "failed") && self.blob.is_some() { BlobStatus { progress: self.blob.as_ref().map_or(0, |last| last.progress), ..blob } } else { blob };
         if !self.sink_open() || self.blob.as_ref() == Some(&blob) {

@@ -247,7 +247,6 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
         report(operation.pos, format!("operation `{name}` ignores its response: `upsert` and `match_by` read it"));
     }
     check_batch(node, operation, report);
-    check_processing(node, operation, report);
     check_dimensions(node, operation, report);
 }
 
@@ -301,26 +300,6 @@ fn check_dimensions(node: &ModelDecl, operation: &OperationDecl, report: &mut im
     for field in [&dimensions.width, &dimensions.height] {
         if !node.attributes.iter().any(|attribute| attribute.name == *field && matches!(attribute.ty, TypeRef::Scalar(ScalarKind::Int))) {
             report(dimensions.pos, format!("operation `{name}`: `dimensions` names `{field}`, which is no integer attribute of `{}`", node.name));
-        }
-    }
-}
-
-fn check_processing(node: &ModelDecl, operation: &OperationDecl, report: &mut impl FnMut(Pos, String)) {
-    let Some(processing) = &operation.processing else { return };
-    let name = &operation.name;
-    if operation.upload.is_none() {
-        report(processing.pos, format!("operation `{name}`: `processing` belongs to an operation with `upload: true`"));
-    }
-    for path in std::iter::once(&processing.field).chain(&processing.progress) {
-        let first = path.split('.').next().unwrap_or_default();
-        if !node.attributes.iter().any(|attribute| attribute.name == first) {
-            report(processing.pos, format!("operation `{name}`: `processing` path `{path}` names no attribute of `{}`", node.name));
-        }
-    }
-    let first = processing.field.split('.').next().unwrap_or_default();
-    if let Some(values) = node.attributes.iter().find(|attribute| attribute.name == first && !processing.field.contains('.')).and_then(|attribute| attribute.values.as_ref()) {
-        if let Some(missing) = processing.done.iter().find(|done| !values.contains(done)) {
-            report(processing.pos, format!("operation `{name}`: `done` value `{missing}` is not a value of `{}`", processing.field));
         }
     }
 }

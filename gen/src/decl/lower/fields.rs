@@ -191,12 +191,12 @@ pub(super) fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> 
     };
     let null_given = line.opt(cx, "null");
     decl.null = null_given.map_or(schema_null, |pair| boolean(cx, &pair.value, "`null`").unwrap_or(false));
-    let optional_given = line.opt(cx, "optional").and_then(|pair| boolean(cx, &pair.value, "`optional`").map(|value| (value, pair_pos(pair))));
-    if let (true, Some((true, at_optional))) = (local, optional_given) {
-        cx.fail(at_optional, format!("attribute `{}`: local implies optional, omit `optional: true`", decl.name));
-    }
-    decl.optional = local || optional_given.is_some_and(|(value, _)| value);
+    let optional_given = line.opt(cx, "optional").and_then(|pair| boolean(cx, &pair.value, "`optional`"));
+    decl.optional = local || optional_given == Some(true);
     if let Some(pair) = line.opt(cx, "default") {
+        if local {
+            cx.fail(pair_pos(pair), format!("attribute `{}`: `local` and `default` exclude each other: the app writes a local value", decl.name));
+        }
         decl.default = Some(Spanned::new(json_of(&pair.value.item), at(&pair.value)));
     }
     let is_file = decl.ty == TypeRef::File;
@@ -229,6 +229,9 @@ pub(super) fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> 
         (Some(pair), None) | (None, Some(pair)) => cx.fail(pair_pos(pair), "`ref` and `id` are given together: `ref: Model, id: :attribute`"),
     }
     if let Some(pair) = line.opt(cx, "merge") {
+        if local {
+            cx.fail(pair_pos(pair), format!("attribute `{}`: `local` and `merge` exclude each other: the server never writes a local value", decl.name));
+        }
         if site != Site::Model || is_file {
             cx.fail(pair_pos(pair), "`merge` applies only to a top-level attribute that is not a file");
         } else if let Some(rule) = merge_rule(&pair.value.item) {

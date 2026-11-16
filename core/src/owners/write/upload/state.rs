@@ -122,15 +122,6 @@ impl UploadState {
     }
 }
 
-/// The server works on the file of a finished transfer (`processing` of the action).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct UploadProcessing {
-    pub progress: Option<f64>,
-}
-
-/// The progress is a finite number read from JSON, so equality is total.
-impl Eq for UploadProcessing {}
-
 /// The file of a transfer: the copy of the library once it is durable, the file of the caller before (D-376).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransferFile {
@@ -157,8 +148,6 @@ pub struct UploadInfo {
     /// The file URL of the copy of the library from the end of the copy to the removal of the transfer.
     #[serde(default)]
     pub local_url: Option<String>,
-    #[serde(default)]
-    pub processing: Option<UploadProcessing>,
     /// The file the transfer reads now: `local_url` is made from it at the read.
     #[serde(skip)]
     pub copy_file: Option<TransferFile>,

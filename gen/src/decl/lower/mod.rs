@@ -231,10 +231,6 @@ fn model(cx: &mut Cx, node: &ModelNode) -> ModelDecl {
     let storage = options.opt(cx, "storage").map_or(Storage::Disk, |pair| match &pair.value.item {
         Value::Symbol(name) if name == "memory" => Storage::Memory,
         Value::Symbol(name) if name == "local" => Storage::Local,
-        Value::Symbol(name) if name == "disk" => {
-            cx.fail(at(&pair.value), "storage `:disk` is the default; omit `storage`");
-            Storage::Disk
-        }
         _ => {
             cx.fail(at(&pair.value), "`storage` must be `:memory` or `:local`");
             Storage::Disk

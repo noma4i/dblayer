@@ -6,7 +6,7 @@ use std::sync::{Arc, Weak};
 use super::database::Database;
 use super::LoadMoreResult;
 use super::queue::OperationInfo;
-use super::wire::{WireModel, WireProcessing, WireRow};
+use super::wire::{WireModel, WireRow};
 use super::QuerySpec;
 use super::DbError;
 use crate::owners::contract::{WindowPhase, WindowState};
@@ -67,7 +67,7 @@ pub enum ReadValue {
     Request { operation: String, variables_json: String, reason: crate::ffi::RequestReason },
     Lost { first: u64, last: u64 },
     Gap,
-    Status { revision: i64, state: String, wait_reason: Option<String>, progress: f64, error: Option<String>, local_url: Option<String>, processing: Option<WireProcessing> },
+    Status { revision: i64, state: String, wait_reason: Option<String>, progress: f64, error: Option<String>, local_url: Option<String> },
     /// The last value of a stream, exactly one.
     Ended { cause: EndCause },
 }
@@ -188,7 +188,7 @@ pub(super) fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadV
         Value::CableClose { position, event } => ReadValue::CableClose { position, event },
         Value::Lost { first, last } => ReadValue::Lost { first, last },
         Value::Gap => ReadValue::Gap,
-        Value::Status { revision, blob } => ReadValue::Status { revision, state: blob.state, wait_reason: blob.wait_reason.and_then(|reason| crate::store::operation::enum_text(&reason)), progress: blob.progress as f64 / 100.0, error: blob.error, local_url: blob.local_url, processing: blob.processing },
+        Value::Status { revision, blob } => ReadValue::Status { revision, state: blob.state, wait_reason: blob.wait_reason.and_then(|reason| crate::store::operation::enum_text(&reason)), progress: blob.progress as f64 / 100.0, error: blob.error, local_url: blob.local_url },
         Value::Ended(cause) => ReadValue::Ended { cause },
     })
 }
@@ -385,7 +385,7 @@ impl Database {
                 Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone(), node: None, wants: Vec::new(), deferred_rows: Vec::new(), query: None })
             }
             ReadRequest::Changes | ReadRequest::CableCloses | ReadRequest::Requests => Ok(View { kind: match request { ReadRequest::CableCloses => Kind::CableCloses, ReadRequest::Requests => Kind::Requests, _ => Kind::Changes }, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), node: None, wants: Vec::new(), deferred_rows: Vec::new(), query: None }),
-            ReadRequest::Operations => Ok(View { kind: Kind::Operations, model: String::new(), tables: std::iter::once(crate::store::operation::QUEUE_TABLE.to_string()).chain(self.db.specs().values().filter(|spec| spec.actions.iter().any(|action| action.processing.is_some())).map(|spec| crate::store::ddl::table_name(spec.key.as_str()))).collect(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), node: None, wants: Vec::new(), deferred_rows: Vec::new(), query: None }),
+            ReadRequest::Operations => Ok(View { kind: Kind::Operations, model: String::new(), tables: std::iter::once(crate::store::operation::QUEUE_TABLE.to_string()).collect(), local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), node: None, wants: Vec::new(), deferred_rows: Vec::new(), query: None }),
             ReadRequest::Blob { model, id, action } => Ok(View { kind: Kind::Blob, model: model.clone(), tables: vec![crate::store::ddl::table_name(model)], local: true, remote: false, live: false, scoped: Default::default(), reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: crate::store::transfer_key(model, id, action), node: None, wants: Vec::new(), deferred_rows: Vec::new(), query: None }),
         }
     }

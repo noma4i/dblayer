@@ -39,7 +39,7 @@ public func syncInfo(state: SyncState, error: OperationFailure? = nil) -> SyncIn
 public func uploadInfo(_ status: UploadStatus, progress: Double = 0, error: OperationFailure? = nil) -> UploadInfo {
   UploadInfo(wire: WireUpload(
     status: wireStatus(status), stage: "", sentBytes: 0, totalBytes: 0, progress: progress, batchProgress: progress, waitReason: nil, attempts: 0,
-    error: error.map { wireFailure(kind: $0.kind, reason: $0.reason, message: $0.message) }, localUrl: nil, processing: nil
+    error: error.map { wireFailure(kind: $0.kind, reason: $0.reason, message: $0.message) }, localUrl: nil
   ))
 }
 

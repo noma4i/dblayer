@@ -65,9 +65,6 @@ pub struct ActionDeclaration {
     /// The `returns` block: an object of nullable fields read from the answer by the normalizer of standalone operations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub returns: Option<FieldSpec>,
-    /// The server works on the file after `Confirmed`: the field, its terminal values and the field of the progress (M37).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub processing: Option<ProcessingDeclaration>,
     /// The attributes of the row that hold the width and height of the uploaded file as a user sees it (D-413).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dimensions: Option<DimensionsDeclaration>,
@@ -147,22 +144,6 @@ pub struct DimensionsDeclaration {
     pub height: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProcessingDeclaration {
-    pub field: String,
-    pub done: Vec<String>,
-    #[serde(default)]
-    pub progress: Option<String>,
-}
-
-impl ProcessingDeclaration {
-    /// `Some(progress)` while the value of `field` in `data` is not terminal; `None` when it is terminal or absent.
-    pub fn progress_in(&self, data: &Map<String, Value>) -> Option<Option<f64>> {
-        let value = read_path(data, &self.field).and_then(Value::as_str)?;
-        (!self.done.iter().any(|done| done == value)).then(|| self.progress.as_deref().and_then(|path| read_path(data, path)).and_then(Value::as_f64))
-    }
-}
-
 impl ActionDeclaration {
 
     pub fn new(name: &str, root_shape: RootShape) -> Self {
@@ -191,7 +172,6 @@ impl ActionDeclaration {
             root: None,
             lands: Vec::new(),
             returns: None,
-            processing: None,
             dimensions: None,
             removes_receiver: false,
             copies_receiver_to: None,

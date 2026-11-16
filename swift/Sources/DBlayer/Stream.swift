@@ -282,7 +282,6 @@ public struct TransferProgress: Sendable, Equatable {
   public let progress: Double
   public let error: String?
   public let localUrl: String?
-  public let processing: WireProcessing?
 }
 
 /// One item of the status of a transfer: a change, or the end of the stream with the cause of the core.
@@ -302,7 +301,7 @@ public struct UploadStatusStream: AsyncSequence, Sendable {
     public mutating func next() async -> TransferItem? {
       while let value = await inner.next() {
         switch value {
-        case let .status(revision, state, waitReason, progress, error, localUrl, processing): return .progress(TransferProgress(revision: revision, state: state, waitReason: waitReason, progress: progress, error: error, localUrl: localUrl, processing: processing))
+        case let .status(revision, state, waitReason, progress, error, localUrl): return .progress(TransferProgress(revision: revision, state: state, waitReason: waitReason, progress: progress, error: error, localUrl: localUrl))
         case let .ended(cause): return .ended(cause)
         default: continue
         }

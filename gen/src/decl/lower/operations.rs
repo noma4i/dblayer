@@ -267,26 +267,26 @@ pub(super) fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
     };
     let upload = line.opt(cx, "upload").and_then(|pair| match boolean(cx, &pair.value, "`upload`") {
         Some(true) => Some(pair_pos(pair)),
-        Some(false) => {
-            cx.fail(pair_pos(pair), "`upload: false` is the default: remove it");
+        _ => {
+            cx.fail(at(&pair.value), "`upload` is only `true`: omit it for the default");
             None
         }
-        None => None,
     });
     if upload.is_some() && kind != OperationKind::Custom {
         cx.fail(line.pos, format!("`{name}` is a standard operation: `upload: true` belongs to a named operation"));
     }
-    let expires_after = line.opt(cx, "expires_after").and_then(|pair| match &pair.value.item {
-        Value::Int(seconds) if *seconds > 0 => Some(*seconds as u64),
-        _ => {
-            cx.fail(pair_pos(pair), "`expires_after` is a whole number of seconds above 0");
-            None
+    let expires_after = line.opt(cx, "expires_after").and_then(|pair| {
+        let text = duration(cx, &pair.value, "`expires_after`")?;
+        let seconds = dblayer::runtime::parse_duration(&text)?.as_secs();
+        if seconds == 0 {
+            cx.fail(pair_pos(pair), "`expires_after` is a duration of 1 second or more");
         }
+        Some(seconds)
     });
     line.finish(cx);
     let lines = block(cx, call)?;
     let mut decl = OperationDecl {
-        pos: line.pos, name: name.clone(), kind, upload, expires_after, processing: None, dimensions: None, mutation: None, parameters: Vec::new(), variables: None, local: None, local_from: Vec::new(), local_sites: Vec::new(), wrap: None, response: None, match_by: None,
+        pos: line.pos, name: name.clone(), kind, upload, expires_after, dimensions: None, mutation: None, parameters: Vec::new(), variables: None, local: None, local_from: Vec::new(), local_sites: Vec::new(), wrap: None, response: None, match_by: None,
         on_failure: None, optimistic: None, upserts: Vec::new(), refetch: Vec::new(), returns: None, batch: None, length: None,
         removes_receiver: None, copies_receiver_to: None, scope_effects: Vec::new(),
     };
@@ -299,7 +299,7 @@ pub(super) fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
                 | (OperationKind::Create | OperationKind::Update | OperationKind::Custom, "parameter")
                 | (OperationKind::Create | OperationKind::Update, "local" | "refetch" | "match_by" | "on_failure")
                 | (OperationKind::Custom, "match_by" | "on_failure" | "optimistic" | "upsert" | "refetch" | "returns" | "batch" | "validates")
-                | (OperationKind::Custom, "processing" | "dimensions" | "removes_receiver" | "copies_receiver_to" | "joins_scope" | "leaves_scope")
+                | (OperationKind::Custom, "dimensions" | "removes_receiver" | "copies_receiver_to" | "joins_scope" | "leaves_scope")
         );
         if !allowed {
             cx.fail(Pos::of(item), format!("`{word}` does not apply to operation `{name}`"));
@@ -373,18 +373,6 @@ pub(super) fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl)
             line.no_options(cx);
             if let Some(arg) = exactly_one_arg(cx, &line, "a variable name like `wrap \"input\"`") {
                 decl.wrap = string(cx, arg, "the variable path");
-            }
-        }
-        "processing" => {
-            no_block(cx, call);
-            let done = line.opt(cx, "done").and_then(|pair| string_list(cx, &pair.value, "`done`"));
-            let progress = line.opt(cx, "progress").and_then(|pair| path(cx, &pair.value, "`progress`")).map(|found| found.item);
-            line.finish(cx);
-            let field = exactly_one_arg(cx, &line, "a field path like `processing \"status\", done: [\"READY\"]`").and_then(|arg| path(cx, arg, "the `processing` field")).map(|found| found.item);
-            if let (Some(field), Some(done)) = (field, done.filter(|done| !done.is_empty())) {
-                decl.processing = Some(ProcessingDecl { pos: line.pos, field, done, progress });
-            } else {
-                cx.fail(line.pos, "`processing` needs a field path and a non-empty `done: [...]`");
             }
         }
         "dimensions" => {

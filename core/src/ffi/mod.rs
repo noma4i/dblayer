@@ -73,7 +73,7 @@ pub use crate::transport::RequestReason;
 pub use read::{SessionStanding, SessionStatus, ReadClaim, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, RowEdit};
 pub use upload_rounds::{RoundJob, RoundJobsSink, RoundRefusal};
 pub use preparer::{PrepareKind, PrepareJob, PrepareOutcome, PrepareProgress, PreparePlan, Preparer, ProbeOutcome};
-pub use wire::{Cell, CellEntry, WireFailure, WireFile, WireModel, WireRow, WireSync, WireSyncState, WireProcessing, WireUpload, WireUploadStatus};
+pub use wire::{Cell, CellEntry, WireFailure, WireFile, WireModel, WireRow, WireSync, WireSyncState, WireUpload, WireUploadStatus};
 pub use queue::{OperationInfo, OperationQueueStatus};
 pub use crate::transport::{PutFile, PutReply};
 #[cfg(test)]

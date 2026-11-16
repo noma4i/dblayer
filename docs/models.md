@@ -63,7 +63,7 @@ Attribute options:
 | `MomentMedia` or `[MomentMedia]` as the type | named nested value or list, declared once by an attribute block                                                                                                                |
 | `from: "location.lat"`                       | read the value from a nested path of the response when the attribute name itself is absent                                                                                     |
 | `merge: :non_empty`                          | what a row from the server may replace in a stored value, see below                                                                                                            |
-| `local: true`                                | the server never sends the field and a refresh never replaces or clears it, see [local fields](#local-fields) (implies `optional`, so `optional: true` next to it is an error) |
+| `local: true`                                | the server never sends the field and a refresh never replaces or clears it, see [local fields](#local-fields) (implies `optional`; it takes no `default:` and no `merge:`) |
 
 For a top-level `from` field, an explicit null at any segment clears a nullable field or applies its non-null default.
 An absent path key leaves the stored field unchanged.
@@ -884,8 +884,8 @@ subscribe "PresenceSignal", from: "presenceSignal", id: "memberId", apply: { eff
 Removal sends no mutation. It closes queued writes without sending or rollback and destroys children declared with `dependent: :destroy`.
 Observers receive 1 change for the removal.
 Observing a model opens the shared subscription. The last cancel releases it.
-After a reconnect that lost events, the watched reads of the affected models are reread once, fresh or not. A load after the network returns covers gaps that began before that return. A connection break without a network change triggers a reread. A scope declared with `keep_on_gap: true` is the exception: after a break its window is not reread and does not change. Events after the reconnect, `refresh`, `load more` and the freshness time act as before. `keep_on_gap` needs `query` and cannot be combined with `refresh_on_foreground`.
-Node reads and remote scopes default to `5.minutes` when `freshness` is omitted.
+After a reconnect that lost events, the watched reads of the affected models are reread once, fresh or not. A load after the network returns covers gaps that began before that return. A connection break without a network change triggers a reread. A scope declared with `keep_on_gap: true` is the exception: after a break its window is not reread and does not change. Events after the reconnect, `refresh`, `load more` and the freshness time act as before. `keep_on_gap` needs `query` and cannot be combined with `refresh_on_foreground`. The flags `keep_on_gap`, `stable_order`, `refresh_on_foreground` and `members_complete` take only `true`: omit one for the default. A repeated `index`, `changes` or association name in one model stops the generator with the line.
+Node reads and remote scopes default to `5.minutes` when `freshness` is omitted: write `freshness` only for another value.
 A `preload` scope loads on its own after open with a session, sign-in, reset and network return. It starts no request while offline, signed out, or while the device saves power, and none while its answer is fresh. At open the scope first reads its saved window: a window whose saved data is still fresh sends no request. It waits for the end of power saving.
 The library reloads every `preload` scope when the window of the scope is stale. There is no call to reload all scopes at once.
 Expiration alone starts no request. A later reconnect or read checks freshness again.
@@ -1085,7 +1085,7 @@ Every operation that reaches the server waits in the durable queue while the net
 
 | Line                                      | Meaning                                                                                                                                                                                                       | Default                                     |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| `operation :typing, expires_after: 30 do` | whole seconds a queued operation may wait before it is sent. When the library picks it after that time, it rolls the optimistic change back and ends the operation `rejected` with the failure kind `expired` | none: the operation waits as long as needed |
+| `operation :typing, expires_after: 30.seconds do` | a duration (`30.seconds`, `2.hours`): how long a queued operation may wait before it is sent. When the library picks it after that time, it rolls the optimistic change back and ends the operation `rejected` with the failure kind `expired` | none: the operation waits as long as needed |
 
 ## Effects of an operation before the answer
 
@@ -1196,8 +1196,6 @@ A `parameter` inside a model operation takes the same types as an operation with
 A top-level `operation` outside a model takes only its name and block. Named options produce a generator error naming the option.
 
 For file uploads, name each operation and declare it with `operation :name, upload: true`. Each operation declares its own `response`, `upsert` and `parameter` lines. The sent mutation selects that declaration for the same response processing used by other actions. The generator emits `<operationName>Variables` on Swift and Kotlin when the operation has parameters. The steps of the upload (`createBlob`, multipart) are declared once per project in `uploads do ... end`, see [uploads](files.md#uploads).
-
-An upload operation can declare that the server works on the file after the transfer: `processing "status", done: ["READY"], progress: "percent"`. The first argument is the field of the model that holds the state, `done` lists its terminal values and `progress` names the field that holds the progress. While the field holds another value, the upload entry of the action carries the processing and its progress. A new value of the row, from an answer or an event, updates it. A terminal value removes it. A path or a `done` value that the model does not declare fails the generator with the file and line.
 
 An upload operation can name the integer attributes that hold the size of the uploaded file: `dimensions width: :width, height: :height`. The library reads the file during the call and writes both attributes with the first values of the row, and the final mutation gets them as variables of the same names. The size is the one a user sees: the result of `prepare`, or the source turned upright. A file the platform cannot read leaves both attributes empty.
 
