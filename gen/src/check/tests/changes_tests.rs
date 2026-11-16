@@ -247,3 +247,21 @@ fn cable_when_names_a_bool_attribute_of_one_singleton() {
         assert!(errors.iter().any(|error| error.message.contains(expected)), "{expected}: {errors:?}");
     }
 }
+
+/// D-485 M83: the event channel `changes` is one top-level declaration that every `changed_by` reads; inside a model, twice, or missing it stops the generator.
+#[test]
+fn changes_is_one_top_level_channel() {
+    let channel = "changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n";
+    let record = |inside: &str| format!("model Record do\n  attribute :title, :string\n{NODE}{inside}  changed_by \"RECORD\", via: :node\nend\n");
+    parse_models(&format!("{channel}{}", record(""))).unwrap_or_else(|errors| panic!("{errors:?}"));
+    let missed: Vec<String> = [
+        (record(&format!("  {channel}")), "unknown word `changes`"),
+        (format!("{channel}{channel}{}", record("")), "changes is declared twice"),
+        (record(""), "changes"),
+    ].into_iter().filter_map(|(source, expected)| match parse_models(&source) {
+        Ok(_) => Some(format!("accepted, wanted `{expected}`:\n{source}")),
+        Err(errors) if errors.iter().any(|error| error.message.contains(expected)) => None,
+        Err(errors) => Some(format!("wanted `{expected}`, got {errors:?}")),
+    }).collect();
+    assert!(missed.is_empty(), "{missed:#?}");
+}

@@ -126,13 +126,15 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aListOperationReturnsOneGeneratedResultPerElementOfTheRootList() async throws {
-    _ = try await Self.openOperationRig("Giphy", document: "query Giphy($type: String!, $limit: Int) { giphy(type: $type, limit: $limit) { id url isSticker } }", reply: #"{"data":{"giphy":[{"id":1,"url":"u1","isSticker":true},{"id":"2"}]}}"#)
+    let transport = try await Self.openOperationRig("Giphy", document: "query Giphy($type: String!, $limit: Int) { giphy(type: $type, limit: $limit) { id url isSticker } }", reply: #"{"data":{"giphy":[{"id":1,"url":"u1","isSticker":true},{"id":"2"}]}}"#)
 
     let result = try await Operations.giphyLoad(type: "gif")
 
     #expect(result.map(\.id) == ["1", "2"])
     #expect(result.map(\.url) == ["u1", nil])
     #expect(result.map(\.isSticker) == [true, nil])
+    let sent = transport.calls.filter { $0.operationName == "Giphy" }.map(\.variablesJson)
+    #expect(try JSONValue.read(sent[0]) == JSONValue.read(#"{"type":"gif"}"#), "an unset optional parameter is not sent (M85): \(sent[0])")
   }
 
   @MainActor

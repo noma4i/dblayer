@@ -125,13 +125,15 @@ class OperationCallTest {
 
     @Test
     fun aListOperationReturnsOneGeneratedResultPerElementOfTheRootList() = bounded {
-        rig("Giphy", "query Giphy(${'$'}type: String!, ${'$'}limit: Int) { giphy(type: ${'$'}type, limit: ${'$'}limit) { id url isSticker } }", """{"data":{"giphy":[{"id":1,"url":"u1","isSticker":true},{"id":"2"}]}}""")
+        val transport = rig("Giphy", "query Giphy(${'$'}type: String!, ${'$'}limit: Int) { giphy(type: ${'$'}type, limit: ${'$'}limit) { id url isSticker } }", """{"data":{"giphy":[{"id":1,"url":"u1","isSticker":true},{"id":"2"}]}}""")
 
         val result = withTimeout(5000) { Operations.giphyLoad(type = "gif") }
 
         assertEquals(listOf("1", "2"), result.map { it.id })
         assertEquals(listOf("u1", null), result.map { it.url })
         assertEquals(listOf(true, null), result.map { it.isSticker })
+        val sent = transport.calls.filter { it.operationName == "Giphy" }.map { it.variablesJson }
+        assertEquals(parseJson("""{"type":"gif"}"""), parseJson(sent[0]), "an unset optional parameter is not sent (M85)")
     }
 
     @Test

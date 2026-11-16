@@ -514,6 +514,11 @@ impl Rig {
 
     /// The app path with an existing world: a real session client on the fake HTTP of `first`, signed in as its account. `edit` changes the models before the database opens.
     pub(super) async fn signed_as(first: Arc<World>, invalid: bool, edit: impl FnOnce(&mut Value)) -> Rig {
+        Self::signed_with_operations(first, invalid, edit, Value::Array(Vec::new())).await
+    }
+
+    /// A signed rig whose specs also carry standalone operation specs.
+    pub(super) async fn signed_with_operations(first: Arc<World>, invalid: bool, edit: impl FnOnce(&mut Value), operations: Value) -> Rig {
         let switch = Switchable::new(Some(first.clone()), invalid);
         let mut encrypted = crate::transport::encrypted::tests::protocol_tests::config();
         encrypted.endpoints.session_operations.insert("login_link".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
@@ -521,7 +526,7 @@ impl Rig {
         let opener = OpenDatabase::new();
         let mut models: Value = serde_json::from_str(&plain_models()).unwrap();
         edit(&mut models);
-        let database = opener.open_with_clock(config(), crate::ffi::specs(models.to_string()), crate::ffi::OpenPorts { partial_operations: true, transport: Some(switch.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(WatchedHeld::default())), http: Some(first.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
+        let database = opener.open_with_clock(config(), json!({"models": models, "operations": operations}).to_string(), crate::ffi::OpenPorts { partial_operations: true, transport: Some(switch.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(WatchedHeld::default())), http: Some(first.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
         database.register_operations(plain_operations()).await.unwrap();
         database.set_online(true).await.unwrap();
         bound(database.session_call("login_link".into(), json!({"account": first.account()}).to_string())).await.unwrap();
