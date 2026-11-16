@@ -27,7 +27,7 @@ async fn a_refused_round_shows_its_reason_on_the_upload_until_the_next_round_is_
     let stand = Stand::new();
     let database = stand.open(None, &[CREATE_MOMENT]).await;
     let jobs = Arc::new(Jobs::default());
-    database.set_round_jobs(jobs.clone());
+    database.set_round_jobs(jobs.clone()).unwrap();
     database.set_online(false).await.unwrap();
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip");
@@ -70,7 +70,7 @@ async fn a_round_that_starts_with_nothing_unfinished_is_ended_at_once_before_any
     let declared: Vec<_> = STEPS.iter().map(|(name, document)| serde_json::json!({"name": name, "document": document})).collect();
     database.register_operations(serde_json::Value::Array(declared).to_string()).await.unwrap();
     let jobs = Arc::new(Jobs::default());
-    database.set_round_jobs(jobs.clone());
+    database.set_round_jobs(jobs.clone()).unwrap();
 
     database.round_started(0, 0, database.session_epoch());
 
@@ -89,7 +89,7 @@ async fn round_old_epoch_after_reopen_cannot_refuse_restored_upload() {
     let first = stand.open(Some(&path), &[CREATE_MOMENT]).await;
     first.set_online(false).await.unwrap();
     let old_jobs = Arc::new(Jobs::default());
-    first.set_round_jobs(old_jobs.clone());
+    first.set_round_jobs(old_jobs.clone()).unwrap();
     let old_epoch = first.session_epoch();
     let _receipt = bound(first.send(clip("Moment", r#"{"text":"clip"}"#, "upload_clip", &source, old_epoch))).await.unwrap();
     settled(&first, "the old job is scheduled", || !old_jobs.asked.lock().unwrap().is_empty()).await;
@@ -99,7 +99,7 @@ async fn round_old_epoch_after_reopen_cannot_refuse_restored_upload() {
     let reopened = stand.open(Some(&path), &[CREATE_MOMENT]).await;
     reopened.set_online(false).await.unwrap();
     let jobs = Arc::new(Jobs::default());
-    reopened.set_round_jobs(jobs.clone());
+    reopened.set_round_jobs(jobs.clone()).unwrap();
     let new_epoch = reopened.session_epoch();
     assert_ne!(old_epoch, new_epoch);
     settled(&reopened, "the restored upload schedules a new job", || !jobs.asked.lock().unwrap().is_empty()).await;
@@ -134,4 +134,13 @@ async fn round_old_epoch_after_reopen_cannot_refuse_restored_upload() {
     sink.enter_foreground(registration);
     settled(&reopened, "the current epoch can end the job", || jobs.asked.lock().unwrap().len() == 3).await;
     bound(reopened.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_round_jobs_sink_is_refused() {
+    let stand = Stand::new();
+    let database = stand.open(None, &[CREATE_MOMENT]).await;
+    database.set_round_jobs(Arc::new(Jobs::default())).unwrap();
+    assert!(matches!(database.set_round_jobs(Arc::new(Jobs::default())), Err(crate::ffi::DbError::Invalid { .. })));
+    database.close_now();
 }

@@ -19,7 +19,7 @@ private func stagedFile() throws -> URL {
 
 private func untilHeld(_ status: Cursor<UploadStatusStream>) async -> Bool {
   await status.first("the held status") { item in
-    if case let .progress(progress) = item { return progress.progress >= 0.99 }
+    if case let .progress(_, info) = item { return info.progress >= 0.99 }
     return false
   } != nil
 }
@@ -44,6 +44,24 @@ extension BridgeProbeTests {
     #expect(receipt.optimisticValue?.id == staged.id)
     #expect(receipt.optimisticValue?.text == "hello")
     #expect(try await receipt.confirmed().value?.id == "m77")
+    await DB.closeForCleanup()
+  }
+}
+
+private final class SilentJobs: RoundJobsSink, @unchecked Sendable {
+  func scheduleJob(job: RoundJob) {}
+  func endJob(roundId: UInt32) {}
+  func roundProgress(roundId: UInt32, fraction: Double) {}
+}
+
+extension BridgeProbeTests {
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func aSecondRoundJobsSinkIsRefused() async throws {
+    _ = try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: MockTransport())
+    let sink = SilentJobs()
+    _ = try? DB.database.setRoundJobs(sink: sink)
+    expectDbErrorNow("Invalid") { try DB.database.setRoundJobs(sink: sink) }
     await DB.closeForCleanup()
   }
 }

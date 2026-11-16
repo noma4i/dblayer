@@ -78,7 +78,7 @@ async fn a_round_running_at_the_session_exit_asks_for_the_job_of_the_next_epoch_
     declare_feed(&rig, &database).await;
     database.set_online(true).await.unwrap();
     let jobs = Arc::new(Jobs::default());
-    database.set_round_jobs(jobs.clone());
+    database.set_round_jobs(jobs.clone()).unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     load_rows(&database).await;
     let first = database.session_epoch();

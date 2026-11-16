@@ -273,9 +273,9 @@ fn every_round_job_carries_a_round_id_no_other_job_of_the_process_has() {
     }
     let asked = Arc::new(Asked(Default::default()));
     let slot = RoundJobsSlot::default();
-    assert!(slot.set(asked.clone()));
+    slot.set(asked.clone()).unwrap();
     let other = RoundJobsSlot::default();
-    assert!(other.set(asked.clone()));
+    other.set(asked.clone()).unwrap();
     slot.schedule_job(1, 9);
     other.schedule_job(1, 9);
     slot.schedule_job(2, 9);

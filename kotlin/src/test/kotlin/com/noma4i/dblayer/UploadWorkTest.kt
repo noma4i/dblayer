@@ -117,6 +117,22 @@ class UploadWorkTest {
         }
     }
 
+    @Test
+    fun aSecondRoundJobsSinkIsRefused() = bounded {
+        val database = openSigned(Config(null), modelsJSON, MockTransport())
+        try {
+            val sink = object : RoundJobsSink {
+                override fun scheduleJob(job: RoundJob) {}
+                override fun endJob(roundId: UInt) {}
+                override fun roundProgress(roundId: UInt, fraction: Double) {}
+            }
+            database.setRoundJobs(sink)
+            assertTrue(runCatching { database.setRoundJobs(sink) }.exceptionOrNull() is DbException.Invalid)
+        } finally {
+            closeForCleanup()
+        }
+    }
+
     /** boundary_round_orders (P-BND-08, D-176): the core issues one round id per process, so a late `EndJob` of round A leaves the pending job and the network of round B. */
     @Test
     fun aLateEndJobOfAnOldRoundLeavesThePendingJobAndTheNetworkOfTheNewRound() = bounded {

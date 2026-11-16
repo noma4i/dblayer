@@ -93,7 +93,7 @@ public enum DB {
     let ports = OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: endpoint?.absoluteString, executor: UrlSessionTransport(headers: headers), dataSyncDeclared: nil, preparer: SystemPreparer())
     let made = try await opener.open(config: Config(path: path), modelsJson: modelsJSON, options: OpenOptions(operations: definitions(operations)), ports: ports, observers: SystemObservers())
     #if os(iOS)
-    made.setRoundJobs(sink: UploadRounds(database: made, scheduler: SystemRoundScheduler(title: uploadTaskTitle)))
+    try made.setRoundJobs(sink: UploadRounds(database: made, scheduler: SystemRoundScheduler(title: uploadTaskTitle)))
     #endif
   }
 

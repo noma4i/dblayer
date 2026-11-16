@@ -7,7 +7,7 @@ use crate::owners::write::rounds::RoundId;
 use crate::owners::write::rounds_executor::RoundJobs;
 use crate::runtime::Epoch;
 
-use super::Database;
+use super::{Database, DbError};
 
 /// The round the platform schedules: the core numbers requests and rounds, the platform returns these values unchanged in `round_started`, `round_refused` and `round_ended`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
@@ -75,14 +75,17 @@ impl RoundJobs for RoundJobsSlot {
 }
 
 impl RoundJobsSlot {
-    pub(super) fn set(&self, sink: Arc<dyn RoundJobsSink>) -> bool { self.0.set(sink).is_ok() }
+    pub(super) fn set(&self, sink: Arc<dyn RoundJobsSink>) -> Result<(), DbError> {
+        self.0.set(sink).map_err(|_| DbError::Invalid { detail: "set_round_jobs: the sink of the round jobs is set once per database".into() })
+    }
 }
 
 #[uniffi::export]
 impl Database {
-    pub fn set_round_jobs(&self, sink: Arc<dyn RoundJobsSink>) { if self.jobs.set(sink) {
-            self.life.jobs_sink_set();
-        }
+    pub fn set_round_jobs(&self, sink: Arc<dyn RoundJobsSink>) -> Result<(), DbError> {
+        self.jobs.set(sink)?;
+        self.life.jobs_sink_set();
+        Ok(())
     }
 
     pub fn round_started(&self, request_id: u64, round_id: u32, epoch: u64) {
