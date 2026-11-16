@@ -345,6 +345,28 @@
         "wrap": null
       },
       {
+        "args": { "text": "string?" },
+        "client_mutation_id": false,
+        "correlate": [],
+        "has_cascade_dependents": false,
+        "has_optimistic": false,
+        "has_temp_row_retention": false,
+        "ignore_response": false,
+        "lands": [],
+        "local": [],
+        "members": [],
+        "mutation": "RetextMoment",
+        "name": "retext",
+        "on_failure": "rollback",
+        "optimistic": { "text": { "$arg": "text" } },
+        "refetch": [],
+        "root": null,
+        "root_shape": "upsert",
+        "upload": false,
+        "variables": { "momentId": "id", "text": "text" },
+        "wrap": null
+      },
+      {
         "args": { "note": "string?" },
         "client_mutation_id": false,
         "correlate": [],

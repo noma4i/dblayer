@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Show the status of a transfer stream as the `UploadInfo` of its row.
+- Replace a failed member of an earlier batch with a new upload of its key.
+- Throw `Invalid` when the round jobs sink of a database is set a second time.
+
+### Fixed
+
+- Discard a failed batch member after its batch confirmed without a row for it.
+
+### Removed
+
+- Remove `TransferProgress` from Swift and Kotlin.
+
 ## 6.41.0 - 2026-11-16
 
 ### Changed

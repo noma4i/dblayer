@@ -8,6 +8,7 @@ mutation CreateMoment($text: String, $media: JSON) { createMoment(text: $text, m
 mutation UpdateMoment($momentId: ID!, $text: String, $media: JSON) { updateMoment(momentId: $momentId, text: $text, media: $media) { id uuid userId text likedByMe media createdAt } }
 mutation DeleteMoment($momentId: ID!) { deleteMoment(momentId: $momentId) }
 mutation LikeMoment($momentId: ID!) { likeMoment(momentId: $momentId) { id uuid userId text likedByMe media createdAt } }
+mutation RetextMoment($momentId: ID!, $text: String) { retextMoment(momentId: $momentId, text: $text) { id uuid userId text likedByMe media createdAt } }
 mutation ShareMoment($momentId: ID!, $note: String) { shareMoment(momentId: $momentId, note: $note) { successMessage copies moment { id uuid userId text likedByMe media createdAt } } }
 mutation CreateContainer($title: String!, $shareUrl: String, $isPublic: Boolean, $shelves: [ContainerShelf!]) { createContainer(title: $title, shareUrl: $shareUrl, isPublic: $isPublic, shelves: $shelves) { id title shareUrl isPublic shelves } }
 mutation LedgerCreate { ledgerCreate { id scope } }

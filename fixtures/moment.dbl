@@ -70,6 +70,11 @@ model Moment do
     optimistic likedByMe: true
     refetch :feed
   end
+  operation :retext do
+    mutation "RetextMoment"
+    parameter :text, :string, null: true
+    variables momentId: :id
+  end
   operation :share do
     mutation "ShareMoment"
     optimistic false
