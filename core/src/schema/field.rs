@@ -116,7 +116,7 @@ impl FieldSpec {
     }
 
     pub fn variant(case: &str, type_name: &str, fields: Vec<FieldSpec>) -> Self {
-        Self { app_type: Some(type_name.to_string()), fields, ..Self::with_kind(case, FieldKind::Object) }
+        Self { app_type: Some(type_name.to_string()), from: Some(type_name.to_string()), fields, ..Self::with_kind(case, FieldKind::Object) }
     }
 
     pub fn enumeration(name: &str, values: &[&str]) -> Self {

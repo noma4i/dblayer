@@ -209,9 +209,6 @@ impl<'a> Run<'a> {
         } else if !self.named_fits(attribute, reached.name()) {
             problems.push(format!("`{word}` does not fit the schema type `{}`{}", reached.describe(), self.unmapped_hint(reached.name())));
         }
-        if matches!(attribute.ty, TypeRef::Enum | TypeRef::List(ListElement::Enum)) {
-            problems.extend(self.enum_problems(attribute, reached.name()));
-        }
         if attribute.is_union() && !matches!(self.schema.types.get(reached.name()), Some(TypeKind::Union(_))) && !self.schema.is_interface(reached.name()) {
             problems.push(format!("is not a union: schema type `{}` is not one", reached.name()));
         }
@@ -239,13 +236,6 @@ impl<'a> Run<'a> {
             "array" => structured || builtin,
             _ => true,
         }
-    }
-
-    pub(super) fn enum_problems(&self, attribute: &AttributeDecl, named: &str) -> Vec<String> {
-        let Some(TypeKind::Enum(known)) = self.schema.types.get(named) else { return Vec::new() };
-        let Some(values) = &attribute.values else { return Vec::new() };
-        let missing: Vec<&str> = values.iter().map(String::as_str).filter(|value| !known.iter().any(|candidate| candidate == value)).collect();
-        if missing.is_empty() { Vec::new() } else { vec![format!("lists values {} that enum `{named}` does not have", missing.join(", "))] }
     }
 
     pub(super) fn check_associations(&mut self, node: &ModelDecl, element: &str, selects: Vec<&'a Select>) {

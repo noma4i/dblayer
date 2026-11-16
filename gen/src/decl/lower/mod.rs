@@ -375,7 +375,7 @@ pub(crate) fn lower_calls(nodes: &[OperationNode], errors: &mut Vec<Found>) -> V
     for node in nodes {
         let mut cx = Cx { file: node.file, errors, schema: None, memory: false };
         let pos = Pos { line: node.line, column: node.column };
-        let mut decl = CallDecl { name: node.name.clone(), pos, file: node.file, kind: None, wrap: None, parameters: Vec::new(), returns: None, returns_pos: pos, shape: None };
+        let mut decl = CallDecl { name: node.name.clone(), pos, file: node.file, kind: None, wrap: None, parameters: Vec::new(), answer: None, shape: None };
         let mut seen: Vec<&str> = Vec::new();
         let mut named = 0;
         for call in &node.body {
@@ -399,15 +399,16 @@ pub(crate) fn lower_calls(nodes: &[OperationNode], errors: &mut Vec<Found>) -> V
                 }
                 "parameter" => decl.parameters.extend(parameter(&mut cx, call)),
                 "returns" => {
-                    decl.returns_pos = line.pos;
-                    decl.returns = returns(&mut cx, call, false);
+                    if let Some(pos) = returns(&mut cx, call) {
+                        cx.fail(pos, "an operation without a model always answers with the type of its document: delete `returns`");
+                    }
                 }
                 "response" => match response(&mut cx, call) {
                     Some(ResponseDecl::Read(ResponseRead { from: None, shape: Some(shape), pos })) => decl.shape = Some((shape, pos)),
                     Some(_) => cx.fail(line.pos, "an operation without a model has `response shape: :list` only"),
                     None => {}
                 },
-                other => cx.fail(line.pos, format!("unknown line `{other}` in an operation, expected one of mutation, query, parameter, returns, response")),
+                other => cx.fail(line.pos, format!("unknown line `{other}` in an operation, expected one of mutation, query, parameter, response")),
             }
         }
         if named != 1 {

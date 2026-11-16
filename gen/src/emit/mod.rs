@@ -422,7 +422,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
     out.push_str(&edge_types);
     let spread = with_shared_in_variants(models);
     let types = declared_types(&spread);
-    for declaration in &types { if matches!(declaration.kind, FieldKind::Union | FieldKind::UnionArray) { emit_swift_union(&mut out, declaration); } else { emit_swift_type(&mut out, declaration, &types, true); } }
+    for declaration in &types { if matches!(declaration.kind, FieldKind::Union | FieldKind::UnionArray) { emit_swift_union(&mut out, declaration, true); } else { emit_swift_type(&mut out, declaration, &types, true); } }
     emit_swift_enums(&mut out, &decls);
     emit_swift_inputs(&mut out, &schema_types.inputs);
     emit_swift_operations(&mut out, operations);
@@ -581,7 +581,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
     out.push_str(&edge_types);
     let spread = with_shared_in_variants(models);
     let types = declared_types(&spread);
-    for declaration in &types { if matches!(declaration.kind, FieldKind::Union | FieldKind::UnionArray) { emit_kotlin_union(&mut out, declaration); } else { emit_kotlin_type(&mut out, declaration, &types, true); } }
+    for declaration in &types { if matches!(declaration.kind, FieldKind::Union | FieldKind::UnionArray) { emit_kotlin_union(&mut out, declaration, true); } else { emit_kotlin_type(&mut out, declaration, &types, true); } }
     emit_kotlin_enums(&mut out, &decls);
     emit_kotlin_inputs(&mut out, &schema_types.inputs);
     emit_kotlin_operations(&mut out, operations);

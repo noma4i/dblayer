@@ -101,7 +101,7 @@ fn members_fault<'a>(groups: &[&'a [FieldSpec]], object: &Map<String, Value>, pa
 impl FieldSpec {
     fn union_fault<'a>(&'a self, object: &Map<String, Value>, path: &str, typed: bool, declared: &mut Declared<'a>) -> Option<ValueFault> {
         let typename = object.get(TYPENAME).and_then(Value::as_str)?;
-        let variant = self.fields.iter().find(|variant| variant.app_type.as_deref() == Some(typename))?;
+        let variant = self.fields.iter().find(|variant| variant.from.as_deref() == Some(typename))?;
         members_fault(&[&self.shared, &variant.fields], object, path, typed, declared)
     }
 

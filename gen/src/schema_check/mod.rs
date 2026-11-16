@@ -8,6 +8,7 @@ use dblayer::schema::NodeRead;
 use dblayer::value::ScalarKind;
 use crate::{FileError, ParseError};
 
+mod answer;
 mod documents;
 #[cfg(test)]
 mod tests;
@@ -55,7 +56,8 @@ pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], 
     if !mismatched.is_empty() {
         return Err(mismatched);
     }
-    let inferred = infer::infer(schema, &documents, nodes, standalone);
+    let mut inferred = infer::infer(schema, &documents, nodes, standalone);
+    inferred.extend(answer::infer(schema, scalars, &documents, nodes, standalone));
     if !inferred.is_empty() {
         return Err(inferred.into_iter().map(|(file, pos, message)| FileError { file: files[file].clone(), error: ParseError::new(pos.line, pos.column, message) }).collect());
     }

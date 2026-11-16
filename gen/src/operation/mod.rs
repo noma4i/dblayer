@@ -1,10 +1,8 @@
 use std::collections::HashSet;
 
-use dblayer::schema::{FieldKind, FieldSpec, ModelSpec};
-use dblayer::value::ScalarKind;
+use dblayer::schema::{FieldSpec, ModelSpec};
 
-use crate::naming::camel;
-use crate::decl::{AttributeBlock, AttributeDecl, CallDecl, ListElement, ResponseShape, TypeRef};
+use crate::decl::{CallDecl, ResponseShape};
 use crate::ParseError;
 
 type Found = (usize, ParseError);
@@ -44,22 +42,6 @@ pub(crate) fn display_kind(kind: &str) -> String {
     }
 }
 
-pub(crate) fn resolve_result_enums((models, operations): (&mut [ModelSpec], &mut [OperationCall]), schema: Option<&crate::schema_check::Schema>) -> Result<(), String> {
-    fn walk(field: &mut FieldSpec, schema: Option<&crate::schema_check::Schema>) -> Result<(), String> {
-        if let (true, Some(name)) = (matches!(field.kind, FieldKind::Enum { .. } | FieldKind::List { .. }), field.app_type.clone()) {
-            let Some(schema) = schema else { return Err(format!("result field `{}` names the schema enum `{name}`: pass --schema <schema.graphql> so the generator can read it", field.name)) };
-            let Some(crate::schema_check::TypeKind::Enum(known)) = schema.types.get(&name) else { return Err(format!("result field `{}` names `{name}`, which is not an enum of the schema", field.name)) };
-            match &mut field.kind {
-                FieldKind::Enum { values } => *values = known.clone(),
-                _ => field.values = known.clone(),
-            }
-        }
-        field.fields.iter_mut().try_for_each(|inner| walk(inner, schema))
-    }
-    let action_results = models.iter_mut().flat_map(|model| model.actions.iter_mut()).flat_map(|action| action.returns.as_mut());
-    action_results.chain(operations.iter_mut().flat_map(|operation| operation.result.as_mut())).try_for_each(|root| walk(root, schema))
-}
-
 pub(crate) fn schema_type_names(models: &[ModelSpec], operations: &[OperationCall]) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     let model_args = models.iter().flat_map(|model| &model.actions).flat_map(|action| action.args.iter());
@@ -79,50 +61,6 @@ pub(crate) fn schema_type_names(models: &[ModelSpec], operations: &[OperationCal
     }
     names
 }
-
-pub(crate) fn result_fields(attributes: &[AttributeDecl], file: usize, errors: &mut Vec<Found>) -> Vec<FieldSpec> {
-    let mut fields: Vec<FieldSpec> = Vec::new();
-    for attribute in attributes {
-        let fail = |message: &str| (file, ParseError::new(attribute.pos.line, attribute.pos.column, message));
-        if fields.iter().any(|field| field.name == attribute.name) {
-            errors.push(fail(&format!("returns attribute `{}` is declared twice", attribute.name)));
-            continue;
-        }
-        let name = attribute.name.as_str();
-        let nested = |errors: &mut Vec<Found>, mut field: FieldSpec, type_name: &str| {
-            field.app_type = Some(type_name.to_string());
-            if let AttributeBlock::Fields(inner) = &attribute.block {
-                field.fields = result_fields(inner, file, errors);
-            }
-            field
-        };
-        let field: Result<FieldSpec, &str> = match (&attribute.ty, &attribute.block) {
-            (TypeRef::Json, AttributeBlock::None) => Ok(FieldSpec::raw(name)),
-            (TypeRef::Scalar(kind), AttributeBlock::None) if *kind != ScalarKind::Date => Ok(FieldSpec::scalar(name, *kind)),
-            (TypeRef::List(ListElement::Scalar(kind)), AttributeBlock::None) if *kind != ScalarKind::Date => Ok(FieldSpec::list(name, *kind)),
-            (TypeRef::Named(type_name), AttributeBlock::None) => {
-                let mut field = FieldSpec::enumeration(name, &[]);
-                field.app_type = Some(type_name.clone());
-                Ok(field)
-            }
-            (TypeRef::NamedList(type_name), AttributeBlock::None) => {
-                let mut field = FieldSpec::list(name, ScalarKind::Str);
-                field.app_type = Some(type_name.clone());
-                Ok(field)
-            }
-            (TypeRef::Named(type_name), AttributeBlock::Fields(_)) => Ok(nested(errors, FieldSpec::object(name), type_name)),
-            (TypeRef::NamedList(type_name), AttributeBlock::Fields(_)) => Ok(nested(errors, FieldSpec::array(name), type_name)),
-            _ => Err(RESULT_TYPES),
-        };
-        match field {
-            Ok(field) => fields.push(field.nullable()),
-            Err(message) => errors.push(fail(message)),
-        }
-    }
-    fields
-}
-
-const RESULT_TYPES: &str = "a returned attribute is :bool, :int, :num, :string, :id, :json, [:id] or another scalar list, the name of a schema enum (alone or in a list), or a named object with a `do ... end` block (alone or in a list)";
 
 pub(crate) fn build(nodes: &[CallDecl], errors: &mut Vec<Found>) -> Vec<OperationCall> {
     let mut seen = HashSet::new();
@@ -147,17 +85,11 @@ pub(crate) fn build(nodes: &[CallDecl], errors: &mut Vec<Found>) -> Vec<Operatio
             }
             call.args.push((parameter.name.clone(), parameter.ty.kind_text(parameter.null)));
         }
-        if let Some(attributes) = &node.returns {
-            let type_name = format!("{}Result", camel(&call.name));
-            let mut root = FieldSpec::object(&call.name);
-            root.app_type = Some(type_name);
-            root.fields = result_fields(attributes, node.file, errors);
-            call.result = Some(root);
-        }
+        call.result = node.answer.clone();
         if let Some((ResponseShape::List, pos)) = &node.shape {
             call.list = true;
-            if node.returns.is_none() {
-                errors.push(fail(*pos, "`response shape: :list` needs a `returns` block that describes one element".to_string()));
+            if node.answer.is_none() {
+                errors.push(fail(*pos, "`response shape: :list` needs the document to select the fields of one element".to_string()));
             }
         }
         built.push(call);

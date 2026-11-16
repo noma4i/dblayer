@@ -46,7 +46,7 @@ fn items(value: &Value, path: &str, read_item: impl Fn(&Value, &str) -> Result<V
 fn union(value: &Value, field: &FieldSpec, path: &str) -> Result<Value, String> {
     let Some(typename) = value.get(TYPENAME).and_then(Value::as_str) else { return Err(format!("{path}: the union value has no {TYPENAME}")) };
     let mut tagged = Map::from_iter([(TYPENAME.to_string(), Value::String(typename.to_string()))]);
-    if let Some(variant) = field.fields.iter().find(|variant| variant.app_type.as_deref() == Some(typename)) {
+    if let Some(variant) = field.fields.iter().find(|variant| variant.from.as_deref() == Some(typename)) {
         if let Value::Object(members) = fields(value, field.shared.iter().chain(&variant.fields), path)? { tagged.extend(members); }
     }
     Ok(Value::Object(tagged))

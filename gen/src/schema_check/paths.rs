@@ -158,27 +158,6 @@ impl<'a> Run<'a> {
                 self.require_membership_fields(model, Spot { file: node.file, at: landing.from.pos, label: "response field" }, operation, &landing.from.item, &reached.selects);
             }
         }
-        let Some(result) = &action.returns else { return };
-        let payload = root.map(|found| found.item.split('.').next().unwrap_or_default()).or_else(|| declared.root.as_ref().map(|found| found.key.as_str()));
-        let Some(payload) = payload else { return };
-        let Some(Ok(reached)) = self.follow_quiet(operation, None, &[payload]) else { return };
-        self.check_result(node.file, operation, &[payload], &reached.selects, result);
-    }
-
-    pub(super) fn check_standalone_result(&mut self, file: usize, operation: &str, result: &[AttributeDecl]) {
-        let Some(payload) = self.operations.named.get(operation).and_then(|declared| declared.root.as_ref()).map(|root| root.key.as_str()) else { return };
-        let Some(Ok(reached)) = self.follow_quiet(operation, None, &[payload]) else { return };
-        self.check_result(file, operation, &[payload], &reached.selects, result);
-    }
-
-    fn check_result(&mut self, file: usize, operation: &str, prefix: &[&str], starts: &[&'a Select], attributes: &[AttributeDecl]) {
-        for attribute in attributes {
-            let Some(found) = self.follow_inside(Spot { file, at: attribute.pos, label: "returns" }, operation, prefix, starts, &attribute.name) else { continue };
-            if let AttributeBlock::Fields(inner) = &attribute.block {
-                let deeper: Vec<&str> = prefix.iter().copied().chain([attribute.name.as_str()]).collect();
-                self.check_result(file, operation, &deeper, &found.selects, inner);
-            }
-        }
     }
 
     fn check_subscription_paths(&mut self, node: &'a ModelDecl, subscription: &'a SubscribeDecl, label: &str) {

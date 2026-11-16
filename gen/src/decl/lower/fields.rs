@@ -6,7 +6,6 @@ pub(super) enum Site {
     Nested,
     Ephemeral,
     Edge,
-    Returns,
 }
 
 const SCALARS: [(&str, ScalarKind); 6] = [
@@ -120,7 +119,7 @@ pub(super) fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> 
     if let Some(reached) = &schema_field {
         ty_owner = Owner(Some(reached.name().to_string()));
     }
-    let schema_null = site != Site::Returns && schema_field.as_ref().is_some_and(|reached| reached.nullable);
+    let schema_null = schema_field.as_ref().is_some_and(|reached| reached.nullable);
     if let (Some(schema), Some(type_name), true) = (cx.schema, &owner.0, !local && !derived && needs_inference(call)) {
         let mut ty = Ty { kind: TyKind::Named(type_name.clone()), nullable: false, has_default: false };
         let mut failed = None;
@@ -252,10 +251,12 @@ pub(super) fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> 
     if local && !matches!(site, Site::Model) {
         cx.fail(line.pos, "`local` applies only to a top-level attribute");
     }
+    let mut values_at = None;
     if let Some(pair) = line.opt(cx, "values") {
         if !matches!(decl.ty, TypeRef::Enum | TypeRef::List(ListElement::Enum)) {
             cx.fail(pair_pos(pair), "`values:` belongs to `:enum` and `[:enum]`");
         } else {
+            values_at = Some(pair_pos(pair));
             decl.values = string_list(cx, &pair.value, "`values`");
         }
     }
@@ -286,22 +287,27 @@ pub(super) fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> 
             cx.fail(default.pos, "json `parse: :json` default must be an object or null");
         }
     }
-    if matches!(decl.ty, TypeRef::Enum | TypeRef::List(ListElement::Enum)) && decl.values.is_none() && site != Site::Returns {
-        cx.fail(line.pos, format!("enum attribute `{name}` needs `values:`"));
+    if matches!(decl.ty, TypeRef::Enum | TypeRef::List(ListElement::Enum)) {
+        let known = cx.schema.and_then(|schema| {
+            let named = [schema_field.as_ref().map(|reached| reached.name()), decl.as_name.as_deref()];
+            named.into_iter().flatten().find_map(|candidate| match schema.types.get(candidate) {
+                Some(TypeKind::Enum(values)) => Some((candidate.to_string(), values.clone())),
+                _ => None,
+            })
+        });
+        match (known, values_at) {
+            (Some((type_name, _)), Some(pos)) => cx.fail(pos, format!("enum `{type_name}` takes its values from the schema; omit `values:`")),
+            (Some((_, values)), None) => decl.values = Some(values),
+            (None, _) if decl.values.is_none() => cx.fail(line.pos, format!("enum attribute `{name}` needs `values:`")),
+            (None, _) => {}
+        }
     }
     attribute_block(cx, call, &mut decl, site, &ty_owner);
-    check_site(cx, &decl, site);
     Some(decl)
 }
 
 pub(super) fn decl_is_union_block(call: &Call) -> bool {
     call.block.as_ref().is_some_and(|block| block.iter().any(|child| matches!(child.word.as_str(), "on" | "shared")))
-}
-
-pub(super) fn check_site(cx: &mut Cx, decl: &AttributeDecl, site: Site) {
-    if site == Site::Returns && (decl.null || decl.optional || decl.default.is_some() || decl.from.is_some() || decl.local) {
-        cx.fail(decl.pos, format!("returns attribute `{}`: every returned attribute is nullable and read by name, so `null`, `optional`, `default`, `from` and `local` do not apply", decl.name));
-    }
 }
 
 pub(super) fn string_list(cx: &mut Cx, node: &Node<Value>, what: &str) -> Option<Vec<String>> {
@@ -333,9 +339,8 @@ pub(super) fn attribute_block(cx: &mut Cx, call: &Call, decl: &mut AttributeDecl
         TypeRef::Named(name) | TypeRef::NamedList(name) => name.clone(),
         _ => String::new(),
     };
-    let nested_site = if site == Site::Returns { Site::Returns } else { Site::Nested };
     if decl_is_union_block(call) {
-        if site == Site::Returns || site == Site::Edge || site == Site::Ephemeral {
+        if site == Site::Edge || site == Site::Ephemeral {
             cx.fail(Pos::of(call), "a union is declared only on a model attribute");
         }
         if let Some(default) = &decl.default {
@@ -347,7 +352,7 @@ pub(super) fn attribute_block(cx: &mut Cx, call: &Call, decl: &mut AttributeDecl
     if children.is_empty() {
         cx.fail(Pos::of(call), format!("`{type_label}` block needs at least 1 attribute"));
     }
-    decl.block = AttributeBlock::Fields(children.iter().filter_map(|child| attribute(cx, child, nested_site, owner)).collect());
+    decl.block = AttributeBlock::Fields(children.iter().filter_map(|child| attribute(cx, child, Site::Nested, owner)).collect());
 }
 
 pub(super) fn union_block(cx: &mut Cx, children: &[Call], name: &str, owner: &Owner) -> AttributeBlock {

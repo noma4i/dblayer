@@ -1,5 +1,5 @@
 
-use dblayer::schema::{MergeRule, NodeRead, OnFailure, Storage};
+use dblayer::schema::{FieldSpec, MergeRule, NodeRead, OnFailure, Storage};
 use dblayer::value::{ScalarKind, SortDirection};
 use serde_json::Value as Json;
 
@@ -460,7 +460,8 @@ pub struct OperationDecl {
     pub optimistic: Option<(OptimisticDecl, Pos)>,
     pub upserts: Vec<UpsertDecl>,
     pub refetch: Vec<RefetchDecl>,
-    pub returns: Option<Vec<AttributeDecl>>,
+    pub returns: Option<Pos>,
+    pub answer: Option<FieldSpec>,
     pub batch: Option<BatchDecl>,
     pub length: Option<LengthDecl>,
     pub removes_receiver: Option<Pos>,
@@ -536,8 +537,7 @@ pub struct CallDecl {
     pub kind: Option<(CallKind, String, Pos)>,
     pub wrap: Option<String>,
     pub parameters: Vec<ParameterDecl>,
-    pub returns: Option<Vec<AttributeDecl>>,
-    pub returns_pos: Pos,
+    pub answer: Option<FieldSpec>,
     pub shape: Option<(ResponseShape, Pos)>,
 }
 

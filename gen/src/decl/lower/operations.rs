@@ -234,20 +234,15 @@ pub(super) fn validates(cx: &mut Cx, call: &Call) -> Option<LengthDecl> {
     Some(LengthDecl { pos: line.pos, attribute, minimum: minimum?, maximum: maximum? })
 }
 
-pub(super) fn returns(cx: &mut Cx, call: &Call, model_operation: bool) -> Option<Vec<AttributeDecl>> {
+pub(super) fn returns(cx: &mut Cx, call: &Call) -> Option<Pos> {
     let mut line = Line::of(call);
     line.no_args(cx);
     line.no_options(cx);
-    let children = block(cx, call)?;
-    if children.is_empty() {
-        cx.fail(line.pos, "`returns` block needs at least 1 attribute");
+    if call.block.is_some() {
+        cx.fail(line.pos, "`returns` takes no block: the answer type comes from the document");
+        return None;
     }
-    let owner = Owner(None);
-    let found: Vec<AttributeDecl> = children.iter().filter_map(|child| attribute(cx, child, Site::Returns, &owner)).collect();
-    if model_operation {
-        crate::operation::result_fields(&found, cx.file, cx.errors);
-    }
-    Some(found)
+    Some(line.pos)
 }
 
 pub(super) fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
@@ -287,7 +282,7 @@ pub(super) fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
     let lines = block(cx, call)?;
     let mut decl = OperationDecl {
         pos: line.pos, name: name.clone(), kind, upload, expires_after, dimensions: None, mutation: None, parameters: Vec::new(), variables: None, local: None, local_from: Vec::new(), local_sites: Vec::new(), wrap: None, response: None, match_by: None,
-        on_failure: None, optimistic: None, upserts: Vec::new(), refetch: Vec::new(), returns: None, batch: None, length: None,
+        on_failure: None, optimistic: None, upserts: Vec::new(), refetch: Vec::new(), returns: None, answer: None, batch: None, length: None,
         removes_receiver: None, copies_receiver_to: None, scope_effects: Vec::new(),
     };
     let mut seen: Vec<&str> = Vec::new();
@@ -506,7 +501,7 @@ pub(super) fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl)
                 decl.scope_effects.push(ScopeEffectDecl { pos: line.pos, joins: call.word == "joins_scope", scope, model, rows, with, order, orders });
             }
         }
-        "returns" => decl.returns = returns(cx, call, true),
+        "returns" => decl.returns = returns(cx, call),
         "batch" => decl.batch = batch(cx, call),
         "validates" => decl.length = validates(cx, call),
         _ => {}

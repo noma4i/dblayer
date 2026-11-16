@@ -167,7 +167,7 @@ fn describe(field: &FieldSpec, out: &mut String) {
                 members_text_of(&field.shared, out, "s");
             }
             for variant in &field.fields {
-                out.push_str(variant.app_type.as_deref().unwrap_or_default());
+                out.push_str(variant.from.as_deref().unwrap_or_default());
                 out.push('=');
                 describe(variant, out);
                 out.push(',');
@@ -252,7 +252,7 @@ fn member_cells<'a>(members: &'a [FieldSpec], object: &Map<String, Value>, types
 
 fn union_cell<'a>(field: &'a FieldSpec, value: &Value, types: &mut Types<'a>) -> Cell {
     let Some(typename) = value.get(TYPENAME).and_then(Value::as_str) else { return Cell::Null };
-    let members = field.fields.iter().find(|variant| variant.app_type.as_deref() == Some(typename)).zip(value.as_object());
+    let members = field.fields.iter().find(|variant| variant.from.as_deref() == Some(typename)).zip(value.as_object());
     let body = members.map_or(Cell::Null, |(variant, object)| Cell::Seq { items: member_cells(&field.shared, object, types).into_iter().chain(member_cells(&variant.fields, object, types)).collect() });
     Cell::Seq { items: vec![Cell::Text { value: typename.to_string() }, body] }
 }

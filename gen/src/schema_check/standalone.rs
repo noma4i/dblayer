@@ -12,9 +12,6 @@ impl Run<'_> {
         if operation.kind != word {
             self.fail(node.file, pos, format!("operation `{name}` is a {}, not a {word}", operation.kind));
         }
-        if let Some(result) = &node.returns {
-            self.check_standalone_result(node.file, name, result);
-        }
         let accepted = infer::input_of(self.schema, operation, node.wrap.as_deref());
         for arg in &node.parameters {
             let Some(ty) = accepted.get(&arg.name) else {

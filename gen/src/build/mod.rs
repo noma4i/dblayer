@@ -369,12 +369,7 @@ fn build_operation(operation: &OperationDecl, node: &ModelDecl) -> ActionDeclara
         _ => refetch.scope.clone(),
     }).collect();
     action.lands = operation.upserts.iter().map(|upsert| ActionLanding { model: upsert.model.clone(), root: upsert.from.item.clone() }).collect();
-    action.returns = operation.returns.as_ref().map(|attributes| {
-        let mut root = FieldSpec::object(&operation.name);
-        root.app_type = Some(format!("{owner}{}Result", crate::naming::camel(&operation.name)));
-        root.fields = crate::operation::result_fields(attributes, 0, &mut Vec::new());
-        root
-    });
+    action.returns = operation.answer.clone();
     if let (Some(batch), Some(length)) = (&operation.batch, &operation.length) {
         action.batch = Some(dblayer::schema::UploadBatchDeclaration {
             min: length.minimum,

@@ -1,9 +1,10 @@
 use std::fmt::Write;
 
-use dblayer::schema::FieldSpec;
+use dblayer::schema::{FieldKind, FieldSpec};
 
 use crate::operation::OperationCall;
 use super::nested::{emit_kotlin_type, emit_swift_type};
+use super::unions::{emit_kotlin_union, emit_swift_union};
 
 use super::{arg_type, identifier, name};
 fn declared(root: &FieldSpec) -> Vec<&FieldSpec> {
@@ -28,14 +29,22 @@ fn returned(operation: &OperationCall, swift: bool) -> String {
     }
 }
 
+fn emit_swift_declared(out: &mut String, declaration: &FieldSpec, types: &[&FieldSpec]) {
+    if matches!(declaration.kind, FieldKind::Union | FieldKind::UnionArray) { emit_swift_union(out, declaration, false); } else { emit_swift_type(out, declaration, types, false); }
+}
+
+fn emit_kotlin_declared(out: &mut String, declaration: &FieldSpec, types: &[&FieldSpec]) {
+    if matches!(declaration.kind, FieldKind::Union | FieldKind::UnionArray) { emit_kotlin_union(out, declaration, false); } else { emit_kotlin_type(out, declaration, types, false); }
+}
+
 pub(super) fn emit_swift_returns(out: &mut String, root: &FieldSpec) {
     let types = declared(root);
-    for declaration in &types { emit_swift_type(out, declaration, &types, false); }
+    for declaration in &types { emit_swift_declared(out, declaration, &types); }
 }
 
 pub(super) fn emit_kotlin_returns(out: &mut String, root: &FieldSpec) {
     let types = declared(root);
-    for declaration in &types { emit_kotlin_type(out, declaration, &types, false); }
+    for declaration in &types { emit_kotlin_declared(out, declaration, &types); }
 }
 
 pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCall]) {
@@ -43,7 +52,7 @@ pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCal
     for operation in operations {
         let Some(root) = &operation.result else { continue };
         let types = declared(root);
-        for declaration in &types { emit_swift_type(out, declaration, &types, false); }
+        for declaration in &types { emit_swift_declared(out, declaration, &types); }
     }
     writeln!(out, "public enum Operations {{").unwrap();
     for operation in operations {
@@ -70,7 +79,7 @@ pub(super) fn emit_kotlin_operations(out: &mut String, operations: &[OperationCa
     for operation in operations {
         let Some(root) = &operation.result else { continue };
         let types = declared(root);
-        for declaration in &types { emit_kotlin_type(out, declaration, &types, false); }
+        for declaration in &types { emit_kotlin_declared(out, declaration, &types); }
     }
     writeln!(out, "object Operations {{").unwrap();
     for operation in operations {

@@ -162,7 +162,7 @@ impl Builder {
                         let name = column_name(&child.name);
                         members.push(self.member(child, &MemberKey::nested(child), &format!("{base}__{case}__{name}"), &format!("{path}__{case}__{name}"))?);
                     }
-                    variants.push(Variant { typename: variant.app_type.clone()?, members });
+                    variants.push(Variant { typename: variant.from.clone()?, members });
                 }
                 Some(Member::Union { key: key.clone(), present: base.to_string(), at: 0, shared, variants, null })
             }

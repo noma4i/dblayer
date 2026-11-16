@@ -296,7 +296,7 @@ impl ModelSpec {
     fn check_unions(&self) -> Result<(), DeclarationError> {
         for field in self.fields.iter().filter(|field| matches!(field.kind, FieldKind::Union | FieldKind::UnionArray)) {
             let cases: Vec<&str> = field.fields.iter().map(|variant| variant.name.as_str()).collect();
-            let typenames: Vec<&str> = field.fields.iter().filter_map(|variant| variant.app_type.as_deref()).collect();
+            let typenames: Vec<&str> = field.fields.iter().filter_map(|variant| variant.from.as_deref()).collect();
             if !duplicates(&cases).is_empty() || !duplicates(&typenames).is_empty() {
                 return Err(DeclarationError::DuplicateVariant(field.name.clone()));
             }

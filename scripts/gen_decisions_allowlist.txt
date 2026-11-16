@@ -5,7 +5,7 @@ gen/src/build/mod.rs	decl::AssociationKind::HasMany | decl::AssociationKind::Ref
 gen/src/build/mod.rs	stale_time: scope.freshness.as_ref().map_or(DEFAULT_FRESHNESS.to_string(), |fresh| fresh.expires_in.item.clone()),	M21
 gen/src/check/enums.rs	errors.push(at(node.file, site_pos(node, site).unwrap_or(node.pos), message));	M55
 gen/src/check/scope.rs	report(scope.paginate.as_ref().map_or(scope.pos, |paginate| paginate.pos), format!("scope `{name}`: `paginate` and `response shape: :list` cannot be used together"));	M55
-gen/src/decl/lower/fields.rs	decl.block = AttributeBlock::Fields(children.iter().filter_map(|child| attribute(cx, child, nested_site, owner)).collect());	M55
+gen/src/decl/lower/fields.rs	decl.block = AttributeBlock::Fields(children.iter().filter_map(|child| attribute(cx, child, Site::Nested, owner)).collect());	M55
 gen/src/decl/lower/fields.rs	let fields = child.block.as_ref().map(|block| block.iter().filter_map(|inner| attribute(cx, inner, Site::Nested, &Owner(owner.0.as_ref().map(|_| type_name.clone())))).collect());	M55
 gen/src/decl/lower/fields.rs	let fields: Vec<AttributeDecl> = block.iter().filter_map(|inner| attribute(cx, inner, Site::Nested, owner)).collect();	M55
 gen/src/decl/lower/fields.rs	let local = line.opt(cx, "local").and_then(|pair| boolean(cx, &pair.value, "`local`")).unwrap_or(false);	M48
@@ -16,7 +16,6 @@ gen/src/decl/lower/operations.rs	Value::Array(items) => items.iter().filter_map(
 gen/src/decl/lower/operations.rs	decl.match_by = Some(call.args.iter().filter_map(|arg| path(cx, arg, "a `match_by` path")).collect());	M55
 gen/src/decl/lower/operations.rs	let element = element?.iter().filter_map(|field| match &field.value.item {	M55
 gen/src/decl/lower/operations.rs	let first = decl.local_sites.iter().find(|(field, _)| field == name).map_or(line.pos, |(_, pos)| *pos);	M55
-gen/src/decl/lower/operations.rs	let found: Vec<AttributeDecl> = children.iter().filter_map(|child| attribute(cx, child, Site::Returns, &owner)).collect();	M55
 gen/src/decl/lower/operations.rs	let names: Vec<String> = call.args.iter().filter_map(|arg| symbol(cx, arg, "`local` name")).collect();	M55
 gen/src/decl/lower/scopes.rs	Some(PaginateDecl { pos: line.pos, size, direction: direction.unwrap_or(PageDirectionDecl::Forward), max_pages, cursor })	M45
 gen/src/decl/lower/scopes.rs	Value::Array(items) if !items.is_empty() => items.iter().filter_map(|item| path(cx, item, "`id`")).collect(),	M55

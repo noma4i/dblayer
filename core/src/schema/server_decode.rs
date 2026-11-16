@@ -79,7 +79,7 @@ impl FieldSpec {
         let source = value.as_object().ok_or_else(wrong)?;
         let name = source.get(TYPENAME).and_then(Value::as_str).ok_or_else(wrong)?;
         let mut kept = Map::from_iter([(TYPENAME.to_string(), Value::String(name.to_string()))]);
-        if let Some(variant) = self.fields.iter().find(|variant| variant.app_type.as_deref() == Some(name)) {
+        if let Some(variant) = self.fields.iter().find(|variant| variant.from.as_deref() == Some(name)) {
             kept.extend(decode_each(self.shared.iter().chain(&variant.fields), source, enclosing)?);
         }
         Ok(Value::Object(kept))

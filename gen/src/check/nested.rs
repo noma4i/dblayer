@@ -66,7 +66,7 @@ fn walk(attributes: &[AttributeDecl], fields: &[FieldSpec], file: usize, types: 
                 }
                 for variant in variants {
                     let Some(inner) = &variant.fields else { continue };
-                    if let Some(spec) = field.fields.iter().find(|candidate| candidate.app_type.as_deref() == Some(variant.type_name.as_str())) {
+                    if let Some(spec) = field.fields.iter().find(|candidate| candidate.from.as_deref() == Some(variant.type_name.as_str())) {
                         walk(inner, &spec.fields, file, types, errors, true);
                     }
                 }
