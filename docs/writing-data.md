@@ -140,7 +140,7 @@ val confirmed = receipt.confirmed(discardOnFailure = true)
 ```swift
 do {
   let confirmed = try await receipt.confirmed()
-  show(confirmed.value, confirmed.answerJson)
+  show(confirmed.value)
 } catch let DbError.Rejected(failure, kept) {
   showRefusal(failure, kept: kept)
 }
@@ -149,7 +149,7 @@ do {
 ```kotlin
 try {
     val confirmed = receipt.confirmed()
-    show(confirmed.value, confirmed.answerJson)
+    show(confirmed.value)
 } catch (error: DbException.Rejected) {
     showRefusal(error.failure, error.kept)
 }
@@ -355,7 +355,7 @@ A model with `storage: :local` writes rows that only this device holds, see [sto
 
 ## What the server answered
 
-`returns` gives the operation the answer type of its mutation document: the selection under the root field of the mutation, typed by the schema as for an operation without a model (see [server sync](server-sync.md#operations-without-a-model)). Every field is nullable. The confirmed result contains them as `answerJson` on Swift and `answerJson` on Kotlin. A bare `returns` is the whole line (`returns do ... end` is an error). An operation without `returns` has no answer type: its receipt gives the row.
+`returns` gives the operation the answer type of its mutation document: the selection under the root field of the mutation, typed by the schema as for an operation without a model (see [server sync](server-sync.md#operations-without-a-model)). Every field is nullable. The operation returns an `AnsweredReceipt`: `confirmed()` gives the value and `answer`, the answer type decoded (`nil` or `null` when the server sent no answer). A bare `returns` is the whole line (`returns do ... end` is an error). An operation without `returns` has no answer type: its receipt gives the row.
 
 ```ruby
 operation :send_reward do
@@ -370,12 +370,12 @@ end
 
 ```swift
 let sent = try await user.sendReward(rewardId: "g1")
-let confirmed = try await sent.confirmed()
+let answer = try await sent.confirmed().answer
 ```
 
 ```kotlin
 val sent = user.sendReward(rewardId = "g1")
-val confirmed = sent.confirmed()
+val answer = sent.confirmed().answer
 ```
 
 The receipt retains its result. Fields omitted by the server, or returned with another type, are null in the answer JSON.

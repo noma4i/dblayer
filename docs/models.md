@@ -426,7 +426,7 @@ A write that reaches the server waits in the queue while the network is away, su
 
 ### Answer type
 
-A call reads its answer by the answer type of its document, which the generator infers from the selection under the root field and the schema. Names follow the selected fields (an alias names the field), scalars follow the schema and the `scalar` lines, enums come from the schema, objects become types named by owner and field, lists follow the schema, and `... on T` fragments make a union (select `__typename`). Every field is nullable. A value of another type fails the call with `Invalid`.
+A call reads its answer by the answer type of its document, which the generator infers from the selection under the root field and the schema. Names follow the selected fields (an alias names the field), scalars follow the schema and the `scalar` lines, enums come from the schema, objects become types named by owner and field, lists follow the schema, and `... on T` fragments make a union (select `__typename`). A field of an interface or union type whose selection is `... on T` of one type becomes an object with the fields of `T`, so `node(id:) { ... on Message { readers { ... } } }` answers an object with `readers`. A spread of a document fragment expands in place at any depth. Every field is nullable. A value of another type fails the call with `Invalid`.
 
 - A model operation answers with that type only with a bare `returns`. Without it the call gives the receipt of the row. `returns do ... end` is an error.
 - `response from:` of a model operation names the row to land and does not narrow the type.
@@ -462,6 +462,7 @@ val code = Operations.qrCodeCreate(kind = "group", size = 3)
 
 - `response shape: :list` makes the call return a list of the selection of one element.
 - `upsert Model, from: "path"` lands the rows under the path in one batch before the call returns. A refused landing fails the call and gives no answer.
+- `refetch :scope, model: Model` marks that scope stale after the call succeeds and reloads it when read. `model:` is required. A refused call marks nothing.
 - `parameter :input, StickerInput` names a schema input object. Pass the operation types to `DB.open` and `DBlayer.open`.
 
 ### Uploads

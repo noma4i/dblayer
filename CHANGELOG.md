@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- Give the receipt of an operation with `returns` the typed answer as `confirmed().answer`.
+- Declare `refetch :scope, model: Model` on an operation without a model.
+
 ### Changed
 
 - Show the status of a transfer stream as the `UploadInfo` of its row.
@@ -11,10 +16,12 @@
 ### Fixed
 
 - Discard a failed batch member after its batch confirmed without a row for it.
+- Generate the answer type of a query whose root is an interface field selected by `... on T`.
 
 ### Removed
 
 - Remove `TransferProgress` from Swift and Kotlin.
+- Remove `Confirmed.answerJson` from Swift and Kotlin.
 
 ## 6.41.0 - 2026-11-16
 
