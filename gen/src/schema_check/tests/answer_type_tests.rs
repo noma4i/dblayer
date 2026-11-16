@@ -52,7 +52,7 @@ fn the_answer_type_comes_from_the_document() {
     let call = &result["fields"][0];
     assert_eq!(call["app_type"], "CallEndResultCall");
     assert_eq!(fields(call), vec![("id".to_owned(), true), ("status".to_owned(), true), ("finishedAt".to_owned(), true)], "aliases name the field; non-null schema fields are nullable in the answer");
-    assert_eq!(call["fields"][1]["values"], serde_json::json!(["ACTIVE", "ENDED"]), "the enum takes the values of the schema");
+    assert_eq!(call["fields"][1]["kind"]["values"], serde_json::json!(["ACTIVE", "ENDED"]), "the enum takes the values of the schema");
     let errors = compile(&[&CALL_END.replace("end\n", "  returns do\n    attribute :call, :string\n  end\nend\n")]).err().unwrap_or_default();
     assert!(errors.iter().any(|error| error.contains("takes no block")), "{errors:?}");
 }
