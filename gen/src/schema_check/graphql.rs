@@ -162,6 +162,7 @@ fn fields_of(fields: &[schema::Field<'_, String>]) -> HashMap<String, Ty> {
 pub struct Root {
     pub key: String,
     pub field: String,
+    pub takes: Vec<String>,
 }
 
 pub struct Miss {
@@ -305,7 +306,11 @@ impl Operations {
             });
             let root = first.map(|field| {
                 let key = field.alias.clone().unwrap_or_else(|| field.name.clone());
-                Root { key, field: field.name.clone() }
+                let takes = field.arguments.iter().flat_map(|(_, value)| match value {
+                    query::Value::Variable(name) => Some(name.clone()),
+                    _ => None,
+                }).collect();
+                Root { key, field: field.name.clone(), takes }
             });
             let variables = variables.iter().map(|variable| (variable.name.clone(), Ty { has_default: variable.default_value.is_some(), ..Ty::of(&variable.var_type) })).collect();
             if self.named.insert(name.clone(), Operation { file: path.display().to_string(), kind, root, variables, select: select_of(selection) }).is_some() {

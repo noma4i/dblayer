@@ -13,6 +13,7 @@ mod documents;
 mod tests;
 mod fields;
 mod graphql;
+mod infer;
 mod operation;
 mod selection;
 mod inputs;
@@ -40,7 +41,7 @@ pub struct Outcome {
     pub idempotent_inputs: HashSet<(String, String)>,
 }
 
-pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], files: &[String], nodes: &[ModelDecl], standalone: &[CallDecl]) -> Result<Outcome, Vec<FileError>> {
+pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], files: &[String], nodes: &mut [ModelDecl], standalone: &mut [CallDecl]) -> Result<Outcome, Vec<FileError>> {
     let failed = |file: &Path, message: String| vec![FileError { file: file.display().to_string(), error: ParseError::new(1, 1, message) }];
     let mut documents = Operations::default();
     for path in operation_files(operations).map_err(|(path, message)| failed(&path, message))? {
@@ -54,6 +55,11 @@ pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], 
     if !mismatched.is_empty() {
         return Err(mismatched);
     }
+    let inferred = infer::infer(schema, &documents, nodes, standalone);
+    if !inferred.is_empty() {
+        return Err(inferred.into_iter().map(|(file, pos, message)| FileError { file: files[file].clone(), error: ParseError::new(pos.line, pos.column, message) }).collect());
+    }
+    let (nodes, standalone): (&[ModelDecl], &[CallDecl]) = (nodes, standalone);
     let mut declared = Declared::new();
     for node in nodes {
         collect_declared(&node.attributes, node.file, &mut declared);

@@ -295,12 +295,16 @@ pub(super) fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
         let word = item.word.as_str();
         let allowed = matches!(
             (kind, word),
-            (_, "mutation" | "variables" | "wrap" | "response")
+            (_, "mutation" | "variables" | "response")
                 | (OperationKind::Create | OperationKind::Update | OperationKind::Custom, "parameter")
                 | (OperationKind::Create | OperationKind::Update, "local" | "refetch" | "match_by" | "on_failure")
                 | (OperationKind::Custom, "match_by" | "on_failure" | "optimistic" | "upsert" | "refetch" | "returns" | "batch" | "validates")
                 | (OperationKind::Custom, "dimensions" | "removes_receiver" | "copies_receiver_to" | "joins_scope" | "leaves_scope")
         );
+        if !allowed && !OPERATION_WORDS.contains(&word) {
+            cx.fail(Pos::of(item), format!("unknown word `{word}` in an operation"));
+            continue;
+        }
         if !allowed {
             cx.fail(Pos::of(item), format!("`{word}` does not apply to operation `{name}`"));
             continue;
@@ -320,6 +324,11 @@ pub(super) fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
     Some(decl)
 }
 
+const OPERATION_WORDS: [&str; 18] = [
+    "mutation", "variables", "response", "parameter", "local", "refetch", "match_by", "on_failure", "optimistic", "upsert", "returns", "batch", "validates",
+    "dimensions", "removes_receiver", "copies_receiver_to", "joins_scope", "leaves_scope",
+];
+
 pub(super) fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl) {
     let mut line = Line::of(call);
     match call.word.as_str() {
@@ -331,7 +340,14 @@ pub(super) fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl)
             }
         }
         "parameter" => decl.parameters.extend(parameter(cx, call)),
-        "variables" => decl.variables = variables(cx, call, false),
+        "variables" => {
+            decl.variables = variables(cx, call, false);
+            for binding in decl.variables.iter().flatten() {
+                if matches!(&binding.value, VariableValue::Parameter(source) if *source == binding.name) {
+                    cx.fail(binding.pos, format!("variables `{0}: :{0}` repeats the name; omit it", binding.name));
+                }
+            }
+        }
         "local" => {
             no_block(cx, call);
             let from = line.opt(cx, "from").and_then(|pair| match &pair.value.item {
@@ -367,13 +383,6 @@ pub(super) fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl)
             }
             decl.local_sites.extend(names.iter().map(|name| (name.clone(), line.pos)));
             decl.local.get_or_insert_with(Vec::new).extend(names);
-        }
-        "wrap" => {
-            no_block(cx, call);
-            line.no_options(cx);
-            if let Some(arg) = exactly_one_arg(cx, &line, "a variable name like `wrap \"input\"`") {
-                decl.wrap = string(cx, arg, "the variable path");
-            }
         }
         "dimensions" => {
             no_block(cx, call);

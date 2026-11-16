@@ -48,20 +48,10 @@ impl<'a> Run<'a> {
             self.fail(file, pos, format!("operation `{mutation}` is not in the operation documents"));
             return;
         };
-        let variables = &operation.variables;
-        let (owner, accepted) = match wrap {
-            None => (format!("operation `{mutation}`"), variables.clone()),
-            Some(key) => {
-                let Some(wrapper) = variables.get(key) else {
-                    self.fail(file, pos, format!("operation `{mutation}` has no variable `${key}`"));
-                    return;
-                };
-                let Some(fields) = self.schema.input_fields(wrapper.name()) else {
-                    self.fail(file, pos, format!("variable `${key}` of `{mutation}` is `{}`, not an input type", wrapper.describe()));
-                    return;
-                };
-                (format!("`{}`", wrapper.name()), fields)
-            }
+        let accepted = infer::input_of(self.schema, operation, wrap);
+        let owner = match wrap {
+            None => format!("operation `{mutation}`"),
+            Some(key) => format!("`{}`", operation.variables[key].name()),
         };
         for arg in args {
             let kind = arg.ty.kind_text(arg.null);
@@ -80,22 +70,12 @@ impl<'a> Run<'a> {
     }
 
     pub(super) fn check_upload_batch(&mut self, node: &ModelDecl, call: &OperationDecl, batch: &crate::decl::BatchDecl, mutation: &str) {
-        let wrap = call.wrap.as_deref();
         let fail = |run: &mut Self, message| run.fail(node.file, call.pos, message);
         let Some(operation) = self.operations.named.get(mutation) else {
             fail(self, "upload batch mutation is missing from the operation documents".into());
             return;
         };
-        let accepted = match wrap {
-            Some(wrap) => match operation.variables.get(wrap).and_then(|ty| self.schema.input_fields(ty.name())) {
-                Some(fields) => fields,
-                None => {
-                    fail(self, format!("upload batch wrap `{wrap}` must name an input object variable of `{mutation}`"));
-                    return;
-                }
-            },
-            None => operation.variables.clone(),
-        };
+        let accepted = infer::input_of(self.schema, operation, call.wrap.as_deref());
         let items = batch.items.as_str();
         let Some(ty) = accepted.get(items).filter(|ty| ty.is_list()) else {
             fail(self, format!("upload batch `{items}` must be a list of input objects"));
@@ -120,16 +100,7 @@ impl<'a> Run<'a> {
             fail(self, "single upload mutation is missing from the operation documents".into());
             return;
         };
-        let single_fields = match single_operation.and_then(|single| single.wrap.as_deref()) {
-            Some(wrap) => match operation.variables.get(wrap).and_then(|ty| self.schema.input_fields(ty.name())) {
-                Some(fields) => fields,
-                None => {
-                    fail(self, format!("single upload wrap `{wrap}` must name an input object variable"));
-                    return;
-                }
-            },
-            None => operation.variables.clone(),
-        };
+        let single_fields = infer::input_of(self.schema, operation, single_operation.and_then(|single| single.wrap.as_deref()));
         for key in std::iter::once("signedId").chain(batch.input.iter().map(|(target, _)| target.as_str())) {
             if single_fields.get(key).is_none_or(|ty| fields.get(key).is_none_or(|item| item != ty)) {
                 fail(self, format!("single upload variable `{key}` must match the batch item field"));
@@ -169,7 +140,7 @@ impl<'a> Run<'a> {
         let query = remote.query.as_ref()?;
         let name = query.operation.clone();
         let root = if self.operations.named.is_empty() {
-            graphql::Root { key: name.clone(), field: name.clone() }
+            graphql::Root { key: name.clone(), field: name.clone(), takes: Vec::new() }
         } else if let Some(root) = self.operations.named.get(&name).filter(|operation| operation.kind == "query").and_then(|operation| operation.root.as_ref()) {
             root.clone()
         } else {

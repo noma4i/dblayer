@@ -185,6 +185,7 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
             }
         }
     }
+    let written = crate::build::written_by_default(node, operation);
     for parameter in &operation.parameters {
         let in_variables = operation.variables.iter().flatten().any(|binding| matches!(&binding.value, VariableValue::Parameter(source) if *source == parameter.name));
         let in_optimistic = matches!(&operation.optimistic, Some((OptimisticDecl::Fields(fields), _)) if fields.iter().any(|(_, value, _)| match value {
@@ -195,21 +196,17 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
             OptimisticValue::Literal(_) => false,
         }));
         let implicit = operation.upload.is_some() && operation.variables.is_none();
-        if !(in_variables || in_optimistic || implicit) {
+        if !(in_variables || in_optimistic || implicit || written.contains(&parameter.name)) {
             report(parameter.pos, format!("parameter `{}` is used by neither `variables` nor `optimistic`", parameter.name));
         }
     }
-    match (&operation.optimistic, operation.kind) {
-        (None, OperationKind::Custom) => report(operation.pos, format!("operation `{name}` must declare `optimistic` fields or `optimistic false`")),
-        (Some((OptimisticDecl::Fields(fields), _)), _) => {
-            for (field, value, pos) in fields {
-                if !attributes.contains(field.as_str()) {
-                    report(*pos, format!("`optimistic` names unknown attribute `{field}`"));
-                }
-                check_optimistic_value(node, all, operation, (field.as_str(), value), *pos, report);
+    if let Some((OptimisticDecl::Fields(fields), _)) = &operation.optimistic {
+        for (field, value, pos) in fields {
+            if !attributes.contains(field.as_str()) {
+                report(*pos, format!("`optimistic` names unknown attribute `{field}`"));
             }
+            check_optimistic_value(node, all, operation, (field.as_str(), value), *pos, report);
         }
-        _ => {}
     }
     for refetch in &operation.refetch {
         let target = match refetch.model.as_deref() {

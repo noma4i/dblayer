@@ -15,29 +15,7 @@ impl Run<'_> {
         if let Some(result) = &node.returns {
             self.check_standalone_result(node.file, name, result);
         }
-        let accepted = match node.wrap.as_deref() {
-            None => operation.variables.clone(),
-            Some(key) => {
-                let Some(variable) = operation.variables.get(key) else {
-                    self.fail(node.file, pos, format!("operation `{name}` has no variable `${key}`"));
-                    return;
-                };
-                if variable.is_list() {
-                    self.fail(node.file, pos, format!("variable `${key}` must be an input object"));
-                    return;
-                }
-                let Some(fields) = self.schema.input_fields(variable.name()) else {
-                    self.fail(node.file, pos, format!("variable `${key}` must be an input object"));
-                    return;
-                };
-                for (other, ty) in &operation.variables {
-                    if other != key && !ty.optional() {
-                        self.fail(node.file, pos, format!("operation `{name}` requires variable `${other}` outside `{key}`"));
-                    }
-                }
-                fields
-            }
-        };
+        let accepted = infer::input_of(self.schema, operation, node.wrap.as_deref());
         for arg in &node.parameters {
             let Some(ty) = accepted.get(&arg.name) else {
                 self.fail(node.file, arg.pos, format!("`{}` is not an input of operation `{name}`", arg.name));

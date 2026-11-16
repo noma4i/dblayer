@@ -88,16 +88,24 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
     let loaded = schema.map(schema_check::Schema::load).transpose().map_err(|message| vec![FileError {
         file: schema.unwrap().display().to_string(), error: ParseError::new(1, 1, message),
     }])?;
-    let models = decl::lower_models(&parsed.models, loaded.as_ref()).map_err(locate)?;
-    if loaded.is_none() && models.iter().flat_map(|model| &model.scopes).any(|scope| scope.marker.is_some()) {
-        return Err(vec![FileError { file: names[0].clone(), error: ParseError::new(1, 1, "marker and tail require --schema and operation documents") }]);
-    }
+    let mut models = decl::lower_models(&parsed.models, loaded.as_ref()).map_err(locate)?;
     let mut call_errors = Vec::new();
-    let calls = decl::lower_calls(&parsed.operations, &mut call_errors);
+    let mut calls = decl::lower_calls(&parsed.operations, &mut call_errors);
     if !call_errors.is_empty() {
         return Err(locate(call_errors));
     }
-    let checked = loaded.as_ref().map(|schema| schema_check::check_schema(schema, &scalars, operations, &names, &models, &calls)).transpose()?;
+    if loaded.is_none() && models.iter().flat_map(|model| &model.scopes).any(|scope| scope.marker.is_some()) {
+        return Err(vec![FileError { file: names[0].clone(), error: ParseError::new(1, 1, "marker and tail require --schema and operation documents") }]);
+    }
+    if loaded.is_none() {
+        let needing = models.iter().filter(|model| model.storage != dblayer::schema::Storage::Local).flat_map(|model| model.operations.iter().map(move |operation| (model.file, operation.pos, &operation.name)))
+            .chain(models.iter().flat_map(|model| model.scopes.iter().filter(|scope| scope.query.is_some()).map(move |scope| (model.file, scope.pos, &scope.name))))
+            .chain(calls.iter().map(|call| (call.file, call.pos, &call.name))).next();
+        if let Some((file, pos, name)) = needing {
+            return Err(vec![FileError { file: names[file].clone(), error: ParseError::new(pos.line, pos.column, format!("operation `{name}` needs `--schema`")) }]);
+        }
+    }
+    let checked = loaded.as_ref().map(|schema| schema_check::check_schema(schema, &scalars, operations, &names, &mut models, &mut calls)).transpose()?;
     let mut upload_errors = Vec::new();
     let steps = decl::lower_uploads(&parsed.uploads, &models, &mut upload_errors);
     if !upload_errors.is_empty() {

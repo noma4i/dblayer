@@ -98,7 +98,7 @@ fn build_model(node: &ModelDecl) -> ModelSpec {
         id_of: change.id_of.as_ref().map(|(model, field)| dblayer::schema::ChangeIdOf { model: model.clone(), field: field.clone() }),
         payload: change.payload.clone(),
     }).collect();
-    model.actions = node.operations.iter().map(|operation| build_operation(operation, &node.name)).collect();
+    model.actions = node.operations.iter().map(|operation| build_operation(operation, node)).collect();
     if model.field("id").is_none() {
         model.fields.push(FieldSpec::scalar("id", ScalarKind::Id));
     }
@@ -325,7 +325,18 @@ fn updates_spec(update: &SubscribeDecl) -> UpdatesSpec {
     }
 }
 
-fn build_operation(operation: &OperationDecl, owner: &str) -> ActionDeclaration {
+/// M81: an operation of a server model without an `optimistic` line writes each parameter named like an attribute at once.
+pub(crate) fn written_by_default(node: &ModelDecl, operation: &OperationDecl) -> Vec<String> {
+    let effect = operation.removes_receiver.is_some() || operation.copies_receiver_to.is_some() || !operation.scope_effects.is_empty();
+    if operation.kind != OperationKind::Custom || operation.optimistic.is_some() || effect {
+        return Vec::new();
+    }
+    let written = |name: &str| node.attributes.iter().any(|attribute| attribute.name == name && !attribute.local && !attribute.derived);
+    operation.parameters.iter().map(|parameter| parameter.name.clone()).filter(|name| written(name)).collect()
+}
+
+fn build_operation(operation: &OperationDecl, node: &ModelDecl) -> ActionDeclaration {
+    let owner = node.name.as_str();
     let mut action = match operation.kind {
         OperationKind::Create => ActionDeclaration::new("create", RootShape::Upsert),
         OperationKind::Update => ActionDeclaration::new("update", RootShape::Upsert),
@@ -377,6 +388,7 @@ fn build_operation(operation: &OperationDecl, owner: &str) -> ActionDeclaration 
     if let Some((OptimisticDecl::Fields(fields), _)) = &operation.optimistic {
         action.optimistic = fields.iter().map(|(name, value, _)| (name.clone(), optimistic_json(value))).collect();
     }
+    action.optimistic.extend(written_by_default(node, operation).into_iter().map(|name| (name.clone(), json!({ "$arg": name }))));
     action.expires_after = operation.expires_after;
     action.dimensions = operation.dimensions.as_ref().map(|dimensions| dblayer::schema::DimensionsDeclaration { width: dimensions.width.clone(), height: dimensions.height.clone() });
     action.removes_receiver = operation.removes_receiver.is_some();
@@ -397,9 +409,6 @@ fn build_operation(operation: &OperationDecl, owner: &str) -> ActionDeclaration 
         order_param: effect.order.clone(),
         orders: effect.orders.clone(),
     }).collect();
-    if operation.kind == OperationKind::Custom && action.variables.is_empty() {
-        action.variables.insert(format!("{}Id", lower_first(owner)), "id".into());
-    }
     action
 }
 

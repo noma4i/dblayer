@@ -397,13 +397,6 @@ pub(crate) fn lower_calls(nodes: &[OperationNode], errors: &mut Vec<Found>) -> V
                         }
                     }
                 }
-                "wrap" => {
-                    no_block(&mut cx, call);
-                    line.no_options(&mut cx);
-                    if let Some(arg) = exactly_one_arg(&mut cx, &line, "a variable name like `wrap \"input\"`") {
-                        decl.wrap = string(&mut cx, arg, "the variable path");
-                    }
-                }
                 "parameter" => decl.parameters.extend(parameter(&mut cx, call)),
                 "returns" => {
                     decl.returns_pos = line.pos;
@@ -414,7 +407,7 @@ pub(crate) fn lower_calls(nodes: &[OperationNode], errors: &mut Vec<Found>) -> V
                     Some(_) => cx.fail(line.pos, "an operation without a model has `response shape: :list` only"),
                     None => {}
                 },
-                other => cx.fail(line.pos, format!("unknown line `{other}` in an operation, expected one of mutation, query, wrap, parameter, returns, response")),
+                other => cx.fail(line.pos, format!("unknown line `{other}` in an operation, expected one of mutation, query, parameter, returns, response")),
             }
         }
         if named != 1 {
