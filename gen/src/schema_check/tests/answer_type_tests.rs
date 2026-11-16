@@ -6,17 +6,21 @@ use crate::compile_files;
 
 const SCHEMA: &str = r#"
 type Query { chat(id: ID!): Chat }
-type Mutation { callEnd(input: CallEndInput!): CallEndPayload chatPin(input: ChatPinInput!): ChatPinPayload }
+type Mutation { callEnd(input: CallEndInput!): CallEndPayload callPeer(input: CallEndInput!): CallEndPayload chatPin(input: ChatPinInput!): ChatPinPayload }
 input CallEndInput { callId: ID! }
 input ChatPinInput { chatId: ID! pinned: Boolean! }
 enum CallStatus { ACTIVE ENDED }
 type CallEndPayload { call: Call }
-type Call { id: ID! status: CallStatus! endedAt: String duration: Int! }
+type Call { id: ID! status: CallStatus! endedAt: String duration: Int! peer: Peer }
+union Peer = Person | Robot
+type Person { id: ID! name: String! }
+type Robot { id: ID! serial: String! }
+type Contact { id: ID! peer: Peer }
 type ChatPinPayload { chat: Chat pinnedCount: Int! }
 type Chat { id: ID! pinned: Boolean! }
 "#;
 
-const DOCUMENTS: &str = "mutation CallEnd($input: CallEndInput!) { callEnd(input: $input) { call { id status finishedAt: endedAt } } }\nmutation ChatPin($input: ChatPinInput!) { chatPin(input: $input) { chat { id pinned } pinnedCount } }\n";
+const DOCUMENTS: &str = "mutation CallEnd($input: CallEndInput!) { callEnd(input: $input) { call { id status finishedAt: endedAt } } }\nmutation ChatPin($input: ChatPinInput!) { chatPin(input: $input) { chat { id pinned } pinnedCount } }\nmutation CallPeer($input: CallEndInput!) { callPeer(input: $input) { call { peer { __typename ... on Person { id name } ... on Robot { id serial } } } } }\n";
 
 const CALL_END: &str = "operation :call_end do\n  mutation \"CallEnd\"\n  parameter :input, CallEndInput\nend\n";
 
@@ -67,4 +71,16 @@ fn a_model_operation_answers_only_with_returns() {
     let returns = &action(&typed)["returns"];
     assert_eq!(returns["app_type"], "ChatPinResult");
     assert_eq!(fields(returns), vec![("chat".to_owned(), true), ("pinnedCount".to_owned(), true)]);
+}
+
+/// D-484 M53: a variant of a union in an answer is named by its union field type and its variant, so a model that declares `on Person` keeps its name.
+#[test]
+fn an_answer_variant_does_not_take_the_name_of_a_model_variant() {
+    let contact = "model Contact, storage: :local do\n  attribute :peer, Peer, null: true do\n    on Person do\n      attribute :name, :string\n    end\n    on Robot do\n      attribute :serial, :string\n    end\n  end\nend\n";
+    let call_peer = "operation :call_peer do\n  mutation \"CallPeer\"\n  parameter :input, CallEndInput\nend\n";
+    let declarations = compile(&[contact, call_peer]).unwrap_or_else(|errors| panic!("{errors:?}"));
+    let result = serde_json::to_value(declarations.operations.iter().find(|call| call.name == "call_peer").unwrap().result.as_ref().unwrap()).unwrap();
+    let peer = &result["fields"][0]["fields"][0];
+    let variants: Vec<&str> = peer["fields"].as_array().unwrap_or_else(|| panic!("no variants: {peer}")).iter().map(|variant| variant["app_type"].as_str().unwrap()).collect();
+    assert_eq!(variants, vec!["CallPeerResultCallPeerPerson", "CallPeerResultCallPeerRobot"]);
 }
