@@ -1,4 +1,4 @@
-import DBlayer
+@testable import DBlayer
 
 /// How `confirmed()` of a receipt ended: the value, the refusal with `kept`, or the end of the wait with the session or the database.
 enum Settled<Model: DBModel>: Sendable {

@@ -111,7 +111,28 @@ extension DBModel {
 
 public struct Confirmed<Model: DBModel>: Sendable {
   public let value: Model?
-  public let answerJson: String?
+  let answerJson: String?
+}
+
+/// The outcome of an operation that says `returns`: the value and the typed answer of the server.
+public struct Answered<Model: DBModel, Answer: Decodable & Sendable>: Sendable {
+  public let value: Model?
+  public let answer: Answer?
+}
+
+/// The receipt of an operation that says `returns`: `confirmed()` carries the answer decoded by the generated type.
+public struct AnsweredReceipt<Model: DBModel, Answer: Decodable & Sendable>: Sendable {
+  public let receipt: MutationReceipt<Model>
+  public var optimisticValue: Model? { receipt.optimisticValue }
+  public var revision: Int64 { receipt.revision }
+  public var epoch: UInt64 { receipt.epoch }
+  public var operation: Int64? { receipt.operation }
+
+  /// The one outcome of the receipt: the value and the answer, or the error of a refusal or of the end of the wait.
+  @concurrent public func confirmed(discardOnFailure: Bool = false) async throws -> Answered<Model, Answer> {
+    let confirmed = try await receipt.confirmed(discardOnFailure: discardOnFailure)
+    return Answered(value: confirmed.value, answer: try confirmed.answerJson.map { try JSONDecoder().decode(Answer.self, from: Data($0.utf8)) })
+  }
 }
 
 public struct MutationReceipt<Model: DBModel>: Sendable {
@@ -129,6 +150,10 @@ public struct MutationReceipt<Model: DBModel>: Sendable {
     self.epoch = wire.epoch
     self.operation = wire.operation
     self.optimisticValue = try wire.optimisticValue.map(Model.decode)
+  }
+
+  public func answered<Answer: Decodable & Sendable>(_: Answer.Type) -> AnsweredReceipt<Model, Answer> {
+    AnsweredReceipt(receipt: self)
   }
 
   /// The one outcome of the receipt: the value, or the error of a refusal (`DbError.Rejected`, `kept` = the failed intent stays) or of the end of the wait.

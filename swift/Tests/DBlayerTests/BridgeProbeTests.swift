@@ -174,10 +174,10 @@ struct BridgeProbeTests {
     transport.enqueue("ShareMoment", reply: #"{"data":{"shareMoment":{"moment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"},"successMessage":"Shared","copies":3,"other":"x"}}}"#)
     let shared = try await moment.share()
     #expect(shared.optimisticValue?.id == "m77")
-    let answer = try await shared.answer(as: MomentShareResult.self)
+    let answer = try #require(try await shared.confirmed().answer)
     #expect(answer.successMessage == "Shared")
     #expect(answer.copies == 3)
-    #expect(try await shared.answer(as: MomentShareResult.self).copies == 3)
+    #expect(try await shared.confirmed().answer?.copies == 3)
     let sentShare = transport.calls.filter { $0.operationName == "ShareMoment" }.map(\.variablesJson)
     #expect(sentShare.first?.contains("momentId") == true && sentShare.first?.contains("note") == false, "an unset optional parameter of an action is not sent (M85): \(sentShare)")
 
@@ -193,7 +193,7 @@ struct BridgeProbeTests {
     let moment = try await openWithAMoment(transport)
 
     transport.enqueue("ShareMoment", reply: #"{"data":{"shareMoment":{"moment":null,"successMessage":null,"copies":null}}}"#)
-    let answer = try await moment.share().answer(as: MomentShareResult.self)
+    let answer = try #require(try await moment.share().confirmed().answer)
     #expect(answer.successMessage == nil)
     #expect(answer.copies == nil)
     #expect(try await Moment.find("m77").current() != nil)

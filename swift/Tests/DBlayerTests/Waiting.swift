@@ -404,15 +404,14 @@ final class ListReader<Model: DBModel> {
   func loadMore() async throws -> LoadMoreResult { try await projected.loadMore() }
 }
 
+extension AnsweredReceipt {
+  func refusal() async throws -> WireFailure { try await receipt.refusal() }
+}
+
 extension MutationReceipt {
   func confirmedModel() async throws -> Model {
     guard case let .confirmed(value?, _) = try await settled() else { throw WaitFailure.unexpectedOutcome }
     return value
-  }
-
-  func answer<Answer: Decodable>(as _: Answer.Type) async throws -> Answer {
-    guard case let .confirmed(_, answerJson?) = try await settled() else { throw WaitFailure.unexpectedOutcome }
-    return try JSONDecoder().decode(Answer.self, from: Data(answerJson.utf8))
   }
 
   func refusal() async throws -> WireFailure {

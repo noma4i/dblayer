@@ -568,6 +568,19 @@ data class PeerLoadResultPeerRobot(
     val serial: String? = null,
 )
 
+@Immutable
+@Serializable
+data class ChatLibraryResult(
+    val mediaLibrary: ChatLibraryResultMediaLibrary? = null,
+)
+
+@Immutable
+@Serializable
+data class ChatLibraryResultMediaLibrary(
+    val visualCount: Long? = null,
+    val audioCount: Long? = null,
+)
+
 object Operations {
     suspend fun `when`(`class`: String, account: AccountScope? = null): WhenResult {
         val variables_ = mutableMapOf<String, JsonElement>()
@@ -618,5 +631,10 @@ object Operations {
     suspend fun peerLoad(account: AccountScope? = null): PeerLoadResult {
         val variables_ = mutableMapOf<String, JsonElement>()
         return DBlayer.call("PeerLoad", JsonObject(variables_), PeerLoadResult.serializer(), account)
+    }
+    suspend fun chatLibrary(id: String, account: AccountScope? = null): ChatLibraryResult {
+        val variables_ = mutableMapOf<String, JsonElement>()
+        variables_["id"] = jsonValue(id)
+        return DBlayer.call("ChatLibrary", JsonObject(variables_), ChatLibraryResult.serializer(), account)
     }
 }

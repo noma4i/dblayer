@@ -46,6 +46,22 @@ fn result_type(class: &str, action: &str) -> String {
     format!("{class}{}Result", camel(action))
 }
 
+/// M68: an action that says `returns` gives its receipt with the typed answer.
+fn receipt_type(action: &dblayer::schema::ActionDeclaration, model: &str) -> String {
+    match &action.returns {
+        Some(root) => format!("AnsweredReceipt<{model}, {}>", root.app_type.as_deref().expect("a returns root has a type")),
+        None => format!("MutationReceipt<{model}>"),
+    }
+}
+
+fn answered(action: &dblayer::schema::ActionDeclaration, swift: bool) -> String {
+    match (&action.returns, swift) {
+        (Some(root), true) => format!(".answered({}.self)", root.app_type.as_deref().expect("a returns root has a type")),
+        (Some(root), false) => format!(".answered({}.serializer())", root.app_type.as_deref().expect("a returns root has a type")),
+        (None, _) => String::new(),
+    }
+}
+
 /// The `returns` roots of the actions of every model: they declare types like the results of standalone operations.
 pub(crate) fn action_returns(models: &[ModelSpec]) -> impl Iterator<Item = &FieldSpec> {
     models.iter().flat_map(|model| model.actions.iter()).flat_map(|action| action.returns.as_ref())
@@ -176,7 +192,8 @@ pub fn specs_text(models: &[ModelSpec], operations: &[crate::operation::Operatio
             None => FieldSpec::raw(&operation.name),
         };
         let lands = if operation.lands.is_empty() { String::new() } else { format!(",\"lands\":{}", serde_json::to_string(&operation.lands).unwrap()) };
-        format!("{{\"name\":{},\"returns\":{}{lands}}}", serde_json::to_string(&operation.operation).unwrap(), serde_json::to_string(&returns).unwrap())
+        let refetch = if operation.refetch.is_empty() { String::new() } else { format!(",\"refetch\":{}", serde_json::to_string(&operation.refetch).unwrap()) };
+        format!("{{\"name\":{},\"returns\":{}{lands}{refetch}}}", serde_json::to_string(&operation.operation).unwrap(), serde_json::to_string(&returns).unwrap())
     }).collect();
     format!("{{\"models\":{},\"operations\":[{}]}}", serde_json::to_string(models).unwrap(), declared.join(","))
 }
@@ -388,7 +405,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
         for (action, on_type) in model.actions.iter().filter(|action| !action.upload && !["create", "update", "destroy"].contains(&action.name.as_str())).flat_map(|action| [(action, false)].into_iter().chain(singleton_relation(model).map(|_| (action, true)))) {
             let params = action.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, true), arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
-            let returns = "MutationReceipt<Self>";
+            let returns = receipt_type(action, "Self");
             let params = swift_scope(&params, &scope);
             writeln!(out, "    nonisolated(nonsending) public {} {}({params}) async throws -> {returns} {{", if on_type { "static func" } else { "func" }, identifier(&name(&action.name), true)).unwrap();
             writeln!(out, "        {} {values} = try JSONValue.readObject(#\"{}\"#)", if action.optimistic.values().any(|value| value.get("$arg").is_some()) { "var" } else { "let" }, serde_json::to_string(&literals).unwrap()).unwrap();
@@ -409,7 +426,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
                 let listed = action.args.keys().map(|arg| format!("\"{arg}\": try JSONValue.encode({printed})", printed = identifier(arg, true))).collect::<Vec<_>>().join(", ");
                 format!("[{}]", if listed.is_empty() { ":" } else { &listed })
             };
-            writeln!(out, "        return try await {}(\"{}\", values: {values}, args: {args}, in: {scope})\n    }}", if on_type { "Self.actOnSingleton" } else { "self.act" }, action.name).unwrap();
+            writeln!(out, "        return try await {}(\"{}\", values: {values}, args: {args}, in: {scope}){}\n    }}", if on_type { "Self.actOnSingleton" } else { "self.act" }, action.name, answered(action, true)).unwrap();
         }
         for action in model.actions.iter().filter(|action| action.upload && action.batch.is_none()) {
             let method = identifier(&name(&action.name), true);
@@ -418,13 +435,13 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             let id_param = if singleton { String::new() } else { "id: String, ".to_string() };
             let params = upload_args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, true), arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
             let params = if params.is_empty() { String::new() } else { format!(", {params}") };
-            writeln!(out, "    nonisolated(nonsending) public static func {method}({id_param}source: String{params}, prepare: Prepare? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> MutationReceipt<Self> {{\n        {} variables_: [String: JSONValue] = [:]", if upload_args.is_empty() { "let" } else { "var" }).unwrap();
+            writeln!(out, "    nonisolated(nonsending) public static func {method}({id_param}source: String{params}, prepare: Prepare? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> {} {{\n        {} variables_: [String: JSONValue] = [:]", receipt_type(action, "Self"), if upload_args.is_empty() { "let" } else { "var" }).unwrap();
             for (arg, kind) in &upload_args {
                 if kind.ends_with('?') { writeln!(out, "        if let value = {printed} {{ variables_[\"{arg}\"] = try JSONValue.encode(value) }}", printed = identifier(arg, true)).unwrap(); }
                 else { writeln!(out, "        variables_[\"{arg}\"] = try JSONValue.encode({printed})", printed = identifier(arg, true)).unwrap(); }
             }
-            writeln!(out, "        return try await scope_.upload(Self.self, id: {}, action: \"{}\", UploadRequest(path: source, variables: variables_, prepare: prepare, maxBytes: maxBytes))\n    }}", if singleton { "\"singleton\"" } else { "id" }, action.name).unwrap();
-            writeln!(out, "    nonisolated(nonsending) public func {method}(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {{\n        try await scope_.upload(Self.self, id: id, action: \"{}\", request)\n    }}", action.name).unwrap();
+            writeln!(out, "        return try await scope_.upload(Self.self, id: {}, action: \"{}\", UploadRequest(path: source, variables: variables_, prepare: prepare, maxBytes: maxBytes)){}\n    }}", if singleton { "\"singleton\"" } else { "id" }, action.name, answered(action, true)).unwrap();
+            writeln!(out, "    nonisolated(nonsending) public func {method}(_ request: UploadRequest, in scope_: AccountScope) async throws -> {} {{\n        try await scope_.upload(Self.self, id: id, action: \"{}\", request){}\n    }}", receipt_type(action, "Self"), action.name, answered(action, true)).unwrap();
             writeln!(out, "    nonisolated(nonsending) public static func stage{}(source: String, prepare: Prepare? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> StagedUpload<Self> {{\n        try await scope_.stage(Self.self, action: \"{}\", UploadRequest(path: source, prepare: prepare, maxBytes: maxBytes))\n    }}", upper_first(&method), action.name).unwrap();
         }
         out.push_str("}\n\n");
@@ -536,13 +553,13 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             let params = upload_args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
             let params = if params.is_empty() { String::new() } else { format!(", {params}") };
             let variables = upload_args.iter().map(|(arg, kind)| if kind.ends_with('?') { format!("if ({printed} != null) this.put(\"{arg}\", jsonValue({printed}))", printed = identifier(arg, false)) } else { format!("this.put(\"{arg}\", jsonValue({printed}))", printed = identifier(arg, false)) }).collect::<Vec<_>>().join("; ");
-            writeln!(out, "        suspend fun {method}({ACCOUNT}: AccountScope{id_param}, source: String{params}, prepare: Prepare? = null, maxBytes: ULong? = null): MutationReceipt<{class}> =\n            {ACCOUNT}.upload(this, {}, \"{}\", UploadRequest(source, variables = buildJsonObject {{ {variables} }}, prepare = prepare, maxBytes = maxBytes))", if singleton { "\"singleton\"" } else { "id" }, action.name).unwrap();
+            writeln!(out, "        suspend fun {method}({ACCOUNT}: AccountScope{id_param}, source: String{params}, prepare: Prepare? = null, maxBytes: ULong? = null): {} =\n            {ACCOUNT}.upload(this, {}, \"{}\", UploadRequest(source, variables = buildJsonObject {{ {variables} }}, prepare = prepare, maxBytes = maxBytes)){}", receipt_type(action, &class), if singleton { "\"singleton\"" } else { "id" }, action.name, answered(action, false)).unwrap();
             writeln!(out, "        suspend fun stage{}({ACCOUNT}: AccountScope, source: String, prepare: Prepare? = null, maxBytes: ULong? = null): StagedUpload<{class}> =\n            {ACCOUNT}.stage({class}, \"{}\", UploadRequest(source, prepare = prepare, maxBytes = maxBytes))", upper_first(&method), action.name).unwrap();
         }
         if singleton_relation(model).is_some() {
             for action in model.actions.iter().filter(|action| !action.upload && !["create", "update", "destroy"].contains(&action.name.as_str())) {
                 let (params, call) = kotlin_action_call(action, &account);
-                writeln!(out, "        suspend fun {}({params}): MutationReceipt<{class}> = this.actOnSingleton({call}, {account})", identifier(&name(&action.name), false)).unwrap();
+                writeln!(out, "        suspend fun {}({params}): {} = this.actOnSingleton({call}, {account}){}", identifier(&name(&action.name), false), receipt_type(action, &class), answered(action, false)).unwrap();
             }
         }
         let fields = writable_fields(model);
@@ -595,10 +612,10 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         }
         for action in model.actions.iter().filter(|action| !action.upload && !["create", "update", "destroy"].contains(&action.name.as_str())) {
             let (params, call) = kotlin_action_call(action, &account);
-            writeln!(out, "    suspend fun {}({params}): MutationReceipt<{class}> = this.act({call}, {class}, {account})", identifier(&name(&action.name), false)).unwrap();
+            writeln!(out, "    suspend fun {}({params}): {} = this.act({call}, {class}, {account}){}", identifier(&name(&action.name), false), receipt_type(action, &class), answered(action, false)).unwrap();
         }
         for action in model.actions.iter().filter(|action| action.upload && action.batch.is_none()) {
-            writeln!(out, "    suspend fun {}({ACCOUNT}: AccountScope, request: UploadRequest): MutationReceipt<{class}> = {ACCOUNT}.upload({class}, id, \"{}\", request)", identifier(&name(&action.name), false), action.name).unwrap();
+            writeln!(out, "    suspend fun {}({ACCOUNT}: AccountScope, request: UploadRequest): {} = {ACCOUNT}.upload({class}, id, \"{}\", request){}", identifier(&name(&action.name), false), receipt_type(action, &class), action.name, answered(action, false)).unwrap();
         }
         if !model.associations.is_empty() {
             out.push_str("    object Relations {\n");

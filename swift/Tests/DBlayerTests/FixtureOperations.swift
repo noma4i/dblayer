@@ -914,6 +914,33 @@ public struct PeerLoadResultPeerRobot: Codable, Sendable, Equatable {
     }
 }
 
+public struct ChatLibraryResult: Codable, Sendable, Equatable {
+    public let mediaLibrary: ChatLibraryResultMediaLibrary?
+
+    public init(mediaLibrary: ChatLibraryResultMediaLibrary? = nil) {
+        self.mediaLibrary = mediaLibrary
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case mediaLibrary = "mediaLibrary"
+    }
+}
+
+public struct ChatLibraryResultMediaLibrary: Codable, Sendable, Equatable {
+    public let visualCount: Int?
+    public let audioCount: Int?
+
+    public init(visualCount: Int? = nil, audioCount: Int? = nil) {
+        self.visualCount = visualCount
+        self.audioCount = audioCount
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case visualCount = "visualCount"
+        case audioCount = "audioCount"
+    }
+}
+
 public enum Operations {
     nonisolated(nonsending) public static func when(`class`: String, in scope_: AccountScope? = nil) async throws -> WhenResult {
         var variables_: [String: JSONValue] = [:]
@@ -964,5 +991,10 @@ public enum Operations {
     nonisolated(nonsending) public static func peerLoad(in scope_: AccountScope? = nil) async throws -> PeerLoadResult {
         let variables_: [String: JSONValue] = [:]
         return try await DB.call("PeerLoad", variables: variables_, as: PeerLoadResult.self, in: scope_)
+    }
+    nonisolated(nonsending) public static func chatLibrary(id: String, in scope_: AccountScope? = nil) async throws -> ChatLibraryResult {
+        var variables_: [String: JSONValue] = [:]
+        variables_["id"] = try JSONValue.encode(id)
+        return try await DB.call("ChatLibrary", variables: variables_, as: ChatLibraryResult.self, in: scope_)
     }
 }

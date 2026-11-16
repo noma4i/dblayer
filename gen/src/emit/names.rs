@@ -10,7 +10,7 @@ const BARE_CALLS: &[&str] = &["self", "this", "jsonValue", "mapOf", "mutableMapO
 
 const IMPORTED_TYPES: &[&str] = &[
     "Query", "Condition", "Order", "SortDirection", "Column", "Association", "FileField", "FileInfo", "JSONValue", "JsonElement", "JsonObject", "JsonArray", "JsonPrimitive", "JsonNull", "JsonEncoder", "DB", "DBlayer", "DBModel", "DBSingleton",
-    "ModelDecoder", "AccountScope", "MutationReceipt", "UploadRequest", "UploadInfo", "SyncInfo", "WireRow", "Cell", "CellReader", "Blob", "GraphQLNullable", "ListSerializer", "UnionSerializer",
+    "ModelDecoder", "AccountScope", "MutationReceipt", "AnsweredReceipt", "Answered", "UploadRequest", "UploadInfo", "SyncInfo", "WireRow", "Cell", "CellReader", "Blob", "GraphQLNullable", "ListSerializer", "UnionSerializer",
     "UnionTypenameKey", "RawEnumSerializer", "RawEnum", "KSerializer", "SerialDescriptor", "SerializationException", "SerialName", "Serializable", "Immutable", "EncodeDefault", "ExperimentalSerializationApi", "OptIn",
     "Operations", "Self", "Pair", "Date", "String", "Int", "Long", "Bool", "Boolean", "Double", "List", "Map", "Dictionary", "Array", "Codable", "Encodable", "Equatable", "Hashable", "Sendable", "Encoder", "Decoder",
     "CodingKey", "CodingKeys", "DecodingError",

@@ -25,7 +25,7 @@ class UploadAnswerTest {
                 transport.enqueue("CreateMoment", """{"data":{"createMoment":{$row$field}}}""")
                 val uploaded = moment.uploadClip(AccountScope.current(), UploadRequest(source.path))
                 assertEquals("m77", uploaded.optimisticValue?.id)
-                assertEquals(expected, uploaded.answer<MomentUploadClipResult>().successMessage)
+                assertEquals(expected, requireNotNull(uploaded.confirmed().answer).successMessage)
             }
             assertEquals(listOf("CreateMoment", "CreateBlob", "CreateMoment", "CreateMoment"), transport.calls.map { it.operationName })
             assertTrue(transport.unscripted.isEmpty())

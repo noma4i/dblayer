@@ -44,10 +44,6 @@ private fun threadStacks(): String = Thread.getAllStackTraces().entries
     .sortedBy { it.key.name }
     .joinToString("\n") { (thread, frames) -> "\"${thread.name}\" ${thread.state}\n" + frames.joinToString("\n") { "    at $it" } }
 
-suspend inline fun <reified Answer> MutationReceipt<*>.answer(): Answer {
-    return dbJson.decodeFromString<Answer>(requireNotNull(confirmed().answerJson) { "the operation has no answer" })
-}
-
 suspend fun MutationReceipt<*>.rejection(): DbException.Rejected = try {
     confirmed()
     error("the operation was not refused")
@@ -56,6 +52,7 @@ suspend fun MutationReceipt<*>.rejection(): DbException.Rejected = try {
 }
 
 suspend fun MutationReceipt<*>.refusal(): WireFailure = rejection().failure
+suspend fun AnsweredReceipt<*, *>.refusal(): WireFailure = receipt.refusal()
 
 suspend fun MutationReceipt<*>.isRefused(): Boolean = try {
     confirmed()

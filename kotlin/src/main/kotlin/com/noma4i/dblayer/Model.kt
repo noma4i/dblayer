@@ -2,6 +2,7 @@ package com.noma4i.dblayer
 
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.coroutines.ensureActive
@@ -118,7 +119,26 @@ suspend fun <Model : DBModel> ModelDecoder<Model>.actOnSingleton(action: String,
     return onAccountOf(account) { database, ordered, epoch -> MutationReceipt(database, this, ordered.act(epoch, modelName, "singleton", action, values.jsonText(), args.jsonText())) }
 }
 
-data class Confirmed<Model : DBModel>(val value: Model?, val answerJson: String?)
+data class Confirmed<Model : DBModel>(val value: Model?, internal val answerJson: String?)
+
+/** The outcome of an operation that says `returns`: the value and the typed answer of the server. */
+data class Answered<Model : DBModel, Answer>(val value: Model?, val answer: Answer?)
+
+/** The receipt of an operation that says `returns`: [confirmed] carries the answer decoded by the generated type. */
+class AnsweredReceipt<Model : DBModel, Answer>(val receipt: MutationReceipt<Model>, private val serializer: KSerializer<Answer>) {
+    val optimisticValue: Model? get() = receipt.optimisticValue
+    val revision: Long get() = receipt.revision
+    val epoch: ULong get() = receipt.epoch
+    val operation: Long? get() = receipt.operation
+
+    /** The one outcome of the receipt: the value and the answer, or [DbException.Rejected] or the exception of the end of the wait. */
+    suspend fun confirmed(discardOnFailure: Boolean = false): Answered<Model, Answer> {
+        val confirmed = receipt.confirmed(discardOnFailure)
+        return Answered(confirmed.value, confirmed.answerJson?.let { dbJson.decodeFromString(serializer, it) })
+    }
+}
+
+fun <Model : DBModel, Answer> MutationReceipt<Model>.answered(serializer: KSerializer<Answer>): AnsweredReceipt<Model, Answer> = AnsweredReceipt(this, serializer)
 
 class MutationReceipt<Model : DBModel>(private val database: Database, private val decoder: ModelDecoder<Model>, private val wire: WireOperationReceipt) {
     val optimisticValue: Model? = wire.optimisticValue?.let(decoder::read)

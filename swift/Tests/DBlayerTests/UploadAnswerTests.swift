@@ -23,7 +23,7 @@ extension BridgeProbeTests {
       transport.enqueue("CreateMoment", reply: "{\"data\":{\"createMoment\":{\(row)\(field)}}}")
       let uploaded = try await moment.uploadClip(UploadRequest(path: source.path), in: DB.account())
       #expect(uploaded.optimisticValue?.id == "m77")
-      #expect(try await uploaded.answer(as: MomentUploadClipResult.self).successMessage == expected)
+      #expect(try #require(try await uploaded.confirmed().answer).successMessage == expected)
     }
     #expect(transport.calls.map(\.operationName) == ["CreateMoment", "CreateBlob", "CreateMoment", "CreateMoment"])
     #expect(transport.unscripted.isEmpty)

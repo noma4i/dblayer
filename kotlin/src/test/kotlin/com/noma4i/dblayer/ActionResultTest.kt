@@ -21,10 +21,10 @@ class ActionResultTest {
         transport.enqueue("ShareMoment", """{"data":{"shareMoment":{"moment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"},"successMessage":"Shared","copies":3,"other":"x"}}}""")
         val shared = moment.share()
         assertEquals("m77", shared.optimisticValue?.id)
-        val answer = withTimeout(5000) { shared.answer<MomentShareResult>() }
+        val answer = requireNotNull(withTimeout(5000) { shared.confirmed() }.answer)
         assertEquals("Shared", answer.successMessage)
         assertEquals(3L, answer.copies)
-        assertEquals(3L, withTimeout(5000) { shared.answer<MomentShareResult>() }.copies)
+        assertEquals(3L, withTimeout(5000) { shared.confirmed() }.answer?.copies)
         val sentShare = transport.calls.filter { it.operationName == "ShareMoment" }.map { it.variablesJson }
         assertEquals("an unset optional parameter of an action is not sent (M85): $sentShare", true, sentShare.first().contains("momentId") && !sentShare.first().contains("note"))
 
@@ -44,7 +44,7 @@ class ActionResultTest {
         val moment = Moment.find(requireNotNull(withTimeout(5000) { Moment.create(text = "hello", media = null, account = AccountScope.current()).confirmed() }.value).id).current()!!
 
         transport.enqueue("ShareMoment", """{"data":{"shareMoment":{"moment":null,"successMessage":null,"copies":null}}}""")
-        val answer = withTimeout(5000) { moment.share().answer<MomentShareResult>() }
+        val answer = requireNotNull(withTimeout(5000) { moment.share().confirmed() }.answer)
         assertNull(answer.successMessage)
         assertNull(answer.copies)
         assertNotNull(Moment.find("m77").current())
