@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Refuse a scope variable that its query document does not declare.
+
 ## 6.43.0 - 2026-11-16
 
 ### Added

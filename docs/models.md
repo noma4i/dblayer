@@ -310,7 +310,7 @@ val fresh = Group.node(groupId, force = true)
 val groups = Group.nodes(ids)
 ```
 
-- `variables id: :id` binds the parameter to the document variable (`variables momentId: :id` for another name). Another `node: :one` scope of the same model reads a smaller selection (`Note.transcodeStatus(id)`). The name `nodeId` belongs to the node read.
+- `variables id: :id` binds the parameter to the document variable (`variables momentId: :id` for another name). Each `variables` entry names a variable of the scope's document, every required document variable has a source, and a parameter must fit the type of its variable, or generation fails. Another `node: :one` scope of the same model reads a smaller selection (`Note.transcodeStatus(id)`). The name `nodeId` belongs to the node read.
 - The answer lands as a normal server row: only the selected fields change, and merge rules, local fields and unconfirmed local edits stay.
 - A plain call inside the freshness time of that id reads the local row and sends nothing, and `force: true` always asks. Overlapping calls for one id share a request, and a forced call within 1 second of the last answer gets that answer.
 - The result is nil for `null`, an error `NOT_FOUND` on `node`, a foreign type or a missing id. `null` and `NOT_FOUND` delete the stored row and its `dependent: :destroy` children like a server delete event, and send no mutation. A foreign type writes nothing.

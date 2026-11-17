@@ -31,8 +31,6 @@ gen/src/schema_check/graphql.rs	Selection::Field(field) => found.fields.push(Sel
 gen/src/schema_check/graphql.rs	let key = field.alias.clone().unwrap_or_else(|| field.name.clone());	M32
 gen/src/schema_check/operation.rs	let at = remote.response.as_ref().and_then(|read| read.from.as_ref()).map_or(query.pos, |found| found.pos);	M55
 gen/src/schema_check/operation.rs	let pos = remote.paginate.as_ref().map(|paginate| paginate.pos).or_else(|| remote.response.as_ref().map(|read| read.pos)).unwrap_or(query.pos);	M55
-gen/src/schema_check/selection.rs	renamed.map_or(param.to_string(), |binding| binding.name.clone())	M32
-gen/src/schema_check/selection.rs	renamed.map_or(parameter.name.as_str(), |binding| binding.name.as_str()) == variable	M32
 gen/src/unions.rs	variants.iter().zip(derived).map(|(variant, case)| variant.case.clone().unwrap_or(case)).collect()	M54
 gen/src/decl/lower/operations.rs	let input = line.opt(cx, "input").map(|pair| symbol_pairs(cx, Some(pair), "`input`")).unwrap_or_default();	M58
 gen/src/decl/lower/operations.rs	let set = line.opt(cx, "set").map(|pair| copy_set(cx, pair)).unwrap_or_default();	M58
@@ -49,6 +47,7 @@ gen/src/build/mod.rs	scope.where_.iter().flat_map(|clause| &clause.pairs).find(|
 gen/src/build/mod.rs	let column = scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == parameter.item).map_or(parameter.item.clone(), |(column, _)| column.item.clone());	M60
 gen/src/build/mod.rs	action.local = operation.local.clone().unwrap_or_default();	M58
 gen/src/lib.rs	action.client_mutation_id = action.mutation.as_ref().is_some_and(|name| checked.idempotent_inputs.contains(&(name.clone(), action.wrap.clone().unwrap_or_else(|| "input".into()))));	M64
+gen/src/schema_check/variables.rs	let mapped = |parameter: &str| scope.variables.iter().flatten().find(|binding| matches!(&binding.value, VariableValue::Parameter(source) if source == parameter)).map_or(parameter.to_string(), |binding| binding.name.clone());	M88
 gen/src/schema_check/selection.rs	let key = field.from.as_ref().map_or(name, |found| found.item.as_str());	M59
 gen/src/schema_check/selection.rs	let real = selected.as_ref().and_then(|found| found.first().map(|field| field.name.clone())).unwrap_or_else(|| segments[0].to_string());	M32
 gen/src/emit/mod.rs	field.from.as_deref().unwrap_or(&field.name)	M59

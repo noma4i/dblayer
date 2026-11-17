@@ -10,7 +10,7 @@ type Query {
   node(id: ID!): Node
   nodes(ids: [ID!]!): [Node]!
   clubMembers(clubId: ID!, order: String): ClubNode
-  momentsFeed(first: Int, after: String): MomentConnection!
+  momentsFeed(vibeId: String, first: Int, after: String): MomentConnection!
   ledgerEntries(scope: String!, first: Int, after: String): LedgerFeedConnection!
   shadowScope(first: Int, after: String): ShadowConnection!
   shadowAccount(first: Int, after: String): ShadowAccountConnection!

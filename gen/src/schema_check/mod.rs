@@ -21,6 +21,7 @@ mod inputs;
 mod paths;
 mod media;
 mod standalone;
+mod variables;
 
 pub use inputs::{InputField, InputObject, SchemaTypes, Ty, TyKind};
 pub(crate) use inputs::load_schema_types;
