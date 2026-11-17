@@ -5,7 +5,7 @@ use crate::check_models_against_schema;
 
 const SCHEMA: &str = "type Query { items: ItemList!, one(id: ID!): Item }\ntype Mutation { touch(id: ID!): Item }\ntype ItemList { nodes: [Item!]! }\ntype Item { id: ID! title: String! owner: Owner }\ntype Owner { id: ID! name: String }\n";
 
-const MODEL: &str = "model Item do\n  attribute :title, :string\n  scope :one do\n    query \"one\"\n  end\nend\n";
+const MODEL: &str = "model Item do\n  attribute :title, :string\n  scope :one do\n    parameter :itemId, :id\n    variables id: :itemId\n    query \"one\"\n  end\nend\n";
 
 fn check(documents: &str) -> Result<(), Vec<String>> {
     let directory = tempfile::tempdir().unwrap();

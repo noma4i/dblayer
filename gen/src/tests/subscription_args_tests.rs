@@ -28,8 +28,8 @@ fn subscription_arguments_must_match_the_scope_parameters() {
     let cases = [
         ("same names and types", "subscription documentUpdated($slug: String!, $source: Source) { documentUpdated(slug: $slug, source: $source) { id slug } }", None),
         ("optional scope param left out", "subscription documentUpdated($slug: String!) { documentUpdated(slug: $slug) { id slug } }", None),
-        ("extra required argument", "subscription documentUpdated($slug: String!, $token: ID!) { documentUpdated(slug: $slug, token: $token) { id slug } }", Some("argument `$token` has no scope parameter")),
-        ("wrong type", "subscription documentUpdated($slug: String!, $source: Int) { documentUpdated(slug: $slug, source: $source) { id slug } }", Some("`$source` is `Int` but scope parameter `source` is")),
+        ("extra required argument", "subscription documentUpdated($slug: String!, $token: ID!) { documentUpdated(slug: $slug, token: $token) { id slug } }", Some("variable `$token` has no source")),
+        ("wrong type", "subscription documentUpdated($slug: String!, $source: Int) { documentUpdated(slug: $slug, source: $source) { id slug } }", Some("param `source` is `Source` but the variable `$source` of `documentUpdated` is `Int`")),
     ];
     for (name, document, expected) in cases {
         match (compile(document), expected) {

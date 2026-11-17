@@ -63,7 +63,7 @@ fn action(name: &str, mutation: &str, lines: &str) -> String {
 }
 
 fn members(options: &str) -> String {
-    format!("model User do\n  attribute :name, :string, null: true\n  scope :members do\n    parameter :chatId, :string\n    query \"ChatMembers\"{options}\n    paginate size: 30, direction: :forward\n  end\nend\n")
+    format!("model User do\n  attribute :name, :string, null: true\n  scope :members do\n    parameter :chatId, :string\n    variables id: :chatId\n    query \"ChatMembers\"{options}\n    paginate size: 30, direction: :forward\n  end\nend\n")
 }
 
 fn run(source: &str) -> Result<(), Vec<(usize, String)>> {
@@ -139,9 +139,9 @@ fn a_landing_path_the_answer_lacks_is_refused() {
 
 #[test]
 fn a_fetch_root_the_document_does_not_select_is_refused() {
-    let broken = "model Message do\n  attribute :body, :string, null: true\n  scope :messages do\n    parameter :chatId, :string\n    query \"ChatMessages\"\n    response from: \"node.messages\", shape: :list\n  end\nend\n";
+    let broken = "model Message do\n  attribute :body, :string, null: true\n  scope :messages do\n    parameter :chatId, :string\n    variables id: :chatId\n    query \"ChatMessages\"\n    response from: \"node.messages\", shape: :list\n  end\nend\n";
     refused("root past what the document selects", broken, "response from: \"node.messages\"", &["response from `node.messages`", "no `messages` under `node`", "title"]);
-    let renamed = "model Chat do\n  attribute :title, :string, null: true\n  scope :found do\n    parameter :chatId, :string\n    query \"Aliased\"\n    response from: \"found\", shape: :list\n  end\nend\n";
+    let renamed = "model Chat do\n  attribute :title, :string, null: true\n  scope :found do\n    query \"Aliased\"\n    response from: \"found\", shape: :list\n  end\nend\n";
     run(renamed).unwrap();
     let schema_name = renamed.replace("from: \"found\"", "from: \"roster\"");
     refused("schema name of an aliased root", &schema_name, "query \"Aliased\"", &["must start with the first field `found`"]);

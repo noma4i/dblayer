@@ -80,10 +80,10 @@ fn declarations_are_checked_against_the_schema() {
         ("list remote on one object", model("    attribute :title, :string\n", "  scope :one do\n    query \"one\"\n    response shape: :list\n  end\n"), Some((8, "expects a list"))),
         ("aliased root needs its key", model("    attribute :title, :string\n", "  scope :mine do\n    query \"mine\"\n    response from: \"items\"\n    paginate size: 20, direction: :forward\n  end\n"), Some((7, "must start with the first field `mine`"))),
         ("aliased root with its key", model("    attribute :title, :string\n", "  scope :mine do\n    query \"mine\"\n    paginate size: 20, direction: :forward\n  end\n"), None),
-        ("id from the parent object", "model Item do\n  attribute :id, :id, id_from: :owner\n  attribute :ownerId, :id, null: true\n  belongs_to :owner, class_name: Item, from: \"owner\"\n  scope :one do\n    query \"one\"\n  end\nend\n".to_string(), None),
+        ("id from the parent object", "model Item do\n  attribute :id, :id, id_from: :owner\n  attribute :ownerId, :id, null: true\n  belongs_to :owner, class_name: Item, from: \"owner\"\n  scope :one do\n    parameter :itemId, :id\n    variables id: :itemId\n    query \"one\"\n  end\nend\n".to_string(), None),
         ("association path of the wrong shape", "model Item do\n  attribute :title, :string\n  attribute :ownerId, :id, null: true\n  has_many :owners, class_name: Item, foreign_key: :ownerId, from: \"owner\"\n  scope :one do\n    query \"one\"\n  end\nend\n".to_string(), Some((4, "expects a list"))),
         ("default covers a nullable schema field", model("    attribute :note, :string, default: \"\"\n", REMOTE), None),
-        ("association path through a list", "model Item do\n  attribute :title, :string\n  attribute :ownerIds, [:id], default: []\n  references :owners, class_name: Item, foreign_key: :ownerIds, from: \"links.owner\"\n  scope :one do\n    query \"one\"\n  end\nend\n".to_string(), None),
+        ("association path through a list", "model Item do\n  attribute :title, :string\n  attribute :ownerIds, [:id], default: []\n  references :owners, class_name: Item, foreign_key: :ownerIds, from: \"links.owner\"\n  scope :one do\n    parameter :itemId, :id\n    variables id: :itemId\n    query \"one\"\n  end\nend\n".to_string(), None),
         ("local model has no schema", "model Item, storage: :local do\n  attribute :ghost, :string\nend\n".to_string(), None),
     ];
     for (name, source, expected) in cases {

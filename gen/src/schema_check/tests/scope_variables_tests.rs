@@ -31,7 +31,7 @@ fn every_scope_variable_names_a_document_variable_and_every_required_one_has_a_s
         ("names match", MODEL.to_string(), documents(NODE, OWNED), &[]),
         ("a renamed node id", MODEL.replace("variables id: :id", "variables thingId: :id"), documents("query ThingNode($thingId: ID!) { node(id: $thingId) { ... on Thing { id title } } }\n", OWNED), &[]),
         ("a node scope binds `id` while the document asks for `$thingId`", MODEL.to_string(), documents("query ThingNode($thingId: ID!) { node(id: $thingId) { ... on Thing { id title } } }\n", OWNED), &["model `Thing` scope `one` operation `ThingNode`: variable `$id` is not a variable of the document", "model `Thing` scope `one` operation `ThingNode`: variable `$thingId` has no source"]),
-        ("a string parameter the document does not declare", MODEL.to_string(), documents(NODE, "query ThingsOwned($ownerName: String) { things(owner: $ownerName) { id title } }\n"), &["scope `owned` param `owner` is `string` but operation `ThingsOwned` has no variable `$owner`"]),
+        ("a string parameter the document does not declare", MODEL.to_string(), documents(NODE, "query ThingsOwned($ownerName: String) { things(owner: $ownerName) { id title } }\n"), &["model `Thing` scope `owned` operation `ThingsOwned`: param `owner` is `string` but the document has no variable `$owner`"]),
         ("a required document variable without a source", MODEL.to_string(), documents(NODE, "query ThingsOwned($owner: String, $tag: ID!) { things(owner: $owner, tag: $tag) { id title } }\n"), &["model `Thing` scope `owned` operation `ThingsOwned`: variable `$tag` has no source"]),
     ];
     for (name, model, operations, expected) in cases {
