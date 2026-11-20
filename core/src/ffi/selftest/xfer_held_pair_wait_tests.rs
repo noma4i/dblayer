@@ -25,7 +25,8 @@ async fn xfer_step_behind_a_held_pair_keeps_attempts() {
     let temporary = sent.optimistic_value.as_ref().unwrap().id.clone();
     let upload = || database.peek_row_now(epoch, "Moment".into(), temporary.clone()).unwrap().and_then(|row| row.uploads.into_iter().find(|entry| entry.action == "upload_clip")).map(|entry| entry.upload);
     crate::test_wait::settled(&database, "the step started", || upload().is_some_and(|upload| upload.attempts == 1)).await;
-    clock.advance(3 * 120_000);
+    // D-493: a held pair lives at most the bound of the core clock; this is the longest wait it can have.
+    clock.advance(crate::transport::REQUEST_TIMEOUT_MS - 1_000);
     let waiting = upload().unwrap();
     assert_eq!((stand.script.count("CreateBlob"), waiting.attempts, waiting.status != WireUploadStatus::Failed, waiting.error.is_none()), (0, 1, true, true), "the step behind the held pair neither failed nor burned an attempt: {waiting:?}");
     held.release();

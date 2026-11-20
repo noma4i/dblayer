@@ -166,6 +166,7 @@ pub(super) async fn advancing_by<T>(clock: &crate::ffi::TestClock, step: u64, wo
     tokio::pin!(work);
     let frozen = super::upload_stand::frozen_of(clock);
     let mut armed = clock.armed();
+    if let Some(frozen) = &frozen { tokio::select! { result = &mut work => return result, () = frozen.thawed() => {} } }
     clock.advance(step);
     loop {
         tokio::select! {
