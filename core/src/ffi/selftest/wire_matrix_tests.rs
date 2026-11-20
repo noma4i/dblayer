@@ -14,6 +14,32 @@ async fn call(rig: &Rig) -> Result<String, DbError> {
 
 fn last_sequence(rig: &Rig) -> Option<i64> { rig.world.log().last().and_then(|entry| entry.sequence) }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_conflicting_pair_blocks_writes_but_logout_ends_the_session() {
+    for fault in [Fault::Refuse { code: "SEQUENCE_CONFLICT", confirmed: false }, Fault::Answer(in_errors("SEQUENCE_CONFLICT"))] {
+        let rig = Rig::encrypted().await;
+        rig.login_ios("A").await;
+        rig.world.fail_next("login_link", fault);
+        let first = bound(rig.database.session_call("social".into(), json!({"account": "A"}).to_string())).await;
+        assert!(matches!(first, Err(DbError::Session { code: SessionCode::SequenceConflict, .. })), "{first:?}");
+        let sent = rig.world.log().len();
+        let second = bound(rig.database.session_call("social".into(), json!({"account": "A"}).to_string())).await;
+        assert!(matches!(second, Err(DbError::Session { code: SessionCode::SequenceConflict, .. })), "{second:?}");
+        assert_eq!(rig.world.log().len(), sent, "a conflicting pair stays held instead of sending a new pair");
+        let oversized = json!({"padding": "x".repeat(300_000)}).to_string();
+        let refused_logout = bound(rig.database.session_call("logout".into(), oversized)).await;
+        assert!(matches!(refused_logout, Err(DbError::RequestTooLarge { .. })), "{refused_logout:?}");
+        let blocked = bound(rig.database.session_call("social".into(), json!({"account": "A"}).to_string())).await;
+        assert!(matches!(blocked, Err(DbError::Session { code: SessionCode::SequenceConflict, .. })), "{blocked:?}");
+        assert_eq!(rig.world.log().len(), sent, "a logout refused before persistence keeps the conflicting pair");
+        let logout = bound(rig.database.session_call("logout".into(), "{}".into())).await;
+        assert!(logout.is_ok(), "logout must reach the server after a sequence conflict: {logout:?}");
+        assert_eq!(rig.database.session_status().unwrap().phase, crate::ffi::SessionStanding::None);
+        assert!(!rig.world.signed(), "logout ends the server session as well as the local one");
+        bound(rig.database.close_database()).await.unwrap();
+    }
+}
+
 /// `RATE_LIMITED` is a session refusal and an unknown name is a GraphQL error carrying the name, in `error` and in `errors[].extensions.code`; the number is spent only by a confirmed answer; a temporary code with a confirmed number is not sent again.
 #[tokio::test(flavor = "multi_thread")]
 async fn wire_session_code_and_consumption() {

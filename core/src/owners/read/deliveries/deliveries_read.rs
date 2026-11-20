@@ -361,10 +361,7 @@ impl Delivery {
     }
 
     pub(super) fn same_rows(&mut self, read: i64, fx: &mut Vec<Emit>) {
-        if self.held_state.as_ref().is_some_and(|held| visible_after(held) <= read) {
-            let state = self.state_at(read);
-            self.push(Value::State { revision: self.revision, state }, fx);
-        }
+        if let Some(held) = self.held_state.take_if(|held| visible_after(held) <= read) { self.window_state(held, fx); }
     }
 
     pub(super) fn live_rows(&mut self, seen: i64, revision: i64, rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64>, fx: &mut Vec<Emit>) {

@@ -329,7 +329,7 @@ impl FakeHttp for World {
             let mut state = self.state.lock().unwrap();
             if state.credential != credential { state.credential = credential; state.contract.set_last(0); }
         }
-        let admission = self.state.lock().unwrap().contract.admit(&contract_request);
+        let admission = if operation == "logout" { Admission::Fresh } else { self.state.lock().unwrap().contract.admit(&contract_request) };
         match admission {
             Admission::Stored(stored) => {
                 let mut state = self.state.lock().unwrap();
@@ -364,7 +364,7 @@ impl FakeHttp for World {
             }
             Some(Fault::Hold(_) | Fault::HoldThen(..)) | None => {}
         }
-        if sealed_sequence == sequence { self.state.lock().unwrap().contract.settle(&contract_request, answer.clone()); }
+        if operation != "logout" && sealed_sequence == sequence { self.state.lock().unwrap().contract.settle(&contract_request, answer.clone()); }
         Ok(EncryptedReply { status: 200, body: seal_response(&request, sealed_sequence, answer) })
     }
 }

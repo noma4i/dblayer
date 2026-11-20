@@ -282,8 +282,11 @@ async fn next_rows(rig: &Rig, stream: &ReadStream, expected: i64) -> i64 {
     revision
 }
 
-/// The payment of the owed row releases the interest of the stream: a stream that shows the row takes one `State` frame with `settled`, the phase and the rows unchanged. The count of the window holds no interest in the row and takes none.
-async fn took_settled_state(name: &str, stream: &Arc<ReadStream>) {
+async fn settled_after_rows(name: &str, stream: &Arc<ReadStream>, state: crate::ffi::ReadState) {
+    if state.settled {
+        assert_eq!(state.phase, crate::ffi::ReadPhase::Loaded, "{name}: {state:?}");
+        return;
+    }
     match crate::test_wait::within_named(8, name, stream.pull_next()).await {
         Some(ReadValue::State { state, .. }) => assert!(state.settled && state.phase == crate::ffi::ReadPhase::Loaded, "{name}: {state:?}"),
         other => panic!("{name}: expected one State frame, got {other:?}"),
@@ -293,12 +296,14 @@ async fn took_settled_state(name: &str, stream: &Arc<ReadStream>) {
 async fn assert_quiet(db: &Database, streams: &[&Arc<ReadStream>]) {
     let mut pulls: Vec<_> = streams.iter().map(|stream| Box::pin(stream.pull_next())).collect();
     for pull in &mut pulls {
-        assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pull.as_mut(), cx).is_pending())).await);
+        let seen = std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pull.as_mut(), cx))).await;
+        assert!(seen.is_pending(), "unexpected delivery before the barrier: {seen:?}");
     }
     let life = db.life_handle();
     bound(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
     for pull in &mut pulls {
-        assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pull.as_mut(), cx).is_pending())).await);
+        let seen = std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pull.as_mut(), cx))).await;
+        assert!(seen.is_pending(), "unexpected delivery after the barrier: {seen:?}");
     }
 }
 
@@ -400,18 +405,20 @@ async fn dlv_prop_one_change_every_view_related_row() {
     hold.release();
     assert!(matches!(bound(db.confirmed(receipt, false)).await, Err(crate::ffi::DbError::Rejected { kept: false, .. })));
     let mut restored = Vec::new();
+    let mut restored_states = Vec::new();
     for stream in [&list, &entity] {
         let value = bound(stream.pull_next()).await.unwrap();
-        let (revision, rows) = match value { ReadValue::Delta { revision, edits, .. } => (revision, crate::ffi::RowEdit::carried(&edits)), ReadValue::Snapshot { revision, rows, .. } => (revision, rows), other => panic!("{other:?}") };
+        let (revision, rows, state) = match value { ReadValue::Delta { revision, edits, state, .. } => (revision, crate::ffi::RowEdit::carried(&edits), state), ReadValue::Snapshot { revision, rows, state, .. } => (revision, rows, state), other => panic!("{other:?}") };
         assert!(texts(&cell(&rig, "Message", &rows[0], "reactions")).contains(&"Bob".to_string()));
         restored.push(revision);
+        restored_states.push(state);
     }
     assert!(restored[0] > revisions[0] && restored[1] > revisions[1], "the restore follows the overlay on each stream");
     rig.clock.advance(1_000);
     crate::test_wait::settled(&rig, "the refusal owes the receiver one node read", || rig.world.count("UserNode") == nodes + 1).await;
     let life = db.life_handle();
     bound(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
-    for (name, stream) in [("list", &list), ("entity", &entity)] { took_settled_state(name, stream).await; }
+    for ((name, stream), state) in [("list", &list), ("entity", &entity)].into_iter().zip(restored_states) { settled_after_rows(name, stream, state).await; }
     assert_quiet(db, &[&list, &entity, &count]).await;
     assert_eq!(restored[0], restored[1], "both streams end on one revision once settled (P-DLV-17)");
     db.close_now();

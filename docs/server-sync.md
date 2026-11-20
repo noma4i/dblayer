@@ -173,6 +173,8 @@ A sealed `RATE_LIMITED` answer with `retryAfter` of N seconds ends its request a
 Call `sessionReset()` for every sign-out of the app. The library clears the data itself.
 If `CredentialStore.clear` fails during a revoked logout, the logout still succeeds and the next open clears the credential that has no stored state.
 
+A sequence conflict keeps the pending request and refuses new authenticated requests. The configured `logout` remains available with a stored credential. Its server endpoint must accept logout independently of the request number and return `revoked`. The library clears local session state after that confirmation.
+
 ### Reading the session
 
 `sessionStatus()` returns the session now without network or storage access: `epoch`, `identity` and `phase`. `phase` is `none` without a session, `active` for a signed-in one (also while it resets or its storage failed) and `ending` while it ends. `identity` is the digest of the credential and is set for `active` and `ending`. Equal identities in two readings mean the same session. It is not the server session id. The call throws `NotOpen` before `open` and `Closed` after `close`.

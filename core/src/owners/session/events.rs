@@ -558,9 +558,17 @@ impl SessionState {
                 self.phase = SessionPhase::PendingHeld { pending, told };
                 self.queue_mutate(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
             }
-            (SessionPhase::Blocked { pending, reason }, SessionInput::SessionCall { reply: id, .. }) => {
-                self.phase = SessionPhase::Blocked { pending, reason };
-                reply(fx, id, Err(blocked_error(reason)));
+            (SessionPhase::Blocked { pending, reason }, SessionInput::SessionCall { operation, body, reply: id }) => {
+                let logout = self.credential.is_some() && self.def(&operation).is_some_and(|def| def.class == OperationClass::Logout);
+                if logout {
+                    self.held = Some(SessionPhase::Blocked { pending, reason });
+                    self.phase = SessionPhase::Idle;
+                    self.begin(Queued::Call { operation, body, reply: id }, fx);
+                    if matches!(self.phase, SessionPhase::Idle) { self.idle(fx); }
+                } else {
+                    self.phase = SessionPhase::Blocked { pending, reason };
+                    reply(fx, id, Err(blocked_error(reason)));
+                }
             }
             (SessionPhase::Blocked { pending, reason }, SessionInput::Mutate { author, req_id, .. }) => {
                 let same = pending.as_ref().is_some_and(|pending| pending.request_id == req_id);
@@ -573,6 +581,9 @@ impl SessionState {
             }
             (SessionPhase::Persisting { pending, batch, .. }, SessionInput::Committed(Committed { batch: committed, .. })) if committed == batch => {
                 self.write_settled();
+                if pending.class == OperationClass::Logout {
+                    if let Some(SessionPhase::Blocked { pending: Some(old), .. }) = self.held.take() { let _ = Self::detached(old, fx); }
+                }
                 if let Some(error) = self.detach_error.take() {
                     self.resume_finish_retained(&pending, Err(error), true, fx);
                     fx.push(SessionEffect::ScheduleTick { attempts: 0 });
@@ -703,7 +714,12 @@ impl SessionState {
                         _ => Ok(body.clone()),
                     }
                 } else { Ok(body.clone()) };
-                if let Some(code) = refusal {
+                let conflict = pending.class != OperationClass::Sessionless && (refusal == Some(crate::transport::SessionCode::SequenceConflict) || sequence.is_some_and(|sequence| sequence != pending.sequence));
+                if conflict {
+                    let error = match refusal { Some(code @ crate::transport::SessionCode::SequenceConflict) => SessionError::Session { code, body: body.clone() }, _ => SessionError::SequenceConflict };
+                    self.resume_finish_retained(&pending, Err(error), true, fx);
+                    self.phase = SessionPhase::Blocked { pending: Some(PendingCall { reply: None, ..pending }), reason: Block::SequenceConflict };
+                } else if let Some(code) = refusal {
                     let confirmed = (pending.class != OperationClass::Sessionless && sequence == Some(pending.sequence)).then_some(pending.sequence);
                     let error = SessionError::Session { code, body: body.clone() };
                     self.land(pending, Err(error), None, confirmed, false, fx);
@@ -713,11 +729,8 @@ impl SessionState {
                     let identity = pending.credential;
                     let sequence = pending.sequence;
                     self.land(pending, answer, identity, Some(sequence), false, fx);
-                } else if sequence.is_none() {
-                    self.land(pending, answer, None, None, false, fx);
                 } else {
-                    self.resume_finish_retained(&pending, Err(SessionError::SequenceConflict), true, fx);
-                    self.phase = SessionPhase::Blocked { pending: Some(PendingCall { reply: None, ..pending }), reason: Block::SequenceConflict };
+                    self.land(pending, answer, None, None, false, fx);
                 }
             }
             SessionInput::Revoked { request_id, attempt_id, body, .. } if mine(request_id, attempt_id) => {

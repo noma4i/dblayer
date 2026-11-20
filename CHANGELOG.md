@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Keep the pending request after a sequence conflict.
+- Allow logout to end a session blocked by a sequence conflict.
+- Avoid duplicate state frames after a related row is read again.
+
 ## 6.43.1 - 2026-11-17
 
 ### Fixed

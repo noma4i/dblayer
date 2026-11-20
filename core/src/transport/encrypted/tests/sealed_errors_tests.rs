@@ -63,7 +63,7 @@ async fn query_replayed_single_retry_owner() {
 }
 
 #[tokio::test]
-async fn a_session_code_in_a_sealed_answer_is_a_typed_error_and_keeps_the_credential_and_clears_the_pending_request() {
+async fn a_session_code_is_typed_keeps_the_credential_and_retains_only_conflicting_numbered_requests() {
     for (wire, code) in TABLE {
         for mutation in [false, true] {
             for confirmed in [false, true] {
@@ -92,7 +92,8 @@ async fn a_session_code_in_a_sealed_answer_is_a_typed_error_and_keeps_the_creden
                 } else {
                     assert_eq!(error, TransportError::Session { code, detail: json!({ "error": wire }).to_string() }, "{case}: the detail is the unchanged body (wire.md:10)");
                 }
-                assert_eq!((rig.credentials.value(), pending(&rig.db)), (credential.clone(), false), "{case}: the transport clears the pending request and keeps the credential, the session end is the owner's (D-276)");
+                let retained = mutation && code == SessionCode::SequenceConflict;
+                assert_eq!((rig.credentials.value(), pending(&rig.db)), (credential.clone(), retained), "{case}: lifecycle sess_calling_sequence_conflict retains the conflicting pair, other terminal refusals clear it");
             }
         }
     }

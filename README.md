@@ -12,7 +12,7 @@ iOS 17, macOS 14, or Android 13 (API 33) or newer.
 
 ## Highlights
 
-- **Always live.** Every read of a model is a stream: a snapshot, then keyed deltas. There is no separate "observe" call to remember.
+- **Always live.** Every read of a model is a stream: a snapshot, then keyed deltas. Unchanged state produces no extra frame. There is no separate "observe" call to remember.
 - **Refresh on entry.** A stream loads a stale relation on connect while keeping cached rows visible. `beginLoad()` gives the result of that load without starting another one.
 - **Local first.** Data lives in SQLite. Reads never wait for the network, and writes are applied locally at once.
 - Repeat `local` in a create operation to fill attributes from different singleton models.
@@ -24,7 +24,7 @@ iOS 17, macOS 14, or Android 13 (API 33) or newer.
 - **GraphQL without glue code.** Register your operations and point models at them. Responses of queries, mutations and subscription events are normalized into rows by one set of rules. Refetching after mutations, reconnects and app resume is automatic.
 - **Typed GraphQL inputs.** Generated Swift and Kotlin types support recursive inputs and one-of choices, preserving omitted fields and explicit nulls.
 - **No flicker.** One change is one commit. Observers see cascades, replacements and id swaps as a single transition, in order. Pull-to-refresh replaces data in one commit with no empty state in between.
-- **Encrypted sessions.** The core builds and opens encrypted requests, numbers mutations and stores a pending mutation before it is sent, so a lost answer is repeated unchanged after a restart. Session recovery delivers the answer to its queued mutation or upload step in Swift and Kotlin. The app supplies only the HTTP post and the credential storage. See [server sync](docs/server-sync.md).
+- **Encrypted sessions.** The core builds and opens encrypted requests, numbers mutations and stores a pending mutation before it is sent, so a lost answer is repeated unchanged after a restart. Session recovery delivers the answer to its queued mutation or upload step in Swift and Kotlin. A sequence conflict keeps the pending request while allowing server-confirmed logout. The app supplies only the HTTP post and the credential storage. See [server sync](docs/server-sync.md).
 - **Encrypted cable primitives.** Rust `CableLink` authenticates the server pin, creates the encrypted hello and encrypts subscription frames with directional keys. See [cable protocol](docs/cable-protocol.md).
 - **Files built in.** A `file` field stores binary data. You never choose where bytes live: SQLite or disk.
 - **Owned upload sources.** Upload admission copies files before committing. Files above 256 KiB live beside the database and survive removal of the original.
