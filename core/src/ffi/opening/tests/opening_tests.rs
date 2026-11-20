@@ -303,6 +303,7 @@ struct Recording(Arc<std::sync::Mutex<Vec<String>>>);
 #[async_trait::async_trait]
 impl Transport for Recording {
     fn app_headers(&self) -> HashMap<String, String> { HashMap::new() }
+    fn rotate_connections(&self) {}
     async fn send(&self, request: crate::transport::HttpRequest) -> crate::transport::RawOutcome {
         self.0.lock().unwrap().push(request.url);
         crate::transport::RawOutcome::response(200, "{}")

@@ -39,6 +39,7 @@ impl Headered {
 
 #[async_trait::async_trait]
 impl Transport for Headered {
+    fn rotate_connections(&self) {}
     fn app_headers(&self) -> HashMap<String, String> { HashMap::from([("X-Gen".into(), crate::lock::lock(&self.value).clone())]) }
     async fn send(&self, request: HttpRequest) -> RawOutcome {
         crate::lock::lock(&self.sent).push((request.url.clone(), request.headers.clone()));
@@ -63,7 +64,7 @@ impl Transport for Headered {
 #[tokio::test(flavor = "multi_thread")]
 async fn life_prop_headers_per_request() {
     let port = Arc::new(Headered { value: Mutex::new("first".into()), server: FakeServer::new(Arc::new(crate::runtime::SystemClock)), sent: Mutex::default(), cables: Mutex::default(), puts: Mutex::default() });
-    let transport = ForeignTransport::plain(port.clone(), Some(format!("{GRAPHQL_HOST}/graphql"))).unwrap();
+    let transport = ForeignTransport::plain(port.clone(), Some(format!("{GRAPHQL_HOST}/graphql")), Arc::new(crate::runtime::SystemClock)).unwrap();
     let request = || crate::transport::GraphQLRequest::new("query Q { x }", "Q", serde_json::json!({})).by(crate::transport::WireIds::bootstrap());
     let ports = OpenPorts { partial_operations: true, executor: Some(port.clone()), encrypted: Some(crate::transport::encrypted::tests::protocol_tests::config()), credentials: Some(Arc::new(crate::ffi::tests::encrypted_tests::Held(Arc::new(MemoryCredentials::default())))), ..Default::default() };
     let database = within(crate::ffi::OpenDatabase::new().open(Config { path: None }, crate::ffi::EMPTY_SPECS.into(), OpenOptions::default(), ports, None)).await.unwrap();

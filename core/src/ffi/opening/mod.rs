@@ -52,6 +52,7 @@ impl Drop for ExecutorHttp {
 impl EncryptedHttp for ExecutorHttp {
     fn app_headers(&self) -> HashMap<String, String> { crate::lock::effect(|| self.0.app_headers()) }
     async fn send(&self, request: HttpRequest) -> RawOutcome { crate::lock::effect(|| self.0.send(request)).await }
+    fn rotate_connections(&self) { crate::lock::effect(|| self.0.rotate_connections()); }
 }
 
 impl OpenPorts {

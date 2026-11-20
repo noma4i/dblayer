@@ -26,6 +26,8 @@ pub(crate) trait FakeTransport: Send + Sync {
     async fn put(&self, _: String, _: HashMap<String, String>, _: core::PutFile, _: core::TransferIdentity, _: Arc<ByteProgress>) -> Result<core::PutReply, DbError> { unreachable!("no scripted put") }
     fn cable(&self) -> Option<&CablePeer> { None }
     fn cable_opened(&self, _: &str) {}
+    /// A stand records the rotation to assert it.
+    fn rotated(&self) {}
 }
 
 /// Scripted encrypted POST answers addressed by path.
@@ -33,6 +35,7 @@ pub(crate) trait FakeTransport: Send + Sync {
 pub(crate) trait FakeHttp: Send + Sync {
     async fn post(&self, path: String, body: String, purpose: core::NetworkPurpose) -> Result<EncryptedReply, DbError>;
     fn seen(&self, _: &core::HttpRequest) {}
+    fn rotated(&self) {}
 }
 
 fn failed(error: DbError) -> RawOutcome {
@@ -59,6 +62,7 @@ fn path_of(url: &str) -> String {
 #[async_trait]
 impl<T: FakeTransport> Transport for T {
     fn app_headers(&self) -> HashMap<String, String> { HashMap::new() }
+    fn rotate_connections(&self) { FakeTransport::rotated(self); }
 
     async fn send(&self, request: core::HttpRequest) -> RawOutcome {
         let body: Value = serde_json::from_str(&request.body).expect("GraphQL body");
@@ -94,6 +98,7 @@ impl<T: FakeTransport> Transport for T {
 #[async_trait]
 impl<T: FakeHttp> EncryptedHttp for T {
     fn app_headers(&self) -> HashMap<String, String> { HashMap::new() }
+    fn rotate_connections(&self) { FakeHttp::rotated(self); }
 
     async fn send(&self, request: core::HttpRequest) -> RawOutcome {
         self.seen(&request);

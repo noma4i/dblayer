@@ -208,11 +208,11 @@ impl Database {
     pub(crate) fn store_revision(&self) -> Result<i64, crate::store::StoreError> { self.db.revision_seq() }
 
     fn start(config: Config, models_json: String, (transport, endpoint): (Option<Arc<dyn Transport>>, Option<String>), (clock, preparer): (Arc<dyn Clock>, Option<Arc<dyn super::Preparer>>)) -> Result<Arc<Self>, DbError> {
-        Self::start_prepared(config, models_json, (clock, preparer), |db, _| {
+        Self::start_prepared(config, models_json, (clock, preparer), |db, clock| {
             #[cfg(test)]
             if transport.is_some() { super::tests::signed_session_tests::signed_session(db); }
             let _ = db;
-            Ok(Wiring { transport: transport.map(|transport| ForeignTransport::plain(transport, endpoint).map(|plain| Arc::new(plain) as Arc<dyn core::Upstream>)).transpose()?, encrypted: None, cable: None, seal: None })
+            Ok(Wiring { transport: transport.map(|transport| ForeignTransport::plain(transport, endpoint, clock.clone()).map(|plain| Arc::new(plain) as Arc<dyn core::Upstream>)).transpose()?, encrypted: None, cable: None, seal: None })
         })
     }
 

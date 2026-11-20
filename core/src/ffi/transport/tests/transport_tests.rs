@@ -36,6 +36,7 @@ struct Port {
 #[async_trait::async_trait]
 impl Transport for Port {
     fn app_headers(&self) -> HashMap<String, String> { HashMap::from([("X-App".into(), "yes".into())]) }
+    fn rotate_connections(&self) {}
     async fn send(&self, _: HttpRequest) -> RawOutcome { unreachable!() }
     async fn open_cable(&self, _: String, headers: HashMap<String, String>, _: u64, events: Arc<dyn CableEvents>) -> CableOutcome {
         *crate::lock::lock(&self.link.headers) = headers;
@@ -48,7 +49,7 @@ impl Transport for Port {
 
 fn opened(refusal: Option<(RawFailure, Option<u16>)>) -> (ForeignTransport, Arc<Link>) {
     let link = Arc::new(Link::default());
-    (ForeignTransport::beside_session(Arc::new(Port { link: link.clone(), refusal, put: RawOutcome::response(200, "") })), link)
+    (ForeignTransport::beside_session(Arc::new(Port { link: link.clone(), refusal, put: RawOutcome::response(200, "") }), Arc::new(crate::runtime::SystemClock)), link)
 }
 
 const URL: &str = "wss://test.invalid/cable";
@@ -146,7 +147,7 @@ async fn the_cable_carries_the_app_headers_and_the_library_user_agent() {
 async fn a_failed_put_is_interrupted_only_when_the_core_cancelled_it() {
     let failed = RawOutcome::failed(crate::transport::RawFailureKind::Io, "connection reset");
     let link = Arc::new(Link::default());
-    let transport = ForeignTransport::beside_session(Arc::new(Port { link, refusal: None, put: failed }));
+    let transport = ForeignTransport::beside_session(Arc::new(Port { link, refusal: None, put: failed }), Arc::new(crate::runtime::SystemClock));
     let request = |cancel: crate::transport::CancelToken| crate::transport::PutRequest {
         url: "https://files.test/blob".into(),
         reason: crate::transport::RequestReason::Send,
@@ -176,6 +177,7 @@ impl Drop for OpenDropped<'_> {
 #[async_trait::async_trait]
 impl Transport for Held {
     fn app_headers(&self) -> HashMap<String, String> { HashMap::new() }
+    fn rotate_connections(&self) {}
     async fn send(&self, _: HttpRequest) -> RawOutcome { unreachable!() }
     async fn open_cable(&self, _: String, _: HashMap<String, String>, _: u64, _: Arc<dyn CableEvents>) -> CableOutcome {
         let _dropped = OpenDropped(&self.dropped);
@@ -190,7 +192,7 @@ impl Transport for Held {
 #[tokio::test]
 async fn an_abandoned_cable_open_cancels_the_platform_call() {
     let held = Arc::new(Held { entered: tokio::sync::Notify::new(), dropped: std::sync::atomic::AtomicBool::new(false) });
-    let transport = Arc::new(ForeignTransport::beside_session(held.clone()));
+    let transport = Arc::new(ForeignTransport::beside_session(held.clone(), Arc::new(crate::runtime::SystemClock)));
     let opening = { let transport = transport.clone(); tokio::spawn(async move { transport.open_cable(URL).await.map(drop) }) };
     within(held.entered.notified()).await;
     assert!(!held.dropped.load(std::sync::atomic::Ordering::SeqCst));

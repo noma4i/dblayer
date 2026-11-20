@@ -14,6 +14,8 @@ pub trait Transport: Send + Sync {
     async fn send(&self, request: core::HttpRequest) -> core::RawOutcome;
     /// Opens the WebSocket at `url` (built by the core), reports its frames to `events` and returns the connection after the handshake.
     async fn open_cable(&self, url: String, headers: HashMap<String, String>, connect_ms: u64, events: Arc<dyn CableEvents>) -> CableOutcome;
+    /// Makes the next request and the next cable open use a new connection (`URLSession.flush`, `connectionPool.evictAll()`). Requests in flight finish on their own.
+    fn rotate_connections(&self);
     /// Uploads the file range to the presigned `url` with the core timeouts, reports the sent bytes to `progress`.
     async fn put(&self, target: PutTarget, file: core::PutFile, identity: core::TransferIdentity, progress: Arc<ByteProgress>) -> core::RawOutcome;
 }
@@ -215,21 +217,38 @@ impl crate::owners::life::ObserverPort for ObserverStop {
     }
 }
 
-pub(super) struct ForeignTransport { port: Arc<dyn Transport>, endpoint: Option<String> }
+pub(super) struct ForeignTransport { port: Arc<dyn Transport>, endpoint: Option<String>, clock: Arc<dyn crate::runtime::Clock> }
+
+/// D-493: one port call of an HTTP exchange ends within `REQUEST_TIMEOUT_MS` of the core clock. The port future is dropped at the bound (the platform task is cancelled) and a late answer is lost.
+pub(super) async fn bounded(clock: &dyn crate::runtime::Clock, call: impl std::future::Future<Output = core::RawOutcome>) -> core::RawOutcome {
+    let deadline = clock.now().saturating_add(std::time::Duration::from_millis(core::REQUEST_TIMEOUT_MS));
+    tokio::select! {
+        outcome = call => outcome,
+        () = clock.sleep_until(deadline) => core::RawOutcome::Failed { failure: core::RawFailure::deadline() },
+    }
+}
+
+/// D-492: a failure of the network class rotates the connections before the outcome goes to the author.
+pub(super) fn rotated(outcome: core::RawOutcome, rotate: impl FnOnce()) -> core::RawOutcome {
+    if matches!(&outcome, core::RawOutcome::Failed { failure } if failure.is_network()) { rotate(); }
+    outcome
+}
 
 impl ForeignTransport {
-    pub(super) fn plain(port: Arc<dyn Transport>, endpoint: Option<String>) -> Result<Self, DbError> {
+    pub(super) fn plain(port: Arc<dyn Transport>, endpoint: Option<String>, clock: Arc<dyn crate::runtime::Clock>) -> Result<Self, DbError> {
         let endpoint = core::graphql_endpoint(&endpoint.unwrap_or_default()).map_err(DbError::from)?;
-        Ok(Self { port, endpoint: Some(endpoint) })
+        Ok(Self { port, endpoint: Some(endpoint), clock })
     }
 
-    pub(super) fn beside_session(port: Arc<dyn Transport>) -> Self { Self { port, endpoint: None } }
+    pub(super) fn beside_session(port: Arc<dyn Transport>, clock: Arc<dyn crate::runtime::Clock>) -> Self { Self { port, endpoint: None, clock } }
+
+    fn rotate(&self) { crate::lock::effect(|| self.port.rotate_connections()); }
 
     async fn graphql(&self, request: core::GraphQLRequest, kind: core::ExchangeKind) -> Result<core::Response, core::TransportError> {
         let Some(endpoint) = &self.endpoint else { return Err(core::TransportError::Config { code: core::ConfigCode::InvalidRequest, detail: "the database has no GraphQL endpoint".into() }) };
         let wire = request.authored()?;
         let app_headers = crate::lock::effect(|| self.port.app_headers());
-        let outcome = crate::lock::effect(|| self.port.send(core::graphql_call(endpoint, &request, wire, app_headers))).await;
+        let outcome = rotated(bounded(&*self.clock, crate::lock::effect(|| self.port.send(core::graphql_call(endpoint, &request, wire, app_headers)))).await, || self.rotate());
         serde_json::from_str(&core::graphql_text(outcome, kind)?).map_err(|error| core::TransportError::Decode(error.to_string()))
     }
 }
@@ -263,7 +282,10 @@ impl core::Upstream for ForeignTransport {
         let (port, url, events) = (self.port.clone(), url.to_string(), mailbox.clone());
         match port.open_cable(url, headers, core::CONNECT_TIMEOUT_MS, events.clone()).await {
             CableOutcome::Open { connection } => Ok(Arc::new(ForeignSocket::new(connection, events)) as Arc<dyn core::CableSocket>),
-            CableOutcome::Failed { failure, handshake_status } => Err(core::classify_upgrade(&failure, handshake_status)),
+            CableOutcome::Failed { failure, handshake_status } => {
+                if handshake_status.is_none() && failure.is_network() { self.rotate(); }
+                Err(core::classify_upgrade(&failure, handshake_status))
+            }
         }
     }
     async fn query(&self, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
@@ -280,7 +302,9 @@ impl core::Upstream for ForeignTransport {
         let progress = Arc::new(ByteProgress { cancel: request.cancel, sent: request.sent });
         let headers = core::merge_headers(HashMap::new(), request.headers.into_iter().collect());
         let target = PutTarget { url: request.url, headers, connect_ms: core::CONNECT_TIMEOUT_MS, request_ms: core::REQUEST_TIMEOUT_MS, response_limit: core::MAX_PUT_RESPONSE_BYTES };
-        match self.port.put(target, request.file, request.identity, progress).await {
+        let outcome = self.port.put(target, request.file, request.identity, progress).await;
+        let outcome = if cancel.is_cancelled() { outcome } else { rotated(outcome, || self.rotate()) };
+        match outcome {
             core::RawOutcome::Response { status, etag, .. } => Ok(core::PutReply { status, etag }),
             core::RawOutcome::Failed { .. } if cancel.is_cancelled() => Err(core::TransportError::Interrupted("the upload was cancelled".into())),
             core::RawOutcome::Failed { failure } => Err(core::classify(&failure, core::ExchangeKind::Put)),

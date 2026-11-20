@@ -41,6 +41,14 @@ const CALL_CANCELLED_CLASS: &str = "java.io.IOException";
 const CALL_CANCELLED_TEXT: &str = "Canceled";
 
 impl RawFailure {
+    /// The failure of an exchange the core ended at its total bound: the platform never answered in time.
+    pub fn deadline() -> Self {
+        Self { domain: URL_ERROR_DOMAIN.into(), code: Some(URL_TIMED_OUT), message: format!("the exchange had no answer in {REQUEST_TIMEOUT_MS} ms") }
+    }
+
+    /// A failure of the network class: the next request must not reuse the connection the failure left behind.
+    pub fn is_network(&self) -> bool { matches!(self.kind(), RawFailureKind::Timeout | RawFailureKind::Io | RawFailureKind::Unreachable) }
+
     /// The one table of known platform errors. An error it does not know is `Io`.
     pub fn kind(&self) -> RawFailureKind {
         let class = self.domain.as_str();
