@@ -549,7 +549,7 @@ impl Windows {
     }
 
     pub(super) fn interest_preload(state: &mut WindowsState, key: WindowKey, now: i64, out: &mut Effects<Self>) {
-        if !state.identity || state.operations_awaited || !state.preload_allowed(&key) { return; }
+        if !state.preload_allowed(&key) { return; }
         match state.windows.get(&key) {
             None => state.ensure(&key, now, out),
             Some(window) if window.interest().contains(&PRELOAD) => return,
