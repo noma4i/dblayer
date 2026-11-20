@@ -68,6 +68,13 @@ impl FileDirectories {
         Self { cache: directory.join("cache"), directory: Some(directory), scratch: true, #[cfg(test)] source_reads: Default::default() }
     }
 
+    /// Removes the directory and the cache of a scratch (in-memory) database; an on-disk database keeps its files.
+    pub(crate) fn remove_scratch(&self) {
+        if !self.scratch { return; }
+        if let Some(directory) = &self.directory { let _ = fs::remove_dir_all(directory); }
+        let _ = fs::remove_dir_all(&self.cache);
+    }
+
     pub(crate) fn has_directory(&self) -> bool {
         self.directory.is_some()
     }
@@ -273,10 +280,7 @@ fn write_atomic(target: &Path, partial: &Path, bytes: &[u8]) -> io::Result<()> {
 
 impl Drop for FileDirectories {
     fn drop(&mut self) {
-        if self.scratch {
-            if let Some(directory) = &self.directory { let _ = fs::remove_dir_all(directory); }
-            let _ = fs::remove_dir_all(&self.cache);
-        }
+        self.remove_scratch();
     }
 }
 

@@ -6,6 +6,10 @@
 
 - Add the `trace` flag of `UrlSessionTransport`: one development `os_log` line per HTTP request, file PUT and cable event.
 
+### Fixed
+
+- Remove the scratch directory of an in-memory database when it closes.
+
 ## 6.44.0 - 2026-11-20
 
 ### Changed

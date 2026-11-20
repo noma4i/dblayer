@@ -96,3 +96,26 @@ async fn life_closed_stream_releases_store() {
     while let Some(value) = stream.pull_next().await { last = Some(value); }
     assert!(matches!(last, Some(ReadValue::Ended { cause: EndCause::Closed })));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_an_in_memory_database_removes_its_scratch_directory() {
+    let database = local_notes().await;
+    let stored = database.db.files().write("f1", b"bytes").unwrap();
+    let scratch = stored.parent().unwrap().to_path_buf();
+    assert!(stored.exists());
+    database.close_database().await.unwrap();
+    assert!(!scratch.exists(), "the scratch directory outlived the close");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_an_on_disk_database_keeps_its_files_directory() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("kept.sqlite");
+    let mut model = ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
+    model.storage = Storage::Local;
+    let config = Config { path: Some(path.to_string_lossy().into_owned()) };
+    let database = Database::open(config, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap();
+    let stored = database.db.files().write("f1", b"bytes").unwrap();
+    database.close_database().await.unwrap();
+    assert!(stored.exists(), "an on-disk database lost its file at the close");
+}

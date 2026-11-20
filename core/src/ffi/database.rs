@@ -493,7 +493,8 @@ impl Database {
             crate::runtime::Outcome::Internal | crate::runtime::Outcome::EpochEnded(_) => Err(DbError::Internal { detail: "the answer of the close was lost".into() }),
         };
         let (life, _closing) = (this_db.life.clone(), crate::runtime::hold_until_woken(this_db.life.launch()));
-        let ended = blocking(move || { life.shutdown(); Ok(()) }).await;
+        let store = this_db.db.clone();
+        let ended = blocking(move || { life.shutdown(); store.files().remove_scratch(); Ok(()) }).await;
         crate::runtime::release_holds();
         if let Some(lease) = this_db.lease.get() { lease.release(); }
         answered.and(ended)
