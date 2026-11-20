@@ -202,7 +202,7 @@ impl MockTransport {
             operation_name: request.operation_name.clone(),
             variables: request.variables.clone(),
             purpose: request.purpose,
-            wire: request.wire,
+            wire: request.wire.clone(),
         });
         crate::runtime::wake_pumps();
         self.wake.notify_waiters();
@@ -210,7 +210,7 @@ impl MockTransport {
 
     async fn reply(&self, kind: RecordedKind, request: GraphQLRequest) -> Result<Response, TransportError> {
         self.record(kind, &request);
-        let pair = request.wire.map(|wire| Request::from_wire(&format!("{:?}", wire.author), &json!({ "requestId": wire.request_id.to_string(), "sequence": null, "body": { "operationName": request.operation_name, "variables": request.variables, "query": request.document } })));
+        let pair = request.wire.clone().map(|wire| Request::from_wire(&format!("{:?}", wire.author), &json!({ "requestId": wire.request_id.to_string(), "sequence": null, "body": { "operationName": request.operation_name, "variables": request.variables, "query": request.document } })));
         let (repeated, responder, queued) = {
             let mut state = self.lock();
             let repeated = pair.as_ref().and_then(|pair| match state.contract.admit(pair) {

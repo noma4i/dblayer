@@ -102,6 +102,10 @@ pub struct HttpRequest {
     pub purpose: NetworkPurpose,
     /// The most bytes of the answer the platform reads: it counts while reading and aborts with `DBlayer.ResponseLimit` code 1 at the next byte.
     pub response_limit: u64,
+    /// The GraphQL operation name, or the encrypted path when no name is known, never empty. The platform only labels its dev trace with it.
+    pub operation: String,
+    /// The session sequence of a numbered request, `None` for reads and bootstrap. The platform only labels its dev trace with it.
+    pub sequence: Option<u64>,
 }
 
 /// The owner that minted the request id of an `HttpRequest`. Ids of different authors may repeat, so a double keys by the pair.
@@ -116,15 +120,22 @@ pub enum Author {
 }
 
 /// The identity of one physical attempt on the wire: the author, the id the author gave the request and the number of the attempt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WireIds {
     pub author: Author,
     pub request_id: u64,
     pub attempt: u32,
+    /// The GraphQL operation name of the request, empty when the sealing owner does not know it; it only labels the dev trace of the platform.
+    pub operation: String,
+    /// The session sequence of a numbered request, `None` for reads and bootstrap.
+    pub sequence: Option<u64>,
 }
 
 impl WireIds {
-    pub fn new(author: Author, request_id: u64, attempt: u64) -> Self { Self { author, request_id, attempt: u32::try_from(attempt).unwrap_or(u32::MAX) } }
+    pub fn new(author: Author, request_id: u64, attempt: u64) -> Self { Self { author, request_id, attempt: u32::try_from(attempt).unwrap_or(u32::MAX), operation: String::new(), sequence: None } }
+
+    /// The same attempt, labelled with the operation name and the session sequence of the request.
+    pub fn labelled(self, operation: &str, sequence: Option<u64>) -> Self { Self { operation: operation.to_string(), sequence, ..self } }
 
     /// A physical attempt gets a number that no earlier attempt of the process had.
     pub fn next_attempt() -> u64 {
@@ -224,6 +235,8 @@ pub fn graphql_call(endpoint: &str, request: &GraphQLRequest, wire: WireIds, app
         request_ms: REQUEST_TIMEOUT_MS,
         purpose: request.purpose,
         response_limit: MAX_HTTP_RESPONSE_BYTES,
+        operation: request.operation_name.clone(),
+        sequence: None,
     }
 }
 
@@ -241,6 +254,8 @@ pub fn encrypted_call(origin: &str, path: &str, body: String, (purpose, wire): (
         request_ms: REQUEST_TIMEOUT_MS,
         purpose,
         response_limit: MAX_HTTP_RESPONSE_BYTES,
+        operation: if wire.operation.is_empty() { path.to_string() } else { wire.operation },
+        sequence: wire.sequence,
     })
 }
 

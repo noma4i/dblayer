@@ -131,7 +131,7 @@ impl Upstream for EncryptedTransport {
     async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
         let path = &self.exchange.config().endpoints.graphql;
         let wire = request.authored()?;
-        let response = response_from_read(self.read(path, graphql_body(&request, false), wire).await?, false)?;
+        let response = response_from_read(self.read(path, graphql_body(&request, false), wire.clone()).await?, false)?;
         if !matches!(&response.kind, Some(crate::transport::AnswerKind::DocumentMissing)) {
             return Ok(response);
         }

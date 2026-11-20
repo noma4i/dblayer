@@ -312,7 +312,7 @@ impl Transport for Recording {
 }
 
 fn request(url: &str) -> crate::transport::HttpRequest {
-    crate::transport::HttpRequest { author: crate::transport::Author::Window, request_id: 1, attempt: 1, url: url.into(), method: "POST".into(), headers: HashMap::new(), body: String::new(), connect_ms: 1, request_ms: 1, purpose: crate::transport::NetworkPurpose::Standard, response_limit: crate::transport::MAX_HTTP_RESPONSE_BYTES }
+    crate::transport::HttpRequest { author: crate::transport::Author::Window, request_id: 1, attempt: 1, url: url.into(), method: "POST".into(), headers: HashMap::new(), body: String::new(), connect_ms: 1, request_ms: 1, purpose: crate::transport::NetworkPurpose::Standard, response_limit: crate::transport::MAX_HTTP_RESPONSE_BYTES, operation: "Probe".into(), sequence: None }
 }
 
 fn encrypted() -> crate::ffi::EncryptedConfig {

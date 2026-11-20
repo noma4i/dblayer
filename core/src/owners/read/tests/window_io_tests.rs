@@ -140,7 +140,7 @@ fn win_io_request_lands() {
     let landed_rows: Vec<&str> = batch.ops.iter().flat_map(|op| match op { StoreOp::Window { roots, .. } => roots.iter().map(|row| row.row_id.as_str()).collect(), _ => Vec::new() }).collect();
     assert_eq!(landed_rows, ["r1", "r2"]);
     assert_eq!(saw_input::<WindowsInput>(&rig.det, |input| matches!(input, WindowsInput::Response { .. })), 1, "the answer came back as one input");
-    assert_eq!(rig.mock.calls().iter().map(|call| call.wire).collect::<Vec<_>>(), [Some(crate::transport::WireIds::new(crate::transport::Author::Window, 1, 1))], "the request goes out with the request and attempt of the Window");
+    assert_eq!(rig.mock.calls().iter().map(|call| call.wire.clone()).collect::<Vec<_>>(), [Some(crate::transport::WireIds::new(crate::transport::Author::Window, 1, 1))], "the request goes out with the request and attempt of the Window");
 }
 
 #[test]
@@ -240,7 +240,7 @@ fn rt_prop_close_against_query_no_old_transport_window() {
     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Load { key: other.clone(), id: 2, goal: w::Goal::First, force: false, store_revision: 0 });
     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::WindowRead { key: other, read_id: 2, result: Ok(None) });
     pump(&mut rig.det, |det| saw_input::<WindowsInput>(det, |input| matches!(input, WindowsInput::Dropped { .. })) == 1);
-    let late: Vec<_> = rig.mock.calls().iter().skip(1).map(|call| (call.operation_name.clone(), call.wire)).collect();
+    let late: Vec<_> = rig.mock.calls().iter().skip(1).map(|call| (call.operation_name.clone(), call.wire.clone())).collect();
     assert!(late.is_empty(), "late calls reached the old transport after the close: {late:?}");
 }
 

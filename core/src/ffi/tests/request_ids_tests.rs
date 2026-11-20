@@ -34,7 +34,7 @@ async fn sess_request_ids_unique_per_process() {
     first.close_database().await.unwrap();
     let second = life(&transport, clock).await;
     second.load(second.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
-    let pairs: Vec<(Author, u64)> = transport.calls().iter().filter(|call| call.operation_name == "Feed").map(|call| { let wire = call.wire.expect("a window request names its author"); (wire.author, wire.request_id) }).collect();
+    let pairs: Vec<(Author, u64)> = transport.calls().iter().filter(|call| call.operation_name == "Feed").map(|call| { let wire = call.wire.clone().expect("a window request names its author"); (wire.author, wire.request_id) }).collect();
     assert_eq!(pairs.len(), 2, "one load per life");
     assert_ne!(pairs[0], pairs[1], "the second life does not reuse the pair of the first");
     assert_eq!(second.read_query(second.session_epoch(), super::QuerySpec::json(FEED)).await.unwrap().len(), 0, "the second load took the second reply");

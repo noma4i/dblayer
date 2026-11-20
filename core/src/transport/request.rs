@@ -60,7 +60,7 @@ impl GraphQLRequest {
     pub fn by(self, wire: super::WireIds) -> Self { Self { wire: Some(wire), ..self } }
 
     pub fn authored(&self) -> Result<super::WireIds, super::TransportError> {
-        self.wire.ok_or_else(|| super::TransportError::Config { code: super::ConfigCode::InvalidRequest, detail: "the request has no author".into() })
+        self.wire.clone().ok_or_else(|| super::TransportError::Config { code: super::ConfigCode::InvalidRequest, detail: "the request has no author".into() })
     }
 
 }

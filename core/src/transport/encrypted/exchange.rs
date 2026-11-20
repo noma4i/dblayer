@@ -163,6 +163,7 @@ impl Exchange {
         checked_path(path)?;
         let session = credential.map(|credential| RequestSession { credential: credential.into(), sequence });
         let token = self.request_token(session, request_id, response_key, path, body)?;
+        let wire = wire.labelled(body["operationName"].as_str().unwrap_or_default(), sequence.and_then(|sequence| u64::try_from(sequence).ok()));
         self.post(path, token, request_id, response_key, (purpose, wire)).await
     }
 
