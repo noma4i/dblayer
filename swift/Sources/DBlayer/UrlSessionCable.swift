@@ -53,14 +53,12 @@ private final class SocketOpening: NSObject, URLSessionWebSocketDelegate, @unche
 }
 
 /// The trace lines of one cable (see `TransportTrace`): connect start, open, every frame, close and failure.
-private final class CableTrace: @unchecked Sendable {
+private struct CableTrace: Sendable {
   private let target: String
-  private let lock = NSLock()
-  private var last = Date()
 
   init(url: URL) {
     target = TransportTrace.target(url)
-    TransportTrace.emit("cable connect \(target)")
+    emit("connect")
   }
 
   func opened(handshake: Date) { emit("open handshake=\(TransportTrace.ms(handshake, Date()))ms") }
@@ -69,9 +67,7 @@ private final class CableTrace: @unchecked Sendable {
   func failed(_ error: Error) { emit("failure \(TransportTrace.outcome(error, status: nil))") }
 
   private func emit(_ event: String) {
-    let now = Date()
-    let since = lock.withLock { () -> String in defer { last = now }; return TransportTrace.ms(last, now) }
-    TransportTrace.emit("cable \(event) since-last=\(since)ms \(target)")
+    TransportTrace.emit("cable \(event) at=\(Int(Date().timeIntervalSince1970 * 1000)) \(target)")
   }
 }
 
