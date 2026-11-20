@@ -37,6 +37,11 @@ Swift uses `URLSessionWebSocketTask`. Kotlin uses OkHttp WebSocket.
 The core builds the address: it combines `EncryptedConfig.endpoints.cable` with `EncryptedConfig.origin`, HTTPS becomes WSS and development HTTP becomes WS. The platform opens that address as given.
 Every open creates one `PlatformSocket` object that the core holds. The core sends text with `send` and ends the socket with `close`. The platform reports in order what happens on that socket and keeps no registry of sockets.
 
+### Transport trace
+
+`UrlSessionTransport(trace: true)` writes one `os_log` line per HTTP request, file PUT and cable event to the category `dblayer.transport` of the subsystem `com.noma4i.dblayer`; with `trace: false` (the default) it writes nothing.
+It is for development. A line carries only metadata, such as the operation name, the session sequence, the timings of the connection and the outcome. It never carries a body, a header, a credential or a query string.
+
 ## Your own transport
 
 `DB.open` and `DBlayer.open` take any `Transport` in `transport`. The interface has four calls:

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Add the `trace` flag of `UrlSessionTransport`: one development `os_log` line per HTTP request, file PUT and cable event.
+
 ## 6.44.0 - 2026-11-20
 
 ### Changed
