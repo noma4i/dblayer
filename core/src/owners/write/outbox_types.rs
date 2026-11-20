@@ -362,6 +362,8 @@ pub struct QueuedOperation {
     /// An unresolved `encrypted_pending` of `request_id` exists: `Restored.pending` and `pending_retained = true` set it, `pending_retained = false` clears it.
     pub pending_owned: bool,
     pub pair_in_flight: bool,
+    /// `Online(false)` came while the pair was in flight (D-491): Session cancels it and answers `Dropped`, which is no failure when the phone is online again by then, the operation goes out at once.
+    pub path_bounced: bool,
     /// `Sending` after a temporary failure: the backoff timer is set.
     pub waiting_retry: bool,
     /// The rows of the server answer, kept for every attempt to land them.

@@ -716,3 +716,23 @@ fn out_inputs_that_do_not_belong_to_the_stage_change_nothing() {
     twin.committed(id);
     unchanged_by(&mut twin, vec![OutboxInput::Online(Online(true))]);
 }
+
+/// D-491 bounce: the pair in flight when the path is replaced comes back `Dropped` after the `Online(true)` of the same step. It is no failure of the new path: no Backoff timer, the attempt is written at once and the same pair goes out again; a `Dropped` of the online phone with no bounce still waits its Backoff.
+#[test]
+fn outbox_path_bounce_sends_now() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    let req_id = twin.state().ops[&id].request_id;
+    twin.post(OutboxInput::Online(Online(false)));
+    twin.post(OutboxInput::Online(Online(true)));
+    let effects = twin.post(OutboxInput::Answered { req_id, outcome: crate::owners::session::AuthorOutcome::Dropped });
+    assert_eq!((timers(&effects), twin.stage(id), twin.state().ops[&id].waiting_retry), (0, Some(St::PersistingAttempt), false), "no Backoff wait: {effects:?}");
+    assert!(has_op!(twin, StoreOp::Attempt { op_id, attempts: 2, .. } if *op_id == id), "{:?}", twin.store_ops);
+    assert_eq!(twin.state().ops[&id].request_id, req_id, "the same pair");
+
+    let mut plain = Twin::new();
+    let id = sending(&mut plain, Policy::Rollback, false);
+    let req_id = plain.state().ops[&id].request_id;
+    let effects = plain.post(OutboxInput::Answered { req_id, outcome: crate::owners::session::AuthorOutcome::Dropped });
+    assert_eq!((timers(&effects), plain.stage(id), plain.state().ops[&id].waiting_retry), (1, Some(St::Sending), true), "a drop of the online phone keeps its Backoff");
+}

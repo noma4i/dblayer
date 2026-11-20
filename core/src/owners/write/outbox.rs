@@ -342,6 +342,7 @@ impl OutboxState {
                 attempt_unsent: false,
                 pending_owned: false,
                 pair_in_flight: false,
+                path_bounced: false,
                 waiting_retry: false,
                 landing: Vec::new(),
                 missing_destroy: false,
@@ -387,6 +388,7 @@ impl OutboxState {
         operation.sent = true;
         operation.attempt_unsent = false;
         operation.pair_in_flight = true;
+        operation.path_bounced = false;
         operation.waiting_retry = false;
         let purpose = if matches!(operation.op.origin, OpSource::Transfer { .. } | OpSource::TransferGroup { .. }) { PURPOSE_TRANSFER } else { PURPOSE_STANDARD };
         let owner = Some(crate::transport::RequestOwner::Operation { seq: i64::try_from(op_id).unwrap_or(i64::MAX) });

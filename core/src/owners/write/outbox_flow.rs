@@ -40,7 +40,7 @@ impl OutboxState {
         if self.stage_of(op_id) != Some(Stage::Sending) {
             return;
         }
-        if let Some(operation) = self.ops.get_mut(&op_id) { operation.pair_in_flight = false; }
+        if let Some(operation) = self.ops.get_mut(&op_id) { operation.pair_in_flight = false; operation.path_bounced = false; }
         if let Some(temporary) = errors {
             return self.transport_failed(now, op_id, temporary, None, fx);
         }
@@ -76,7 +76,7 @@ impl OutboxState {
         let attempts = self.ops[&op_id].attempts;
         if attempts >= ATTEMPT_LIMIT {
             self.fail_exhausted(op_id, fx);
-        } else if self.is_online() {
+        } else if self.is_online() && !self.ops.get_mut(&op_id).is_some_and(|operation| std::mem::take(&mut operation.path_bounced)) {
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.waiting_retry = true;
             }
@@ -515,6 +515,7 @@ impl OutboxState {
     pub(super) fn online_changed(&mut self, now: u64, on: bool, fx: &mut Effects<Outbox>) {
         self.online = Some(on);
         if !on {
+            for operation in self.ops.values_mut().filter(|operation| operation.stage == Stage::Sending && operation.pair_in_flight && !operation.waiting_retry) { operation.path_bounced = true; }
             let waiting: Vec<OpId> = self.ops.values().filter(|operation| operation.stage == Stage::Sending && operation.waiting_retry).map(|operation| operation.op_id).collect();
             for op_id in waiting {
                 fx.push(Effect::Cancel(ScheduleId(op_id)));
@@ -542,7 +543,10 @@ impl OutboxState {
         let Some(op_id) = self.ops.values().find(|operation| operation.request_id == req_id && (operation.stage == Stage::Sending || (operation.stage == Stage::Failed && operation.pending_owned))).map(|operation| operation.op_id) else { return };
         if self.removed.contains(&op_id) { return; }
         if self.stage_of(op_id) == Some(Stage::Failed) { return self.failed_pair_answered(now, op_id, outcome, fx); }
-        if let Some(operation) = self.ops.get_mut(&op_id) { operation.pair_in_flight = false; }
+        if let Some(operation) = self.ops.get_mut(&op_id) {
+            operation.pair_in_flight = false;
+            if !matches!(outcome, AuthorOutcome::Dropped) { operation.path_bounced = false; }
+        }
         match outcome {
             AuthorOutcome::Response { body, kind: crate::transport::AnswerKind::Transient { .. }, .. } => {
                 if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = true; operation.reject_error = Some(body); }
