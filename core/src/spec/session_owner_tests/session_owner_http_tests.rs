@@ -665,3 +665,23 @@ fn sess_prop_answer_kinds_table() {
     assert_eq!(applied.credential().map(|credential| credential.sequence), Some(1), "the applied mutation spent the number");
 }
 
+
+/// D-491 bounce: the pair in flight goes out again with the same request id, sequence and body, in the order of the existing rows (offline cancels, online sends again); a pair of an author goes again with the next `Mutate` of that author, exactly once.
+#[test]
+fn sess_path_bounce_resends_same_pair() {
+    let mut twin = calling();
+    let (before, aid) = (twin.pending(), twin.aid());
+    assert_eq!(twin.feed(Input::Online(false)), vec![RefEffect::HttpCancel { attempt_id: aid }]);
+    let again = twin.feed(Input::Online(true));
+    let [RefEffect::HttpRequest { pending, .. }] = &again[..] else { panic!("one request after the bounce: {again:?}") };
+    assert_eq!((pending.request_id, pending.sequence, &pending.body), (before.request_id, before.sequence, &before.body), "the same pair goes out again");
+
+    let mut write = calling_mutate();
+    let (pair, aid) = (write.pending(), write.aid());
+    assert_eq!(write.feed(Input::Online(false)), vec![RefEffect::HttpCancel { attempt_id: aid }, answer(7, 11, Outcome::Dropped)]);
+    assert!(write.feed(Input::Online(true)).is_empty(), "the pair stays held until its author sends it again");
+    let again = write.feed(mutate(7, 11));
+    let [RefEffect::HttpRequest { pending, .. }] = &again[..] else { panic!("one request for the author: {again:?}") };
+    assert_eq!((pending.request_id, pending.sequence, &pending.body), (pair.request_id, pair.sequence, &pair.body), "the same pair, exactly once");
+    assert_eq!(write.history.iter().filter(|effect| matches!(effect, RefEffect::CommitPending { .. })).count(), 1, "the pair was stored once");
+}
