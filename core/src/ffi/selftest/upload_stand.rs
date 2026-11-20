@@ -52,6 +52,46 @@ pub(super) struct Hold {
     signal: Notify,
 }
 
+/// The scripted answers held in flight: the core clock of the stand stands still while one is held, as a real server that has not answered yet does not make the exchange wait longer than it did (D-493 counts the bound on the clock of the core).
+#[derive(Default)]
+pub(super) struct Frozen { held: std::sync::atomic::AtomicUsize, thawed: Notify }
+
+struct Freezing(Arc<Frozen>);
+
+impl Freezing {
+    fn start(frozen: &Arc<Frozen>) -> Self { frozen.held.fetch_add(1, Ordering::SeqCst); Freezing(frozen.clone()) }
+}
+
+impl Drop for Freezing {
+    fn drop(&mut self) { self.0.held.fetch_sub(1, Ordering::SeqCst); crate::lock::effect(|| self.0.thawed.notify_waiters()); }
+}
+
+impl Frozen {
+    /// Returns when no scripted answer is held.
+    pub(super) async fn thawed(&self) {
+        crate::test_wait::signalled(&self.thawed, "no scripted answer is held in flight", || self.held.load(Ordering::SeqCst) == 0).await
+    }
+}
+
+fn frozen_clocks() -> &'static Mutex<Vec<(usize, Arc<Frozen>)>> {
+    static CLOCKS: std::sync::OnceLock<Mutex<Vec<(usize, Arc<Frozen>)>>> = std::sync::OnceLock::new();
+    CLOCKS.get_or_init(Default::default)
+}
+
+/// Ties the held answers of `script` to the clock the stand runs on.
+pub(super) fn freeze_with(clock: &TestClock, script: &Script) {
+    let key = clock as *const TestClock as usize;
+    let mut all = frozen_clocks().lock().unwrap();
+    all.retain(|(known, _)| *known != key);
+    all.push((key, script.frozen.clone()));
+}
+
+/// The held answers of the stand that runs on `clock`, if it has any.
+pub(super) fn frozen_of(clock: &TestClock) -> Option<Arc<Frozen>> {
+    let key = clock as *const TestClock as usize;
+    frozen_clocks().lock().unwrap().iter().find(|(known, _)| *known == key).map(|(_, frozen)| frozen.clone())
+}
+
 struct Dropped(Arc<Hold>);
 
 impl Drop for Dropped {
@@ -75,13 +115,14 @@ pub(super) struct Call {
 pub(super) struct Script {
     contract: Mutex<Contract<Answer>>,
     forgotten: AtomicBool,
+    frozen: Arc<Frozen>,
     calls: Mutex<Vec<Call>>,
     wires: Mutex<Vec<(crate::transport::Author, u64, u32)>>,
 }
 
 impl Default for Script {
     fn default() -> Self {
-        Script { contract: Mutex::new(Contract::adopting()), forgotten: AtomicBool::new(false), calls: Mutex::default(), wires: Mutex::default() }
+        Script { contract: Mutex::new(Contract::adopting()), forgotten: AtomicBool::new(false), frozen: Arc::default(), calls: Mutex::default(), wires: Mutex::default() }
     }
 }
 
@@ -165,6 +206,7 @@ impl FakeHttp for ScriptedHttp {
                     hold.entered.store(true, Ordering::SeqCst);
             crate::lock::effect(|| hold.signal.notify_waiters());
                     let _dropped = Dropped(hold.clone());
+                    let _frozen = Freezing::start(&self.script.frozen);
                     hold.gate.notified().await;
                     answer = Some(*next);
                 }

@@ -152,6 +152,7 @@ pub(super) fn timed_stand() -> (super::upload_stand::Stand, std::sync::Arc<crate
     let mut stand = super::upload_stand::Stand::new();
     let clock = crate::ffi::TestClock::new(1_000_000);
     stand.rig.server = crate::transport::encrypted::tests::fake_server_tests::FakeServer::new(clock.manual());
+    super::upload_stand::freeze_with(&clock, &stand.script);
     (stand, clock)
 }
 
@@ -163,12 +164,17 @@ pub(super) async fn advancing<T>(clock: &crate::ffi::TestClock, work: impl Futur
 /// Runs the work and moves the clock by `step` over every wait it arms, until it ends.
 pub(super) async fn advancing_by<T>(clock: &crate::ffi::TestClock, step: u64, work: impl Future<Output = T>) -> T {
     tokio::pin!(work);
+    let frozen = super::upload_stand::frozen_of(clock);
     let mut armed = clock.armed();
     clock.advance(step);
     loop {
         tokio::select! {
             result = &mut work => return result,
-            () = clock.await_armed(armed) => { armed = clock.armed(); clock.advance(step); }
+            () = clock.await_armed(armed) => {
+                if let Some(frozen) = &frozen { tokio::select! { result = &mut work => return result, () = frozen.thawed() => {} } }
+                armed = clock.armed();
+                clock.advance(step);
+            }
         }
     }
 }
