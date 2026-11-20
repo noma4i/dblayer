@@ -5,8 +5,10 @@ public final class UrlSessionTransport: Transport, EncryptedHttp, @unchecked Sen
   private let http: UrlSessionHttp
   private let session: URLSession
   private let cable: UrlSessionCable
+  private let trace: Bool
 
-  public init(headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession? = nil) {
+  /// `trace: true` writes one `os_log` line per HTTP exchange, file PUT and cable event (subsystem `com.noma4i.dblayer`, category `dblayer.transport`): metadata only, for development.
+  public init(headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession? = nil, trace: Bool = false) {
     let configuration = session?.configuration ?? .ephemeral
     configuration.httpAdditionalHeaders = nil
     configuration.httpCookieStorage = nil
@@ -17,8 +19,9 @@ public final class UrlSessionTransport: Transport, EncryptedHttp, @unchecked Sen
     let own = URLSession(configuration: configuration)
     self.headers = headers
     self.session = own
-    self.http = UrlSessionHttp(session: own)
-    self.cable = UrlSessionCable { own.webSocketTask(with: $0) }
+    self.trace = trace
+    self.http = UrlSessionHttp(session: own, trace: trace)
+    self.cable = UrlSessionCable(trace: trace) { own.webSocketTask(with: $0) }
   }
 
   deinit { session.invalidateAndCancel() }
@@ -40,9 +43,9 @@ public final class UrlSessionTransport: Transport, EncryptedHttp, @unchecked Sen
       let response: URLResponse
       let body: Data
       if file.offset == 0 && file.length == size {
-        (body, response) = try await BoundedExchange(limit: target.responseLimit, progress: progress).run(in: session) { $0.uploadTask(with: request, fromFile: URL(fileURLWithPath: file.path)) }
+        (body, response) = try await BoundedExchange(limit: target.responseLimit, progress: progress, trace: trace ? TraceCall(put: address, identity: identity) : nil).run(in: session) { $0.uploadTask(with: request, fromFile: URL(fileURLWithPath: file.path)) }
       } else {
-        (body, response) = try await PartUpload(file: file, progress: progress, limit: target.responseLimit).run(request, in: session)
+        (body, response) = try await PartUpload(file: file, progress: progress, limit: target.responseLimit, trace: trace ? TraceCall(put: address, identity: identity) : nil).run(request, in: session)
       }
       let http = response as? HTTPURLResponse
       return .response(status: UInt16(clamping: http?.statusCode ?? 0), etag: http?.value(forHTTPHeaderField: "ETag"), body: String(decoding: body, as: UTF8.self))

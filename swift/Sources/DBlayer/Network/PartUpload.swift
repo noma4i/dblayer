@@ -9,9 +9,9 @@ final class PartUpload: BoundedExchange, @unchecked Sendable {
   private let failures = DispatchQueue(label: "dblayer.part-upload.failures")
   private var readerError: Error?
 
-  init(file: PutFile, progress: ByteProgress, limit: UInt64) {
+  init(file: PutFile, progress: ByteProgress, limit: UInt64, trace: TraceCall? = nil) {
     self.file = file
-    super.init(limit: limit, progress: progress)
+    super.init(limit: limit, progress: progress, trace: trace)
   }
 
   func run(_ request: URLRequest, in session: URLSession) async throws -> (Data, URLResponse) {

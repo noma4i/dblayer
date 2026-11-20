@@ -57,7 +57,7 @@ struct ResponseLimitTests {
         let session = URLSession(configuration: config)
         defer { session.invalidateAndCancel() }
         let url = "https://example.test/\(UUID().uuidString)/\(length)-\(mode)"
-        let request = HttpRequest(author: .session, requestId: 0, attempt: 1, url: url, method: "POST", headers: [:], body: "{}", connectMs: 10_000, requestMs: 30_000, purpose: .standard, responseLimit: 16)
+        let request = HttpRequest(author: .session, requestId: 0, attempt: 1, url: url, method: "POST", headers: [:], body: "{}", connectMs: 10_000, requestMs: 30_000, purpose: .standard, responseLimit: 16, operation: "Probe", sequence: nil)
         let outcome = await UrlSessionTransport(session: session).send(request: request)
         if length == 16 { #expect(outcome == .response(status: 200, etag: nil, body: String(repeating: "a", count: 16))) }
         else {

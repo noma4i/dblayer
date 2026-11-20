@@ -14,10 +14,14 @@ class BoundedExchange: RefuseRedirect, URLSessionDataDelegate, @unchecked Sendab
   private var continuation: CheckedContinuation<(Data, URLResponse), Error>?
   private var body = Data()
   private var failure: Error?
+  private let trace: TraceCall?
+  private var started = Date()
+  private var metrics: URLSessionTaskMetrics?
 
-  init(limit: UInt64, progress: ByteProgress? = nil) {
+  init(limit: UInt64, progress: ByteProgress? = nil, trace: TraceCall? = nil) {
     self.limit = limit
     self.progress = progress
+    self.trace = trace
     super.init()
   }
 
@@ -26,6 +30,7 @@ class BoundedExchange: RefuseRedirect, URLSessionDataDelegate, @unchecked Sendab
     task.delegate = self
     queue = session.delegateQueue
     self.task = task
+    started = Date()
     return try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { continuation in
         self.continuation = continuation
@@ -67,9 +72,16 @@ class BoundedExchange: RefuseRedirect, URLSessionDataDelegate, @unchecked Sendab
     }
   }
 
+  func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+    if trace != nil { self.metrics = metrics }
+  }
+
   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
     let continuation = continuation
     self.continuation = nil
+    if let trace {
+      TransportTrace.emit(trace.line(started: started, finished: Date(), metrics: metrics, error: failure ?? error, status: (task.response as? HTTPURLResponse)?.statusCode))
+    }
     if let reason = failure ?? error {
       continuation?.resume(throwing: reason)
     } else if let response = task.response {

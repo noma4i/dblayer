@@ -17,6 +17,7 @@ extension RawOutcome {
 
 struct UrlSessionHttp: Sendable {
   let session: URLSession
+  var trace = false
 
   func exchange(_ request: HttpRequest) async -> RawOutcome {
     guard let url = URL(string: request.url) else { return .failed(failure: RawFailure(domain: "url", code: nil, message: "")) }
@@ -26,7 +27,7 @@ struct UrlSessionHttp: Sendable {
     request.headers.forEach { urlRequest.setValue($1, forHTTPHeaderField: $0) }
     urlRequest.httpBody = Data(request.body.utf8)
     do {
-      let (data, response) = try await BoundedExchange(limit: request.responseLimit).run(in: session) { $0.dataTask(with: urlRequest) }
+      let (data, response) = try await BoundedExchange(limit: request.responseLimit, trace: trace ? TraceCall(request) : nil).run(in: session) { $0.dataTask(with: urlRequest) }
       let status = (response as? HTTPURLResponse)?.statusCode ?? 0
       return .response(status: UInt16(clamping: status), etag: nil, body: String(decoding: data, as: UTF8.self))
     } catch {

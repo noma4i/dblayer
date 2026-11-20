@@ -52,29 +52,57 @@ private final class SocketOpening: NSObject, URLSessionWebSocketDelegate, @unche
   }
 }
 
+/// The trace lines of one cable (see `TransportTrace`): connect start, open, every frame, close and failure.
+private final class CableTrace: @unchecked Sendable {
+  private let target: String
+  private let lock = NSLock()
+  private var last = Date()
+
+  init(url: URL) {
+    target = TransportTrace.target(url)
+    TransportTrace.emit("cable connect \(target)")
+  }
+
+  func opened(handshake: Date) { emit("open handshake=\(TransportTrace.ms(handshake, Date()))ms") }
+  func frame(_ direction: String, bytes: Int) { emit("frame \(direction) bytes=\(bytes)") }
+  func closed(code: Int?, reason: String?, initiator: String) { emit("close code=\(code.map { String($0) } ?? "-") reason=\(reason ?? "-") initiator=\(initiator)") }
+  func failed(_ error: Error) { emit("failure \(TransportTrace.outcome(error, status: nil))") }
+
+  private func emit(_ event: String) {
+    let now = Date()
+    let since = lock.withLock { () -> String in defer { last = now }; return TransportTrace.ms(last, now) }
+    TransportTrace.emit("cable \(event) since-last=\(since)ms \(target)")
+  }
+}
+
 private final class UrlSessionCableConnection: PlatformSocket, @unchecked Sendable {
   private let socket: any CableWebSocket
   private let events: CableEvents
+  private let trace: CableTrace?
   private var receiver: Task<Void, Never>?
 
-  init(socket: any CableWebSocket, events: CableEvents) {
+  init(socket: any CableWebSocket, events: CableEvents, trace: CableTrace?) {
     self.socket = socket
     self.events = events
+    self.trace = trace
     receiver = Task { [socket] in
       while !Task.isCancelled {
         do {
           switch try await socket.receive() {
           case let .string(text):
-            guard UInt64(text.utf8.count) <= cableFrameLimit() else { return Self.refuse(socket, events) }
+            trace?.frame("in", bytes: text.utf8.count)
+            guard UInt64(text.utf8.count) <= cableFrameLimit() else { return Self.refuse(socket, events, trace) }
             events.frame(text: text)
           case let .data(bytes):
-            guard UInt64(bytes.count) <= cableFrameLimit() else { return Self.refuse(socket, events) }
+            trace?.frame("in", bytes: bytes.count)
+            guard UInt64(bytes.count) <= cableFrameLimit() else { return Self.refuse(socket, events, trace) }
             events.binary(bytes: bytes)
           @unknown default: events.ended(closeCode: nil, reason: nil, failure: RawFailure(domain: "cable", code: nil, message: "unknown cable frame"))
           }
         } catch {
           if Task.isCancelled { return }
           let code = socket.closeCode
+          if code == .invalid { trace?.failed(error) } else { trace?.closed(code: code.rawValue, reason: socket.closeReason.map { String(decoding: $0, as: UTF8.self) }, initiator: "remote") }
           events.ended(closeCode: code == .invalid ? nil : UInt16(clamping: code.rawValue), reason: socket.closeReason.map { String(decoding: $0, as: UTF8.self) }, failure: RawFailure(error))
           return
         }
@@ -82,34 +110,40 @@ private final class UrlSessionCableConnection: PlatformSocket, @unchecked Sendab
     }
   }
 
-  private static func refuse(_ socket: any CableWebSocket, _ events: CableEvents) {
+  private static func refuse(_ socket: any CableWebSocket, _ events: CableEvents, _ trace: CableTrace?) {
+    trace?.closed(code: nil, reason: "frame above the limit", initiator: "local")
     socket.cancel()
     events.ended(closeCode: nil, reason: nil, failure: RawFailure(domain: "DBlayer.ResponseLimit", code: 1, message: "the cable frame is above the limit of \(cableFrameLimit()) bytes"))
   }
 
   func send(text: String) -> Bool {
     guard socket.closeCode == .invalid else { return false }
-    socket.send(.string(text)) { [events] error in
-      if let error { events.ended(closeCode: nil, reason: nil, failure: RawFailure(error)) }
+    trace?.frame("out", bytes: text.utf8.count)
+    socket.send(.string(text)) { [events, trace] error in
+      if let error { trace?.failed(error); events.ended(closeCode: nil, reason: nil, failure: RawFailure(error)) }
     }
     return true
   }
 
   func close(code: UInt16, reason: String) {
     receiver?.cancel()
+    trace?.closed(code: Int(code), reason: reason, initiator: "local")
     socket.cancel(with: URLSessionWebSocketTask.CloseCode(rawValue: Int(code)) ?? .normalClosure, reason: Data(reason.utf8))
   }
 
   func cancel() {
     receiver?.cancel()
+    trace?.closed(code: nil, reason: nil, initiator: "local")
     socket.cancel()
   }
 }
 
 final class UrlSessionCable: Sendable {
   private let makeSocket: @Sendable (URLRequest) -> any CableWebSocket
+  private let trace: Bool
 
-  init(makeSocket: @escaping @Sendable (URLRequest) -> any CableWebSocket) {
+  init(trace: Bool = false, makeSocket: @escaping @Sendable (URLRequest) -> any CableWebSocket) {
+    self.trace = trace
     self.makeSocket = makeSocket
   }
 
@@ -118,11 +152,15 @@ final class UrlSessionCable: Sendable {
     var request = URLRequest(url: target, timeoutInterval: TimeInterval(connectMs) / 1000)
     headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
     let socket = makeSocket(request)
+    let trace = trace ? CableTrace(url: target) : nil
+    let started = Date()
     do {
       try await socket.open()
       try Task.checkCancellation()
-      return .open(connection: UrlSessionCableConnection(socket: socket, events: events))
+      trace?.opened(handshake: started)
+      return .open(connection: UrlSessionCableConnection(socket: socket, events: events, trace: trace))
     } catch {
+      trace?.failed(error)
       let status = socket.handshakeStatus
       socket.cancel(with: .goingAway, reason: nil)
       return .failed(failure: RawFailure(error), handshakeStatus: status.map { UInt16(clamping: $0) })

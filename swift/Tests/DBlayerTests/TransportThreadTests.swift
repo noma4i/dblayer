@@ -12,7 +12,7 @@ struct TransportThreadTests {
     let transport = UrlSessionTransport(headers: { [:] }, session: session)
 
     let body = #"{"query":"\#(mutation ? "mutation" : "query") Ping { ping }","operationName":"Ping","variables":{}}"#
-    let request = HttpRequest(author: .session, requestId: 0, attempt: 1, url: url.absoluteString, method: "POST", headers: ["Content-Type": "application/json"], body: body, connectMs: 10_000, requestMs: 30_000, purpose: .standard, responseLimit: 16 * 1024 * 1024)
+    let request = HttpRequest(author: .session, requestId: 0, attempt: 1, url: url.absoluteString, method: "POST", headers: ["Content-Type": "application/json"], body: body, connectMs: 10_000, requestMs: 30_000, purpose: .standard, responseLimit: 16 * 1024 * 1024, operation: "Probe", sequence: nil)
     let outcome = await transport.send(request: request)
 
     #expect(outcome == .response(status: 200, etag: nil, body: #"{"data":{"ping":"pong"}}"#))

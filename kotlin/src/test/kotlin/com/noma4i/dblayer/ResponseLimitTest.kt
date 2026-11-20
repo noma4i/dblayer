@@ -42,7 +42,7 @@ class ResponseLimitTest {
                 val response = MockResponse().setResponseCode(200)
                 if (chunked) response.setChunkedBody(body, 1) else response.setBody(body)
                 server.enqueue(response)
-                val request = HttpRequest(Author.SESSION, 0uL, 1u, server.url("/graphql").toString(), "POST", emptyMap(), "{}", 10_000uL, 30_000uL, NetworkPurpose.STANDARD, 16uL)
+                val request = HttpRequest(Author.SESSION, 0uL, 1u, server.url("/graphql").toString(), "POST", emptyMap(), "{}", 10_000uL, 30_000uL, NetworkPurpose.STANDARD, 16uL, "Probe", null)
                 val outcome = OkHttpTransport(client = OkHttpClient()).send(request)
                 if (length == 16) assertEquals(RawOutcome.Response(200u, null, body), outcome)
                 else {
