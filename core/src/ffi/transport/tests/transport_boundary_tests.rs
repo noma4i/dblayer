@@ -63,7 +63,7 @@ impl Transport for Scripted {
 
 fn clocked(port: &Arc<Scripted>) -> (ForeignTransport, Arc<ManualClock>) {
     let clock = Arc::new(ManualClock::new(Duration::from_secs(1_000)));
-    (ForeignTransport::beside_session(port.clone(), clock.clone()), clock)
+    (ForeignTransport::plain(port.clone(), Some("https://graphql.test/graphql".into()), clock.clone()).unwrap(), clock)
 }
 
 fn request() -> GraphQLRequest { GraphQLRequest::new("query Q { x }", "Q", serde_json::json!({})).by(WireIds::bootstrap()) }
