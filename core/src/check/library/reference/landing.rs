@@ -47,7 +47,7 @@ impl LibraryRef {
     }
 
     /// Coordinator answers H11, H12: one counter of sends per load, the limit of the class of this refusal, a permanent refusal ends at once.
-    fn refusal(&mut self, key: Key, kind: &str) {
+    pub(super) fn refusal(&mut self, key: Key, kind: &str) {
         let class = match kind {
             "temporary" => Class::Network,
             "server" => Class::Server,

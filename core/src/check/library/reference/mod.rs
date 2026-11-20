@@ -103,6 +103,8 @@ struct Held {
     id: String,
     live: bool,
     owner: Owner,
+    /// network.md D-493: the model milliseconds the request has been held.
+    age: u64,
 }
 
 struct Sent {

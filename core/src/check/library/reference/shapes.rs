@@ -13,6 +13,9 @@ pub const MEMBERS_PAGE_SIZE: u64 = 30;
 pub const NETWORK_SENDS: u32 = 3;
 pub const SERVER_SENDS: u32 = 2;
 
+/// network.md D-493: an exchange held this long (model clock) ends with `Timeout`, once.
+pub const REQUEST_MS: u64 = 30_000;
+
 /// Coordinator answer H12: the pause before the retry n is at most `1 s * 2^(n-1)`, never above 30 s (the jitter only shortens it).
 pub fn pause_ceiling_ms(attempt: u32) -> u64 {
     (1_000u64 << attempt.saturating_sub(1).min(5)).min(30_000)

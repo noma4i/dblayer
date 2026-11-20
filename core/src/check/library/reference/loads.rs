@@ -36,7 +36,7 @@ impl LibraryRef {
         let page = self.run_of(key).as_ref().map_or(1, |run| run.page);
         let (operation, variables) = self.request_of(key, page);
         let id = self.provisional();
-        self.held.push(Held { id: id.clone(), live: true, owner: Owner::Window(key) });
+        self.held.push(Held { id: id.clone(), live: true, owner: Owner::Window(key), age: 0 });
         self.requests.push(Sent { id: id.clone(), operation, variables });
         if let Some(run) = self.run_of(key) {
             run.phase = Phase::Flight(id);
