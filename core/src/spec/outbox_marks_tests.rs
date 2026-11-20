@@ -16,6 +16,25 @@ fn out_marking_failed_invalid() {
 }
 
 #[test]
+fn out_retry_waits_for_the_failure_mark_and_joins_the_same_new_cycle() {
+    let mut twin = Twin::new();
+    let id = marking_failed(&mut twin, false);
+    let effects = retry(&mut twin);
+    assert!(answers(&effects, RETRY_REPLY).is_empty());
+    let effects = twin.committed(id);
+    assert_eq!(twin.stage(id), Some(St::MarkingRetry));
+    assert!(answers(&effects, RETRY_REPLY).is_empty());
+    let joined = RETRY_REPLY + 1;
+    let effects = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), action: None, reply: joined });
+    assert!(answers(&effects, joined).is_empty());
+    let effects = twin.committed(id);
+    for reply in [RETRY_REPLY, joined] {
+        assert!(matches!(answers(&effects, reply).as_slice(), [OutboxAnswer::Receipt(Receipt { cycle_id: 2, .. })]));
+    }
+    assert_eq!(sends(&effects), 1);
+}
+
+#[test]
 fn out_failed_retry_restore_failed() {
     let mut twin = Twin::bare();
     declare(&mut twin);

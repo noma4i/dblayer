@@ -405,3 +405,6 @@ pub struct QueuedOperation {
     /// The temp ids of the body the operation waits for, read when it is queued and when a swap or the send rewrites the body.
     pub body_temps: Result<Vec<String>, String>,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Held { Retry, Discard }

@@ -11,6 +11,50 @@ use crate::test_wait::settled;
 const ROW: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#;
 const EXPIRY_OPERATIONS: [(&str, &str); 2] = [("CreateBlob", "mutation CreateBlob { createBlob { signedId } }"), ("CreateMoment", "mutation CreateMoment { createMoment { id } }")];
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_upload_mutation_retries_without_uploading_the_file_again() {
+    for failure in [Answer::Data(r#"{"errors":[{"message":"Publication rejected"}]}"#.into()), Answer::Status(422)] {
+        for action in [None, Some("upload_clip".to_string())] {
+            let stand = Stand::new();
+            let database = stand.open(None, &[CREATE_MOMENT]).await;
+            let directory = tempfile::tempdir().unwrap();
+            let source = directory.path().join("photo.jpg");
+            std::fs::write(&source, b"photo").unwrap();
+            stand.script.data("CreateBlob", BLOB);
+            let refusal = std::sync::Arc::new(super::upload_stand::Hold::default());
+            stand.script.enqueue("CreateMoment", Answer::Held(refusal.clone(), Box::new(failure.clone())));
+            let epoch = database.session_epoch();
+            let sent = bound(database.send(clip("Moment", r#"{"text":"photo"}"#, "upload_clip", &source, epoch))).await.unwrap();
+            let id = sent.optimistic_value.as_ref().unwrap().id.clone();
+            let stream = database.subscribe_values(epoch, crate::ffi::ReadRequest::Entity { model: "Moment".into(), id: id.clone(), fetch: crate::ffi::ReadFetch::Never });
+            let original = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), {
+                let database = database.clone();
+                async move { database.confirmed(sent, false).await }
+            }));
+            refusal.entered().await;
+            refusal.release();
+            loop {
+                let rows = match bound(stream.pull_next()).await.unwrap() {
+                    crate::ffi::ReadValue::Snapshot { rows, .. } => rows,
+                    crate::ffi::ReadValue::Delta { edits, .. } => crate::ffi::RowEdit::carried(&edits),
+                    _ => continue,
+                };
+                if rows.iter().any(|row| row.sync.state == WireSyncState::Failed || row.uploads.iter().any(|entry| entry.upload.status == crate::ffi::WireUploadStatus::Failed)) { break; }
+            }
+            stand.script.data("CreateMoment", ROW);
+
+            let retried = bound(database.retry(epoch, "Moment".into(), id, action.clone(), None)).await.unwrap();
+            let confirmed = bound(database.confirmed(retried, false)).await.unwrap();
+
+            let refused = bound(original).await.unwrap();
+            assert!(matches!(refused, Err(DbError::Rejected { .. })), "{action:?}: {refused:?}");
+            assert_eq!(confirmed.value.unwrap().id, "m1", "{action:?}");
+            assert_eq!((stand.script.count("CreateBlob"), stand.puts.bodies.lock().unwrap().len(), stand.script.count("CreateMoment")), (1, 1, 2), "{action:?}");
+            bound(database.close_database()).await.unwrap();
+        }
+    }
+}
+
 async fn row(database: &Database, id: &str) -> Option<WireRow> { bound(database.read_row(database.session_epoch(), "Moment".into(), id.into())).await.unwrap() }
 
 async fn until_state(database: &Database, id: &str, wanted: WireSyncState) {

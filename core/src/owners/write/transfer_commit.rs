@@ -14,11 +14,10 @@ impl TransferState {
         let Some(id) = self.open_id(key) else { return reply(fx, rep, TransferAnswer::Err(Fault::NotFound)) };
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if transfer.stage == TransferStage::Removing { return reply(fx, rep, TransferAnswer::Err(Fault::NotFound)); }
-        if !transfer.held || transfer.commit_reply.is_some() || transfer.commit_waiting.is_some() { return reply(fx, rep, TransferAnswer::Err(Fault::Invalid)); }
+        if !transfer.held || transfer.commit_reply.is_some() || transfer.commands.iter().any(|command| matches!(command, Waiting::Commit(..))) { return reply(fx, rep, TransferAnswer::Err(Fault::Invalid)); }
         let open = matches!(transfer.stage, TransferStage::Preparing | TransferStage::Measuring | TransferStage::PersistingPrepared | TransferStage::Ready | TransferStage::PersistingAttempt | TransferStage::Uploading | TransferStage::PersistingPart | TransferStage::Held | TransferStage::Failed);
         if Self::defers_removal(transfer.stage, transfer.batch_id.is_some(), transfer.supply_back.is_some(), false) {
-            transfer.commit_first = transfer.removal_waiting.is_empty();
-            transfer.commit_waiting = Some((epoch, request, rep));
+            transfer.commands.push(Waiting::Commit(epoch, request, rep));
             self.removal_pending.insert(id);
             return;
         }

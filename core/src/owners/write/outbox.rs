@@ -65,8 +65,9 @@ pub struct OutboxState {
     pub(super) cancelled_commits: BTreeMap<OpId, i64>,
     pub(super) submit_replies: BTreeMap<OpId, ReplyId>,
     pub(super) retry_waiters: Vec<(OpId, ReplyId)>,
+    pub(super) retry_transfer_waiting: Vec<(OpId, String, String, ReplyId, Vec<crate::owners::store::UploadRow>)>,
     pub(super) discard_waiters: Vec<(OpId, ReplyId)>,
-    pub(super) discard_waiting: Vec<(OpId, ReplyId)>,
+    pub(super) discard_waiting: Vec<(OpId, ReplyId, Held)>,
     pub(super) outcome_waiters: Vec<(OpId, u64, ReplyId, bool)>,
     pub(super) confirmed_discards: BTreeMap<OpId, (u64, String)>,
     pub(super) transfer_discards: BTreeMap<OpId, (u64, u64)>,
@@ -125,6 +126,7 @@ impl OutboxState {
             cancelled_commits: BTreeMap::new(),
             submit_replies: BTreeMap::new(),
             retry_waiters: Vec::new(),
+            retry_transfer_waiting: Vec::new(),
             discard_waiters: Vec::new(),
             discard_waiting: Vec::new(),
             outcome_waiters: Vec::new(),
@@ -595,6 +597,21 @@ impl OutboxState {
         }
     }
 
+    pub(super) fn retry_transfer_current(&self, op_id: OpId, asked: &[(u64, u64)], fx: &mut Effects<Outbox>) -> bool {
+        let Some(transfer) = self.peers.transfer else { return false };
+        let cycles: Vec<(u64, u64)> = match &self.ops[&op_id].op.origin {
+            OpSource::Api => return false,
+            OpSource::Transfer { transfer_id, cycle_id } => vec![(*transfer_id, *cycle_id)],
+            OpSource::TransferGroup { members, .. } => members.iter().map(|member| (member.transfer_id, member.cycle_id)).collect(),
+        };
+        let (mut asked, mut running) = (asked.to_vec(), cycles.clone());
+        asked.sort_unstable();
+        running.sort_unstable();
+        if asked != running { return false; }
+        fx.push(Effect::Send(Outbound::new(transfer, TransferInput::RetryCurrent { cycles })));
+        true
+    }
+
     pub(super) fn tell_transfer(&self, op_id: OpId, outcome: &OutboxOutcome, intent_removed: bool, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get(&op_id) else { return };
         let Some(transfer) = self.peers.transfer else { return };
@@ -844,10 +861,17 @@ impl OutboxState {
         for reply in Self::take_waiters(&mut self.retry_waiters, op_id) {
             Self::reply(fx, reply, answer.clone());
         }
+        if let OutboxAnswer::Err(fault) = answer {
+            let (held, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.retry_transfer_waiting).into_iter().partition(|entry| entry.0 == op_id);
+            self.retry_transfer_waiting = rest;
+            for (_, _, _, _, uploads) in held { self.retry_transfer_answer(uploads.into_iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(fault.clone()), fx); }
+        }
         for reply in Self::take_waiters(&mut self.discard_waiters, op_id) {
             Self::reply(fx, reply, answer.clone());
         }
-        for reply in Self::take_waiters(&mut self.discard_waiting, op_id) {
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.discard_waiting).into_iter().partition(|(id, _, _)| *id == op_id);
+        self.discard_waiting = rest;
+        for (_, reply, _) in mine {
             Self::reply(fx, reply, answer.clone());
         }
     }
@@ -1046,7 +1070,7 @@ impl StateOwner for Outbox {
         } else {
             state.handle(now, input, &mut fx);
         }
-        state.run_waiting_discards(&mut fx);
+        state.run_waiting_commands(&mut fx);
         #[cfg(test)]
         state.release_quiet(&mut fx);
         fx

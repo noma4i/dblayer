@@ -715,15 +715,23 @@ fn xfer_end_discard_cancel_write_outcome() {
 }
 
 #[test]
-fn a_transfer_with_its_write_in_flight_refuses_retry() {
+fn a_retry_waits_for_a_failure_write_and_refuses_other_unfinished_steps() {
     let (mut retrying, id) = failed_with_upload();
     retrying.retry(KEY, None);
     refuses_calls(&mut retrying, KEY);
     assert_eq!(retrying.stage(id), TransferStage::PersistingRetry);
     let mut failing = Twin::new();
     let id = failing.persisting_failure(KEY);
-    refuses_calls(&mut failing, KEY);
-    assert_eq!(failing.stage(id), TransferStage::PersistingFailure);
+    let (waiting, out) = failing.retry(KEY, None);
+    assert_eq!((out.writes(), out.all_replies()), (0, 0));
+    let (joined, out) = failing.retry(KEY, None);
+    assert_eq!((out.writes(), out.all_replies()), (0, 0));
+    let out = failing.commit();
+    assert_eq!((failing.stage(id), out.kinds(), out.replies(waiting)), (TransferStage::PersistingRetry, vec![UploadKind::Retrying], vec![]));
+    let out = failing.commit();
+    for reply in [waiting, joined] {
+        assert!(matches!(out.replies(reply).as_slice(), [TransferAnswer::Receipt(receipt)] if receipt.cycle_id == 2));
+    }
     let mut removing = Twin::offline();
     let id = removing.accepted(KEY, 2);
     removing.cancel(KEY);

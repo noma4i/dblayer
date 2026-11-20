@@ -336,6 +336,7 @@ pub enum TransferInput {
     MutationOutcome { transfer_id: TransferId, cycle_id: CycleId, outcome: OutboxOutcome, intent_removed: bool, row_never_created: bool },
     MutationOutcomes { batch_id: BatchId, members: Vec<(TransferId, CycleId, OutboxOutcome)>, intent_removed: bool },
     RetryOutcome { cycles: Vec<(TransferId, CycleId)>, result: Result<i64, Fault> },
+    RetryCurrent { cycles: Vec<(TransferId, CycleId)> },
     DiscardOutcome { key: Key, result: Result<(), Fault> },
     Outcome { receipt: Receipt, reply: ReplyId, discard_on_failure: bool },
     /// A `Blob` stream follows the key `model:row:action`, also before a transfer exists.
@@ -585,13 +586,27 @@ pub struct PrepareRun {
 
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq))]
+pub enum Waiting {
+    Removal(ReplyId, bool),
+    Retry(Option<SuppliedSource>, ReplyId),
+    Commit(Epoch, CommitRequest, ReplyId),
+    Asked { rep: ReplyId, ids: Vec<(TransferId, CycleId)>, answer: Option<RetryAnswer> },
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq))]
+pub enum RetryAnswer {
+    Current,
+    Refused(Fault),
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct Transfer {
     pub held: bool,
     /// The file was staged: it goes multipart whatever its size, also after `Commit` (D-372).
     pub multipart_forced: bool,
     pub commit_reply: Option<ReplyId>,
-    pub commit_waiting: Option<(Epoch, CommitRequest, ReplyId)>,
-    pub commit_first: bool,
     pub commit: Option<CommitPlan>,
     pub prep: Option<PrepareRun>,
     pub transfer_id: TransferId,
@@ -671,7 +686,7 @@ pub struct Transfer {
     /// The row of the transfer as the batch of its acceptance showed it.
     pub optimistic: Option<crate::store::Row>,
     pub cancel_replies: Vec<(ReplyId, bool)>,
-    pub removal_waiting: Vec<(ReplyId, bool)>,
+    pub commands: Vec<Waiting>,
     pub retry_reply: Option<ReplyId>,
     pub supply_reply: Option<ReplyId>,
     pub supply_back: Option<TransferStage>,

@@ -250,13 +250,13 @@ impl TransferState {
     /// The replacement of `new` does not happen: the replaced transfer is `Failed` again and Outbox ends the replacement.
     pub(super) fn restore_replaced(&mut self, new: TransferId, fx: &mut Fx) -> Option<TransferId> {
         let (old, _) = self.replacements.remove(&new)?;
-        let waiting = self.transfers.get_mut(&new).map(|transfer| std::mem::take(&mut transfer.removal_waiting)).unwrap_or_default();
+        let waiting = self.transfers.get_mut(&new).map(|transfer| std::mem::take(&mut transfer.commands)).unwrap_or_default();
         if let Some(transfer) = self.transfers.get_mut(&old) {
             transfer.stage = TransferStage::Failed;
             transfer.removal = None;
             transfer.prior = None;
             if !waiting.is_empty() {
-                transfer.removal_waiting.extend(waiting);
+                transfer.commands.extend(waiting);
                 self.removal_pending.insert(old);
             }
         }
@@ -675,11 +675,10 @@ impl TransferState {
         let mut replies: Vec<ReplyId> = Vec::new();
         replies.extend(transfer.accept_reply.take());
         replies.extend(std::mem::take(&mut transfer.cancel_replies).into_iter().map(|(reply, _)| reply));
-        replies.extend(std::mem::take(&mut transfer.removal_waiting).into_iter().map(|(reply, _)| reply));
+        replies.extend(std::mem::take(&mut transfer.commands).into_iter().map(|command| match command { Waiting::Removal(reply, _) | Waiting::Retry(_, reply) | Waiting::Commit(_, _, reply) | Waiting::Asked { rep: reply, .. } => reply }));
         replies.extend(transfer.retry_reply.take());
         replies.extend(transfer.supply_reply.take());
         replies.extend(transfer.commit_reply.take());
-        replies.extend(transfer.commit_waiting.take().map(|(_, _, rep)| rep));
         replies.extend(transfer.staged_failed.take().and_then(|(rep, _)| rep));
         replies.append(&mut transfer.discard_waiters);
         let in_flight = std::mem::replace(&mut transfer.in_flight, false) && transfer.stage != TransferStage::PersistingAttempt;
@@ -1001,7 +1000,13 @@ impl TransferState {
                 }).collect();
                 self.finish_batch(now, batch_id, outcomes, intent_removed, fx);
             }
-            TransferInput::RetryOutcome { cycles, result } => self.retry_mutation_outcome(&cycles, result, fx),
+            TransferInput::RetryOutcome { cycles, result } => {
+                let answered = match &result { Err(fault) => self.record_retry_answer(&cycles, RetryAnswer::Refused(fault.clone())), Ok(_) => false };
+                if !answered { self.retry_mutation_outcome(&cycles, result, fx); }
+            }
+            TransferInput::RetryCurrent { cycles } => {
+                if !self.record_retry_answer(&cycles, RetryAnswer::Current) { self.retry_mutation_outcome(&cycles, Err(super::outbox::Fault::InFlight), fx); }
+            }
             TransferInput::DiscardOutcome { key, result } => self.discard_outcome(&key, result, fx),
             TransferInput::Outcome { receipt, reply, discard_on_failure } => self.outcome(receipt, reply, discard_on_failure, fx),
             TransferInput::StatusInterestPlus { key, stream_id } => self.interest_plus(key, stream_id, fx),

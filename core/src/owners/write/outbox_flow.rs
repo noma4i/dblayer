@@ -123,6 +123,11 @@ impl OutboxState {
             self.retry_transfer_answer(ids, Err(Fault::NotFound), fx);
             return;
         };
+        if Self::defers_retry(self.ops[&op_id].stage) {
+            self.retry_transfer_waiting.push((op_id, model.into(), row.into(), reply, uploads));
+            return;
+        }
+        if matches!(self.ops[&op_id].stage, Stage::Queued | Stage::PersistingAttempt | Stage::Sending | Stage::Landing | Stage::Failed) && self.retry_transfer_current(op_id, &ids, fx) { return; }
         if self.ops[&op_id].stage != Stage::Failed {
             self.retry_transfer_answer(ids, Err(Fault::InFlight), fx);
             return;
@@ -168,11 +173,43 @@ impl OutboxState {
         let Some(op_id) = self.open_on_row(model, row, action) else {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound));
         };
+        self.retry_op(op_id, reply, fx);
+    }
+
+    pub(super) fn defers_retry(stage: Stage) -> bool { matches!(stage, Stage::RollingBack(_) | Stage::MarkingFailed) }
+
+    pub(super) fn run_waiting_commands(&mut self, fx: &mut Effects<Outbox>) {
+        let mut blocked: Vec<OpId> = Vec::new();
+        for (op_id, reply, held) in std::mem::take(&mut self.discard_waiting) {
+            let stage = self.ops.get(&op_id).map(|operation| operation.stage);
+            let defers = stage.is_some_and(|stage| match held { Held::Retry => Self::defers_retry(stage), Held::Discard => Self::defers_discard(stage) });
+            if defers || blocked.contains(&op_id) {
+                blocked.push(op_id);
+                self.discard_waiting.push((op_id, reply, held));
+                continue;
+            }
+            match (held, stage) {
+                (Held::Retry, None) => Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound)),
+                (Held::Retry, Some(_)) => self.retry_op(op_id, reply, fx),
+                (Held::Discard, _) => self.discard_op(op_id, reply, fx),
+            }
+        }
+        let waiting = std::mem::take(&mut self.retry_transfer_waiting);
+        for (op_id, model, row, reply, uploads) in waiting {
+            match self.ops.get(&op_id).map(|operation| operation.stage) {
+                Some(stage) if Self::defers_retry(stage) => self.retry_transfer_waiting.push((op_id, model, row, reply, uploads)),
+                _ => self.retry_transfer(&model, &row, reply, uploads, fx),
+            }
+        }
+    }
+
+    fn retry_op(&mut self, op_id: OpId, reply: ReplyId, fx: &mut Effects<Outbox>) {
         let receipt = self.receipt(op_id, 0);
         match self.ops[&op_id].stage {
-            Stage::Submitting => self.retry_waiters.push((op_id, reply)),
+            Stage::Submitting | Stage::MarkingRetry => self.retry_waiters.push((op_id, reply)),
+            Stage::RollingBack(_) | Stage::MarkingFailed => self.discard_waiting.push((op_id, reply, Held::Retry)),
             Stage::Queued | Stage::PersistingAttempt | Stage::Sending | Stage::Landing => Self::reply(fx, reply, OutboxAnswer::Receipt(receipt)),
-            Stage::RollingBack(_) | Stage::MarkingFailed | Stage::MarkingRetry | Stage::WaitingDeclaration => Self::reply(fx, reply, OutboxAnswer::Err(Fault::InFlight)),
+            Stage::WaitingDeclaration => Self::reply(fx, reply, OutboxAnswer::Err(Fault::InFlight)),
             Stage::Failed => match self.ops[&op_id].error.as_deref() {
                 Some("RestoreFailed") => Self::reply(fx, reply, OutboxAnswer::Err(Fault::RestoreFailed)),
                 Some("StateLost") => Self::reply(fx, reply, OutboxAnswer::Err(Fault::StateLost)),
@@ -205,21 +242,10 @@ impl OutboxState {
     /// The stages of the internal steps of the library: a `Discard` waits in them for the stage the operation leaves to (D-392).
     pub(super) fn defers_discard(stage: Stage) -> bool { matches!(stage, Stage::Submitting | Stage::PersistingAttempt | Stage::MarkingFailed | Stage::MarkingRetry) }
 
-    /// The end of every step of the owner: an operation that left the stage of an internal step runs its waiting `Discard` commands by the row of its stage.
-    pub(super) fn run_waiting_discards(&mut self, fx: &mut Effects<Outbox>) {
-        let waiting = std::mem::take(&mut self.discard_waiting);
-        for (op_id, reply) in waiting {
-            match self.ops.get(&op_id).map(|operation| operation.stage) {
-                Some(stage) if Self::defers_discard(stage) => self.discard_waiting.push((op_id, reply)),
-                _ => self.discard_op(op_id, reply, fx),
-            }
-        }
-    }
-
     pub(super) fn discard_op(&mut self, op_id: OpId, reply: ReplyId, fx: &mut Effects<Outbox>) {
         if self.replacements.values().any(|old| *old == Some(op_id)) { return Self::reply(fx, reply, OutboxAnswer::Err(Fault::InFlight)); }
         match self.ops[&op_id].stage {
-            Stage::Submitting | Stage::PersistingAttempt | Stage::MarkingFailed | Stage::MarkingRetry => self.discard_waiting.push((op_id, reply)),
+            Stage::Submitting | Stage::PersistingAttempt | Stage::MarkingFailed | Stage::MarkingRetry => self.discard_waiting.push((op_id, reply, Held::Discard)),
             Stage::Sending | Stage::Landing | Stage::WaitingDeclaration => Self::reply(fx, reply, OutboxAnswer::Err(Fault::InFlight)),
             Stage::Queued | Stage::Failed => {
                 self.discard_waiters.push((op_id, reply));

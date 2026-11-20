@@ -156,3 +156,4 @@ C10	G-09	core	call_prop_mutation_against_end_any_order_public	green	S1: the dire
 D323	temp-param-refused	core	win_prop_temp_id_never_asked	regression	-	coordinator D-323
 D328	temp-prefix-value-sent	core	write_sends_a_value_that_only_starts_with_the_temp_prefix	red-by-reading	-	coordinator D-328
 D329	rollback-retry-dependents	core	out_rollback_retry_keeps_the_dependents	red-by-reading	-	coordinator D-329
+D392-RETRY	failed-commit-retry	core	a_refused_upload_mutation_retries_without_uploading_the_file_again	regression	first Failed frame while the old receipt waits	public API

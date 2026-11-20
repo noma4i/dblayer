@@ -8,6 +8,29 @@ use crate::owners::write::transfer::{TransferAnswer, TransferId, TransferInput, 
 const KEY: &str = "Moment:r1:upload";
 const OTHER: &str = "Message:m2:send";
 
+#[test]
+fn xfer_retry_and_discard_keep_their_order_while_failure_commits() {
+    for retry_first in [true, false] {
+        let mut twin = Twin::new();
+        twin.persisting_failure(KEY);
+        let ((retry, first), (discard, second)) = if retry_first {
+            let retry = twin.retry(KEY, None);
+            (retry, twin.discard(KEY))
+        } else {
+            let discard = twin.discard(KEY);
+            (twin.retry(KEY, None), discard)
+        };
+        let mut outs = vec![first, second];
+        outs.push(twin.commit());
+        if !retry_first { assert!(answers(&outs, retry).is_empty(), "the earlier discard has not committed"); }
+        for _ in 0..8 { if !twin.has_pending() { break; } outs.push(twin.commit()); }
+        assert_eq!(answers(&outs, discard), vec![TransferAnswer::Ok]);
+        let retried = answers(&outs, retry);
+        if retry_first { assert!(matches!(retried.as_slice(), [TransferAnswer::Receipt(receipt)] if receipt.cycle_id == 2), "{retried:?}"); }
+        else { assert_eq!(retried, vec![TransferAnswer::Err(Fault::NotFound)]); }
+    }
+}
+
 fn copying_batch(twin: &mut Twin) -> TransferId {
     twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply: 80 });
     let ids = [twin.state().open_id(KEY).unwrap(), twin.state().open_id(OTHER).unwrap()];

@@ -30,7 +30,7 @@ impl TransferState {
         }
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if Self::defers_removal(stage, batched, supplying, committing) {
-            transfer.removal_waiting.push((rep, cancel));
+            transfer.commands.push(Waiting::Removal(rep, cancel));
             self.removal_pending.insert(id);
             return;
         }
@@ -90,12 +90,65 @@ impl TransferState {
                 self.removal_pending.insert(id);
                 continue;
             }
-            let (key, waiting) = (transfer.key.clone(), std::mem::take(&mut transfer.removal_waiting));
-            let (commit, commit_first) = (transfer.commit_waiting.take(), std::mem::take(&mut transfer.commit_first));
-            let (before, after) = if commit_first { (commit, None) } else { (None, commit) };
-            if let Some((epoch, request, rep)) = before { self.commit(epoch, &key, request, rep, fx); }
-            for (rep, cancel) in waiting { self.cancel(now, &key, rep, cancel, fx); }
-            if let Some((epoch, request, rep)) = after { self.commit(epoch, &key, request, rep, fx); }
+            let (key, waiting) = (transfer.key.clone(), std::mem::take(&mut transfer.commands));
+            let mut rest = std::collections::VecDeque::from(waiting);
+            while let Some(command) = rest.pop_front() {
+                let Some(transfer) = self.transfers.get(&id) else {
+                    let (Waiting::Removal(rep, _) | Waiting::Retry(_, rep) | Waiting::Commit(_, _, rep) | Waiting::Asked { rep, .. }) = command;
+                    Self::refuse(fx, rep, Fault::NotFound);
+                    continue;
+                };
+                let command = match command {
+                    Waiting::Asked { rep, ids, answer: Some(RetryAnswer::Current) } if matches!(transfer.stage, TransferStage::Failed | TransferStage::PersistingFailure | TransferStage::PersistingRetry) && ids.contains(&(id, transfer.cycle_id)) => Waiting::Retry(None, rep),
+                    other => other,
+                };
+                if Self::defers_removal(transfer.stage, transfer.batch_id.is_some(), transfer.supply_back.is_some(), transfer.commit_reply.is_some()) || matches!(command, Waiting::Asked { answer: None, .. }) || (transfer.stage == TransferStage::Removing && matches!(command, Waiting::Retry(..))) {
+                    rest.push_front(command);
+                    break;
+                }
+                let stage = transfer.stage;
+                match command {
+                    Waiting::Removal(rep, cancel) => self.cancel(now, &key, rep, cancel, fx),
+                    Waiting::Retry(Some(_), rep) if stage != TransferStage::Failed => Self::refuse(fx, rep, Fault::InFlight),
+                    Waiting::Retry(source, rep) => self.retry(&key, source, rep, fx),
+                    Waiting::Commit(epoch, request, rep) => self.commit(epoch, &key, request, rep, fx),
+                    Waiting::Asked { rep, ids, answer } => self.apply_retry_answer(&key, id, rep, ids, answer, fx),
+                }
+                if let Some(transfer) = self.transfers.get_mut(&id) {
+                    for pushed in std::mem::take(&mut transfer.commands).into_iter().rev() { rest.push_front(pushed); }
+                }
+            }
+            if let Some(transfer) = self.transfers.get_mut(&id) {
+                let later = std::mem::take(&mut transfer.commands);
+                transfer.commands = rest.into_iter().chain(later).collect();
+                if !transfer.commands.is_empty() { self.removal_pending.insert(id); }
+            }
+        }
+    }
+
+    pub(super) fn record_retry_answer(&mut self, cycles: &[(TransferId, CycleId)], answer: RetryAnswer) -> bool {
+        let mut found = false;
+        for &(id, cycle) in cycles {
+            let Some(transfer) = self.transfers.get_mut(&id) else { continue };
+            for command in &mut transfer.commands {
+                if let Waiting::Asked { answer: slot @ None, ids, .. } = command {
+                    if ids.contains(&(id, cycle)) { *slot = Some(answer.clone()); found = true; self.removal_pending.insert(id); }
+                }
+            }
+        }
+        found
+    }
+
+    fn apply_retry_answer(&mut self, key: &str, id: TransferId, rep: ReplyId, ids: Vec<(TransferId, CycleId)>, answer: Option<RetryAnswer>, fx: &mut Fx) {
+        for (member, _) in &ids {
+            if let Some(transfer) = self.transfers.get_mut(member) { transfer.waits_outbox = false; }
+        }
+        let current = self.transfers.get(&id).map(|transfer| (transfer.stage, transfer.cycle_id));
+        match (answer, current) {
+            (Some(RetryAnswer::Current), Some((TransferStage::Mutating, own))) if ids.contains(&(id, own)) => reply(fx, rep, TransferAnswer::Receipt(self.receipt(id))),
+            (Some(RetryAnswer::Refused(Fault::NotFound)), Some((TransferStage::Failed, _))) if self.transfers.get(&id).is_some_and(|transfer| !transfer.intent_live) => self.retry(key, None, rep, fx),
+            (Some(RetryAnswer::Refused(fault)), _) => Self::refuse(fx, rep, fault),
+            _ => Self::refuse(fx, rep, Fault::InFlight),
         }
     }
 
@@ -148,6 +201,11 @@ impl TransferState {
     pub(super) fn retry(&mut self, key: &str, source: Option<SuppliedSource>, rep: ReplyId, fx: &mut Fx) {
         let Some(id) = self.open_id(key) else { return Self::refuse(fx, rep, Fault::NotFound) };
         if source.as_ref().is_some_and(super::transfer_accept::source_invalid) { return Self::refuse(fx, rep, Fault::Invalid); }
+        if let Some(transfer) = self.transfers.get_mut(&id).filter(|transfer| transfer.stage == TransferStage::PersistingFailure) {
+            transfer.commands.push(Waiting::Retry(source, rep));
+            self.removal_pending.insert(id);
+            return;
+        }
         let undeclared = self.transfers.get(&id).filter(|transfer| self.complete && transfer.stage == TransferStage::Failed && !self.declarations.contains(&(transfer.mutation.model.clone(), transfer.mutation.action.clone()))).map(|transfer| super::failure::undeclared_upload_message(&transfer.mutation.model, &transfer.mutation.action));
         if let Some(text) = undeclared { return Self::refuse(fx, rep, Fault::Rejected(crate::owners::contract::RejectReason::Invalid(text))); }
         let mutation_failed = self.transfers.get(&id).is_some_and(|transfer| transfer.stage == TransferStage::Failed && transfer.signed_id.is_some() && transfer.error.as_deref() != Some("missing_file") && transfer.error.as_deref() != Some("RestoreFailed"));
@@ -161,6 +219,18 @@ impl TransferState {
             return;
         }
         if mutation_failed && self.batch_retry_mutation(id, rep, fx) {
+            return;
+        }
+        if source.is_none() && self.transfers.get(&id).is_some_and(|transfer| transfer.stage == TransferStage::Mutating) {
+            let ids: Vec<TransferId> = match self.group_entry(id).filter(|group| self.phase_of(*group) == Some(BatchPhase::Mutating)) {
+                Some(group) => self.remaining(group).into_iter().filter(|member| self.stage_of(*member) == Some(TransferStage::Mutating)).collect(),
+                None => vec![id],
+            };
+            let asking = ids.iter().any(|member| self.transfers.get(member).is_some_and(|transfer| transfer.commands.iter().any(|command| matches!(command, Waiting::Asked { answer: None, .. }))));
+            let asked: Vec<(TransferId, CycleId)> = if asking { self.transfers.get(&id).map(|transfer| vec![(id, transfer.cycle_id)]).unwrap_or_default() } else { ids.iter().filter_map(|member| self.transfers.get(member)).map(|transfer| (transfer.transfer_id, transfer.cycle_id)).collect() };
+            if let Some(transfer) = self.transfers.get_mut(&id) { transfer.commands.push(Waiting::Asked { rep, ids: asked, answer: None }); }
+            self.removal_pending.insert(id);
+            if !asking { self.request_mutation_retry(&ids, fx); }
             return;
         }
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
@@ -208,6 +278,24 @@ impl TransferState {
         }
     }
 
+    pub(super) fn answer_joined(&mut self, id: TransferId, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        let mut joined = Vec::new();
+        while matches!(transfer.commands.first(), Some(Waiting::Retry(None, _))) {
+            if let Waiting::Retry(_, rep) = transfer.commands.remove(0) { joined.push(rep); }
+        }
+        for rep in joined { reply(fx, rep, TransferAnswer::Receipt(self.receipt(id))); }
+    }
+
+    pub(super) fn refuse_joined(&mut self, id: TransferId, fault: &Fault, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        let mut joined = Vec::new();
+        while matches!(transfer.commands.first(), Some(Waiting::Retry(..))) {
+            if let Waiting::Retry(_, rep) = transfer.commands.remove(0) { joined.push(rep); }
+        }
+        for rep in joined { Self::refuse(fx, rep, fault.clone()); }
+    }
+
     pub(super) fn retry_committed(&mut self, now: crate::runtime::Time, id: TransferId, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.cycle_id += 1;
@@ -221,6 +309,7 @@ impl TransferState {
         if let Some(rep) = rep {
             reply(fx, rep, TransferAnswer::Receipt(receipt));
         }
+        self.answer_joined(id, fx);
         if held {
             self.show(id, Shown::Uploading { progress: 99 }, fx);
             return self.rounds_idle(id, fx);
@@ -241,6 +330,7 @@ impl TransferState {
         let rep = transfer.retry_reply.take();
         if let Some(entry) = group.and_then(|group| self.groups.get_mut(&group)) { entry.phase = BatchPhase::Singles; }
         if let Some(rep) = rep { reply(fx, rep, TransferAnswer::Receipt(self.receipt(id))); }
+        self.answer_joined(id, fx);
         if let Some(group) = group { self.single_next(group, fx); }
         else { self.store(&[id], StoreKind::BatchIntent, fx); }
     }
@@ -248,9 +338,11 @@ impl TransferState {
     pub(super) fn retry_rejected(&mut self, id: TransferId, reason: RejectReason, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.stage = TransferStage::Failed;
+        let fault = Fault::of_reject(reason);
         if let Some(rep) = transfer.retry_reply.take() {
-            Self::refuse(fx, rep, Fault::of_reject(reason));
+            Self::refuse(fx, rep, fault.clone());
         }
+        self.refuse_joined(id, &fault, fx);
     }
 
     pub(super) fn failure_committed(&mut self, now: crate::runtime::Time, id: TransferId, fx: &mut Fx) {
@@ -287,6 +379,16 @@ impl TransferState {
         let cancels = std::mem::take(&mut transfer.cancel_replies);
         let accept = transfer.accept_reply.take();
         let waiters = std::mem::take(&mut transfer.discard_waiters);
+        let mut cancels = cancels;
+        let mut kept = Vec::new();
+        for command in std::mem::take(&mut transfer.commands) {
+            match command {
+                Waiting::Removal(rep, cancel) => cancels.push((rep, cancel)),
+                Waiting::Retry(_, rep) | Waiting::Asked { rep, .. } => Self::refuse(fx, rep, Fault::NotFound),
+                other => kept.push(other),
+            }
+        }
+        transfer.commands = kept;
         let group = transfer.batch_id.and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));
         match removal {
             Removal::Cancel => {

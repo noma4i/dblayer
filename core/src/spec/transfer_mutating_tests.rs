@@ -183,6 +183,8 @@ fn xfer_mutating_retry() {
     let mut twin = Twin::new();
     let id = twin.mutating(KEY);
     let (reply, out) = twin.retry(KEY, None);
+    assert!(out.replies(reply).is_empty());
+    let out = twin.post(TransferInput::RetryCurrent { cycles: vec![(id, 1)] });
     assert!(matches!(out.replies(reply).as_slice(), [TransferAnswer::Receipt(receipt)] if receipt.op_id == id));
     assert_eq!(twin.stage(id), TransferStage::Mutating);
 }

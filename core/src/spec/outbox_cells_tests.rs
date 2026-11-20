@@ -665,11 +665,6 @@ fn out_discard_of_an_operation_in_flight_is_refused() {
         let effects = twin.post(discard(Some("update"), DISCARD_REPLY));
         assert_eq!((answers(&effects, DISCARD_REPLY), effects.len()), (vec![OutboxAnswer::Err(Fault::InFlight)], 1), "{stage:?}");
     }
-    for stage in [St::RollingBack(RWhy::Rejected), St::MarkingFailed, St::MarkingRetry] {
-        let mut twin = in_batch_stage(stage, false).0;
-        let effects = retry(&mut twin);
-        assert_eq!((answers(&effects, RETRY_REPLY), effects.len()), (vec![OutboxAnswer::Err(Fault::InFlight)], 1), "{stage:?}");
-    }
 }
 
 #[test]

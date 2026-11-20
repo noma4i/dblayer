@@ -263,9 +263,15 @@ impl TransferState {
         match result {
             Ok(_) => self.retry_mutation_committed(&ids, fx),
             Err(fault) => for id in ids {
-                if let Some(transfer) = self.transfers.get_mut(&id) {
-                    transfer.stage = TransferStage::Failed;
-                    if let Some(rep) = transfer.retry_reply.take() { reply(fx, rep, TransferAnswer::Err(fault.clone())); }
+                let Some(transfer) = self.transfers.get_mut(&id) else { continue };
+                transfer.stage = TransferStage::Failed;
+                let Some(rep) = transfer.retry_reply.take() else { self.refuse_joined(id, &fault, fx); continue };
+                if matches!(fault, super::outbox::Fault::NotFound) && !transfer.intent_live {
+                    let key = transfer.key.clone();
+                    self.retry(&key, None, rep, fx);
+                } else {
+                    reply(fx, rep, TransferAnswer::Err(fault.clone()));
+                    self.refuse_joined(id, &fault, fx);
                 }
             },
         }
@@ -284,6 +290,7 @@ impl TransferState {
             if let Some(rep) = rep {
                 reply(fx, rep, TransferAnswer::Receipt(receipt));
             }
+            self.answer_joined(id, fx);
             self.show(id, Shown::Uploading { progress: 100 }, fx);
         }
     }
