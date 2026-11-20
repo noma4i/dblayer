@@ -5,6 +5,7 @@
 ### Changed
 
 - Ping the cable after 25 seconds without an incoming frame; accept only the matching pong.
+- Restart work at once on the new path when the phone network changes while online.
 
 ### Added
 

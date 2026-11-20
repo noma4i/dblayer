@@ -387,6 +387,7 @@ Upload steps cap delays at 15 seconds with 50% jitter and preserve their attempt
 An explicit outbox backoff keeps its configured seed and delays.
 Clock drives retry waits, upload deadlines, subscription debounce and socket deadlines.
 Offline requests wait for online without making HTTP attempts or running retry timers.
+A change of the phone network path while online (another network or kind, such as a VPN switch) is a short offline and online in one step: requests in flight are cancelled and every owner restarts its work at once on the new path, with fresh connections and without a retry wait. The send count of a window load is kept; the library trusts only the online flag and the path of the phone, never a check of the server.
 `refresh()`, `loadMore()` and `readNode(force: true)` return `Offline` at once without the network. Before the first network value of the system they wait for it. Other loads wait for the network. When connectivity disappears during an in-flight request or retry wait, the request is cancelled and the load waits for the network and starts again when it returns.
 Callers of the same load share one request. Cancelling the caller that runs it does not fail the others: the first waiting caller sends the request again and the rest keep waiting for it.
 Bootstrap receives Connectivity before a database exists and waits for online before its first HTTP attempt.
