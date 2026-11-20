@@ -11,6 +11,8 @@ class CorpusMock : ScriptedTransport, ScriptedHttp {
 
     override fun appHeaders(): Map<String, String> = emptyMap()
 
+    override fun rotateConnections() {}
+
     private val seen = ArrayList<Seen>()
     private var next = 0
     private val waiting = ConcurrentHashMap<String, CompletableDeferred<String>>()

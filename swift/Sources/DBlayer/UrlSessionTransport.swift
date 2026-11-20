@@ -30,6 +30,9 @@ public final class UrlSessionTransport: Transport, EncryptedHttp, @unchecked Sen
 
   public func send(request: HttpRequest) async -> RawOutcome { await http.exchange(request) }
 
+  /// The next request and the next cable open use a new TCP connection; requests in flight finish on their own.
+  public func rotateConnections() { session.flush {} }
+
   public func openCable(url: String, headers: [String: String], connectMs: UInt64, events: CableEvents) async -> CableOutcome { await cable.open(url: url, headers: headers, connectMs: connectMs, events: events) }
 
   /// URLSession has no connect timeout: `target.connectMs` is not applied. `target.requestMs` is the idle bound, a file has no total bound.

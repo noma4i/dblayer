@@ -8,6 +8,8 @@ final class CorpusMock: ScriptedTransport, ScriptedHttp, @unchecked Sendable {
 
   func appHeaders() -> [String: String] { [:] }
 
+  func rotateConnections() {}
+
   private let lock = NSLock()
   private var next = 0
   private var seen: [Seen] = []

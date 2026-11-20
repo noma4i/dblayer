@@ -91,6 +91,8 @@ extension ScriptedTransport {
 
   public func appHeaders() -> [String: String] { [:] }
 
+  public func rotateConnections() {}
+
   public func send(request: HttpRequest) async -> RawOutcome { await sendGraphql(request: request) }
 
   public func sendGraphql(request: HttpRequest) async -> RawOutcome {
@@ -127,6 +129,8 @@ public protocol ScriptedHttp: EncryptedHttp {
 
 extension ScriptedHttp {
   public func appHeaders() -> [String: String] { [:] }
+
+  public func rotateConnections() {}
 
   public func send(request: HttpRequest) async -> RawOutcome { await sendEncrypted(request: request) }
 

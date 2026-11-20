@@ -15,6 +15,9 @@ class OkHttpTransport(
 
     override suspend fun send(request: HttpRequest): RawOutcome = client.run(request)
 
+    /** The next request and the next cable open use a new connection; requests in flight finish on their own. */
+    override fun rotateConnections() = client.connectionPool.evictAll()
+
     override suspend fun openCable(url: String, headers: Map<String, String>, connectMs: ULong, events: CableEvents): CableOutcome = cable.open(url, headers, connectMs, events)
 
     override suspend fun put(target: PutTarget, file: PutFile, identity: TransferIdentity, progress: ByteProgress): RawOutcome =

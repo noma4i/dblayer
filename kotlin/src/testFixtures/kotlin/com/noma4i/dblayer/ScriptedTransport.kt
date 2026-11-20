@@ -65,6 +65,8 @@ interface ScriptedTransport : Transport {
 
     override fun appHeaders(): Map<String, String> = emptyMap()
 
+    override fun rotateConnections() {}
+
     override suspend fun send(request: HttpRequest): RawOutcome = sendGraphql(request)
 
     suspend fun sendGraphql(request: HttpRequest): RawOutcome {
@@ -95,6 +97,8 @@ class ScriptedWire(val author: Author, val requestId: ULong, val attempt: UInt) 
 /** An encrypted HTTP exchange a test scripts by path. */
 interface ScriptedHttp : EncryptedHttp {
     override fun appHeaders(): Map<String, String> = emptyMap()
+
+    override fun rotateConnections() {}
 
     suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply
 
