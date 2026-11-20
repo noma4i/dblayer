@@ -152,12 +152,18 @@ impl Store {
         self.context.specs.iter().find_map(|(model, spec)| spec.cable_when.as_deref().map(|field| (model.as_str(), field)))
     }
 
-    /// The new value of the cable gate when it differs from the last one told (`restart` = a new epoch whose Feed starts closed).
-    pub(crate) fn cable_gate_change(&self, restart: bool) -> Result<Option<bool>, StoreError> {
-        let Some((model, field)) = self.cable_when() else { return Ok(None) };
-        if restart { self.cable_open.store(false, std::sync::atomic::Ordering::SeqCst); }
-        let open = self.read(&[model], |reader| reader.first_row_flag(model, field))?;
-        Ok((self.cable_open.swap(open, std::sync::atomic::Ordering::SeqCst) != open).then_some(open))
+    pub(crate) fn gate_changes(&self, restart: bool, touched: Option<&Models>) -> Result<Vec<(String, String, bool)>, StoreError> {
+        let pairs: std::collections::BTreeSet<(String, String)> = self.cable_when().map(|(model, field)| (model.to_string(), field.to_string())).into_iter().chain(self.specs().values().flat_map(|spec| &spec.relations).filter_map(|relation| relation.preload_when.as_ref()).map(|gate| (gate.of.clone(), gate.field.clone()))).collect();
+        let mut values = self.gate_values.lock().unwrap_or_else(|error| error.into_inner());
+        if restart { values.clear(); }
+        let mut changes = Vec::new();
+        for (model, field) in pairs {
+            if touched.is_some_and(|models| matches!(models, Models::Set(names) if !names.contains(&model))) { continue; }
+            let open = self.read(&[&model], |reader| reader.first_row_flag(&model, &field))?;
+            let previous = values.insert((model.clone(), field.clone()), open).unwrap_or(false);
+            if previous != open { changes.push((model, field, open)); }
+        }
+        Ok(changes)
     }
 
     pub(crate) fn specs(&self) -> &BTreeMap<String, ModelSpec> { &self.context.specs }
