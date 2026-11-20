@@ -10,6 +10,11 @@
 
 - Add the `trace` flag of `UrlSessionTransport`: one development `os_log` line per HTTP request, file PUT and cable event.
 
+### Changed
+
+- Rotate connections after a network failure and end every HTTP exchange at 30 seconds.
+- Require `rotateConnections()` in every `Transport` and `EncryptedHttp` implementation.
+
 ### Fixed
 
 - Remove the scratch directory of an in-memory database when it closes.
