@@ -77,7 +77,7 @@ impl Base {
         if wal.len() >= 32 {
             let page_size = u32::from_be_bytes(wal[8..12].try_into().unwrap()) as usize;
             let frame = 24 + if page_size == 1 { 65536 } else { page_size };
-            cuts.extend((32..wal.len()).step_by(frame).filter(|offset| u32::from_be_bytes(wal[offset + 4..offset + 8].try_into().unwrap()) != 0).inspect(|offset| assert_eq!(wal[offset + 8..offset + 16], wal[16..24], "the log restarted during the scenario: a frame of another generation")).map(|offset| offset + frame));
+            cuts.extend(wal[32..].chunks_exact(frame).enumerate().filter(|(_, bytes)| u32::from_be_bytes(bytes[4..8].try_into().unwrap()) != 0).inspect(|(_, bytes)| assert_eq!(bytes[8..16], wal[16..24], "the log restarted during the scenario: a frame of another generation")).map(|(index, _)| 32 + (index + 1) * frame));
         }
         (Capture { directory: self.directory, base: self.base, wal, cuts }, files)
     }

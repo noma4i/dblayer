@@ -1,22 +1,21 @@
 # Changelog
 
-## Unreleased
+## 6.44.0 - 2026-11-20
 
 ### Changed
 
 - Accept MediaLayer preparation descriptors through a connected file producer.
-
-### Removed
-
-- Remove media codecs and preparation settings from DBlayer.
-
-## 6.43.2 - 2026-11-20
 
 ### Fixed
 
 - Keep the pending request after a sequence conflict.
 - Allow logout to end a session blocked by a sequence conflict.
 - Avoid duplicate state frames after a related row is read again.
+- Retry failed uploads while their failure commit finishes.
+
+### Removed
+
+- Remove media codecs and preparation settings from DBlayer.
 
 ## 6.43.1 - 2026-11-17
 

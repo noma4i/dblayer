@@ -103,7 +103,7 @@ attachments=(DBlayerFFI.xcframework.zip dblayer.swift dblayer-android.zip dblaye
 archives=(DBlayerFFI.xcframework.zip dblayer-android.zip)
 # An existing stage is reused only for the source commit that built it: another commit moves it aside and builds again.
 if [ -d "$stage" ] && [ "$(cat "$stage/SOURCE" 2> /dev/null)" != "$source_sha" ]; then
-  mv "$stage" "$stage.stale-$(cat "$stage/SOURCE" 2> /dev/null || echo unknown)" || fail "cannot move the stale stage aside: $stage"
+  mv "$stage" "$stage.stale-$(cat "$stage/SOURCE" 2> /dev/null || echo unknown)-$run_id" || fail "cannot move the stale stage aside: $stage"
 fi
 if [ -d "$stage" ]; then
   for file in "${attachments[@]}" SHA256SUMS; do [ -s "$stage/$file" ] || fail "incomplete existing output: $stage/$file"; done
@@ -149,6 +149,15 @@ for abi in arm64-v8a armeabi-v7a x86_64 x86; do [ -s "$tmp/maven-aar/jni/$abi/li
 mkdir "$tmp/maven-classes"
 (cd "$tmp/maven-classes" && unzip -q "$tmp/maven-aar/classes.jar")
 [ -n "$(find "$tmp/maven-classes/com/noma4i/dblayer" -name '*.class' -print -quit 2>/dev/null)" ] || fail 'missing Kotlin classes in Maven AAR'
+[ -s "$artifact_dir/dblayer-$version-test-fixtures.aar" ] || fail 'missing Maven test-fixtures AAR'
+mkdir "$tmp/fixtures-aar" "$tmp/fixtures-classes"
+(cd "$tmp/fixtures-aar" && unzip -q "$artifact_dir/dblayer-$version-test-fixtures.aar") || fail 'corrupt Maven test-fixtures AAR'
+[ -s "$tmp/fixtures-aar/classes.jar" ] || fail 'missing classes.jar in Maven test-fixtures AAR'
+(cd "$tmp/fixtures-classes" && unzip -q "$tmp/fixtures-aar/classes.jar") || fail 'corrupt classes.jar in Maven test-fixtures AAR'
+for class in DBlayerTestingApi MockTransport; do [ -s "$tmp/fixtures-classes/com/noma4i/dblayer/$class.class" ] || fail "missing $class.class in Maven test-fixtures AAR"; done
+/bin/rm -rf "$stage/maven"
+mkdir -p "$stage/maven/com/noma4i/dblayer"
+cp -R "$artifact_dir" "$stage/maven/com/noma4i/dblayer/$version" || fail 'cannot save the Maven staging copy'
 
 checksum="$(swift package compute-checksum "$stage/DBlayerFFI.xcframework.zip")"
 write_package() {
@@ -188,70 +197,22 @@ EOF
 }
 write_package > "$tmp/Package.swift"
 
-/bin/rm -f "$stage/sequences.tsv" "$stage/consumers.tsv" "$stage/RECEIPT.json"
-bash scripts/check_sequences.sh "$stage" --manifest "$manifest" || fail 'sequence suites are red or incomplete: no tag'
-if [ "$consumers" = required ]; then
-  lane_args=()
-  for lane in $consumer_lanes; do lane_args+=(--lane "$lane"); done
-  bash scripts/check_consumers.sh "$stage" --version "$version" --maven "$artifact_dir" --package-swift "$tmp/Package.swift" "${lane_args[@]}" || fail 'app suites are red or incomplete: no tag'
-fi
+planned_apps=""
+[ "$consumers" != required ] || planned_apps="$consumer_lanes"
+receipt_args=(--stage "$stage" --commit "$source_sha" --run-id "$run_id" --maven "$artifact_dir" --package-swift "$tmp/Package.swift" --consumer-lanes "$planned_apps" --plan "$tmp/plan.json")
+# A lane runs only when its real inputs differ from the last green receipt (check_release_receipt.py); unknown inputs stop the release before any run.
+python3 -I scripts/check_release_receipt.py plan "${receipt_args[@]}" > "$tmp/plan.tsv" || fail 'check inputs are unknown or unreadable: no tag'
+cat "$tmp/plan.tsv"
+/bin/rm -f "$stage/sequences.tsv" "$stage/consumers.tsv"
+seq_lanes=() app_lanes=()
+while IFS=$'\t' read -r verdict lane _; do
+  [ "$verdict" = run ] || continue
+  case "$lane" in core | swift | kotlin) seq_lanes+=(--lane "$lane") ;; *) app_lanes+=(--lane "$lane") ;; esac
+done < "$tmp/plan.tsv"
+[ "${#seq_lanes[@]}" = 0 ] || bash scripts/check_sequences.sh "$stage" --manifest "$manifest" "${seq_lanes[@]}" || fail 'sequence suites are red or incomplete: no tag'
+[ "${#app_lanes[@]}" = 0 ] || bash scripts/check_consumers.sh "$stage" --version "$version" --maven "$artifact_dir" --package-swift "$tmp/Package.swift" "${app_lanes[@]}" || fail 'app suites are red or incomplete: no tag'
 require_source
-python3 -I - "$stage" "$version" "$manifest" "$consumers" "$source_sha" "$run_id" "$consumer_lanes" <<'RECEIPT' || fail 'lane reports are missing or incomplete: no tag'
-import hashlib, json, sys
-from pathlib import Path
-
-stage, version, manifest, consumers, commit, run_id, required_consumer_lanes = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7].split()
-def refuse(message):
-    sys.exit(f"release: {message}")
-def rows(name):
-    path = stage / name
-    if not path.is_file() or path.stat().st_size == 0:
-        refuse(f"{name} is missing or empty")
-    return [line.split("\t") for line in path.read_text().splitlines()]
-def lanes(name, required, width):
-    result = {}
-    for row in rows(name):
-        if len(row) < width or row[0] in result:
-            refuse(f"{name} has a malformed or repeated row: {row}")
-        if row[width - 2] != commit or row[width - 1] != run_id:
-            refuse(f"{name} row {row[0]} belongs to source {row[width - 2]} run {row[width - 1]}, expected source {commit} run {run_id}")
-        result[row[0]] = row
-    if sorted(result) != sorted(required):
-        refuse(f"{name} lanes are {sorted(result)}, expected {sorted(required)}")
-    return result
-listed_by_lane = {}
-for line in Path(manifest).read_text().splitlines()[2:]:
-    cells = line.split("\t")
-    if len(cells) > 3:
-        listed_by_lane.setdefault(cells[2], set()).add(cells[3])
-sequences = {}
-for lane, row in lanes("sequences.tsv", ["core", "swift", "kotlin"], 7).items():
-    try:
-        listed, passed = int(row[1]), int(row[2])
-    except ValueError:
-        refuse(f"sequences.tsv lane {lane} has non-numeric counts: {row}")
-    expected = len(listed_by_lane.get(lane, ()))
-    if row[3] != "0" or listed == 0 or listed != expected or passed != listed:
-        refuse(f"sequences lane {lane} is incomplete: rc={row[3]} listed={listed} passed={passed} manifest={expected}")
-    sequences[lane] = {"listed": listed, "passed": passed, "rc": row[3]}
-consumer_lanes = {}
-if consumers == "required":
-    for lane, row in lanes("consumers.tsv", required_consumer_lanes, 5).items():
-        if row[1] != "0":
-            refuse(f"consumers lane {lane} is red: rc={row[1]}")
-        consumer_lanes[lane] = {"rc": row[1]}
-receipt = {
-    "version": version,
-    "source_commit": commit,
-    "manifest_sha256": hashlib.sha256(Path(manifest).read_bytes()).hexdigest(),
-    "artifacts_sha256": {line.split("  ", 1)[1]: line.split("  ", 1)[0] for line in (stage / "SHA256SUMS").read_text().splitlines()},
-    "sequences": sequences,
-    "consumers": consumers,
-    "consumer_lanes": consumer_lanes,
-    "consumer_lanes_required": required_consumer_lanes,
-}
-(stage / "RECEIPT.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
-RECEIPT
+python3 -I scripts/check_release_receipt.py write "${receipt_args[@]}" --version "$version" --consumers "$consumers" --manifest "$manifest" || fail 'lane reports are missing or incomplete: no tag'
 if [ "$publish" = --publish ]; then
   require_source
   git diff --cached --quiet || fail 'index is not empty before packaging'

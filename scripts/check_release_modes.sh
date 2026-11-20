@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-python3 - "$root" <<'PY'
+python3 - "$root" "$@" <<'PY'
 from concurrent.futures import ThreadPoolExecutor
 import io
 import json
@@ -39,6 +39,8 @@ def fixture(base, touch=None, manifest=True, detached_previous=False):
     repo = base / "repo"
     (repo / "scripts").mkdir(parents=True)
     shutil.copy2(release_script, repo / "scripts/release.sh")
+    for helper in source.glob("scripts/check_release_receipt.*"):
+        shutil.copy2(helper, repo / "scripts" / helper.name)
     for name in ("check_docs.sh", "check_zoo.sh"):
         (repo / "scripts" / name).write_text("#!/bin/sh\nexit 0\n")
     shutil.copy2(source / "scripts/check_legacy.sh", repo / "scripts/check_legacy.sh")
@@ -66,6 +68,15 @@ case "${STUB_CONSUMER_REPORT:-green}" in
   rc) printf 'ios\\t0\\tlog\\t'"$S"'\\t'"$R"'\\nandroid\\t1\\tlog\\t'"$S"'\\t'"$R"'\\n' > "$1/consumers.tsv" ;;
   *) printf 'ios\\t0\\tlog\\t'"$S"'\\t'"$R"'\\nandroid\\t0\\tlog\\t'"$S"'\\t'"$R"'\\n' > "$1/consumers.tsv" ;;
 esac
+selected=""; previous=""
+for argument in "$@"; do
+  [ "$previous" != --lane ] || selected="$selected,$argument"
+  previous="$argument"
+done
+if [ -n "$selected" ] && [ -f "$1/consumers.tsv" ]; then
+  awk -F '\\t' -v lanes="$selected," 'index(lanes, "," $1 ",")' "$1/consumers.tsv" > "$1/selected.tsv"
+  mv "$1/selected.tsv" "$1/consumers.tsv"
+fi
 [ "${STUB_CONSUMERS:-green}" = green ] || { echo "consumers: lane ios red" >&2; exit 1; }
 """)
     if manifest:
@@ -73,7 +84,7 @@ esac
         (repo / "core/src/ffi/selftest/manifest.tsv").write_text("version\t1\nid\taliases\tlane\ttest\tstate\ts1\tprovenance\n" + "".join(f"{n}\t\t{lane}\tT.{lane}{n}\tx\tx\tx\n" for lane, count in (("core", 3), ("swift", 2), ("kotlin", 2)) for n in range(count)))
     (repo / "scripts/build_ios.sh").write_text("""#!/bin/bash
 mkdir -p swift/DBlayerFFI.xcframework/{macos-arm64_x86_64,ios-arm64_x86_64-simulator,ios-arm64} swift/Sources/DBlayer
-printf generated-bindings > swift/Sources/DBlayer/dblayer.swift
+printf '%s' "${STUB_BINDING:-generated-bindings}" > swift/Sources/DBlayer/dblayer.swift
 printf info > swift/DBlayerFFI.xcframework/Info.plist
 printf binary > swift/DBlayerFFI.xcframework/macos-arm64_x86_64/libdblayer.a
 printf binary > swift/DBlayerFFI.xcframework/ios-arm64_x86_64-simulator/libdblayer.a
@@ -154,15 +165,27 @@ elif a[0] == "-info": print("Architectures in the fat file: arm64 x86_64")
 elif a[0] == "-archs": print("arm64" if "/ios-arm64/" in a[-1] else "arm64 x86_64")
 ''',
         "gradle": '''#!/usr/bin/env python3
-import io, pathlib, sys, zipfile
+import io, os, pathlib, sys, zipfile
 a=sys.argv[1:]; stage=pathlib.Path(next(x.split("=",1)[1] for x in a if x.startswith("-PstagingRepo=")))
 d=stage/"com/noma4i/dblayer/1.2.3"; d.mkdir(parents=True,exist_ok=True)
 (d/"dblayer-1.2.3.pom").write_text("pom"); (d/"dblayer-1.2.3.module").write_text("{}")
 jar=io.BytesIO()
-with zipfile.ZipFile(jar,"w") as classes: classes.writestr("com/noma4i/dblayer/Database.class","class")
+with zipfile.ZipFile(jar,"w") as classes: classes.writestr(zipfile.ZipInfo("com/noma4i/dblayer/Database.class"),"class")
 with zipfile.ZipFile(d/"dblayer-1.2.3.aar","w") as archive:
- archive.writestr("classes.jar",jar.getvalue())
- for abi in ("arm64-v8a","armeabi-v7a","x86_64","x86"): archive.writestr(f"jni/{abi}/libdblayer.so","so")
+ archive.writestr(zipfile.ZipInfo("classes.jar"),jar.getvalue())
+ for abi in ("arm64-v8a","armeabi-v7a","x86_64","x86"): archive.writestr(zipfile.ZipInfo(f"jni/{abi}/libdblayer.so"),"so")
+mode=os.environ.get("STUB_FIXTURES", "full")
+if mode != "missing":
+ jar=io.BytesIO()
+ with zipfile.ZipFile(jar,"w") as classes:
+  for name in ("DBlayerTestingApi", "MockTransport"):
+   if mode not in ("empty", name): classes.writestr(zipfile.ZipInfo(f"com/noma4i/dblayer/{name}.class"), "class")
+ target=d/"dblayer-1.2.3-test-fixtures.aar"
+ if mode == "corrupt-aar": target.write_bytes(b"invalid zip")
+ else:
+  with zipfile.ZipFile(target,"w") as archive:
+   archive.writestr(zipfile.ZipInfo("AndroidManifest.xml"), "manifest")
+   if mode != "missing-jar": archive.writestr(zipfile.ZipInfo("classes.jar"),b"invalid zip" if mode == "corrupt-jar" else jar.getvalue())
 ''',
         "swift": '''#!/usr/bin/env python3
 import hashlib, pathlib, sys
@@ -191,6 +214,10 @@ if a[:2] == ["release", "download"]:
     bash_env = base / "bash_env"
     bash_env.write_text("cargo() { while [ \"$#\" -gt 0 ]; do if [ \"$1\" = --target ]; then mkdir -p \"target/$2/release\"; printf generator > \"target/$2/release/dblayer-gen\"; fi; shift; done; }\nxcodebuild() { return 97; }\nexport -f cargo xcodebuild\n")
     env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", BASH_ENV=str(bash_env), REAL_GIT=real_git, TEST_ROOT=str(repo), TEST_EVENTS=str(events), GRADLE=str(bin_dir / "gradle"))
+    external = base / "consumer.input"
+    external.write_text("candidate")
+    ref = subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    env.update(CONSUMER_REPO=str(repo), CONSUMER_IOS_REF=ref, CONSUMER_ANDROID_REF=ref, CONSUMER_IOS_COMMAND="echo ios", CONSUMER_ANDROID_COMMAND="echo android", CONSUMER_INPUTS_IOS=str(external), CONSUMER_INPUTS_ANDROID=str(external))
     return repo, env
 
 
@@ -221,7 +248,8 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         repo, env = fixture(base)
         run(["bash", "scripts/release.sh", version], repo, env, contains="Package.swift to be written:")
         stage = repo / "target/release-1.2.3"
-        assert sorted(path.name for path in stage.iterdir()) == sorted(attachments + ["SHA256SUMS", "SOURCE", "NOTES.md", "RECEIPT.json", "sequences.tsv"])
+        assert sorted(path.name for path in stage.iterdir()) == sorted(attachments + ["SHA256SUMS", "SOURCE", "NOTES.md", "RECEIPT.json", "sequences.tsv", "maven"])
+        assert (stage / "maven/com/noma4i/dblayer/1.2.3/dblayer-1.2.3-test-fixtures.aar").is_file()
         receipt = json.loads((stage / "RECEIPT.json").read_text())
         assert receipt["sequences"] == {"core": {"listed": 3, "passed": 3, "rc": "0"}, "swift": {"listed": 2, "passed": 2, "rc": "0"}, "kotlin": {"listed": 2, "passed": 2, "rc": "0"}}, receipt
         assert receipt["consumers"] == "not-required" and receipt["consumer_lanes"] == {}, receipt
@@ -232,16 +260,13 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         dry_events = (base / "events").read_text().splitlines()
         assert not any(line.startswith("gh ") or line.startswith("git push ") for line in dry_events), dry_events
         print("ok dry run stages four release files without publishing")
-        (stage / "dblayer.swift").write_bytes(b"staged binding")
-        sums_file = stage / "SHA256SUMS"
-        sums_file.write_text(subprocess.check_output(["shasum", "-a", "256", *attachments], cwd=stage, text=True))
         (repo / "swift/Sources/DBlayer/dblayer.swift").write_bytes(b"dirty binding")
         source_head = subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
         source_manifest = (repo / "Package.swift").read_bytes()
-        run(["bash", "scripts/release.sh", version, "--publish"], repo, env)
+        run(["bash", "scripts/release.sh", version, "--publish"], repo, dict(env, STUB_BINDING="fresh binding"))
         staged_binding = (stage / "dblayer.swift").read_bytes()
         assert subprocess.check_output([real_git, "-C", str(repo), "show", f"{version}:swift/Sources/DBlayer/dblayer.swift"]) == staged_binding
-        assert (repo / "swift/Sources/DBlayer/dblayer.swift").read_bytes() == b"generated-bindings"
+        assert (repo / "swift/Sources/DBlayer/dblayer.swift").read_bytes() == b"fresh binding"
         assert (repo / "Package.swift").read_bytes() != source_manifest
         assert not subprocess.check_output([real_git, "-C", str(repo), "ls-files", "--", "swift/Sources/DBlayer/dblayer.swift"], text=True).strip()
         assert not subprocess.check_output([real_git, "-C", str(repo), "status", "--porcelain"], text=True).strip()
@@ -369,6 +394,12 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         print("ok a stage of another source is moved aside and built again")
 
     def block_6():
+        for mode in ("missing", "empty", "DBlayerTestingApi", "MockTransport", "corrupt-aar", "missing-jar", "corrupt-jar"):
+            missing, missing_env = fixture(base / f"fixtures-{mode}")
+            run(["bash", "scripts/release.sh", version, "--publish"], missing, dict(missing_env, STUB_FIXTURES=mode), expected=1, contains="test-fixtures")
+            assert_no_release(missing, missing_env, base / f"fixtures-{mode}/events")
+            assert not (missing / "target/release-1.2.3/RECEIPT.json").exists()
+        print("ok missing or incomplete test-fixtures refuse publication without a receipt")
         red, red_env = fixture(base / "red")
         run(["bash", "scripts/release.sh", version, "--publish"], red, dict(red_env, STUB_SEQUENCES="red"), expected=1, contains="sequence suites are red")
         assert_no_release(red, red_env, base / "red/events")
@@ -610,8 +641,53 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         run(["bash", str(source / "scripts/check_consumers.sh"), str(root / "stage"), "--version", version, "--maven", str(root / "maven"), "--package-swift", str(manifest), "--lane", "ios"], root, env, contains="lane ios green")
         print("ok the app lanes get an XCFramework named after the binary target")
 
+    def reuse_fixture(name):
+        repo, env = fixture(base / name, touch=boundary)
+        env.update(CONSUMER_REPO=str(repo), CONSUMER_IOS_REF="master", CONSUMER_ANDROID_REF="master", CONSUMER_IOS_COMMAND="echo ios", CONSUMER_ANDROID_COMMAND="echo android")
+        for lane in ("IOS", "ANDROID"):
+            external = base / name / f"{lane}.input"
+            external.write_text("candidate")
+            env[f"CONSUMER_INPUTS_{lane}"] = str(external)
+        return repo, env
+
+    def block_22():
+        repo, env = reuse_fixture("reuse-green")
+        run(["bash", "scripts/release.sh", version], repo, env)
+        events = base / "reuse-green/events"
+        checks = lambda: [line for line in events.read_text().splitlines() if line.startswith(("check_sequences ", "check_consumers "))]
+        green_checks = checks()
+        assert len(green_checks) == 2, green_checks
+        run(["bash", "scripts/release.sh", version, "--publish"], repo, env)
+        assert checks() == green_checks, "unchanged inputs repeated successful checks"
+        print("ok publish reuses successful checks with unchanged inputs")
+
+    def block_23():
+        repo, env = reuse_fixture("reuse-corrupt")
+        run(["bash", "scripts/release.sh", version], repo, env)
+        (repo / "target/release-1.2.3/RECEIPT.json").write_text("{")
+        events = base / "reuse-corrupt/events"
+        before = [line for line in events.read_text().splitlines() if line.startswith(("check_sequences ", "check_consumers "))]
+        run(["bash", "scripts/release.sh", version, "--publish"], repo, env, expected=1, contains="receipt")
+        assert [line for line in events.read_text().splitlines() if line.startswith(("check_sequences ", "check_consumers "))] == before
+        assert_no_release(repo, env, events)
+        print("ok corrupt receipts refuse publication without repeating checks")
+
+    def block_24():
+        repo, env = reuse_fixture("reuse-ios-change")
+        run(["bash", "scripts/release.sh", version], repo, env)
+        events = base / "reuse-ios-change/events"
+        before = len(events.read_text().splitlines())
+        Path(env["CONSUMER_INPUTS_IOS"]).write_text("changed candidate")
+        run(["bash", "scripts/release.sh", version, "--publish"], repo, env)
+        checks = [line for line in events.read_text().splitlines()[before:] if line.startswith(("check_sequences ", "check_consumers "))]
+        assert len(checks) == 1 and checks[0].startswith("check_consumers ") and "--lane ios" in checks[0] and "--lane android" not in checks[0], checks
+        print("ok changed iOS inputs run only the iOS consumer check")
+
+    available = (block_1, block_2, block_3, block_4, block_5, block_6, block_7, block_8, block_9, block_10, block_11, block_12, block_13, block_14, block_15, block_16, block_17, block_18, block_19, block_20, block_21, block_22, block_23, block_24)
+    selected = set(sys.argv[2:])
+    assert selected <= {block.__name__ for block in available}, selected
     with ThreadPoolExecutor(max_workers=6) as blocks:
-        futures = [blocks.submit(block) for block in (block_1, block_2, block_3, block_4, block_5, block_6, block_7, block_8, block_9, block_10, block_11, block_12, block_13, block_14, block_15, block_16, block_17, block_18, block_19, block_20, block_21)]
+        futures = [blocks.submit(block) for block in available if not selected or block.__name__ in selected]
         for future in futures:
             future.result()
 PY
