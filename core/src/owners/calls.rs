@@ -128,6 +128,8 @@ struct CallAttempt {
     last: Option<CallError>,
     waiting_network: bool,
     waiting_retry: bool,
+    /// A mutation in flight when `Online(false)` came: Session cancels it and answers `Dropped` after the `Online(true)` of the same bounce, that answer is no failure and the call goes again at once.
+    bounced: bool,
 }
 
 fn retry_policy(error: &CallError, kind: CallKind) -> Option<crate::runtime::RetryPolicy> {
@@ -179,7 +181,7 @@ impl CallsState {
         let kind = definition.kind;
         self.calls.insert(id, (CallPhase::Sending { request_id, kind, generation, releasing: false }, reply));
         self.by_reply.insert(reply, id);
-        self.attempts.insert(id, CallAttempt { operation: operation.clone(), definition: definition.clone(), variables: variables.clone(), epoch: self.epoch, attempt: 1, last: None, waiting_network: false, waiting_retry: false });
+        self.attempts.insert(id, CallAttempt { operation: operation.clone(), definition: definition.clone(), variables: variables.clone(), epoch: self.epoch, attempt: 1, last: None, waiting_network: false, waiting_retry: false, bounced: false });
         fx.push(CallsEffect::Request { call_id: id, request_id, operation, variables, definition, epoch: self.epoch, reason: crate::transport::RequestReason::Send });
     }
 
@@ -200,6 +202,9 @@ impl CallsState {
 
     fn retry(&mut self, call_id: CallId, error: CallError, policy: crate::runtime::RetryPolicy, fx: &mut Vec<CallsEffect>, scheduled: &mut Vec<(CallId, u32, crate::runtime::RetryPolicy)>, finished: &mut Vec<CallId>) {
         let Some(attempt) = self.attempts.get_mut(&call_id) else { return };
+        if std::mem::take(&mut attempt.bounced) && self.online == Some(true) {
+            return self.send_again(call_id, fx);
+        }
         if !policy.allows(attempt.attempt + 1) {
             let phase = self.phase(call_id);
             self.finish(call_id, Err(error), fx, finished);
@@ -222,7 +227,7 @@ impl CallsState {
             if attempt.waiting_network { continue; }
             if attempt.waiting_retry { unbacked.push(*call_id); }
             else if *kind == CallKind::Query { fx.push(CallsEffect::Cancel { request_id: *request_id, kind: CallKind::Query }); }
-            else { continue; }
+            else { attempt.bounced = true; continue; }
             attempt.waiting_network = true;
         }
         unbacked
@@ -237,6 +242,7 @@ impl CallsState {
         let Some(attempt) = self.attempts.get_mut(&call_id) else { return };
         attempt.waiting_retry = false;
         attempt.waiting_network = false;
+        attempt.bounced = false;
         fx.push(CallsEffect::Request { call_id, request_id, operation: attempt.operation.clone(), variables: attempt.variables.clone(), definition: attempt.definition.clone(), epoch: attempt.epoch, reason: crate::transport::RequestReason::Retry });
     }
 }

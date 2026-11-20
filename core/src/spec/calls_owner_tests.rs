@@ -955,6 +955,9 @@ fn calls_path_bounce_leaves_mutation_and_skips_backoff() {
     let up = twin.feed(Input::Online(true));
     assert_eq!(up.effects.iter().filter(|effect| matches!(effect, CallsEffect::Request { call_id: 1, .. })).count(), 1, "the waiting retry starts at once");
     assert!(!up.effects.iter().any(|effect| matches!(effect, CallsEffect::Request { call_id: 2, .. })), "the mutation is not sent again by Calls");
+    let written = twin.history.iter().find_map(|effect| if let CallsEffect::Request { call_id: 2, request_id, .. } = effect { Some(*request_id) } else { None }).unwrap();
+    let held = twin.feed(Input::Dropped { call_id: 2 });
+    assert!(held.effects.iter().any(|effect| matches!(effect, CallsEffect::Request { call_id: 2, request_id, .. } if *request_id == written)), "the pair Session cancelled goes again at once with the same request id: {:?}", held.effects);
     let stale = twin.feed(Input::RetryDue { call_id: 1, attempt: 1 });
     assert!(stale.effects.is_empty(), "the stale Backoff does not send a second time");
 }
