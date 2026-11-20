@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use super::crash_image_support::{copy_tree, drained, files_of, over_images, reopen_preparing, Capture};
 use super::rig_tests::bound;
-use super::upload_prepare_tests::{probed_image, send, shrink, PREPARED};
+use super::upload_prepare_tests::{probed_image, send, descriptor, PREPARED};
 use super::upload_stand::{clip, plain, ScriptedPreparer, Stand, BLOB, CREATE_MOMENT};
 use crate::ffi::wire::WireUploadStatus;
 
@@ -128,7 +128,7 @@ async fn temp_row_has_a_holder(case: Case) {
             std::fs::write(&image, super::upload_prepare_tests::SOURCE).unwrap();
             stand.script.data("CreateBlob", BLOB);
             let held = stand.script.hold("CreateMoment", LANDED);
-            bound(database.send(send(epoch, &image, shrink()))).await.unwrap();
+            bound(database.send(send(epoch, &image, descriptor()))).await.unwrap();
             held.entered().await;
             copy_tree(&files_of(&live), &kept_files);
             held.release();

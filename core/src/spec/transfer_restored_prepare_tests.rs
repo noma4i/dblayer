@@ -1,11 +1,9 @@
 //! Owner-level property of the owner `Transfer`: a restored row in `preparing` ends under every order of its inputs and of the tasks of its executor.
 
 use super::transfer_harness::*;
-use crate::ffi::upload_wire::WirePrepare;
 use crate::owners::contract::Online;
 use crate::owners::write::rounds::RoundsInput;
 use crate::owners::write::transfer::{TransferInput, TransferStage};
-use crate::prepare::{ImageFormat, PhotoEdit};
 
 const KEY: &str = "Moment:r1:upload";
 
@@ -17,7 +15,7 @@ enum Start {
 
 fn preparing_row(start: Start) -> crate::owners::write::transfer::StoredTransfer {
     let mut found = stored(1, KEY, 1);
-    found.prepare = Some(WirePrepare::Image { edit: PhotoEdit { max_size: None, enlarge: false, crop: None, output_size: None, mirror: false, rotation_degrees: 0 }, quality: None, format: ImageFormat::Jpeg });
+    found.prepare = Some(vec![0, 255, 128, 1, 0, 17]);
     found.size = 10;
     if matches!(start, Start::FailedThenRetry) { found.failed = Some(crate::owners::write::failure::of_prepare(crate::value::sync::PrepareReason::Failed, "the prepared file is gone".into())); }
     found

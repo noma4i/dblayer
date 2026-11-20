@@ -36,7 +36,7 @@ registerStandOperations(database, lateOperationsJson)
 server.registerDocuments(lateOperationsJson)
 ```
 
-Every open of the stand installs a `ScriptedPreparer`, so a source with `prepare` settings uploads in a test. The double has no codecs: its probe answers the kind the settings name, `run` copies the source to the result, and the upload sends the bytes of the source. Pass your own `preparer` to open the stand with another one. The outcome of `run` and the facts of the video probe are parameters of the double.
+Every open of the stand installs a `ScriptedPreparer` for files with descriptor bytes. Its probe returns configured file facts. Its run copies the source and reports progress without codecs. Pass a different `preparer` to change its outcome or file facts.
 
 ```swift
 let database = try await openSigned(config: config, modelsJson: modelsJSON, transport: transport, operations: operationsJSON, preparer: ScriptedPreparer(outcome: .cannotDecode(message: "no decoder")))

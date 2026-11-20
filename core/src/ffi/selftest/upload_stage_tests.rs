@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use super::crash_image_support::{files_of, over_images, reopen, Capture};
-use super::upload_prepare_tests::{probed_image, shrink, upload_of, PREPARED, SOURCE};
+use super::upload_prepare_tests::{probed_image, descriptor, upload_of, PREPARED, SOURCE};
 use super::rig_tests::bound;
 use super::upload_stand::{request, ScriptedPreparer, Stand, CREATE_MOMENT};
 use crate::ffi::upload_wire::{WireSource, WireUploadRequest};
@@ -107,7 +107,7 @@ async fn xfer_stage_commit_early() {
         };
         let (run_hold, put_hold) = (preparer.hold_next(), stand.puts.hold_next());
         let staged = if case == "preparing" {
-            let request = WireUploadRequest { source: WireSource::File { path: source.to_str().unwrap().into(), name: None, mime: None, prepare: Some(shrink()), max_bytes: None }, variables_json: "{}".into() };
+            let request = WireUploadRequest { source: WireSource::File { path: source.to_str().unwrap().into(), name: None, mime: None, prepare: Some(descriptor()), max_bytes: None }, variables_json: "{}".into() };
             bound(database.stage(database.session_epoch(), "Moment".into(), "upload_clip".into(), request)).await.unwrap()
         } else { staged(&database, &source).await };
         match case {

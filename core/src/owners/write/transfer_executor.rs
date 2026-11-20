@@ -255,22 +255,7 @@ impl TransferExecutor {
     /// The path of the copy of the library: the platform reads the source from it.
     fn copy_path(&self, transfer_id: TransferId) -> String { self.local(transfer_id, Source { path: String::new(), parts: 0 }).path }
 
-    fn probe(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), kind: crate::ffi::PrepareKind) {
-        let Some(preparer) = self.preparer.get().cloned() else {
-            back.reply(stamp, TransferInput::Probed { transfer_id, attempt_id, outcome: crate::ffi::ProbeOutcome::Failed { message: "no preparer".into() } });
-            return;
-        };
-        let (path, prepares, back, cancelled) = (self.copy_path(transfer_id), self.prepares.clone(), back.clone(), Arc::new(AtomicBool::new(false)));
-        let flag = cancelled.clone();
-        let _ = self.wire.tasks.start(back.watch(task_id(TaskKind::Probe, transfer_id)), Box::pin(async move {
-            let outcome = preparer.probe(path, kind).await;
-            prepares.done(&transfer_id);
-            if !flag.load(Ordering::SeqCst) { back.reply(stamp, TransferInput::Probed { transfer_id, attempt_id, outcome }); }
-        }));
-        self.prepares.put(transfer_id, Running::new(move || cancelled.store(true, Ordering::SeqCst)));
-    }
-
-    fn prepare(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), plan: crate::ffi::PreparePlan) {
+    fn prepare(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), descriptor: Vec<u8>) {
         let Some(preparer) = self.preparer.get().cloned() else {
             back.reply(stamp, TransferInput::Prepared { transfer_id, attempt_id, outcome: crate::ffi::PrepareOutcome::Failed { message: "no preparer".into() } });
             return;
@@ -278,7 +263,7 @@ impl TransferExecutor {
         let prepared = prepared_file_id(transfer_id);
         let destination = self.files.path(&prepared).unwrap_or_else(|| self.files.cache_target(&prepared, "prepared"));
         if let Some(parent) = destination.parent() { let _ = std::fs::create_dir_all(parent); }
-        let job = crate::ffi::PrepareJob { attempt_id, source: self.copy_path(transfer_id), destination: destination.to_string_lossy().into_owned(), plan };
+        let job = crate::ffi::PrepareJob { attempt_id, source: self.copy_path(transfer_id), destination: destination.to_string_lossy().into_owned(), descriptor };
         let progress = { let back = back.clone(); Arc::new(crate::ffi::PrepareProgress::new(move |fraction| back.reply(stamp, TransferInput::PrepareProgress { transfer_id, attempt_id, percent: (fraction.clamp(0.0, 1.0) * 100.0).floor() as u32 }))) };
         let (files, prepares, back, cancelled) = (self.files.clone(), self.prepares.clone(), back.clone(), Arc::new(AtomicBool::new(false)));
         let flag = cancelled.clone();
@@ -468,8 +453,7 @@ impl EffectRunner<Transfers> for TransferExecutor {
                 }
             }
             TransferEffect::CopyCancel { transfer_id } => self.copies.cancel(&transfer_id),
-            TransferEffect::Probe { transfer_id, attempt_id, kind } => self.probe(stamp, back, (transfer_id, attempt_id), kind),
-            TransferEffect::Prepare { transfer_id, attempt_id, plan } => self.prepare(stamp, back, (transfer_id, attempt_id), plan),
+            TransferEffect::Prepare { transfer_id, attempt_id, descriptor } => self.prepare(stamp, back, (transfer_id, attempt_id), descriptor),
             TransferEffect::PrepareCancel { transfer_id, attempt_id } => self.prepare_cancel(transfer_id, attempt_id),
             TransferEffect::Measure { transfer_id, attempt_id } => self.measure(stamp, back, (transfer_id, attempt_id)),
             TransferEffect::Step { transfer_id, attempt_id, cycle_id, key, operation, part, purpose, upload_id, source, steps, seeded, reason, .. } => {

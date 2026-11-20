@@ -48,8 +48,7 @@ pub fn prepared_file_id(transfer_id: TransferId) -> String { format!("{}.prepare
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskKind {
     Copy = 1,
-    Probe,
-    Prepare,
+    Prepare = 3,
     Step,
     Complete,
     /// The read of an outcome: the transfer id bits hold the reply that waits for it.
@@ -66,7 +65,6 @@ pub fn task_id(kind: TaskKind, transfer_id: TransferId) -> EffectId { (kind as u
 pub(super) fn task_of(id: EffectId) -> Option<(TaskKind, TransferId)> {
     let kind = match id >> TASK_ID_BITS {
         1 => TaskKind::Copy,
-        2 => TaskKind::Probe,
         3 => TaskKind::Prepare,
         4 => TaskKind::Step,
         5 => TaskKind::Complete,
@@ -109,7 +107,7 @@ pub struct Source {
 #[cfg_attr(test, derive(PartialEq))]
 pub struct SuppliedSource {
     pub source: Source,
-    pub prepare: Option<crate::ffi::upload_wire::WirePrepare>,
+    pub prepare: Option<Vec<u8>>,
     pub max_bytes: Option<u64>,
     pub steps: Steps,
     pub values: crate::owners::store::IntentEffects,
@@ -117,7 +115,6 @@ pub struct SuppliedSource {
     pub local: String,
     pub variables: serde_json::Map<String, serde_json::Value>,
     pub wrap: Option<String>,
-    pub probed: Option<crate::ffi::ProbeOutcome>,
 }
 
 #[derive(Clone, Debug)]
@@ -134,7 +131,7 @@ pub struct StoredTransfer {
     pub key: Key,
     pub seq: u64,
     pub source: Option<Source>,
-    pub prepare: Option<crate::ffi::upload_wire::WirePrepare>,
+    pub prepare: Option<Vec<u8>>,
     pub max_bytes: Option<u64>,
     pub awaiting_source: bool,
     pub batch: Option<u64>,
@@ -267,12 +264,10 @@ pub struct BatchItem {
     /// The action asks to go on in power saving.
     pub urgent: bool,
     pub source: Option<Source>,
-    pub prepare: Option<crate::ffi::upload_wire::WirePrepare>,
+    pub prepare: Option<Vec<u8>>,
     pub max_bytes: Option<u64>,
     pub mutation: NewOp,
     pub steps: Option<Steps>,
-    /// The probe of the source at the acceptance: the first attempt of the prepare step takes it, no second probe runs (D-413).
-    pub probed: Option<crate::ffi::ProbeOutcome>,
     /// The width and height a staged upload measured at its acceptance, given to its commit (D-413).
     pub dimensions: Option<serde_json::Map<String, serde_json::Value>>,
 }
@@ -364,7 +359,6 @@ pub enum TransferInput {
     PrepareSlotFreed,
     PrepareCleared { transfer_id: TransferId, clear_id: AttemptId },
     /// The platform read the source of the attempt.
-    Probed { transfer_id: TransferId, attempt_id: AttemptId, outcome: crate::ffi::ProbeOutcome },
     /// The whole percent of the run of the attempt.
     PrepareProgress { transfer_id: TransferId, attempt_id: AttemptId, percent: u32 },
     PutProgress { transfer_id: TransferId, attempt_id: AttemptId, sent: u64 },
@@ -497,10 +491,8 @@ pub enum TransferEffect {
     /// The temporary file of the copy takes the place of the copy: the answer comes back as `StagedPromoted`.
     PromoteStaged { transfer_id: TransferId },
     CopyCancel { transfer_id: TransferId },
-    /// The platform reads the source of the transfer: the answer comes back as `Probed`.
-    Probe { transfer_id: TransferId, attempt_id: AttemptId, kind: crate::ffi::PrepareKind },
     /// The platform writes the result by `plan`: the answers come back as `PrepareProgress` and `Prepared`.
-    Prepare { transfer_id: TransferId, attempt_id: AttemptId, plan: crate::ffi::PreparePlan },
+    Prepare { transfer_id: TransferId, attempt_id: AttemptId, descriptor: Vec<u8> },
     PrepareCancel { transfer_id: TransferId, attempt_id: AttemptId },
     /// Read the result of the platform in chunks: the answer comes back as `CopyDone` or `CopyFailed`.
     Measure { transfer_id: TransferId, attempt_id: AttemptId },
@@ -578,17 +570,14 @@ pub enum NextStep {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreparePhase {
     Queued,
-    Probe,
     Run,
 }
 
-/// The prepare step of a transfer: its phase, the plan of the run and what the platform answered.
+/// The prepare step of a transfer: its phase and what the platform answered.
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq))]
 pub struct PrepareRun {
     pub phase: PreparePhase,
-    pub plan: Option<crate::ffi::PreparePlan>,
-    pub metadata_keys: Vec<String>,
     pub percent: u32,
     pub name: Option<String>,
     pub mime: Option<String>,
@@ -609,9 +598,8 @@ pub struct Transfer {
     pub key: Key,
     pub seq: u64,
     pub source: Option<Source>,
-    pub prepare: Option<crate::ffi::upload_wire::WirePrepare>,
+    pub prepare: Option<Vec<u8>>,
     pub max_bytes: Option<u64>,
-    pub probed: Option<crate::ffi::ProbeOutcome>,
     pub dimensions: Option<serde_json::Map<String, serde_json::Value>>,
     pub batch_id: Option<BatchId>,
     pub epoch: Epoch,

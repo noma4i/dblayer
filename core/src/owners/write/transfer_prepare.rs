@@ -1,4 +1,4 @@
-//! Owner `Transfer`: the prepare step of a source (D-364): the slot, the probe, the run, the measure of the result and the swap of the copy for it.
+//! Owner `Transfer`: the prepare step of a source (D-364): the slot, the run, the measure of the result and the swap of the copy for it.
 
 use std::time::Duration;
 
@@ -6,43 +6,12 @@ use super::failure;
 use super::outbox_types::Phase;
 use super::transfer::{run, Fx, TransferState};
 use super::transfer_types::*;
-use crate::ffi::upload_wire::{CannotDecode, WirePrepare};
-use crate::ffi::{PrepareOutcome, PreparePlan, ProbeOutcome};
-use crate::owners::store::StoreOp;
+use crate::ffi::PrepareOutcome;
 use crate::runtime::{Effect, Time};
 use crate::value::sync::PrepareReason;
 
-/// The plan of the run for what the platform read, `None` when the source goes as it is.
-fn plan_of(settings: &WirePrepare, probed: &ProbeOutcome, size: u64) -> Result<Option<PreparePlan>, String> {
-    match (settings, probed) {
-        (WirePrepare::Video { limits, mirror, .. }, ProbeOutcome::Video { source, metadata_keys }) => {
-            let limits = limits.clone().unwrap_or_else(crate::prepare::default_video_limits);
-            if !matches!(source.rotation_degrees, 0 | 90 | 180 | 270) { return Err(format!("the rotation of the video is {}, not 0, 90, 180 or 270", source.rotation_degrees)); }
-            let plan = crate::prepare::plan_video(*source, size, limits.clone()).map_err(|error| error.to_string())?;
-            let plan = crate::prepare::VideoPlan { reencode: plan.reencode || *mirror, ..plan };
-            let strip_metadata = crate::prepare::video_metadata_to_strip(metadata_keys.clone());
-            if !plan.reencode && strip_metadata.is_empty() { return Ok(None); }
-            Ok(Some(PreparePlan::Video { plan, strip_metadata, audio_bitrate: limits.audio_bitrate, audio_channels: limits.audio_channels, audio_sample_rate: limits.audio_sample_rate, mirror: *mirror }))
-        }
-        (WirePrepare::Image { edit, quality, format, .. }, ProbeOutcome::Image { width, height, exif_orientation, .. }) => {
-            let plan = crate::prepare::photo_plan(*width, *height, *exif_orientation, *edit).ok_or_else(|| "the image cannot be planned".to_string())?;
-            Ok(Some(PreparePlan::Image { plan, quality: crate::prepare::jpeg_quality(quality.unwrap_or(f64::NAN)), format: *format }))
-        }
-        _ => Err("the platform read a file of another kind than the settings ask for".into()),
-    }
-}
-
-/// The plan that writes the container again without the private keys: no decoder is needed.
-fn repack_of(plan: &PreparePlan, metadata_keys: &[String]) -> Option<PreparePlan> {
-    let strip_metadata = crate::prepare::video_metadata_to_strip(metadata_keys.to_vec());
-    match plan {
-        PreparePlan::Video { plan, audio_bitrate, audio_channels, audio_sample_rate, .. } if !strip_metadata.is_empty() => Some(PreparePlan::Video { plan: crate::prepare::VideoPlan { reencode: false, ..*plan }, strip_metadata, audio_bitrate: *audio_bitrate, audio_channels: *audio_channels, audio_sample_rate: *audio_sample_rate, mirror: false }),
-        _ => None,
-    }
-}
-
 impl TransferState {
-    /// The slot is held from the probe to the commit of the result.
+    /// The slot is held from the run to the commit of the result.
     fn prepare_busy(&self) -> bool {
         self.scan().any(|transfer| matches!(transfer.stage, TransferStage::Measuring | TransferStage::PersistingPrepared) || (transfer.stage == TransferStage::Preparing && transfer.prep.as_ref().is_some_and(|prep| prep.phase != PreparePhase::Queued)))
     }
@@ -56,7 +25,7 @@ impl TransferState {
     pub(super) fn queue_prepare(&mut self, id: TransferId, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.stage = TransferStage::Preparing;
-        transfer.prep = Some(PrepareRun { phase: PreparePhase::Queued, plan: None, metadata_keys: Vec::new(), percent: 0, name: None, mime: None });
+        transfer.prep = Some(PrepareRun { phase: PreparePhase::Queued, percent: 0, name: None, mime: None });
         self.show(id, Shown::Preparing { progress: 0 }, fx);
         self.free_prepare_slot(fx);
     }
@@ -87,7 +56,7 @@ impl TransferState {
     pub(super) fn stop_prepare(&mut self, id: TransferId, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get(&id) else { return };
         match (transfer.stage, transfer.prep.as_ref().map(|prep| prep.phase)) {
-            (TransferStage::Preparing, Some(PreparePhase::Probe | PreparePhase::Run)) => run(fx, TransferEffect::PrepareCancel { transfer_id: id, attempt_id: transfer.attempt_id }),
+            (TransferStage::Preparing, Some(PreparePhase::Run)) => run(fx, TransferEffect::PrepareCancel { transfer_id: id, attempt_id: transfer.attempt_id }),
             (TransferStage::Measuring, _) => run(fx, TransferEffect::CopyCancel { transfer_id: id }),
             (TransferStage::Preparing, _) => {}
             _ => return,
@@ -102,12 +71,10 @@ impl TransferState {
         let Some(id) = next else { return };
         let attempt_id = self.attempt();
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        let Some(kind) = transfer.prepare.as_ref().map(WirePrepare::kind) else { return };
+        let Some(descriptor) = transfer.prepare.clone() else { return };
         transfer.attempt_id = attempt_id;
-        if let Some(prep) = transfer.prep.as_mut() { prep.phase = PreparePhase::Probe; }
-        let Some(outcome) = transfer.probed.take() else { return run(fx, TransferEffect::Probe { transfer_id: id, attempt_id, kind }) };
-        let timer = self.timer();
-        fx.push(Effect::Schedule { id: timer, after: Duration::ZERO, input: TransferInput::Probed { transfer_id: id, attempt_id, outcome } });
+        if let Some(prep) = transfer.prep.as_mut() { prep.phase = PreparePhase::Run; }
+        run(fx, TransferEffect::Prepare { transfer_id: id, attempt_id, descriptor });
     }
 
     /// An input of an attempt the owner does not know: the platform is told to stop it (R2), an old attempt of a live step changes nothing (R4).
@@ -119,41 +86,6 @@ impl TransferState {
                 false
             }
         }
-    }
-
-    pub(super) fn probed(&mut self, now: Time, id: TransferId, attempt_id: AttemptId, outcome: ProbeOutcome, fx: &mut Fx) {
-        if !self.current(id, attempt_id, &[TransferStage::Preparing], fx) { return; }
-        let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        let size = transfer.size;
-        let Some(prep) = transfer.prep.as_mut().filter(|prep| prep.phase == PreparePhase::Probe) else { return };
-        let Some(settings) = transfer.prepare.clone() else { return };
-        if let ProbeOutcome::Failed { message } = &outcome { return self.fail_prepare(now, id, PrepareReason::Failed, message.clone(), fx); }
-        let plan = match plan_of(&settings, &outcome, size) {
-            Ok(plan) => plan,
-            Err(message) => return self.fail_prepare(now, id, PrepareReason::Failed, message, fx),
-        };
-        if let ProbeOutcome::Video { metadata_keys, .. } = outcome { prep.metadata_keys = metadata_keys; }
-        match plan {
-            None => self.pass_through(now, id, fx),
-            Some(plan) => {
-                prep.phase = PreparePhase::Run;
-                prep.plan = Some(plan.clone());
-                run(fx, TransferEffect::Prepare { transfer_id: id, attempt_id, plan });
-            }
-        }
-    }
-
-    /// The source goes as it is: its copy is the file of the transfer.
-    fn pass_through(&mut self, now: Time, id: TransferId, fx: &mut Fx) {
-        let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        if transfer.over_limit(transfer.size) { return self.fail_too_large(now, id, fx); }
-        let key = transfer.key.clone();
-        transfer.prepare = None;
-        transfer.prep = None;
-        self.send_batch(vec![StoreOp::RemovePrepare { key }], fx);
-        self.enter_upload(now, id, fx);
-        self.free_prepare_slot(fx);
-        self.start_in_order(now, fx);
     }
 
     pub(super) fn prepare_progress(&mut self, id: TransferId, attempt_id: AttemptId, percent: u32, fx: &mut Fx) {
@@ -176,31 +108,29 @@ impl TransferState {
                 self.show(id, Shown::Preparing { progress: 100 }, fx);
                 run(fx, TransferEffect::Measure { transfer_id: id, attempt_id });
             }
+            PrepareOutcome::Unchanged { name, mime } => {
+                let Some(place) = transfer.place else { return self.fail_prepare(now, id, PrepareReason::Failed, "the copy of the source has no place".into(), fx) };
+                let copy = CopiedBlob { size: transfer.size, sha256: transfer.sha256.clone(), place, cached: CachedBlob::Miss };
+                prep.name = name;
+                prep.mime = mime;
+                prep.percent = 100;
+                self.show(id, Shown::Preparing { progress: 100 }, fx);
+                self.persist_prepared(now, id, (copy, false), fx);
+            }
             PrepareOutcome::Failed { message } => self.fail_prepare(now, id, PrepareReason::Failed, message, fx),
-            PrepareOutcome::CannotDecode { message } => self.cannot_decode(now, id, message, fx),
+            PrepareOutcome::CannotDecode { message } => self.fail_prepare(now, id, PrepareReason::DeviceCannotDecode, message, fx),
+            PrepareOutcome::Cancelled => self.fail_prepare(now, id, PrepareReason::Failed, "the platform cancelled the preparation".into(), fx),
         }
-    }
-
-    fn cannot_decode(&mut self, now: Time, id: TransferId, message: String, fx: &mut Fx) {
-        let Some(transfer) = self.transfers.get(&id) else { return };
-        let (Some(prep), Some(WirePrepare::Video { on_cannot_decode, .. })) = (transfer.prep.as_ref(), transfer.prepare.as_ref()) else { return self.fail_prepare(now, id, PrepareReason::Failed, message, fx) };
-        let repacking = matches!(&prep.plan, Some(PreparePlan::Video { plan, .. }) if !plan.reencode);
-        if *on_cannot_decode == CannotDecode::Fail || repacking { return self.fail_prepare(now, id, PrepareReason::DeviceCannotDecode, message, fx); }
-        let repack = prep.plan.as_ref().and_then(|plan| repack_of(plan, &prep.metadata_keys));
-        let Some(plan) = repack else {
-            self.clear_prepare(id, fx);
-            return self.pass_through(now, id, fx);
-        };
-        let attempt_id = self.attempt();
-        let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        transfer.attempt_id = attempt_id;
-        if let Some(prep) = transfer.prep.as_mut() { prep.plan = Some(plan.clone()); }
-        run(fx, TransferEffect::Prepare { transfer_id: id, attempt_id, plan });
     }
 
     /// The result is read: the row of the transfer takes its size and hash, the copy of the source stays until `Committed`.
     pub(super) fn measured(&mut self, now: Time, id: TransferId, attempt_id: AttemptId, copy: CopiedBlob, fx: &mut Fx) {
         if !self.current(id, attempt_id, &[TransferStage::Measuring], fx) { return; }
+        self.persist_prepared(now, id, (copy, true), fx);
+    }
+
+    /// The one write of the result, for `Done` (`swap`: the prepared file replaces the copy at `Committed`) and `Unchanged`; the descriptor goes in the same batch.
+    fn persist_prepared(&mut self, now: Time, id: TransferId, (copy, swap): (CopiedBlob, bool), fx: &mut Fx) {
         let sizing = self.sizing;
         if self.transfers.get(&id).is_some_and(|transfer| transfer.over_limit(copy.size)) { return self.fail_too_large(now, id, fx); }
         let steps = match self.transfers.get(&id).and_then(|transfer| transfer.steps.as_ref()).map(|steps| serde_json::from_str::<super::upload_codec::StepsBody>(&steps.body)).transpose() {
@@ -208,9 +138,11 @@ impl TransferState {
             Err(error) => return self.fail_prepare(now, id, PrepareReason::Failed, format!("Internal(Invalid): the steps body is not readable: {error}"), fx),
         };
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        let mut before = transfer.clone();
-        before.previous = None;
-        transfer.previous = Some(Box::new(before));
+        if swap {
+            let mut before = transfer.clone();
+            before.previous = None;
+            transfer.previous = Some(Box::new(before));
+        }
         let CopiedBlob { size, sha256, place, cached } = copy;
         transfer.size = size;
         transfer.sha256 = sha256;

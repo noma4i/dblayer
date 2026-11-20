@@ -20,7 +20,7 @@ pub(super) const CACHE_STATEMENTS: [&str; 19] = [
     include_str!("../sql/ddl/reread_owed.sql"),
 ];
 
-pub(super) const CORE_STATEMENTS: [&str; 40] = [
+pub(super) const CORE_STATEMENTS: [&str; 39] = [
     include_str!("../sql/ddl/row_alias.sql"),
     include_str!("../sql/ddl/manifest.sql"),
     include_str!("../sql/ddl/op.sql"),
@@ -42,7 +42,6 @@ pub(super) const CORE_STATEMENTS: [&str; 40] = [
     include_str!("../sql/ddl/upload_orphan.sql"),
     include_str!("../sql/ddl/sync_upload_part.sql"),
     include_str!("../sql/ddl/sync_upload_prepare.sql"),
-    include_str!("../sql/ddl/sync_upload_prepare_step.sql"),
     include_str!("../sql/ddl/sync_action.sql"),
     include_str!("../sql/ddl/sync_field.sql"),
     include_str!("../sql/ddl/op_open.sql"),

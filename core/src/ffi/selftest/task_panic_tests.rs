@@ -7,8 +7,7 @@ use serde_json::json;
 use super::rig_tests::bound;
 use super::upload_prepare_tests::{send, SOURCE};
 use super::upload_stand::{Stand, CREATE_MOMENT};
-use crate::ffi::upload_wire::{CannotDecode, WirePrepare};
-use crate::ffi::{ByteProgress, Database, DbError, FakeTransport, PrepareJob, PrepareKind, PrepareOutcome, PrepareProgress, Preparer, ProbeOutcome, PutReply, TransportRequest};
+use crate::ffi::{ByteProgress, Database, DbError, FakeTransport, PrepareJob, PrepareOutcome, PrepareProgress, Preparer, ProbeOutcome, PutReply, TransportRequest};
 use crate::test_wait::settled;
 
 struct PanickingQuery;
@@ -59,26 +58,26 @@ async fn a_session_reset_whose_credential_clear_panics_ends_and_closes_the_datab
     settled(&database.life, "the database did not close after the panic of the erase task", || database.life.published().closed).await;
 }
 
-struct PanickingProbe;
+struct PanickingPrepare;
 
 #[async_trait]
-impl Preparer for PanickingProbe {
-    async fn probe(&self, _: String, _: PrepareKind) -> ProbeOutcome { panic!("the platform failed") }
-    async fn run(&self, _: PrepareJob, _: Arc<PrepareProgress>) -> PrepareOutcome { unreachable!() }
+impl Preparer for PanickingPrepare {
+    async fn probe(&self, _: String, _: Option<Vec<u8>>, _: Option<String>) -> ProbeOutcome { ProbeOutcome::Failed { message: "unused".into() } }
+    async fn run(&self, _: PrepareJob, _: Arc<PrepareProgress>) -> PrepareOutcome { panic!("the platform failed") }
     fn cancel(&self, _: u64) {}
+    fn import_descriptor(&self, _: crate::ffi::SavedPreparation) -> crate::ffi::PrepareImportOutcome { crate::ffi::PrepareImportOutcome::Failed { message: "unused".into() } }
 }
 
-/// Task panic of Transfer (D-472, P-RT-12): a transfer whose probe panics is a permanent failure of the probe, the receipt of the send ends and the database closes.
+/// Task panic of Transfer ends its receipt and closes the database (D-472, P-RT-12).
 #[tokio::test(flavor = "multi_thread")]
-async fn a_transfer_whose_probe_panics_ends_its_receipt_and_closes_the_database() {
+async fn a_transfer_whose_preparation_panics_ends_its_receipt_and_closes_the_database() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, SOURCE).unwrap();
-    let stand = Stand::new().keep_moment().with_preparer(Arc::new(PanickingProbe));
+    let stand = Stand::new().keep_moment().with_preparer(Arc::new(PanickingPrepare));
     let database = stand.open(Some(&directory.path().join("db.sqlite")), &[CREATE_MOMENT]).await;
-    let video = WirePrepare::Video { limits: Some(crate::prepare::default_video_limits()), mirror: false, on_cannot_decode: CannotDecode::Fail };
-    let receipt = bound(database.send(send(database.session_epoch(), &source, video))).await.unwrap();
+    let receipt = bound(database.send(send(database.session_epoch(), &source, super::upload_prepare_tests::descriptor()))).await.unwrap();
     let confirmed = bound(database.confirmed(receipt, false)).await;
     assert!(confirmed.is_err(), "{confirmed:?}");
-    settled(&database.life, "the database did not close after the panic of the probe task", || database.life.published().closed).await;
+    settled(&database.life, "the database did not close after the panic of the prepare task", || database.life.published().closed).await;
 }

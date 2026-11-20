@@ -162,7 +162,7 @@ pub(super) fn mutation(key: &str) -> NewOp {
 /// The body the Transfer owner writes for the steps of an upload.
 pub(super) fn steps_body() -> String { crate::owners::write::upload_codec::StepsBody { multipart: false, name: "clip.mp4".into(), mime: "video/mp4".into(), signed_variable: "signedId".into(), item: "id".into() }.steps().body }
 
-pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.into(), held: false, fields: Default::default(), urgent: false, source: Some(Source { path: format!("/src/{key}"), parts }), prepare: None, mutation: mutation(key), steps: Some(Steps { path: "/upload".into(), body: steps_body() }), probed: None, dimensions: None, max_bytes: None } }
+pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.into(), held: false, fields: Default::default(), urgent: false, source: Some(Source { path: format!("/src/{key}"), parts }), prepare: None, mutation: mutation(key), steps: Some(Steps { path: "/upload".into(), body: steps_body() }), dimensions: None, max_bytes: None } }
 
 /// The batch of the tests: two to ten elements go in one mutation.
 pub(super) fn joint() -> Joint { Joint { minimum: 2, maximum: 10, items_key: "items".into(), mutation: mutation("Batch:r:upload"), renumber: None } }
@@ -594,7 +594,7 @@ impl Twin {
 
     pub fn retry(&mut self, key: &str, source: Option<Source>) -> (ReplyId, Out) {
         let reply = self.reply();
-        let source = source.map(|source| crate::owners::write::transfer::SuppliedSource { source, prepare: None, steps: Steps { path: "/upload".into(), body: steps_body() }, values: Default::default(), local: String::new(), variables: Default::default(), wrap: None, max_bytes: None, probed: None });
+        let source = source.map(|source| crate::owners::write::transfer::SuppliedSource { source, prepare: None, steps: Steps { path: "/upload".into(), body: steps_body() }, values: Default::default(), local: String::new(), variables: Default::default(), wrap: None, max_bytes: None });
         (reply, self.post(TransferInput::Retry { key: key.into(), source, reply }))
     }
 
@@ -774,7 +774,6 @@ impl PrepareFiles {
         match run {
             Run::DeleteFile { path } => pending.push(Pending::Delete(path.clone())),
             Run::ClearPrepare { transfer_id, clear_id } => pending.push(Pending::Clear { transfer_id: *transfer_id, clear_id: *clear_id }),
-            Run::Probe { transfer_id, attempt_id, .. } => pending.push(Pending::Input(TransferInput::Probed { transfer_id: *transfer_id, attempt_id: *attempt_id, outcome: crate::ffi::ProbeOutcome::Image { width: 1000, height: 1000, exif_orientation: 1, format: crate::prepare::ImageFormat::Jpeg } })),
             Run::Prepare { transfer_id, attempt_id, .. } => pending.push(Pending::Written { transfer_id: *transfer_id, attempt_id: *attempt_id }),
             Run::Measure { transfer_id, attempt_id } => pending.push(Pending::Measure { transfer_id: *transfer_id, attempt_id: *attempt_id }),
             Run::PromoteStaged { transfer_id } => pending.push(Pending::Promote { transfer_id: *transfer_id }),

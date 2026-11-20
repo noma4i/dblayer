@@ -1,27 +1,20 @@
 import DBlayer
 import Foundation
 
-/// A preparer without codecs for the stand: the probe answers the kind the settings name, `run` reports half and all of the work and copies the source to the result.
+/// A file producer for tests, without codecs.
 public final class ScriptedPreparer: Preparer, @unchecked Sendable {
   private let outcome: PrepareOutcome
-  private let video: ProbeOutcome
+  private let facts: ProbeOutcome
 
-  public init(outcome: PrepareOutcome = .done(name: nil, mime: nil), video: ProbeOutcome = ScriptedPreparer.defaultVideo) {
+  public init(outcome: PrepareOutcome = .done(name: nil, mime: nil), facts: ProbeOutcome = ScriptedPreparer.defaultFacts) {
     self.outcome = outcome
-    self.video = video
+    self.facts = facts
   }
 
-  /// A 1280x720 MP4 of H.264 and AAC at 30 frames per second without private metadata keys.
-  public static let defaultVideo = ProbeOutcome.video(
-    source: VideoSource(width: 1280, height: 720, rotationDegrees: 0, frameRate: 30, bitrate: 1_000_000, mp4H264Aac: true),
-    metadataKeys: []
-  )
+  public static let defaultFacts = ProbeOutcome.file(width: 1280, height: 720, mime: nil)
 
-  public func probe(path: String, kind: PrepareKind) async -> ProbeOutcome {
-    switch kind {
-    case .video: return video
-    case .image: return .image(width: 1080, height: 1920, exifOrientation: 1, format: .jpeg)
-    }
+  public func probe(path: String, descriptor: Data?, mime: String?) async -> ProbeOutcome {
+    facts
   }
 
   public func run(job: PrepareJob, progress: PrepareProgress) async -> PrepareOutcome {
@@ -37,4 +30,8 @@ public final class ScriptedPreparer: Preparer, @unchecked Sendable {
   }
 
   public func cancel(attemptId: UInt64) {}
+
+  public func importDescriptor(saved: SavedPreparation) -> PrepareImportOutcome {
+    .failed(message: "no saved preparation was configured")
+  }
 }

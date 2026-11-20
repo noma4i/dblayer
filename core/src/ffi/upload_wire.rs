@@ -2,7 +2,6 @@ use serde_json::{Map, Value};
 
 use super::DbError;
 use crate::owners::write::upload::{UploadBatchInput, UploadFile, UploadItem};
-use crate::prepare::{ImageFormat, PhotoEdit, VideoLimits};
 
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct WireUploadRequest {
@@ -19,32 +18,8 @@ pub struct WireUploadItem {
 
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum WireSource {
-    File { path: String, name: Option<String>, mime: Option<String>, prepare: Option<WirePrepare>, max_bytes: Option<u64> },
+    File { path: String, name: Option<String>, mime: Option<String>, prepare: Option<Vec<u8>>, max_bytes: Option<u64> },
     Pending,
-}
-
-/// What the library makes of the source file before it uploads: `limits = None` takes `default_video_limits`.
-#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
-pub enum WirePrepare {
-    Video { limits: Option<VideoLimits>, mirror: bool, on_cannot_decode: CannotDecode },
-    Image { edit: PhotoEdit, quality: Option<f64>, format: ImageFormat },
-}
-
-impl WirePrepare {
-    pub(crate) fn kind(&self) -> super::PrepareKind {
-        match self {
-            Self::Video { .. } => super::PrepareKind::Video,
-            Self::Image { .. } => super::PrepareKind::Image,
-        }
-    }
-}
-
-/// What happens to a source the device cannot decode: the upload fails with a typed reason, or the source goes as it is.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, uniffi::Enum)]
-pub enum CannotDecode {
-    #[default]
-    Fail,
-    UploadSource,
 }
 
 impl WireSource {
@@ -62,9 +37,9 @@ impl WireSource {
         }
     }
 
-    pub(crate) fn prepare(&self) -> Option<&WirePrepare> {
+    pub(crate) fn prepare(&self) -> Option<&[u8]> {
         match self {
-            Self::File { prepare, .. } => prepare.as_ref(),
+            Self::File { prepare, .. } => prepare.as_deref(),
             Self::Pending => None,
         }
     }
@@ -93,7 +68,7 @@ pub struct WireUploadSource {
     pub values_json: String,
     pub variables_json: String,
     #[uniffi(default = None)]
-    pub prepare: Option<WirePrepare>,
+    pub prepare: Option<Vec<u8>>,
     /// The largest file that may go to the network.
     #[uniffi(default = None)]
     pub max_bytes: Option<u64>,

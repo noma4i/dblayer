@@ -37,7 +37,7 @@ class UploadPrepareStandTest {
         try {
             enqueueUpload(transport)
             openSigned(Config(null), modelsJSON, transport, operations = UPLOAD_OPERATIONS)
-            val prepare = Prepare.image(PhotoEdit(null, false, null, null, false, 0u))
+            val prepare = byteArrayOf(0, -1, -128, 1, 0, 17)
             val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "hello") }, upload = UploadCommand("upload_clip", UploadRequest(file.path, prepare = prepare)))
             assertEquals("m77", sent.confirmed().value?.id)
             assertEquals(listOf("abcdef"), transport.bodies.toList())
@@ -59,7 +59,7 @@ class UploadPrepareStandTest {
         try {
             enqueueUpload(transport)
             openSigned(Config(null), modelsJSON, transport, operations = UPLOAD_OPERATIONS, preparer = ScriptedPreparer(PrepareOutcome.CannotDecode("no decoder")))
-            val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "hello") }, upload = UploadCommand("upload_clip", UploadRequest(file.path, prepare = Prepare.video(mirror = true))))
+            val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "hello") }, upload = UploadCommand("upload_clip", UploadRequest(file.path, prepare = byteArrayOf(0, -1, -128, 1, 0, 17))))
             val id = sent.optimisticValue!!.id
             eventually("the failure of the prepare step is shown") { Moment.find(id).current()?.uploads?.get("upload_clip")?.error != null }
             val failed = Moment.find(id).current()?.uploads?.get("upload_clip")?.error

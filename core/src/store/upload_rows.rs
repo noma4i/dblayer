@@ -50,7 +50,9 @@ pub(crate) struct UploadRaw {
     failed_at: Option<i64>,
     blob_created_at: Option<i64>,
     held: bool,
-    prepare: Option<crate::ffi::upload_wire::WirePrepare>,
+    prepare: Option<Vec<u8>>,
+    /// Saved settings without a descriptor: the transfer must not go unprepared.
+    saved_prepare: bool,
     max_bytes: Option<u64>,
 }
 
@@ -69,6 +71,7 @@ pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result
         parts.entry(key).or_default().push(etag);
     }
     let mut prepares = super::prepare_rows::read_prepares(connection)?;
+    let mut saved = super::prepare_import::saved_ids(connection)?;
     let mut statement = connection.prepare(
         include_str!("sql/upload_rows/upload_rows_select_sync_upload.sql"),
     )?;
@@ -95,6 +98,8 @@ pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result
             steps_path: row.get(18)?,
             steps_body: row.get(19)?,
             prepare: prepares.remove(&row.get::<_, i64>(20)?),
+            saved_prepare: saved.remove(&row.get::<_, i64>(20)?),
+
             transfer_id: row.get(20)?,
             cycle_id: row.get(21)?,
             signed_id: row.get(22)?,
@@ -217,7 +222,7 @@ impl Store {
             max_bytes: raw.max_bytes,
             held: raw.held,
             steps: raw.steps_path.zip(raw.steps_body).map(|(path, body)| Steps { path, body }),
-            restore_failed: unreadable,
+            restore_failed: unreadable.or_else(|| raw.saved_prepare.then(|| "the prepare settings of an older layout are not imported".to_string())),
             restore_element: None,
         })
     }

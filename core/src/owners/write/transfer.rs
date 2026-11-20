@@ -1031,7 +1031,6 @@ impl TransferState {
             TransferInput::SlotFreed => self.start_in_order(now, fx),
             TransferInput::PrepareSlotFreed => self.start_prepares(fx),
             TransferInput::PrepareCleared { transfer_id, clear_id } => self.prepare_cleared(transfer_id, clear_id, fx),
-            TransferInput::Probed { transfer_id, attempt_id, outcome } => self.probed(now, transfer_id, attempt_id, outcome, fx),
             TransferInput::PrepareProgress { transfer_id, attempt_id, percent } => self.prepare_progress(transfer_id, attempt_id, percent, fx),
             TransferInput::PutStarted { transfer_id, attempt_id } => self.put_started(transfer_id, attempt_id, fx),
             TransferInput::PutProgress { transfer_id, attempt_id, sent } => self.put_progress(transfer_id, attempt_id, sent, fx),

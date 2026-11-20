@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Accept MediaLayer preparation descriptors through a connected file producer.
+
+### Removed
+
+- Remove media codecs and preparation settings from DBlayer.
+
 ## 6.43.2 - 2026-11-20
 
 ### Fixed

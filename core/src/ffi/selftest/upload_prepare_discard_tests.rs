@@ -1,6 +1,6 @@
 use super::crash_image_support::{drained, files_of};
 use super::rig_tests::bound;
-use super::upload_prepare_tests::{probed_image, send, shrink, upload_of, SOURCE};
+use super::upload_prepare_tests::{probed_image, send, descriptor, upload_of, SOURCE};
 use super::upload_stand::{Answer, ScriptedPreparer, Stand, CREATE_MOMENT};
 use crate::ffi::wire::WireUploadStatus;
 use crate::owners::write::upload::MEBIBYTE;
@@ -22,7 +22,7 @@ async fn xfer_discard_of_a_failed_prepared_multipart_leaves_nothing() {
     stand.script.data("InitMultipart", INIT);
     stand.script.enqueue("PresignParts", Answer::Status(422));
     stand.script.data("AbortMultipart", ABORTED);
-    let receipt = bound(database.send(send(epoch, &file, shrink()))).await.unwrap();
+    let receipt = bound(database.send(send(epoch, &file, descriptor()))).await.unwrap();
     let id = receipt.optimistic_value.unwrap().id;
     crate::test_wait::settled(&database, "the upload failed after the multipart was created", || upload_of(&database, &id).is_some_and(|upload| upload.status == WireUploadStatus::Failed)).await;
     assert_eq!(stand.script.count("InitMultipart"), 1, "the multipart exists on the server: {:?}", stand.script.names());

@@ -1,26 +1,4 @@
 CREATE TABLE IF NOT EXISTS sync_upload_prepare (
   transfer_id INTEGER PRIMARY KEY,
-  kind TEXT NOT NULL,
-  mirror INTEGER NOT NULL,
-  max_long_side INTEGER,
-  min_frame_rate INTEGER,
-  max_frame_rate INTEGER,
-  source_bitrate_cap_percent INTEGER,
-  audio_bitrate INTEGER,
-  audio_channels INTEGER,
-  audio_sample_rate INTEGER,
-  recode_above_bytes INTEGER,
-  max_width INTEGER,
-  max_height INTEGER,
-  enlarge INTEGER,
-  crop_x REAL,
-  crop_y REAL,
-  crop_width REAL,
-  crop_height REAL,
-  output_width INTEGER,
-  output_height INTEGER,
-  rotation_degrees INTEGER,
-  quality REAL,
-  format TEXT,
-  on_cannot_decode TEXT
+  descriptor BLOB NOT NULL
 ) STRICT

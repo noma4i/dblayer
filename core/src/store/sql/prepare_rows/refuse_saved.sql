@@ -1,0 +1,1 @@
+UPDATE restore_failed SET reason = ?1 WHERE source_table = ?2 AND key = ?3

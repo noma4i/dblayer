@@ -42,7 +42,7 @@ Every read is a stream of an `AccountScope` shown through `Projected`. See [live
 - `RetryProgress` is read by pull: `RetryProgress.changes` in Swift and `RetryProgress.flow` in Kotlin. See [server sync](server-sync.md#retries).
 - `upload` on a row that does not exist is accepted, and the answer of the final mutation writes the row. See [files](files.md#upload-to-a-row-that-does-not-exist).
 - Send a file with `upload: UploadCommand(action:, request:)` on a send, or call `scope.upload(row, action:, request)` for an existing record. The `.dbl` files declare the upload steps once per project in `uploads do ... end`.
-- Pass `prepare` settings in the source to recompress a video or an image, and remove the recompression of the app before an upload. See [files](files.md#source-preparation).
+- Build `prepare` descriptor bytes with MediaLayer and connect its file producer at database open. See [files](files.md#source-preparation).
 
 ## 6. Models in `.dbl`
 
@@ -135,7 +135,7 @@ scope.uploadStatus(staged).uploadStatus.collect { item -> if (item is TransferIt
 - A call or a write that meets an unreadable secret waits and goes when the secret can be read again. Remove the retry of the app on a `Storage` error that only waited for the keystore.
 - A stored upload step fails with the state of the session when the session cannot send it (`StateLost`, or the reason of a blocked session) instead of staying queued. A `failed` row of this kind is handled by `retry` or `discard`.
 - A refused write of the session record to the disk, or of the erase of the account data at the end of a session, ends at the next online or foreground event: calls get `Storage` until then, and the end of the session goes on after the write went through. The app adds no timer.
-- The file probe of a custom `Preparer` reports the turn of a video as 0, 90, 180 or 270, an EXIF orientation as 1 to 8 (any other value is 1), and the location of a video as the key `location`. Remove the own conversion of negative turns and of the platform spelling of the location key.
+- MediaLayer inspects video turns, image orientation and private metadata. The connected `Preparer` reports output dimensions and MIME type.
 
 ## 10. After 6.31.1
 
@@ -188,7 +188,7 @@ val receipt = staged.commit(values, variables)
 - `discard` right after `commit` returns `true` when the upload is removed with its row and `false` when the final mutation already left and the row stays. It does not throw `InFlight`: remove a repeat after it.
 - A batch upload with one key twice in the call fails with `Invalid` that names the key, not with `InFlight`. Fix the call.
 - A video with `mirror` set goes up mirrored on iOS also when the source needs no re-encode. The app changes nothing.
-- A custom `Preparer` that reports a video rotation outside 0, 90, 180 or 270 gets `prepare_failed` with the reason `failed`, and the copy of the source stays. Report the turn as one of the four values.
+- MediaLayer validates preparation settings before making a descriptor. DBlayer keeps the source after a failed preparation.
 - The first open after the update rebuilds the cache of the server models because the cache format changed. The app sees the server data load again once. Local models, queued operations, the session and uploads stay. The app changes nothing.
 - A call or a load made before the first network value of the system waits for it instead of failing with `Offline`. A call that waits 30 seconds for that value fails with a network error, not with `Offline`. Remove a retry on `Offline` at start. The app changes nothing else.
 - `discard` and `cancelUpload` of a failed upload that is being replaced no longer throw `InFlight`: remove a repeat after it. The command applies to the upload the key keeps: the new one when the replacement is confirmed, the failed one when it is refused.

@@ -2,15 +2,12 @@ package com.noma4i.dblayer
 
 import java.io.File
 
-/** A preparer without codecs for the stand: the probe answers the kind the settings name, `run` reports half and all of the work and copies the source to the result. */
+/** A file producer for tests, without codecs. */
 class ScriptedPreparer(
     private val outcome: PrepareOutcome = PrepareOutcome.Done(null, null),
-    private val video: ProbeOutcome = DEFAULT_VIDEO,
+    private val facts: ProbeOutcome = DEFAULT_FACTS,
 ) : Preparer {
-    override suspend fun probe(path: String, kind: PrepareKind): ProbeOutcome = when (kind) {
-        PrepareKind.VIDEO -> video
-        PrepareKind.IMAGE -> ProbeOutcome.Image(1080u, 1920u, 1u, ImageFormat.JPEG)
-    }
+    override suspend fun probe(path: String, descriptor: ByteArray?, mime: String?): ProbeOutcome = facts
 
     override suspend fun run(job: PrepareJob, progress: PrepareProgress): PrepareOutcome {
         progress.report(0.5)
@@ -22,8 +19,10 @@ class ScriptedPreparer(
 
     override fun cancel(attemptId: ULong) {}
 
+    override fun importDescriptor(saved: SavedPreparation): PrepareImportOutcome =
+        PrepareImportOutcome.Failed("no saved preparation was configured")
+
     companion object {
-        /** A 1280x720 MP4 of H.264 and AAC at 30 frames per second without private metadata keys. */
-        val DEFAULT_VIDEO: ProbeOutcome = ProbeOutcome.Video(VideoSource(1280u, 720u, 0, 30f, 1_000_000u, true), emptyList())
+        val DEFAULT_FACTS: ProbeOutcome = ProbeOutcome.File(1280u, 720u, null)
     }
 }

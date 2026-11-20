@@ -60,10 +60,9 @@ impl Database {
         Ok((Source { path: path.to_string(), parts }, multipart))
     }
 
-    fn checked_prepare(&self, prepare: Option<&super::upload_wire::WirePrepare>, max_bytes: Option<u64>) -> Result<(), DbError> {
+    fn checked_prepare(&self, prepare: Option<&[u8]>, max_bytes: Option<u64>) -> Result<(), DbError> {
         if max_bytes == Some(0) { return Err(invalid("the size limit of the source is 0")); }
-        let Some(prepare) = prepare else { return Ok(()) };
-        crate::prepare::check_settings(prepare)?;
+        if prepare.is_none() { return Ok(()) }
         if self.preparer.get().is_none() { return Err(invalid("a source with prepare settings needs a preparer: pass one to open")); }
         Ok(())
     }
@@ -74,8 +73,8 @@ impl Database {
         source.path().map(|path| self.source_of(path, held)).transpose()
     }
 
-    fn supplied_source(&self, model: &str, row: &crate::identity::RowId, action: &str, source: WireUploadSource, (shown, probed): (Map<String, Value>, Option<super::ProbeOutcome>)) -> Result<SuppliedSource, DbError> {
-        self.checked_prepare(source.prepare.as_ref(), source.max_bytes)?;
+    fn supplied_source(&self, model: &str, row: &crate::identity::RowId, action: &str, source: WireUploadSource, shown: Map<String, Value>) -> Result<SuppliedSource, DbError> {
+        self.checked_prepare(source.prepare.as_deref(), source.max_bytes)?;
         let row = &self.db.resolve(model, row)?;
         let mut values = super::upload_wire::object(&source.values_json)?;
         let mut variables = super::upload_wire::object(&source.variables_json)?;
@@ -94,35 +93,28 @@ impl Database {
             Some(batch) => spec.actions.iter().find(|action| action.name == batch.single).and_then(|action| action.wrap.clone()),
             None => declaration.wrap.clone(),
         };
-        Ok(SuppliedSource { source: file, prepare: source.prepare, max_bytes: source.max_bytes, steps, values: effects, local: Value::Object(local).to_string(), variables, wrap, probed })
+        Ok(SuppliedSource { source: file, prepare: source.prepare, max_bytes: source.max_bytes, steps, values: effects, local: Value::Object(local).to_string(), variables, wrap })
     }
 
-    /// D-413: the attributes the declared `dimensions` name, measured on the file of the caller during the call, and the probe the first prepare attempt takes. A refused probe or a base without a preparer leaves them empty.
-    async fn measured(&self, declaration: &ActionDeclaration, path: &str, (name, mime): (Option<&str>, Option<&str>), prepare: Option<&super::upload_wire::WirePrepare>) -> (Map<String, Value>, Option<super::ProbeOutcome>) {
-        let (Some(dimensions), Some(preparer)) = (&declaration.dimensions, self.preparer.get()) else { return (Map::new(), None) };
+    /// D-413: the declared `dimensions` as the preparer probes them; a refusal, no size or no preparer leaves them empty.
+    async fn measured(&self, declaration: &ActionDeclaration, path: &str, (name, mime): (Option<&str>, Option<&str>), prepare: Option<&[u8]>) -> Map<String, Value> {
+        let (Some(dimensions), Some(preparer)) = (&declaration.dimensions, self.preparer.get()) else { return Map::new() };
         let mime = mime.map_or_else(|| mime_of(name.unwrap_or(path)).to_string(), str::to_string);
-        let kind = match prepare {
-            Some(prepare) => prepare.kind(),
-            None if mime.starts_with("image/") => super::PrepareKind::Image,
-            None if mime.starts_with("video/") => super::PrepareKind::Video,
-            None => return (Map::new(), None),
-        };
-        let probed = preparer.probe(path.to_string(), kind).await;
-        let file = path.to_string();
-        let size = crate::blocking::blocking_unit(move || std::fs::metadata(file)).map_or(0, |metadata| metadata.len());
-        let shown = crate::prepare::shown_size(prepare, &probed, size).map(|size| Map::from_iter([(dimensions.width.clone(), Value::from(size.width)), (dimensions.height.clone(), Value::from(size.height))]));
-        (shown.unwrap_or_default(), prepare.map(|_| probed))
+        match preparer.probe(path.to_string(), prepare.map(<[u8]>::to_vec), Some(mime)).await {
+            super::ProbeOutcome::File { width: Some(width), height: Some(height), .. } => Map::from_iter([(dimensions.width.clone(), Value::from(width)), (dimensions.height.clone(), Value::from(height))]),
+            _ => Map::new(),
+        }
     }
 
-    async fn measured_file(&self, declaration: &ActionDeclaration, file: &UploadFile) -> (Map<String, Value>, Option<super::ProbeOutcome>) {
-        let Some(path) = file.source.path() else { return (Map::new(), None) };
+    async fn measured_file(&self, declaration: &ActionDeclaration, file: &UploadFile) -> Map<String, Value> {
+        let Some(path) = file.source.path() else { return Map::new() };
         self.measured(declaration, path, (file.source.name(), file.source.mime()), file.source.prepare()).await
     }
 
-    async fn measured_supply(&self, model: &str, action: &str, source: &WireUploadSource) -> Result<(Map<String, Value>, Option<super::ProbeOutcome>), DbError> {
+    async fn measured_supply(&self, model: &str, action: &str, source: &WireUploadSource) -> Result<Map<String, Value>, DbError> {
         let spec = self.db.spec(model)?;
         let declaration = spec.upload_action(action).ok_or_else(|| invalid("upload action is not declared"))?;
-        Ok(self.measured(declaration, &source.path, (source.name.as_deref(), source.mime.as_deref()), source.prepare.as_ref()).await)
+        Ok(self.measured(declaration, &source.path, (source.name.as_deref(), source.mime.as_deref()), source.prepare.as_deref()).await)
     }
 
     /// The request of the final mutation: the variables carry a sentinel where the signed id of the file goes.
@@ -140,7 +132,7 @@ impl Database {
             let name = file_name(plan.file, &file.path);
             StepsBody { multipart: *multipart, mime: plan.file.source.mime().map_or_else(|| mime_of(&name).to_string(), str::to_string), name, signed_variable: "signedId".into(), item: item.to_string() }.steps()
         });
-        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), held: false, fields, urgent: false, source: source.map(|(source, _)| source), prepare: plan.file.source.prepare().cloned(), max_bytes: plan.file.source.max_bytes(), mutation: self.upload_mutation(plan, mutation)?, steps, probed: None, dimensions: None })
+        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), held: false, fields, urgent: false, source: source.map(|(source, _)| source), prepare: plan.file.source.prepare().map(<[u8]>::to_vec), max_bytes: plan.file.source.max_bytes(), mutation: self.upload_mutation(plan, mutation)?, steps, dimensions: None })
     }
 
     fn single_of(&self, model: &str, action: &str, file: &UploadFile, held: bool) -> Result<Single, DbError> {
@@ -248,7 +240,7 @@ impl Database {
         this_db.account_call(epoch)?;
         let mut file = this_db.offload(move || request.into_file()).await?;
         let single = this_db.single_of(&model, &action, &file, false)?;
-        let (shown, probed) = this_db.measured_file(&single.declaration, &file).await;
+        let shown = this_db.measured_file(&single.declaration, &file).await;
         let row = this_db.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name, verb, target, args, values) = (this_db.db.clone(), model.clone(), action.clone(), row.clone(), file.variables.clone(), shown.clone());
         file.variables.extend(shown);
@@ -260,8 +252,7 @@ impl Database {
                 Err(error) => Err(error.into()),
             }
         }).await?;
-        let mut item = this_db.single_upload((&model, row_id.as_str(), &action), single, &file, effects)?;
-        item.probed = probed;
+        let item = this_db.single_upload((&model, row_id.as_str(), &action), single, &file, effects)?;
         let waiter = this_db.life.accept_upload(epoch, item);
         let TransferAnswer::Receipt(held) = this_db.transfer_answer(waiter, "upload").await? else { return Err(DbError::Internal { detail: "the owner answered an upload with no receipt".into() }) };
         let value = held.optimistic.as_ref().map(|shown| this_db.wire_of_row(&model, shown)).transpose()?;
@@ -274,11 +265,10 @@ impl Database {
         let file = this_db.offload(move || request.into_file()).await?;
         let single = this_db.single_of(&model, &action, &file, true)?;
         if single.source.is_none() { return Err(invalid("a staged upload needs a file")); }
-        let (shown, probed) = this_db.measured_file(&single.declaration, &file).await;
+        let shown = this_db.measured_file(&single.declaration, &file).await;
         let row = crate::identity::RowId::generate_temp(None);
         let mut item = this_db.single_upload((&model, row.as_str(), &action), single, &file, IntentEffects::default())?;
         item.held = true;
-        item.probed = probed;
         item.dimensions = Some(shown).filter(|shown| !shown.is_empty());
         let waiter = this_db.life.accept_upload(epoch, item);
         let TransferAnswer::Receipt(held) = this_db.transfer_answer(waiter, "stage").await? else { return Err(DbError::Internal { detail: "the owner answered a stage with no receipt".into() }) };
@@ -328,19 +318,16 @@ impl Database {
         }
         let declaration = action.clone();
         let mut items = items;
-        let mut probes = Vec::new();
         for item in &mut items {
             let file = UploadFile { source: item.source.clone(), variables: Map::new() };
-            let (shown, probed) = this_db.measured_file(&declaration, &file).await;
+            let shown = this_db.measured_file(&declaration, &file).await;
             item.values.extend(shown.clone());
             item.variables.extend(shown);
-            probes.push(probed);
         }
         let (db, name) = (this_db.db.clone(), model.clone());
         let created = this_db.offload(move || items.into_iter().map(|item| Ok((db.plan_create(&name, item.values.clone(), Map::new())?, item))).collect::<Result<Vec<_>, DbError>>()).await?;
-        let planned = created.into_iter().zip(probes).map(|((planned, item), probed)| {
-            let mut built = this_db.batch_upload(&model, &request.operation, &planned, &item, &request)?;
-            built.probed = probed;
+        let planned = created.into_iter().map(|(planned, item)| {
+            let built = this_db.batch_upload(&model, &request.operation, &planned, &item, &request)?;
             Ok((item, planned, built))
         }).collect::<Result<Vec<_>, DbError>>()?;
         let built: Vec<BatchItem> = planned.iter().map(|(_, _, built)| built.clone()).collect();
@@ -395,7 +382,7 @@ impl Database {
         let Some(upload) = request.upload else { return Err(invalid("a command without a file goes through the owners")) };
         let mut file = self.offload(move || upload.request.into_file()).await?;
         let single = self.single_of(&request.model, &upload.action, &file, false)?;
-        let (shown, probed) = self.measured_file(&single.declaration, &file).await;
+        let shown = self.measured_file(&single.declaration, &file).await;
         file.variables.extend(shown.clone());
         let (db, name, texts) = (self.db.clone(), request.model.clone(), (request.values_json.clone(), request.args_json.clone()));
         let planned = self.offload(move || {
@@ -403,8 +390,7 @@ impl Database {
             values.extend(shown);
             Ok(db.plan_create(&name, values, serde_json::from_str(&texts.1)?)?)
         }).await?;
-        let mut item = self.single_upload((&request.model, planned.row_id.as_str(), &upload.action), single, &file, planned.effects.clone())?;
-        item.probed = probed;
+        let item = self.single_upload((&request.model, planned.row_id.as_str(), &upload.action), single, &file, planned.effects.clone())?;
         let waiter = self.life.accept_upload(epoch, item);
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "send").await? else { return Err(DbError::Internal { detail: "the owner answered a send with no receipt".into() }) };
         let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&request.model, shown)).transpose()?.ok_or_else(|| DbError::Internal { detail: format!("the accepted row {} of {} is not shown", planned.row_id, request.model) })?;

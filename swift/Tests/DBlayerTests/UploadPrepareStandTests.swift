@@ -42,7 +42,7 @@ extension BridgeProbeTests {
     _ = try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport, operations: uploadOperations)
     let file = try source("abcdef")
     defer { try? FileManager.default.removeItem(at: file) }
-    let sent = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path, prepare: .image(edit: PhotoEdit(maxSize: nil, enlarge: false, crop: nil, outputSize: nil, mirror: false, rotationDegrees: 0)))))
+    let sent = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path, prepare: Data([0, 255, 128, 1, 0, 17]))))
     #expect(try await sent.confirmed().value?.id == "m77")
     #expect(transport.bodies == [Data("abcdef".utf8)])
     let refused = try await DB.account().send(Moment.self, values: ["text": .string("large")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path, maxBytes: 5)))
@@ -61,7 +61,7 @@ extension BridgeProbeTests {
     _ = try await openSigned(config: Config(path: nil), modelsJson: modelsJSON, transport: transport, operations: uploadOperations, preparer: ScriptedPreparer(outcome: .cannotDecode(message: "no decoder")))
     let file = try source("abcdef")
     defer { try? FileManager.default.removeItem(at: file) }
-    let sent = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path, prepare: .video(mirror: true))))
+    let sent = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path, prepare: Data([0, 255, 128, 1, 0, 17]))))
     let id = try #require(sent.optimisticValue).id
     _ = try await sent.settled()
     let failed = try #require(try await Moment.find(id).current()?.uploads["upload_clip"]?.error)

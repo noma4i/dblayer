@@ -62,39 +62,43 @@ A restart before supply marks the transfer `missing_file`. Cancellation or accou
 
 ### Source preparation
 
-A file source with `prepare` settings is recompressed by the library before its transfer. The app passes the settings only. The upload shows `preparing` with `progress`, then it sends the prepared file. A restart during the preparation starts it again from the source.
+MediaLayer owns media settings, inspection and codecs. DBlayer accepts its descriptor bytes, stores them with the upload and sends the prepared file. Connect the media executor through a `Preparer` at `open`. The connection maps values and adds no lifecycle steps to the app.
 
 ```swift
-let clip = UploadRequest(path: path, prepare: .video())
-let edit = PhotoEdit(maxSize: PixelSize(width: 1080, height: 1920), enlarge: false, crop: nil, outputSize: nil, mirror: false, rotationDegrees: 0)
-let photo = UploadRequest(path: path, prepare: .image(edit: edit, quality: 0.8))
-```
+import MediaLayer
 
-```swift
-let capped = UploadRequest(path: path, maxBytes: 5_000_000)
+let descriptor = try mediaPrepareDescriptor(intent: .video(limits: nil, mirror: false, onCannotDecode: .fail))
+let clip = UploadRequest(path: path, prepare: descriptor, maxBytes: 5_000_000)
 ```
 
 ```kotlin
-val clip = UploadRequest(path, prepare = Prepare.video())
-val edit = PhotoEdit(PixelSize(1080u, 1920u), enlarge = false, crop = null, outputSize = null, mirror = false, rotationDegrees = 0u)
-val photo = UploadRequest(path, prepare = Prepare.image(edit, quality = 0.8))
+import com.noma4i.medialayer.*
+
+val descriptor = mediaPrepareDescriptor(MediaPrepareIntent.Video(null, false, CannotDecode.FAIL))
+val clip = UploadRequest(path, prepare = descriptor, maxBytes = 5_000_000uL)
+```
+
+Pass the connected file producer once when opening the database:
+
+```swift
+try await DB.open(modelsJSON: modelsJSON, uploadTaskTitle: "Uploading", preparer: filePreparer)
 ```
 
 ```kotlin
-val capped = UploadRequest(path, maxBytes = 5_000_000uL)
+DBlayer.open(context, modelsJson = modelsJSON, uploadNotification = notification, preparer = filePreparer)
 ```
 
-- `Prepare.video(limits, mirror, onCannotDecode)`: without `limits` the library uses its default limits. A video above the limits, or with `mirror`, is encoded again. A video inside the limits that carries private metadata of the source is written again without it and without a new encode. Any other video goes as it is. With `limits.recodeAboveBytes` set, a video not larger than it is not encoded again by the limits (`mirror` still encodes it).
-- `SystemPreparer` is the `Preparer` that Swift uses by default: it prepares and probes sources with the codecs of the system.
-- `Prepare.image(edit, quality, format)`: the image is always written again, upright and without the metadata of the source. `format` is JPEG or PNG.
-- `VideoLimits` has `maxLongSide`, `corridors`, `minFrameRate`, `maxFrameRate`, `sourceBitrateCapPercent`, `audioBitrate`, `audioChannels`, `audioSampleRate` and `recodeAboveBytes`. Each corridor is a `BitrateStep` with `fromLongSide`, `minBps` and `maxBps`: the step with the largest `fromLongSide` not above the target long side sets the bitrate range. The default limits are a long side of 1920, corridors from 0 (500000 to 900000 bps), 720 (700000 to 1200000), 960 (900000 to 1500000), 1280 (1200000 to 2000000) and 1920 (2000000 to 3500000), frame rates from 30 to 60, a source bitrate cap of 95 percent, audio of 128000 bps, 2 channels and 44100 Hz, and no `recodeAboveBytes`. A `maxLongSide` below 2, no corridor, a corridor with `minBps` above `maxBps`, or frame rates that do not satisfy 0 < min <= max are refused with `Invalid`.
-- `CropFractions` has `x`, `y`, `width` and `height` as fractions of the upright image, and `PhotoEdit.crop` takes it.
-- `maxBytes` stands on `UploadRequest`, `UploadItem` and `UploadSource`, not on `Prepare`. It is the largest file that may go to the network: the prepared file, or the source when it goes as it is. A larger file ends the upload as `failed` with the kind `too_large` and no transfer request leaves the device. `retry(action)` gives the same outcome. `maxBytes` of 0 is refused with `Invalid`. A request without `maxBytes` has no limit.
-- A failed preparation gives the error kind `prepare_failed`. The `reason` field of the error names the cause: `device_cannot_decode` for a video the device cannot decode, `failed` for any other failure. With `onCannotDecode` set to `uploadSource` a video the device cannot decode goes as it is. `retry(action)` prepares the source again.
-- One preparation runs at a time, in the order of the operations. It does not need the network.
-- A restart during the preparation starts the step again from the copy of the source. The files of the earlier attempt never remove the new result, and the upload does not fail for them.
-- `cancelUpload(action)` stops a running preparation and removes its file.
-- An `UploadSource` of a [deferred source](#deferred-source) takes `prepare` too.
+- `prepare` is optional `Data` in Swift and `ByteArray` in Kotlin on `UploadRequest`, `UploadItem` and `UploadSource`. DBlayer stores the bytes without decoding them.
+- `Preparer.probe` returns the output width, height and MIME type. Declared dimensions reach the first row before its receipt. Without a descriptor it reports the source dimensions.
+- `Preparer.run` receives the saved source, destination, attempt and descriptor. It reports progress and returns `Done`, `Unchanged`, `CannotDecode`, `Failed` or `Cancelled`.
+- `Done` writes the destination. `Unchanged` uses the saved source without another copy. DBlayer commits the selected file and its metadata before sending it.
+- `maxBytes` limits the file that goes to the network. Above it, the upload fails with `too_large` and sends no transfer request. Zero is `Invalid`.
+- One preparation runs at a time in operation order, without a network requirement.
+- A restart repeats preparation from the retained source and descriptor. The prior attempt cannot remove the new result.
+- A failed producer keeps the source for `retry(action)`. `CannotDecode` gives `prepare_failed` with reason `device_cannot_decode`.
+- `cancelUpload(action)` stops the attempt and removes its files.
+- During a database format change, `importDescriptor` converts retained settings through the media library. A refused import retains the settings and source and sends nothing.
+- A descriptor without a connected `Preparer` is `Invalid` before the upload is accepted.
 
 ### Wire sources
 

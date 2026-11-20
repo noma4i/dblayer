@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::rig_tests::bound;
-use super::upload_prepare_tests::{probed_image, send, shrink, PREPARED, SOURCE};
+use super::upload_prepare_tests::{probed_image, send, descriptor, PREPARED, SOURCE};
 use super::upload_stage_tests::{answers, COMPLETE, LANDED, OPERATIONS as STAGE_OPERATIONS};
 use super::upload_batch_shift_tests::{blob, OPERATIONS};
 use super::upload_stand::{request, ScriptedPreparer, Stand, BLOB};
@@ -69,7 +69,7 @@ fn source_files(directory: &Path, count: usize) -> Vec<std::path::PathBuf> {
 fn remove_all(paths: &[std::path::PathBuf]) { for path in paths { std::fs::remove_file(path).unwrap(); } }
 
 fn file_source(path: &Path, prepared: bool) -> WireSource {
-    WireSource::File { path: path.to_str().unwrap().into(), name: None, mime: None, prepare: prepared.then(shrink), max_bytes: None }
+    WireSource::File { path: path.to_str().unwrap().into(), name: None, mime: None, prepare: prepared.then(descriptor), max_bytes: None }
 }
 
 /// P-XFER-23 (D-386): `localUrl` of every upload of a call (a single upload, each item of a batch, a staged file), with and without the prepare step, is the URL of a readable file from the return of the call to the end of the transfer, while the file of the caller is already deleted. Input: the file of the caller deleted at once; the points: call returned, prepare running, prepare ended with the PUT held, the final mutation held (`sending`), the end. Assert: at each point every upload shows a URL with a non-empty file; after the end no URL. Catches: a status whose URL depends on the written size or on the copy of the source that the prepare step removes.
@@ -95,7 +95,7 @@ async fn xfer_prop_local_url() {
                     mutation = Some(stand.script.hold("CreateMoment", LANDED));
                     let (database, source) = (database.clone(), sources[0].clone());
                     tokio::spawn(async move {
-                        let receipt = bound(database.send(if prepared { send(epoch, &source, shrink()) } else { super::upload_stand::clip("Moment", r#"{"text":"A"}"#, "upload_clip", &source, epoch) })).await.unwrap();
+                        let receipt = bound(database.send(if prepared { send(epoch, &source, descriptor()) } else { super::upload_stand::clip("Moment", r#"{"text":"A"}"#, "upload_clip", &source, epoch) })).await.unwrap();
                         (vec![receipt.optimistic_value.as_ref().unwrap().id.clone()], vec![receipt], None)
                     })
                 }

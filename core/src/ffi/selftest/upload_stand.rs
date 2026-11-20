@@ -381,8 +381,8 @@ pub(super) fn shows(rows: &Rows, wanted: WireSyncState) -> bool { rows.0.lock().
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum PrepareEvent {
-    Probe(Vec<u8>, crate::ffi::PrepareKind),
-    Run(u64),
+    Probe(Vec<u8>, Option<Vec<u8>>),
+    Run(u64, Vec<u8>),
     Cancel(u64),
 }
 
@@ -393,6 +393,8 @@ pub(super) struct ScriptedPreparer {
     holds: Mutex<VecDeque<Arc<Hold>>>,
     failures: Mutex<VecDeque<String>>,
     outcomes: Mutex<VecDeque<PrepareOutcome>>,
+    import_outcomes: Mutex<VecDeque<crate::ffi::PrepareImportOutcome>>,
+    imported: Mutex<Vec<crate::ffi::SavedPreparation>>,
     jobs: Mutex<Vec<PrepareJob>>,
     events: Mutex<Vec<PrepareEvent>>,
     cancelled: Mutex<std::collections::HashSet<u64>>,
@@ -402,7 +404,7 @@ pub(super) struct ScriptedPreparer {
 
 impl ScriptedPreparer {
     pub(super) fn new(probe: ProbeOutcome, bytes: &[u8], fractions: &[f64]) -> Arc<Self> {
-        Arc::new(Self { probe, bytes: bytes.to_vec(), fractions: fractions.to_vec(), holds: Mutex::default(), failures: Mutex::default(), outcomes: Mutex::default(), jobs: Mutex::default(), events: Mutex::default(), cancelled: Mutex::default(), running: Default::default(), peak: Default::default() })
+        Arc::new(Self { probe, bytes: bytes.to_vec(), fractions: fractions.to_vec(), holds: Mutex::default(), failures: Mutex::default(), outcomes: Mutex::default(), import_outcomes: Mutex::default(), imported: Mutex::default(), jobs: Mutex::default(), events: Mutex::default(), cancelled: Mutex::default(), running: Default::default(), peak: Default::default() })
     }
 
     pub(super) fn hold_next(&self) -> Arc<Hold> {
@@ -413,11 +415,14 @@ impl ScriptedPreparer {
 
     pub(super) fn fail_next(&self, message: &str) { self.failures.lock().unwrap().push_back(message.into()) }
     pub(super) fn outcome_next(&self, outcome: PrepareOutcome) { self.outcomes.lock().unwrap().push_back(outcome) }
+    pub(super) fn import_next(&self, outcome: crate::ffi::PrepareImportOutcome) { self.import_outcomes.lock().unwrap().push_back(outcome) }
+    pub(super) fn imported_settings(&self) -> Vec<crate::ffi::SavedPreparation> { self.imported.lock().unwrap().clone() }
     pub(super) fn jobs(&self) -> Vec<PrepareJob> { self.jobs.lock().unwrap().clone() }
     pub(super) fn events(&self) -> Vec<PrepareEvent> { self.events.lock().unwrap().clone() }
     pub(super) fn probes(&self) -> Vec<Vec<u8>> { self.events().into_iter().filter_map(|event| if let PrepareEvent::Probe(content, _) = event { Some(content) } else { None }).collect() }
-    pub(super) fn kinds(&self) -> Vec<crate::ffi::PrepareKind> { self.events().into_iter().filter_map(|event| if let PrepareEvent::Probe(_, kind) = event { Some(kind) } else { None }).collect() }
-    pub(super) fn runs(&self) -> Vec<u64> { self.events().into_iter().filter_map(|event| if let PrepareEvent::Run(attempt) = event { Some(attempt) } else { None }).collect() }
+    pub(super) fn descriptors(&self) -> Vec<Option<Vec<u8>>> { self.events().into_iter().filter_map(|event| if let PrepareEvent::Probe(_, descriptor) = event { Some(descriptor) } else { None }).collect() }
+    pub(super) fn runs(&self) -> Vec<u64> { self.events().into_iter().filter_map(|event| if let PrepareEvent::Run(attempt, _) = event { Some(attempt) } else { None }).collect() }
+    pub(super) fn started_sources(&self) -> Vec<Vec<u8>> { self.events().into_iter().filter_map(|event| if let PrepareEvent::Run(_, content) = event { Some(content) } else { None }).collect() }
     pub(super) fn cancels(&self) -> Vec<u64> { self.events().into_iter().filter_map(|event| if let PrepareEvent::Cancel(attempt) = event { Some(attempt) } else { None }).collect() }
     pub(super) fn peak_runs(&self) -> usize { self.peak.load(Ordering::SeqCst) }
     pub(super) fn calls(&self) -> usize { self.events().iter().filter(|event| !matches!(event, PrepareEvent::Cancel(_))).count() }
@@ -431,13 +436,13 @@ impl Drop for Running<'_> {
 
 #[async_trait]
 impl Preparer for ScriptedPreparer {
-    async fn probe(&self, path: String, kind: crate::ffi::PrepareKind) -> ProbeOutcome {
-        self.events.lock().unwrap().push(PrepareEvent::Probe(std::fs::read(&path).unwrap_or_default(), kind));
+    async fn probe(&self, path: String, descriptor: Option<Vec<u8>>, _: Option<String>) -> ProbeOutcome {
+        self.events.lock().unwrap().push(PrepareEvent::Probe(std::fs::read(&path).unwrap_or_default(), descriptor));
         self.probe.clone()
     }
 
     async fn run(&self, job: PrepareJob, progress: Arc<PrepareProgress>) -> PrepareOutcome {
-        self.events.lock().unwrap().push(PrepareEvent::Run(job.attempt_id));
+        self.events.lock().unwrap().push(PrepareEvent::Run(job.attempt_id, std::fs::read(&job.source).unwrap()));
         self.jobs.lock().unwrap().push(job.clone());
         let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
         self.peak.fetch_max(now, Ordering::SeqCst);
@@ -451,7 +456,7 @@ impl Preparer for ScriptedPreparer {
             let _dropped = Dropped(hold.clone());
             hold.gate.notified().await;
         }
-        if self.cancelled.lock().unwrap().contains(&job.attempt_id) { return PrepareOutcome::Failed { message: "cancelled".into() } }
+        if self.cancelled.lock().unwrap().contains(&job.attempt_id) { return PrepareOutcome::Cancelled }
         for fraction in late { progress.report(*fraction); }
         if let Some(outcome) = self.outcomes.lock().unwrap().pop_front() { return outcome }
         if let Some(message) = self.failures.lock().unwrap().pop_front() { return PrepareOutcome::Failed { message } }
@@ -463,21 +468,17 @@ impl Preparer for ScriptedPreparer {
         self.cancelled.lock().unwrap().insert(attempt_id);
         self.events.lock().unwrap().push(PrepareEvent::Cancel(attempt_id));
     }
+
+    fn import_descriptor(&self, saved: crate::ffi::SavedPreparation) -> crate::ffi::PrepareImportOutcome {
+        crate::lock::assert_no_library_lock("saved preparation import");
+        self.imported.lock().unwrap().push(saved);
+        self.import_outcomes.lock().unwrap().pop_front().unwrap_or_else(|| crate::ffi::PrepareImportOutcome::Failed { message: "no saved preparation was configured".into() })
+    }
 }
 
 /// The source of `supply_source` that carries the prepare settings of the transfer.
-pub(super) fn source_of(path: &Path, values_json: &str, prepare: &crate::ffi::upload_wire::WirePrepare) -> crate::ffi::upload_wire::WireUploadSource {
-    crate::ffi::upload_wire::WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: values_json.into(), variables_json: "{}".into(), prepare: Some(prepare.clone()), max_bytes: None }
-}
-
-/// The video the platform read: `reencode` is a source that the table of limits cannot keep as it is, `keys` are the metadata keys of the file.
-pub(super) fn video_probe(keys: &[&str], reencode: bool) -> ProbeOutcome {
-    ProbeOutcome::Video { source: crate::prepare::VideoSource { width: 1280, height: 720, rotation_degrees: if reencode { 90 } else { 0 }, frame_rate: 30.0, bitrate: Some(1_000_000), mp4_h264_aac: true }, metadata_keys: keys.iter().map(|key| key.to_string()).collect() }
-}
-
-/// The settings of a video that say what a device that cannot decode the source does: the field of the settings comes with the type.
-pub(super) fn cannot_decode_settings(upload_source: bool) -> crate::ffi::upload_wire::WirePrepare {
-    crate::ffi::upload_wire::WirePrepare::Video { limits: Some(crate::prepare::default_video_limits()), mirror: false, on_cannot_decode: if upload_source { crate::ffi::upload_wire::CannotDecode::UploadSource } else { crate::ffi::upload_wire::CannotDecode::Fail } }
+pub(super) fn source_of(path: &Path, values_json: &str, prepare: &[u8]) -> crate::ffi::upload_wire::WireUploadSource {
+    crate::ffi::upload_wire::WireUploadSource { path: path.to_str().unwrap().into(), name: None, mime: None, values_json: values_json.into(), variables_json: "{}".into(), prepare: Some(prepare.to_vec()), max_bytes: None }
 }
 
 /// The typed reason of a failed upload: the field of the failure comes with the type.

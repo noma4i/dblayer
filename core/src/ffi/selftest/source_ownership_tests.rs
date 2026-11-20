@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use super::crash_image_support::{copy_tree, drained, files_of, over_images, reopen, reopen_preparing, unaccepted, Capture};
 use super::rig_tests::bound;
 use super::upload_batch_shift_tests::{blob, items, OPERATIONS};
-use super::upload_prepare_tests::{probed_image, send, shrink, PREPARED, SOURCE};
+use super::upload_prepare_tests::{probed_image, send, descriptor, PREPARED, SOURCE};
 use super::upload_stand::{clip, ScriptedPreparer, Stand, BLOB, CREATE_MOMENT};
 use crate::ffi::upload_wire::{WireSource, WireUploadBatch, WireUploadItem};
 
@@ -34,7 +34,7 @@ async fn source_file_of_the_caller_is_not_read_after_the_receipt() {
     let run_hold = preparer.hold_next();
     stand.script.data("CreateBlob", BLOB);
     stand.script.data("CreateMoment", LANDED);
-    let receipt = bound(database.send(send(epoch, &file, shrink()))).await.unwrap();
+    let receipt = bound(database.send(send(epoch, &file, descriptor()))).await.unwrap();
     run_hold.entered().await;
     std::fs::remove_file(&file).unwrap();
     let kept_files = directory.path().join("kept.files");

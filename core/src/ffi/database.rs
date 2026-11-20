@@ -207,8 +207,8 @@ impl Database {
     #[cfg(test)]
     pub(crate) fn store_revision(&self) -> Result<i64, crate::store::StoreError> { self.db.revision_seq() }
 
-    fn start(config: Config, models_json: String, (transport, endpoint): (Option<Arc<dyn Transport>>, Option<String>), clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
-        Self::start_with(config, models_json, clock, |db, _| {
+    fn start(config: Config, models_json: String, (transport, endpoint): (Option<Arc<dyn Transport>>, Option<String>), (clock, preparer): (Arc<dyn Clock>, Option<Arc<dyn super::Preparer>>)) -> Result<Arc<Self>, DbError> {
+        Self::start_prepared(config, models_json, (clock, preparer), |db, _| {
             #[cfg(test)]
             if transport.is_some() { super::tests::signed_session_tests::signed_session(db); }
             let _ = db;
@@ -216,10 +216,21 @@ impl Database {
         })
     }
 
+    #[cfg(test)]
     pub(super) fn start_with(
         config: Config,
         models_json: String,
         clock: Arc<dyn Clock>,
+        wire: impl FnOnce(&Arc<Store>, &Arc<dyn Clock>) -> Result<Wiring, DbError>,
+    ) -> Result<Arc<Self>, DbError> {
+        Self::start_prepared(config, models_json, (clock, None), wire)
+    }
+
+    /// The saved prepare settings are imported before the owners restore the transfers.
+    fn start_prepared(
+        config: Config,
+        models_json: String,
+        (clock, preparer): (Arc<dyn Clock>, Option<Arc<dyn super::Preparer>>),
         wire: impl FnOnce(&Arc<Store>, &Arc<dyn Clock>) -> Result<Wiring, DbError>,
     ) -> Result<Arc<Self>, DbError> {
         let Specs { models, operations } = Specs::parse(&models_json)?;
@@ -227,10 +238,11 @@ impl Database {
         let uploads = upload_steps_of(&models)?;
         let keys: Vec<String> = models.iter().map(|model| model.key.to_string()).collect();
         let db = Arc::new(Store::open_models(config.path.as_deref().map(Path::new), models, clock.clone())?);
+        if let Some(preparer) = &preparer { crate::store::import_saved_preparations(&db, preparer.as_ref())?; }
         let Wiring { transport, encrypted, cable, seal } = wire(&db, &clock)?;
         let reads = crate::owners::read::ReadOperations::default();
         let jobs: Arc<super::upload_rounds::RoundJobsSlot> = Arc::default();
-        let preparer: Arc<OnceLock<Arc<dyn super::Preparer>>> = Arc::default();
+        let preparer: Arc<OnceLock<Arc<dyn super::Preparer>>> = Arc::new(preparer.map_or_else(OnceLock::new, OnceLock::from));
         let upload_config = crate::owners::write::upload::UploadConfig::default();
         let life = Self::build_life(&db, transport.clone(), encrypted.as_ref(), cable, seal, reads.clone(), (uploads.clone(), jobs.clone(), preparer.clone()), &upload_config)?;
         let remote = transport.is_some();
@@ -255,7 +267,7 @@ impl Database {
                     let http = http.ok_or_else(|| DbError::Invalid { detail: "encrypted requires http".into() })?;
                     let transport = transport.ok_or_else(|| DbError::Invalid { detail: "encrypted requires transport".into() })?;
                     let _entered = executor()?.enter();
-                    Self::start_with(config, models_json, clock, |db, clock| {
+                    Self::start_prepared(config, models_json, (clock, preparer.clone()), |db, clock| {
                         super::encrypted::wire(db, clock, encrypted, http, credentials, transport)
                     })?
                 }
@@ -263,10 +275,9 @@ impl Database {
                     if credentials.is_some() || http.is_some() {
                         return Err(DbError::Invalid { detail: "credentials and http require encrypted".into() });
                     }
-                    Self::start(config, models_json, (transport, endpoint), clock)?
+                    Self::start(config, models_json, (transport, endpoint), (clock, preparer.clone()))?
                 }
             };
-            if let Some(preparer) = preparer { let _ = database.preparer.set(preparer); }
             database.partial_operations.store(partial_operations, std::sync::atomic::Ordering::SeqCst);
             super::transport::follow_life(&database.life);
             Ok(database)

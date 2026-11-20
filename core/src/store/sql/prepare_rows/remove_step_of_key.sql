@@ -1,1 +1,0 @@
-DELETE FROM sync_upload_prepare_step WHERE transfer_id IN (SELECT transfer_id FROM sync_upload WHERE model = ?1 AND row_id = ?2 AND action = ?3)

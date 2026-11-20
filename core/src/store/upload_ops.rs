@@ -71,6 +71,7 @@ pub(super) fn put_upload(connection: &Connection, row: &UploadRow, kind: UploadK
 pub(super) fn remove_upload(connection: &Connection, key: &str) -> Result<(), StoreError> {
     let [model, id, action] = key_parts(key)?;
     super::prepare_rows::remove_prepare_of(connection, [model, id, action])?;
+    super::prepare_import::remove_saved_of(connection, [model, id, action])?;
     connection.execute(include_str!("sql/upload_ops/remove_upload_delete_sync_upload.sql"), params![model, id, action])?;
     connection.execute(include_str!("sql/upload_ops/put_upload_delete_sync_upload_part.sql"), params![model, id, action])?;
     connection.execute(include_str!("sql/upload_ops/remove_upload_delete_sync_upload_batch.sql"), [])?;

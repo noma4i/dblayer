@@ -1,0 +1,1 @@
+DELETE FROM restore_failed WHERE source_table IN ('sync_upload_prepare', 'sync_upload_prepare_step') AND json_extract(columns, '$.transfer_id') IN (SELECT transfer_id FROM sync_upload WHERE model = ?1 AND row_id = ?2 AND action = ?3)

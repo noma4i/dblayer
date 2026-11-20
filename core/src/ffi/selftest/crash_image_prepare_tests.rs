@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use super::crash_image_support::{copy_tree, drained, files_of, over_images, reopen_preparing, saved_work, unaccepted, Capture};
 use super::rig_tests::bound;
-use super::upload_prepare_tests::{probed_image, send, send_limited, shrink, upload_of, PREPARED, SOURCE};
+use super::upload_prepare_tests::{probed_image, send, send_limited, descriptor, files_left, upload_of, PREPARED, SOURCE};
 use crate::ffi::wire::WireUploadStatus;
 use super::upload_stand::{ScriptedPreparer, Stand, BLOB, CREATE_MOMENT};
 
@@ -14,63 +14,73 @@ fn landed(database: &crate::ffi::Database) -> bool { database.peek_row_now(datab
 /// A process killed after any commit of an upload with a prepare step leaves a file that runs the step again from the copy, finishes the upload with the final mutation sent once and a body that is the prepared file, and never goes back from a landed row.
 #[tokio::test(flavor = "multi_thread")]
 async fn crash_image_prepare() {
-    let directory = tempfile::tempdir().unwrap();
-    let live = directory.path().join("live.sqlite");
-    let file = directory.path().join("clip.jpg");
-    std::fs::write(&file, SOURCE).unwrap();
-    let preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[]);
-    let stand = Stand::new().with_preparer(preparer.clone());
-    let operations = [CREATE_MOMENT];
-    let database = stand.open(Some(&live), &operations).await;
-    let epoch = database.session_epoch();
-    super::crash_image_support::checkpoint_live(&database, &live).await;
-    let base = Capture::begin(&live);
-    let run_hold = preparer.hold_next();
-    let put_hold = stand.puts.hold_next();
-    stand.script.data("CreateBlob", BLOB);
-    stand.script.data("CreateMoment", LANDED);
-    let receipt = bound(database.send(send(epoch, &file, shrink()))).await.unwrap();
-    let kept_files = directory.path().join("kept.files");
-    assert_eq!(upload_of(&database, &receipt.optimistic_value.as_ref().unwrap().id).map(|upload| upload.status), Some(WireUploadStatus::Preparing), "the accepted transfer waits in the prepare step");
-    run_hold.entered().await;
-    copy_tree(&files_of(&live), &kept_files);
-    run_hold.release();
-    put_hold.entered().await;
-    copy_tree(&files_of(&live), &kept_files);
-    put_hold.release();
-    bound(database.confirmed(receipt, false)).await.unwrap();
-    crate::test_wait::settled(&database, "the upload landed", || landed(&database)).await;
-    drained(&database).await;
-    let (capture, _) = base.end(&live);
-    let secret = stand.rig.credentials.inner.value().unwrap();
+    for unchanged in [false, true] {
+        let expected = if unchanged { SOURCE } else { PREPARED };
+        let directory = tempfile::tempdir().unwrap();
+        let live = directory.path().join("live.sqlite");
+        let file = directory.path().join("clip.jpg");
+        std::fs::write(&file, SOURCE).unwrap();
+        let preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[]);
+        if unchanged { preparer.outcome_next(crate::ffi::PrepareOutcome::Unchanged { name: Some("kept.bin".into()), mime: Some("application/x-kept".into()) }); }
+        let stand = Stand::new().with_preparer(preparer.clone());
+        let operations = [CREATE_MOMENT];
+        let database = stand.open(Some(&live), &operations).await;
+        let epoch = database.session_epoch();
+        super::crash_image_support::checkpoint_live(&database, &live).await;
+        let base = Capture::begin(&live);
+        let run_hold = preparer.hold_next();
+        let put_hold = stand.puts.hold_next();
+        stand.script.data("CreateBlob", BLOB);
+        stand.script.data("CreateMoment", LANDED);
+        let receipt = bound(database.send(send(epoch, &file, descriptor()))).await.unwrap();
+        let kept_files = directory.path().join("kept.files");
+        assert_eq!(upload_of(&database, &receipt.optimistic_value.as_ref().unwrap().id).map(|upload| upload.status), Some(WireUploadStatus::Preparing), "the accepted transfer waits in the prepare step");
+        run_hold.entered().await;
+        copy_tree(&files_of(&live), &kept_files);
+        run_hold.release();
+        put_hold.entered().await;
+        copy_tree(&files_of(&live), &kept_files);
+        put_hold.release();
+        bound(database.confirmed(receipt, false)).await.unwrap();
+        crate::test_wait::settled(&database, "the upload landed", || landed(&database)).await;
+        drained(&database).await;
+        let (capture, _) = base.end(&live);
+        let secret = stand.rig.credentials.inner.value().unwrap();
 
-    let cuts = over_images(&capture, &kept_files, |index, image: PathBuf| {
-        let secret = secret.clone();
-        async move {
-            let (saved, _) = saved_work(&image);
-            let unaccepted = unaccepted(&image);
-            let fresh_preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[]);
-            let (fresh, reopened) = reopen_preparing(&image, &secret, &operations, Some(fresh_preparer.clone() as Arc<dyn crate::ffi::Preparer>), |fresh| {
-                fresh.script.data("CreateBlob", BLOB);
-                fresh.script.data("CreateMoment", LANDED);
-            }).await;
-            crate::test_wait::settled(&reopened, "opened", || true).await;
-            drained(&reopened).await;
-            let pairs: std::collections::HashSet<_> = fresh.script.operation_pairs("CreateMoment").into_iter().map(|pair| pair.0).collect();
-            assert!(pairs.len() <= 1, "cut {index}: the row is created by one request: {pairs:?}");
-            let is_landed = landed(&reopened);
-            assert!(is_landed || saved == 0 || unaccepted, "cut {index}: a saved upload is finished");
-            assert!(fresh.puts.bodies.lock().unwrap().iter().all(|body| body.as_slice() == PREPARED), "cut {index}: no byte of the source goes");
-            assert!(fresh_preparer.runs().len() <= 1, "cut {index}: the step runs at most once");
-            let runs = fresh_preparer.runs().len();
-            bound(reopened.close_database()).await.unwrap();
-            (is_landed, saved, runs)
-        }
-    }).await;
-    let landed_cuts: Vec<bool> = cuts.iter().map(|cut| cut.0).collect();
-    assert!(!landed_cuts[0] && *landed_cuts.last().unwrap() && landed_cuts.windows(2).all(|pair| !pair[0] || pair[1]), "{landed_cuts:?}");
-    assert!(cuts.iter().any(|cut| cut.1 > 0 && cut.0 && cut.2 == 1), "a cut holds the upload before the step ends and the step runs again from the copy");
-    database.close_now();
+        let cuts = over_images(&capture, &kept_files, |index, image: PathBuf| {
+            let secret = secret.clone();
+            async move {
+                let (saved, _) = saved_work(&image);
+                let unaccepted = unaccepted(&image);
+                let fresh_preparer = ScriptedPreparer::new(probed_image(), PREPARED, &[]);
+                if unchanged { fresh_preparer.outcome_next(crate::ffi::PrepareOutcome::Unchanged { name: Some("kept.bin".into()), mime: Some("application/x-kept".into()) }); }
+                let (fresh, reopened) = reopen_preparing(&image, &secret, &operations, Some(fresh_preparer.clone() as Arc<dyn crate::ffi::Preparer>), |fresh| {
+                    fresh.script.data("CreateBlob", BLOB);
+                    fresh.script.data("CreateMoment", LANDED);
+                }).await;
+                crate::test_wait::settled(&reopened, "opened", || true).await;
+                drained(&reopened).await;
+                let pairs: std::collections::HashSet<_> = fresh.script.operation_pairs("CreateMoment").into_iter().map(|pair| pair.0).collect();
+                assert!(pairs.len() <= 1, "cut {index}: the row is created by one request: {pairs:?}");
+                let is_landed = landed(&reopened);
+                assert!(is_landed || saved == 0 || unaccepted, "cut {index}: a saved upload is finished");
+                assert!(fresh.puts.bodies.lock().unwrap().iter().all(|body| body.as_slice() == expected), "cut {index}: no byte of the source goes");
+                assert!(fresh_preparer.runs().len() <= 1, "cut {index}: the step runs at most once");
+                assert!(fresh_preparer.jobs().iter().all(|job| job.descriptor == descriptor()), "cut {index}: the descriptor survives every committed cut unchanged");
+                let blobs = fresh.script.variables("CreateBlob");
+                let (name, mime) = if unchanged { ("kept.bin", "application/x-kept") } else { ("ready.jpg", "image/jpeg") };
+                assert!(blobs.iter().all(|variables| variables["filename"] == name && variables["contentType"] == mime), "cut {index}: committed file metadata survives restart");
+                let runs = fresh_preparer.runs().len();
+                bound(reopened.close_database()).await.unwrap();
+                (is_landed, saved, runs)
+            }
+        }).await;
+        let landed_cuts: Vec<bool> = cuts.iter().map(|cut| cut.0).collect();
+        assert!(!landed_cuts[0] && *landed_cuts.last().unwrap() && landed_cuts.windows(2).all(|pair| !pair[0] || pair[1]), "{landed_cuts:?}");
+        assert!(cuts.iter().any(|cut| cut.1 > 0 && cut.0 && cut.2 == 1), "a cut holds the upload before the step ends and the step runs again from the copy");
+        database.close_now();
+
+    }
 }
 
 /// The `max_bytes` of the source survives a process killed while the step runs, or after the copy and before the refusal: the fresh process ends the upload with `too_large` and no transfer request.
@@ -88,7 +98,7 @@ async fn xfer_too_large_after_restart() {
         super::crash_image_support::checkpoint_live(&database, &live).await;
         let base = Capture::begin(&live);
         let run_hold = prepared.then(|| preparer.hold_next());
-        let (prepare, limit) = if prepared { (Some(shrink()), PREPARED.len() as u64 - 1) } else { (None, SOURCE.len() as u64 - 1) };
+        let (prepare, limit) = if prepared { (Some(descriptor()), PREPARED.len() as u64 - 1) } else { (None, SOURCE.len() as u64 - 1) };
         let receipt = bound(database.send(send_limited(database.session_epoch(), &file, prepare, Some(limit)))).await.unwrap();
         let id = receipt.optimistic_value.as_ref().unwrap().id.clone();
         let kept_files = directory.path().join("kept.files");
@@ -120,5 +130,77 @@ async fn xfer_too_large_after_restart() {
         }).await;
         assert!(cuts.iter().any(|cut| cut.0), "prepared={prepared}: a cut holds the accepted upload");
         assert!(cuts.iter().filter(|cut| cut.0).all(|cut| cut.1.as_deref() == Some("too_large") && cut.2 == (0, 0)), "prepared={prepared}: {cuts:?}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_saved_preparation_is_imported_before_its_upload_resumes() {
+    use crate::ffi::{PrepareImportOutcome, ReadRequest, ReadValue, Preparer};
+    for mode in ["imported", "refused", "missing"] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("saved.sqlite");
+        let source = directory.path().join("source");
+        std::fs::write(&source, SOURCE).unwrap();
+        let producer = ScriptedPreparer::new(probed_image(), PREPARED, &[]);
+        let hold = producer.hold_next();
+        let stand = Stand::new().with_preparer(producer);
+        let database = stand.open(Some(&path), &[CREATE_MOMENT]).await;
+        let receipt = bound(database.send(send(database.session_epoch(), &source, descriptor()))).await.unwrap();
+        let id = receipt.optimistic_value.unwrap().id;
+        hold.entered().await;
+        let secret = stand.rig.credentials.inner.value().unwrap();
+        bound(database.close_database()).await.unwrap();
+        drop(database);
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection.execute_batch(include_str!("../../../../fixtures/saved_preparation.sql")).unwrap();
+        drop(connection);
+        let producer = ScriptedPreparer::new(probed_image(), PREPARED, &[]);
+        let imported_descriptor = vec![17, 0, 128, 255, 0, 1];
+        producer.import_next(if mode == "imported" {
+            PrepareImportOutcome::Done { descriptor: imported_descriptor.clone() }
+        } else {
+            PrepareImportOutcome::Failed { message: "the saved settings are refused".into() }
+        });
+        let port = (mode != "missing").then(|| producer.clone() as Arc<dyn Preparer>);
+        let (fresh, database) = reopen_preparing(&path, &secret, &[CREATE_MOMENT], port, |fresh| {
+            fresh.script.data("CreateBlob", BLOB);
+            fresh.script.data("CreateMoment", LANDED);
+        }).await;
+        let saved_count = || {
+            rusqlite::Connection::open(&path).unwrap().query_row(
+                "SELECT count(*) FROM restore_failed WHERE source_table IN ('sync_upload_prepare', 'sync_upload_prepare_step')",
+                [], |row| row.get::<_, i64>(0),
+            ).unwrap()
+        };
+        if mode != "missing" {
+            let imports = producer.imported_settings();
+            assert_eq!(imports.len(), 1, "{mode}: one complete settings snapshot");
+            assert_eq!(imports[0].columns.get("audio_bitrate"), Some(&Some("128000".into())));
+            assert_eq!(imports[0].columns.get("recode_above_bytes"), Some(&None));
+            let mut starts: Vec<_> = imports[0].children.iter().map(|row| row["from_long_side"].clone().unwrap()).collect();
+            starts.sort();
+            assert_eq!(starts, ["0", "720"]);
+        }
+        if mode == "imported" {
+            crate::test_wait::settled(&database, "the imported transfer lands", || landed(&database)).await;
+            assert_eq!(producer.jobs().len(), 1);
+            assert_eq!(producer.jobs()[0].descriptor, imported_descriptor);
+            assert_eq!(*fresh.puts.bodies.lock().unwrap(), vec![PREPARED.to_vec()]);
+            assert_eq!(fresh.script.count("CreateMoment"), 1);
+            assert_eq!(saved_count(), 0);
+        } else {
+            let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Blob {
+                model: "Moment".into(), id: id.clone(), action: "upload_clip".into(),
+            });
+            let Some(ReadValue::Status { upload, .. }) = bound(stream.pull_next()).await else { panic!("{mode}: the transfer status is missing") };
+            assert_eq!(upload.status, WireUploadStatus::Failed);
+            assert_eq!((fresh.script.count("CreateBlob"), fresh.puts.bodies.lock().unwrap().len()), (0, 0));
+            assert_eq!(saved_count(), 3);
+            assert!(files_left(&path) > 0);
+            bound(database.discard(database.session_epoch(), "Moment".into(), id, Some("upload_clip".into()))).await.unwrap();
+            crate::test_wait::settled(&database, "the refused transfer is removed", || files_left(&path) == 0).await;
+            assert_eq!(saved_count(), 0);
+        }
+        bound(database.close_database()).await.unwrap();
     }
 }

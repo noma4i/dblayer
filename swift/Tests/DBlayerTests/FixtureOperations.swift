@@ -48,7 +48,7 @@ public struct Clip: DBModel {
         if let value = title { values_["title"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
     }
-    nonisolated(nonsending) public static func createFile(id: String, source: String, widgets: [StickerWidgetInput]? = nil, prepare: Prepare? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
+    nonisolated(nonsending) public static func createFile(id: String, source: String, widgets: [StickerWidgetInput]? = nil, prepare: Data? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         var variables_: [String: JSONValue] = [:]
         if let value = widgets { variables_["widgets"] = try JSONValue.encode(value) }
         return try await scope_.upload(Self.self, id: id, action: "create_file", UploadRequest(path: source, variables: variables_, prepare: prepare, maxBytes: maxBytes))
@@ -56,7 +56,7 @@ public struct Clip: DBModel {
     nonisolated(nonsending) public func createFile(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(Self.self, id: id, action: "create_file", request)
     }
-    nonisolated(nonsending) public static func stageCreateFile(source: String, prepare: Prepare? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> StagedUpload<Self> {
+    nonisolated(nonsending) public static func stageCreateFile(source: String, prepare: Data? = nil, maxBytes: UInt64? = nil, in scope_: AccountScope) async throws -> StagedUpload<Self> {
         try await scope_.stage(Self.self, action: "create_file", UploadRequest(path: source, prepare: prepare, maxBytes: maxBytes))
     }
 }

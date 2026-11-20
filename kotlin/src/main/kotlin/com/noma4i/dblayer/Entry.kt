@@ -63,11 +63,12 @@ object DBlayer {
         operations: List<GraphQLOperation> = emptyList(),
         http: EncryptedHttp? = null,
         uploadNotification: UploadNotification,
+        preparer: Preparer? = null,
     ) {
         offCaller {
             val dataSync = dataSyncDeclared(android.os.Build.VERSION.SDK_INT) { context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty().toList() }
             UploadNotifications.store(context, uploadNotification)
-            val ports = OpenPorts(transport, encrypted, credentials, http, endpoint, OkHttpTransport(headers), dataSync, SystemPreparer(context.applicationContext))
+            val ports = OpenPorts(transport, encrypted, credentials, http, endpoint, OkHttpTransport(headers), dataSync, preparer)
             NetworkStatus(context)
             val made = opener.open(Config(path), modelsJson, OpenOptions(definitions(operations)), ports, SystemObservers(context))
             made.setRoundJobs(UploadRounds(context.applicationContext, made))

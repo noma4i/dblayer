@@ -4,6 +4,15 @@ import BackgroundTasks
 import UIKit
 #endif
 
+final class Serial<Value>: @unchecked Sendable {
+  private let queue = DispatchQueue(label: "dblayer.prepare.state")
+  private var value: Value
+
+  init(_ value: Value) { self.value = value }
+
+  func update<Result>(_ body: (inout Value) -> Result) -> Result { queue.sync { body(&value) } }
+}
+
 protocol RoundHandle: AnyObject, Sendable {
   func progress(_ fraction: Double)
   func finish(success: Bool)

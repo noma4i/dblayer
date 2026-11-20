@@ -1,1 +1,0 @@
-DELETE FROM sync_upload_prepare_step WHERE transfer_id = ?1

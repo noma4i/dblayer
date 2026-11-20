@@ -296,9 +296,9 @@ data class Asset(
         val position = Column<Asset, Long>("position")
         fun where(condition: Condition) = Query("Asset", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Asset", this, ids)
-        suspend fun createFile(account: AccountScope, id: String, source: String, prepare: Prepare? = null, maxBytes: ULong? = null): MutationReceipt<Asset> =
+        suspend fun createFile(account: AccountScope, id: String, source: String, prepare: ByteArray? = null, maxBytes: ULong? = null): MutationReceipt<Asset> =
             account.upload(this, id, "create_file", UploadRequest(source, variables = buildJsonObject {  }, prepare = prepare, maxBytes = maxBytes))
-        suspend fun stageCreateFile(account: AccountScope, source: String, prepare: Prepare? = null, maxBytes: ULong? = null): StagedUpload<Asset> =
+        suspend fun stageCreateFile(account: AccountScope, source: String, prepare: ByteArray? = null, maxBytes: ULong? = null): StagedUpload<Asset> =
             account.stage(Asset, "create_file", UploadRequest(source, prepare = prepare, maxBytes = maxBytes))
         suspend fun create(clientKey: String, size: Long, position: Long? = null, account: AccountScope? = null): MutationReceipt<Asset> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
@@ -542,13 +542,13 @@ data class Container(
             var built_ = Query("Container", this, relation = "shelf", params = buildJsonObject { this.put("shelf", jsonValue(shelf)) })
             return built_
         }
-        suspend fun createPhoto(account: AccountScope, id: String, source: String, prepare: Prepare? = null, maxBytes: ULong? = null): MutationReceipt<Container> =
+        suspend fun createPhoto(account: AccountScope, id: String, source: String, prepare: ByteArray? = null, maxBytes: ULong? = null): MutationReceipt<Container> =
             account.upload(this, id, "create_photo", UploadRequest(source, variables = buildJsonObject {  }, prepare = prepare, maxBytes = maxBytes))
-        suspend fun stageCreatePhoto(account: AccountScope, source: String, prepare: Prepare? = null, maxBytes: ULong? = null): StagedUpload<Container> =
+        suspend fun stageCreatePhoto(account: AccountScope, source: String, prepare: ByteArray? = null, maxBytes: ULong? = null): StagedUpload<Container> =
             account.stage(Container, "create_photo", UploadRequest(source, prepare = prepare, maxBytes = maxBytes))
-        suspend fun updatePhoto(account: AccountScope, id: String, source: String, prepare: Prepare? = null, maxBytes: ULong? = null): MutationReceipt<Container> =
+        suspend fun updatePhoto(account: AccountScope, id: String, source: String, prepare: ByteArray? = null, maxBytes: ULong? = null): MutationReceipt<Container> =
             account.upload(this, id, "update_photo", UploadRequest(source, variables = buildJsonObject {  }, prepare = prepare, maxBytes = maxBytes))
-        suspend fun stageUpdatePhoto(account: AccountScope, source: String, prepare: Prepare? = null, maxBytes: ULong? = null): StagedUpload<Container> =
+        suspend fun stageUpdatePhoto(account: AccountScope, source: String, prepare: ByteArray? = null, maxBytes: ULong? = null): StagedUpload<Container> =
             account.stage(Container, "update_photo", UploadRequest(source, prepare = prepare, maxBytes = maxBytes))
         suspend fun create(title: String, shareUrl: String? = null, isPublic: Boolean? = null, shelves: List<ContainerShelf>? = null, account: AccountScope? = null): MutationReceipt<Container> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
@@ -1080,9 +1080,9 @@ data class Moment(
             return built_
         }
         suspend fun vibeFeedEdge(vibeId: String, id: String, account: AccountScope? = null): MomentVibeFeedEdge? = Moment.vibeFeed(vibeId).edgeValues(id, account)?.let { MomentVibeFeedEdge(it) }
-        suspend fun uploadClip(account: AccountScope, id: String, source: String, prepare: Prepare? = null, maxBytes: ULong? = null): AnsweredReceipt<Moment, MomentUploadClipResult> =
+        suspend fun uploadClip(account: AccountScope, id: String, source: String, prepare: ByteArray? = null, maxBytes: ULong? = null): AnsweredReceipt<Moment, MomentUploadClipResult> =
             account.upload(this, id, "upload_clip", UploadRequest(source, variables = buildJsonObject {  }, prepare = prepare, maxBytes = maxBytes)).answered(MomentUploadClipResult.serializer())
-        suspend fun stageUploadClip(account: AccountScope, source: String, prepare: Prepare? = null, maxBytes: ULong? = null): StagedUpload<Moment> =
+        suspend fun stageUploadClip(account: AccountScope, source: String, prepare: ByteArray? = null, maxBytes: ULong? = null): StagedUpload<Moment> =
             account.stage(Moment, "upload_clip", UploadRequest(source, prepare = prepare, maxBytes = maxBytes))
         suspend fun create(text: String? = null, media: JsonElement? = null, account: AccountScope? = null): MutationReceipt<Moment> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
@@ -1722,9 +1722,9 @@ data class CurrentUser(
             if (keepOld != null) this.put("keepOld", jsonValue(keepOld))
             if (skipAssign != null) this.put("skipAssign", jsonValue(skipAssign))
         }
-        suspend fun updatePhoto(account: AccountScope, source: String, keepOld: Boolean? = null, skipAssign: Boolean? = null, prepare: Prepare? = null, maxBytes: ULong? = null): AnsweredReceipt<CurrentUser, CurrentUserUpdatePhotoResult> =
+        suspend fun updatePhoto(account: AccountScope, source: String, keepOld: Boolean? = null, skipAssign: Boolean? = null, prepare: ByteArray? = null, maxBytes: ULong? = null): AnsweredReceipt<CurrentUser, CurrentUserUpdatePhotoResult> =
             account.upload(this, "singleton", "update_photo", UploadRequest(source, variables = buildJsonObject { if (keepOld != null) this.put("keepOld", jsonValue(keepOld)); if (skipAssign != null) this.put("skipAssign", jsonValue(skipAssign)) }, prepare = prepare, maxBytes = maxBytes)).answered(CurrentUserUpdatePhotoResult.serializer())
-        suspend fun stageUpdatePhoto(account: AccountScope, source: String, prepare: Prepare? = null, maxBytes: ULong? = null): StagedUpload<CurrentUser> =
+        suspend fun stageUpdatePhoto(account: AccountScope, source: String, prepare: ByteArray? = null, maxBytes: ULong? = null): StagedUpload<CurrentUser> =
             account.stage(CurrentUser, "update_photo", UploadRequest(source, prepare = prepare, maxBytes = maxBytes))
         suspend fun create(name: String, account: AccountScope? = null): MutationReceipt<CurrentUser> = onAccountOf(account) { database_, ordered_, epoch_ ->
             val values_ = buildJsonObject {
