@@ -185,7 +185,7 @@ impl Facts {
                     self.push_fx(WindowEffect::Cancel { request: load.step, attempt: load.attempt });
                 }
                 self.emit(Emit::CancelRetry { request: load.request });
-                Transition(WinState::waiting(load.force, load.page, load.reason))
+                Transition(WinState::waiting(load.force, load.page, load.reason, load.attempts))
             }
             Ev::Stale { cause } if self.covers(*cause) => {
                 if self.reads_node && !load.pinning && matches!(cause, StaleCause::Change { .. }) { load.marked = true; }
@@ -267,7 +267,7 @@ impl Facts {
     }
 
     #[state]
-    fn waiting(&mut self, context: &mut Ctx<'_>, force: &mut bool, page: &mut u32, reason: &mut RequestReason, event: &Ev) -> Outcome<WinState> {
+    fn waiting(&mut self, context: &mut Ctx<'_>, force: &mut bool, page: &mut u32, reason: &mut RequestReason, attempts: &mut u32, event: &Ev) -> Outcome<WinState> {
         self.answer_base.set(-1);
         self.env(event);
         match event {
@@ -277,7 +277,7 @@ impl Facts {
                     self.drop_fresh();
                     return Transition(WinState::idle());
                 }
-                if self.is_online() && !self.deferred() { self.leave_waiting(context, (*force, *reason), *page) } else { Handled }
+                if self.is_online() && !self.deferred() { self.leave_waiting(context, (*force, *reason), (*page, *attempts)) } else { Handled }
             }
             Ev::Online { online: true, .. } if self.deferred() => {
                 Self::defer_cause(reason, RequestReason::Reconnect);
@@ -291,8 +291,8 @@ impl Facts {
                 Self::defer_cause(reason, if matches!(cause, StaleCause::Change { .. }) { RequestReason::Event } else { RequestReason::Reconnect });
                 Handled
             }
-            Ev::Online { online: true, .. } => self.leave_waiting(context, (*force, RequestReason::Reconnect), *page),
-            Ev::PowerSaving { .. } if self.is_online() && !self.deferred() => self.leave_waiting(context, (*force, *reason), *page),
+            Ev::Online { online: true, .. } => self.leave_waiting(context, (*force, RequestReason::Reconnect), (*page, *attempts)),
+            Ev::PowerSaving { .. } if self.is_online() && !self.deferred() => self.leave_waiting(context, (*force, *reason), (*page, *attempts)),
             Ev::OfflineRefused { message } => {
                 self.outcome = LastLoad::Failed(crate::ffi::DbError::Offline { detail: message.clone() });
                 self.announce();
@@ -306,7 +306,7 @@ impl Facts {
             Ev::InterestPlus { id, .. } => {
                 self.add_interest(*id);
                 if self.is_online() && !self.deferred() {
-                    return self.leave_waiting(context, (*force, *reason), *page);
+                    return self.leave_waiting(context, (*force, *reason), (*page, *attempts));
                 }
                 self.announce();
                 Handled
@@ -319,7 +319,7 @@ impl Facts {
                 self.join_load(*id, *goal, *page);
                 if *wider && *goal != Goal::Next { *force = true; *reason = RequestReason::Refresh; }
                 if self.is_online() && !self.deferred() {
-                    return self.leave_waiting(context, (*force, *reason), *page);
+                    return self.leave_waiting(context, (*force, *reason), (*page, *attempts));
                 }
                 Handled
             }

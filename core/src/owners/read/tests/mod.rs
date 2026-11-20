@@ -12,3 +12,4 @@ mod schema_io_tests;
 mod window_io_tests;
 mod windows_order_tests;
 mod windows_pin_tests;
+mod windows_path_tests;

@@ -215,7 +215,7 @@ impl Facts {
             self.emit(Emit::Pin { epoch: self.epoch, request });
             WinState::loading(self.issue(request, attempt, page, force, reason))
         } else {
-            WinState::waiting(force, page, reason)
+            WinState::waiting(force, page, reason, 0)
         };
         if announce {
             self.announce();
@@ -228,13 +228,13 @@ impl Facts {
         if *reason == RequestReason::Reconnect && cause == RequestReason::Event { *reason = RequestReason::Event; }
     }
 
-    /// A window that waited goes to the network: `Loading` with a new request.
-    pub(super) fn leave_waiting(&mut self, ctx: &mut Ctx<'_>, (force, reason): (bool, RequestReason), page: u32) -> Outcome<WinState> {
+    /// A window that waited goes to the network: `Loading` with a new request. `attempts` is the send count of the load that went to `Waiting` (D-491): the same logical request keeps it, a new load starts at 0.
+    pub(super) fn leave_waiting(&mut self, ctx: &mut Ctx<'_>, (force, reason): (bool, RequestReason), (page, attempts): (u32, u32)) -> Outcome<WinState> {
         self.gap_wait = false;
         let (request, attempt) = ctx.request();
         self.emit(Emit::Pin { epoch: self.epoch, request });
         self.announce();
-        Transition(WinState::loading(self.issue(request, attempt, page, force, reason)))
+        Transition(WinState::loading(Load { attempts, ..self.issue(request, attempt, page, force, reason) }))
     }
 
     /// A load of the first page of a media window starts with a check of its marker; every other load asks for a page.
