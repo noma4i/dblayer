@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Ping the cable after 25 seconds without an incoming frame; accept only the matching pong.
+
 ### Added
 
 - Add the `trace` flag of `UrlSessionTransport`: one development `os_log` line per HTTP request, file PUT and cable event.

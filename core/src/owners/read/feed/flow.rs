@@ -155,6 +155,7 @@ impl FeedState {
             return;
         }
         found.protocol = Protocol::Established { key_id, send_counter: FIRST_SEND_COUNTER, recv_counter: FIRST_RECV_COUNTER };
+        fx.push(Fx::Keepalive { connection, after: KEEPALIVE });
         fx.push(Fx::CancelHandshake { connection });
         self.ready(connection, fx);
     }
@@ -165,10 +166,19 @@ impl FeedState {
         }
     }
 
-    pub(super) fn keepalive(&mut self, connection: ConnectionId, counter: u64, now: Time, fx: &mut Vec<Fx>) {
+    /// The silence of the cable is measured from the last INCOMING frame: a keepalive that comes too early waits for the rest of the term. With a ping outstanding the pong or its deadline owns the connection.
+    pub(super) fn keepalive(&mut self, connection: ConnectionId, now: Time, fx: &mut Vec<Fx>) {
         if self.mode != Mode::Live || self.active_connection() != Some(connection) { return; }
         let Some(found) = self.active.as_mut() else { return };
-        if found.pong.is_some() || found.last_sent.is_none_or(|sent| now.0.saturating_sub(sent.0) < KEEPALIVE.as_millis() as u64) || !matches!(found.protocol, Protocol::Established { send_counter, .. } if send_counter == counter) { return; }
+        let Protocol::Established { send_counter: counter, .. } = found.protocol else { return };
+        let Some(heard) = found.last_received else { return };
+        if found.pong.is_some() { return; }
+        let silent = now.0.saturating_sub(heard.0);
+        let term = KEEPALIVE.as_millis() as u64;
+        if silent < term {
+            fx.push(Fx::Keepalive { connection, after: Duration::from_millis(term - silent) });
+            return;
+        }
         Self::seal(found, Outgoing::Ping { ts: now.0 }, fx);
         found.pong = Some(counter);
         found.pong_due = Some(Time(now.0.saturating_add(PONG_DEADLINE.as_millis() as u64)));
@@ -195,11 +205,16 @@ impl FeedState {
             return;
         }
         match frame {
-            Frame::Pong => {
+            Frame::Pong { ts } => {
                 if let Some(found) = self.connection_mut(connection) {
-                    found.pong = None;
-                    found.pong_due = None;
-                    fx.push(Fx::CancelPong { connection });
+                    // The pong confirms the outstanding ping only when it echoes that ping's `ts` (the time it was sent: the deadline minus its term).
+                    let outstanding = found.pong_due.map(|due| due.0.saturating_sub(PONG_DEADLINE.as_millis() as u64));
+                    if found.pong.is_some() && outstanding.is_some() && ts.as_u64() == outstanding {
+                        found.pong = None;
+                        found.pong_due = None;
+                        fx.push(Fx::CancelPong { connection });
+                        fx.push(Fx::Keepalive { connection, after: KEEPALIVE });
+                    }
                 }
             }
             Frame::Ping { ts } => {

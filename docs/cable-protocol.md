@@ -162,9 +162,9 @@ Node reads and remote relations default to `5.minutes`. A zero duration always e
 Expiration alone starts no request. Received events still trigger their normal immediate reread.
 The REACTION area may point to several node reads. Then 1 HTTP request runs for each declared model.
 
-While a live subscription exists, 25 seconds without an outgoing frame start an encrypted ping. Incoming frames do not restart this interval.
+While a live subscription exists, 25 seconds without an incoming frame start an encrypted ping. Outgoing frames do not delay it.
 If no pong arrives within 10 seconds, the client closes the socket and reopens it. Other frames do not count as a pong.
-Each ping gets a new session counter value, so delayed pongs cannot confirm a later ping.
+A pong confirms the outstanding ping only when it echoes that ping's `ts`, so delayed pongs cannot confirm a later ping.
 The pending socket receive survives timer, subscription and cancellation events until it returns a frame or the connection closes.
 The client reads its credential before opening a socket. A handshake timeout closes the socket.
 Without subscriptions there are no connections and no timers. Failed opens and closes before any server frame increase a cable backoff: 1 s doubling to 30 s with 20% jitter.

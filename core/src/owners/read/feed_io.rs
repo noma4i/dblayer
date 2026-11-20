@@ -202,7 +202,7 @@ impl FeedIo {
         let id = body["id"].as_str().map(str::to_string);
         Ok(match body["t"].as_str() {
             Some("ping") => Frame::Ping { ts: body["ts"].as_number().cloned().ok_or(ProtocolReason::Frame)? },
-            Some("pong") => Frame::Pong,
+            Some("pong") => Frame::Pong { ts: body["ts"].as_number().cloned().ok_or(ProtocolReason::Frame)? },
             Some("closing") => Frame::Ended,
             Some("error") => Frame::Error { id, retryable: body["retryable"].as_bool().ok_or(ProtocolReason::Frame)? },
             Some("complete") => Frame::Complete { id: id.unwrap_or_default() },

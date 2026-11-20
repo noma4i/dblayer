@@ -120,7 +120,7 @@ pub fn subscription_of(channel: &str) -> &str { channel.split_once('-').map_or(c
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Frame {
     Ping { ts: serde_json::Number },
-    Pong,
+    Pong { ts: serde_json::Number },
     Events { id: String, events: Vec<FramedEvent> },
     /// The server confirmed the subscription of the channel `id`.
     Confirmed { id: String },
@@ -144,13 +144,13 @@ struct Connection {
     id: ConnectionId,
     protocol: Protocol,
     pong: Option<u64>,
-    last_sent: Option<Time>,
+    last_received: Option<Time>,
     pong_due: Option<Time>,
 }
 
 impl Connection {
     /// A connection in its handshake: nothing sent on it yet.
-    fn handshake(id: ConnectionId) -> Self { Self { id, protocol: Protocol::Handshake, pong: None, last_sent: None, pong_due: None } }
+    fn handshake(id: ConnectionId) -> Self { Self { id, protocol: Protocol::Handshake, pong: None, last_received: None, pong_due: None } }
 
     fn goodbye(&self) -> bool { matches!(self.protocol, Protocol::Established { .. }) }
 }
@@ -201,7 +201,7 @@ enum Fx {
     ResubscribeChannel { connection: ConnectionId, channel: Channel, slot: u64, attempt: u32 },
     HandshakeDeadline { connection: ConnectionId },
     CancelHandshake { connection: ConnectionId },
-    Keepalive { connection: ConnectionId, counter: u64 },
+    Keepalive { connection: ConnectionId, after: Duration },
     PongDeadline { connection: ConnectionId, counter: u64 },
     CancelKeepalive { connection: ConnectionId },
     CancelPong { connection: ConnectionId },
@@ -241,7 +241,7 @@ pub enum FeedInput {
     Resubscribe { connection_id: ConnectionId },
     /// The timer of a `Connect`: a connection still in `Handshake` fails.
     HandshakeDeadline { connection_id: ConnectionId },
-    Keepalive { connection_id: ConnectionId, counter: u64 },
+    Keepalive { connection_id: ConnectionId },
     PongDeadline { connection_id: ConnectionId, counter: u64 },
     /// The timer of a closing connection: its drain is over.
     Drain { connection_id: ConnectionId },
@@ -443,7 +443,7 @@ impl Feed {
                 Fx::Drain { connection } => out.push(Effect::Schedule { id: drain_schedule(connection), after: crate::owners::read::CLOSE_DRAIN, input: FeedInput::Drain { connection_id: connection } }),
                 Fx::CancelDrain { connection } => out.push(Effect::Cancel(drain_schedule(connection))),
                 Fx::CancelHandshake { connection } => out.push(Effect::Cancel(ScheduleId(HANDSHAKE_SCHEDULE | connection))),
-                Fx::Keepalive { connection, counter } => out.push(Effect::Schedule { id: ScheduleId(KEEPALIVE_SCHEDULE | connection), after: KEEPALIVE, input: FeedInput::Keepalive { connection_id: connection, counter } }),
+                Fx::Keepalive { connection, after } => out.push(Effect::Schedule { id: ScheduleId(KEEPALIVE_SCHEDULE | connection), after, input: FeedInput::Keepalive { connection_id: connection } }),
                 Fx::PongDeadline { connection, counter } => out.push(Effect::Schedule { id: ScheduleId(PONG_SCHEDULE | connection), after: PONG_DEADLINE, input: FeedInput::PongDeadline { connection_id: connection, counter } }),
                 Fx::CancelKeepalive { connection } => out.push(Effect::Cancel(ScheduleId(KEEPALIVE_SCHEDULE | connection))),
                 Fx::CancelPong { connection } => out.push(Effect::Cancel(ScheduleId(PONG_SCHEDULE | connection))),
@@ -497,7 +497,6 @@ impl StateOwner for Feed {
         let draining = match state.mode {
             Mode::Draining { connection, then } if !matches!(input, FeedInput::Observed { .. } | FeedInput::Committed(_) | FeedInput::Rejected(_)) => {
                 state.draining(connection, then, input, &mut fx);
-                state.frames_sent(now, &fx);
                 return Self::lower(state, fx);
             }
             Mode::Draining { connection, .. } => Some(connection),
@@ -509,6 +508,7 @@ impl StateOwner for Feed {
             }
             return Self::lower(state, fx);
         }
+        if let FeedInput::HandshakeDone { connection_id, .. } | FeedInput::FrameOpened { connection_id, .. } = &input { state.heard(*connection_id, now); }
         match input {
             FeedInput::CableClosed(_) => {}
             FeedInput::ActivateEpoch(_) => {}
@@ -542,7 +542,7 @@ impl StateOwner for Feed {
             FeedInput::SubscriptionEnded { connection_id } => state.dropped(connection_id, None, &mut fx),
             FeedInput::Resubscribe { connection_id } => state.resubscribe(connection_id, &mut fx),
             FeedInput::HandshakeDeadline { connection_id } => state.handshake_deadline(connection_id, &mut fx),
-            FeedInput::Keepalive { connection_id, counter } => state.keepalive(connection_id, counter, now, &mut fx),
+            FeedInput::Keepalive { connection_id } => state.keepalive(connection_id, now, &mut fx),
             FeedInput::PongDeadline { connection_id, counter } => state.pong_deadline(connection_id, counter, now, &mut fx),
             FeedInput::Drain { .. } => {}
             FeedInput::Observed { batch, payloads } => state.observed(batch, payloads),
@@ -562,7 +562,6 @@ impl StateOwner for Feed {
         if let Some(connection) = draining.filter(|_| state.mode == Mode::Ended) {
             state.drain_cut(connection, &mut fx);
         }
-        state.frames_sent(now, &fx);
         Self::lower(state, fx)
     }
 

@@ -1,12 +1,9 @@
 use super::*;
 
 impl FeedState {
-    pub(super) fn frames_sent(&mut self, now: Time, fx: &[Fx]) {
-        for effect in fx {
-            if let Fx::Run(FeedEffect::Seal { connection, .. }) = effect {
-                if let Some(found) = self.connection_mut(*connection) { found.last_sent = Some(now); }
-            }
-        }
+    /// An incoming frame of the connection: it proves the cable alive and restarts the silence the keepalive measures.
+    pub(super) fn heard(&mut self, connection: ConnectionId, now: Time) {
+        if let Some(found) = self.connection_mut(connection) { found.last_received = Some(now); }
     }
     pub fn with_kept(mut self, kept: BTreeMap<String, BTreeSet<String>>) -> Self {
         self.kept = kept;
@@ -171,7 +168,6 @@ impl FeedState {
         if let Protocol::Established { key_id, send_counter, .. } = &mut connection.protocol {
             fx.push(Fx::Run(FeedEffect::Seal { connection: connection.id, key_id: *key_id, counter: *send_counter, frame }));
             *send_counter += 1;
-            fx.push(Fx::Keepalive { connection: connection.id, counter: *send_counter });
         }
     }
 
