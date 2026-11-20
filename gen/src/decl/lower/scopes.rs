@@ -350,8 +350,15 @@ pub(super) fn scope_line(cx: &mut Cx, call: &Call, decl: &mut ScopeDecl) {
                 Value::Int(number) if *number > 0 && usize::try_from(*number).is_ok() => Some(*number as usize),
                 _ => { cx.fail(at(&pair.value), "`preload limit` must be a positive integer"); None }
             });
+            let when = line.opt(cx, "when").and_then(|pair| {
+                let Value::Hash(parts) = &pair.value.item else { cx.fail(at(&pair.value), "preload when requires of and field"); return None };
+                let of = parts.iter().find(|part| part.key == "of").and_then(|part| konst(cx, &part.value, "preload when model"));
+                let field = parts.iter().find(|part| part.key == "field").and_then(|part| symbol(cx, &part.value, "preload when field"));
+                if parts.len() != 2 || of.is_none() || field.is_none() { cx.fail(at(&pair.value), "preload when requires of and field"); return None; }
+                Some(dblayer::schema::PreloadWhen { of: of?, field: field? })
+            });
             line.used.iter_mut().for_each(|used| *used = true);
-            let values = call.options.iter().filter(|pair| pair.key != "limit").map(|pair| {
+            let values = call.options.iter().filter(|pair| pair.key != "limit" && pair.key != "when").map(|pair| {
                 let choice = match &pair.value.item {
                     Value::Array(nodes) => PreloadChoice::Listed(nodes.iter().filter_map(|node| match &node.item {
                         Value::Str(text) => Some(Spanned::new(Json::String(text.clone()), at(node))),
@@ -386,7 +393,7 @@ pub(super) fn scope_line(cx: &mut Cx, call: &Call, decl: &mut ScopeDecl) {
                 };
                 (Spanned::new(pair.key.clone(), pair_pos(pair)), choice)
             }).collect();
-            decl.preload = Some(PreloadDecl { pos: line.pos, limit, values });
+            decl.preload = Some(PreloadDecl { pos: line.pos, limit, when, values });
         }
         "total" => {
             no_block(cx, call);

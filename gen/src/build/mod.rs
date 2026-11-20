@@ -248,6 +248,7 @@ fn build_scope(scope: &ScopeDecl, reads_node: bool) -> RelationSpec {
         relation.media = Some(dblayer::schema::MediaSpec { marker: marker.operation.clone(), from: marker.from.item.clone(), fields: marker.fields.iter().map(|field| field.item.clone()).collect(), sequence: marker.sequence.item.clone(), tail: tail.operation.clone(), after: tail.after.item.clone(), marker_variables: variables.clone(), tail_variables: variables });
     }
     relation.preload_limit = scope.preload.as_ref().and_then(|preload| preload.limit);
+    relation.preload_when = scope.preload.as_ref().and_then(|preload| preload.when.clone());
     relation.preload_order = scope.preload.iter().flat_map(|preload| &preload.values).map(|(parameter, _)| {
         scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == parameter.item).map_or(parameter.item.clone(), |(column, _)| column.item.clone())
     }).collect();

@@ -216,6 +216,7 @@ pub struct FreshnessDecl {
 pub struct PreloadDecl {
     pub pos: Pos,
     pub limit: Option<usize>,
+    pub when: Option<dblayer::schema::PreloadWhen>,
     pub values: Vec<(Spanned<String>, PreloadChoice)>,
 }
 

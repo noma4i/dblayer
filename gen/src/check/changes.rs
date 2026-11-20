@@ -7,6 +7,18 @@ use crate::decl::ModelDecl;
 pub(super) fn check_changes(nodes: &[ModelDecl], models: &[ModelSpec], errors: &mut Vec<Found>) {
     let mut seen: std::collections::HashMap<(usize, &str, bool), (usize, usize, usize)> = std::collections::HashMap::new();
     for (index, (node, model)) in nodes.iter().zip(models).enumerate() {
+        for scope in &node.scopes {
+            if let Some(preload) = &scope.preload {
+                if let Some(gate) = &preload.when {
+                    match models.iter().find(|candidate| candidate.key.as_str() == gate.of) {
+                        None => errors.push(at(node.file, preload.pos, "preload when names an unknown model")),
+                        Some(origin) if !origin.relations.iter().any(dblayer::schema::RelationSpec::is_singleton) => errors.push(at(node.file, preload.pos, "preload when requires a singleton model")),
+                        Some(origin) if !origin.field(&gate.field).is_some_and(|field| matches!(field.kind, FieldKind::Scalar { kind: ScalarKind::Bool })) => errors.push(at(node.file, preload.pos, "preload when requires a bool attribute")),
+                        Some(_) => {}
+                    }
+                }
+            }
+        }
         if let Some(field) = &model.server_revision {
             if !model.field(field).is_some_and(|field| matches!(field.kind, FieldKind::Scalar { kind: ScalarKind::Int }) && !crate::emit::is_nullable(field) && !field.is_local()) {
                 errors.push(at(node.file, node.pos, "server_revision requires a required integer attribute"));
