@@ -1,20 +1,18 @@
 # Changelog
 
-## Unreleased
-
-### Changed
-
-- Ping the cable after 25 seconds without an incoming frame; accept only the matching pong.
-- Restart work at once on the new path when the phone network changes while online.
+## 6.45.0 - 2026-11-21
 
 ### Added
 
-- Add the `trace` flag of `UrlSessionTransport`: one development `os_log` line per HTTP request, file PUT and cable event.
+- Add the development `trace` flag of `UrlSessionTransport` for per-request log lines.
 
 ### Changed
 
-- Rotate connections after a network failure and end every HTTP exchange at 30 seconds.
+- Restart work at once on the new path when the phone network changes.
+- Rotate connections after a network failure and end each HTTP exchange at 30 seconds.
 - Require `rotateConnections()` in every `Transport` and `EncryptedHttp` implementation.
+- Ping the cable after 25 seconds without an incoming frame.
+- Accept only the pong that answers the outstanding ping.
 
 ### Fixed
 
