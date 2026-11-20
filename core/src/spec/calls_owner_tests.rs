@@ -780,14 +780,12 @@ fn call_prop_reply_once() {
 #[test]
 fn call_prop_epoch() {
     for seed in 1..=40 {
-        let twin = random_trace(seed);
-        let mut ended = false;
-        for effect in &twin.history {
-            if matches!(effect, CallsEffect::Cancel { .. } | CallsEffect::Drained(_)) { ended = true; }
-            if let CallsEffect::Request { .. } = effect {
-                assert!(!ended, "a request goes out after the epoch ended");
-            }
+        let mut twin = random_trace(seed);
+        let ended_at = twin.history.len();
+        for input in [Input::Online(false), Input::Online(true), Input::RetryDue { call_id: 1, attempt: 1 }, Input::RetryDue { call_id: 2, attempt: 1 }, Input::TransportError { call_id: 1, error: http() }, Input::Dropped { call_id: 2 }] {
+            twin.feed(input);
         }
+        assert!(twin.history[ended_at..].iter().all(|effect| !matches!(effect, CallsEffect::Request { .. })), "seed {seed}: a request goes out after the epoch ended");
     }
     let mut twin = sending();
     twin.feed(Input::EpochEnded(End::Session));

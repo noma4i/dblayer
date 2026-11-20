@@ -572,7 +572,8 @@ fn transfer_path_bounce_restarts_step() {
     let id = twin.uploading(KEY, 3);
     twin.step_ok(id, 1, Some("u1"));
     twin.commit();
-    assert_eq!(twin.stage(id), TransferStage::Uploading);
+    twin.commit();
+    assert_eq!(twin.stage(id), TransferStage::Uploading, "part 1 is confirmed and the attempt of part 2 is written");
     let part = twin.t(id).confirmed_parts + 1;
     let down = twin.online(false);
     assert_eq!((down.cancel_steps(), twin.stage(id)), (1, TransferStage::Ready), "the step in flight is cancelled");
