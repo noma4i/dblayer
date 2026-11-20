@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 6.43.2 - 2026-11-20
 
 ### Fixed
 
