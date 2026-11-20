@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased
+## 6.46.0 - 2026-11-21
 
 ### Added
 
-- Support conditional preload based on a singleton boolean field.
+- Add `preload when:` to preload a scope only while a singleton flag is true.
 
 ## 6.45.0 - 2026-11-21
 
