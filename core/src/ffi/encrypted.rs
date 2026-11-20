@@ -44,6 +44,7 @@ impl core::HttpExchange for ForeignHttp {
         }
     }
 
+    fn rotate_connections(&self) { crate::lock::effect(|| self.port.rotate_connections()); }
 }
 
 struct ForeignCredentials(Arc<dyn CredentialStore>);

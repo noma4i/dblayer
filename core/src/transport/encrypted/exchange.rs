@@ -141,6 +141,9 @@ pub(crate) struct SendOnce<'a> {
 }
 
 impl Exchange {
+    /// D-492: the next request of the exchange uses a new connection.
+    pub(crate) fn rotate_connections(&self) { self.http.rotate_connections(); }
+
     pub fn new(config: &EncryptedConfig, http: Arc<dyn HttpExchange>, clock: Arc<dyn Clock>) -> Result<Self, TransportError> {
         config.validate()?;
         let audience = config.origin.trim_end_matches('/').to_string();

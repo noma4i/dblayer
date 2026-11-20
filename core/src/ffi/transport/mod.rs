@@ -85,7 +85,10 @@ impl OnlineSink {
 
     pub(crate) fn apply_online(&self, online: bool) {
         match &self.target {
-            SignalTarget::Status => self.apply_path(super::network_status::path_of_online(online)),
+            SignalTarget::Status => {
+                let stamp = super::network_status::record_network(super::network_status::path_of_online(online));
+                feed_followers(Signal::Online(online), stamp);
+            }
             SignalTarget::Connectivity(connectivity) => connectivity.change(online, super::network_status::next_stamp()),
             SignalTarget::Life(_) => { if let Some(life) = self.life() { post_life(&life, online, super::network_status::next_stamp()); } }
         }
@@ -93,7 +96,7 @@ impl OnlineSink {
 
     fn apply_path(&self, path: super::NetworkPath) {
         let stamp = super::network_status::record_network(path);
-        feed_followers(path.online, stamp);
+        feed_followers(Signal::Path(path), stamp);
     }
 
     pub(crate) fn registrations(&self) -> Arc<Registrations> { self.registrations.clone() }
@@ -115,7 +118,8 @@ impl OnlineSink {
     pub fn set_path(&self, path: super::NetworkPath) {
         match &self.target {
             SignalTarget::Status => self.apply_path(path),
-            SignalTarget::Connectivity(_) | SignalTarget::Life(_) => self.apply_online(path.online),
+            SignalTarget::Connectivity(_) => self.apply_online(path.online),
+            SignalTarget::Life(_) => { if let Some(life) = self.life() { drop(life.set_path(path, super::network_status::next_stamp())); } }
         }
     }
 
@@ -138,6 +142,14 @@ impl OnlineSink {
     pub fn enter_background(&self, token: u64) {
         if let Some(life) = self.life() { self.registrations.deliver(token, || drop(life.background())); }
     }
+}
+
+/// What the observer of the platform said: the whole path, or only the online flag of a direct input.
+#[derive(Clone, Copy)]
+pub(crate) enum Signal { Online(bool), Path(super::NetworkPath) }
+
+impl Signal {
+    fn online(self) -> bool { match self { Self::Online(online) => online, Self::Path(path) => path.online } }
 }
 
 enum Follower {
@@ -163,7 +175,7 @@ pub(crate) fn follow_life(life: &Arc<crate::owners::life::Life>) {
     all.push(Follower::Life(Arc::downgrade(life)));
     drop(all);
     let processed = *super::network_status::network_value().borrow();
-    if let Some(path) = processed.path { post_life(life, path.online, processed.stamp); }
+    if let Some(path) = processed.path { drop(life.set_path(path, processed.stamp)); }
 }
 
 pub(crate) fn follow_connectivity(connectivity: &Arc<crate::transport::Connectivity>) {
@@ -175,7 +187,7 @@ pub(crate) fn follow_connectivity(connectivity: &Arc<crate::transport::Connectiv
     if let Some(path) = processed.path { connectivity.change(path.online, processed.stamp); }
 }
 
-pub(crate) fn feed_followers(online: bool, stamp: u64) {
+pub(crate) fn feed_followers(signal: Signal, stamp: u64) {
     let live: Vec<Follower> = {
         let mut all = crate::lock::lock(followers());
         all.retain(alive);
@@ -186,8 +198,8 @@ pub(crate) fn feed_followers(online: bool, stamp: u64) {
     };
     for follower in live {
         match follower {
-            Follower::Life(life) => { if let Some(life) = life.upgrade() { post_life(&life, online, stamp); } }
-            Follower::Connectivity(connectivity) => { if let Some(connectivity) = connectivity.upgrade() { connectivity.change(online, stamp); } }
+            Follower::Life(life) => { if let Some(life) = life.upgrade() { match signal { Signal::Online(online) => post_life(&life, online, stamp), Signal::Path(path) => drop(life.set_path(path, stamp)) } } }
+            Follower::Connectivity(connectivity) => { if let Some(connectivity) = connectivity.upgrade() { connectivity.change(signal.online(), stamp); } }
         }
     }
 }
@@ -275,6 +287,7 @@ pub(super) fn transport_error(error: DbError) -> core::TransportError {
 
 #[async_trait]
 impl core::Upstream for ForeignTransport {
+    fn rotate_connections(&self) { self.rotate(); }
     async fn open_cable(&self, url: &str) -> Result<Arc<dyn core::CableSocket>, core::TransportError> {
         crate::lock::assert_no_library_lock("Transport::open_cable");
         let mailbox = Arc::new(Mailbox::new());

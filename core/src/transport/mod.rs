@@ -34,6 +34,8 @@ pub use session_code::SessionCode;
 #[async_trait]
 pub trait Upstream: Send + Sync {
     fn set_online(&self, _online: bool) {}
+    /// D-492: the next request and the next cable open use a new connection; requests in flight finish as they are.
+    fn rotate_connections(&self) {}
     fn session(&self) -> Result<Option<String>, TransportError> { Ok(Some(String::new())) }
     async fn open_cable(&self, _url: &str) -> Result<std::sync::Arc<dyn CableSocket>, TransportError> {
         Err(TransportError::Network("encrypted cable socket is not connected".into()))

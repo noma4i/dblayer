@@ -276,6 +276,8 @@ pub(super) struct NetworkRunner {
     pub wiring: Arc<Wiring>,
     /// The answer of `set_online` waits for `step_done`: a caller that heard it finds `Online` already queued for every owner.
     pub held_replies: Vec<(u64, bool)>,
+    /// D-492: the network port of the database; the encrypted one rotates its HTTP port too.
+    pub transport: Option<Arc<dyn crate::transport::Upstream>>,
 }
 
 impl EffectRunner<Network> for NetworkRunner {
@@ -333,6 +335,7 @@ impl EffectRunner<Network> for NetworkRunner {
                 wiring.to_transfer(TransferInput::PowerSaving(saving));
                 wiring.tell_network(&[Peer::Transfer, Peer::Windows], NetworkEvent::PowerSaving { saving, epoch: None });
             }
+            NetworkEffect::RotateConnections => { if let Some(transport) = &self.transport { crate::lock::effect(|| transport.rotate_connections()); } }
             NetworkEffect::Drained(drained) => wiring.to_lifecycle(LifecycleInput::Drained(drained)),
             NetworkEffect::Reply { id, closed } => self.held_replies.push((id, closed)),
         }

@@ -124,6 +124,11 @@ fn response_from_read(answer: Answer, has_document: bool) -> Result<Response, Tr
 
 #[async_trait]
 impl Upstream for EncryptedTransport {
+    fn rotate_connections(&self) {
+        self.exchange.rotate_connections();
+        self.rest.rotate_connections();
+    }
+
     fn session(&self) -> Result<Option<String>, TransportError> {
         Ok(super::credential::stored_session(&self.store)?.filter(|session| session.sequence > 0).map(|session| session.credential_digest))
     }

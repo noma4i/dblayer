@@ -33,6 +33,8 @@ pub struct HttpReply {
 #[async_trait]
 pub trait HttpExchange: Send + Sync {
     async fn post(&self, path: &str, body: String, purpose: crate::transport::NetworkPurpose, wire: crate::transport::WireIds) -> Result<HttpReply, TransportError>;
+    /// D-492: the next POST uses a new connection.
+    fn rotate_connections(&self) {}
 }
 
 pub trait CredentialSlot: Send + Sync {

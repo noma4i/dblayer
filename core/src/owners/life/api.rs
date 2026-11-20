@@ -22,6 +22,14 @@ impl Life {
         waiter
     }
 
+    /// `set_path`: the path of the phone (D-491), Network answers after its `step`.
+    pub fn set_path(&self, path: crate::ffi::NetworkPath, stamp: u64) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
+        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+        self.wiring.to_network(NetworkInput::SetPath { online: path.online, network: path.network, kind: path.kind, stamp, reply: waiter.id().raw() });
+        waiter
+    }
+
     /// `foreground`: Network answers after its `step`.
     pub fn foreground(&self) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }

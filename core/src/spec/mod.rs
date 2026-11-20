@@ -12,6 +12,7 @@ mod lifecycle_tests;
 mod lifecycle_effects_tests;
 mod lifecycle_restore_tests;
 mod network_owner_tests;
+mod network_path_tests;
 mod store_effects_tests;
 mod store_pin_tests;
 mod session_owner_tests;

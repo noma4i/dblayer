@@ -2,6 +2,7 @@
 
 use super::contract::{Drained, ReplyId};
 use super::lifecycle::Peer;
+use crate::ffi::NetworkKind;
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,6 +23,8 @@ pub enum NetworkEffect {
     Foreground { seq: u64, online_seq: u64 },
     /// `PowerSaving(value)` to Transfer and Windows.
     PowerSaving(bool),
+    /// D-492: every network port of the database makes its next request use a new connection. It runs before the owners hear `Online(true)`.
+    RotateConnections,
     Drained(Drained),
     /// The answer to `set_online`, `foreground`, `background`, `set_power_saving`.
     Reply { id: ReplyId, closed: bool },
@@ -30,6 +33,8 @@ pub enum NetworkEffect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetworkInput {
     SetOnline { online: bool, stamp: u64, reply: ReplyId },
+    /// D-491: the path of the phone from the observer of the platform. The stamp rule (D-355) is the one of `SetOnline`.
+    SetPath { online: bool, network: u64, kind: NetworkKind, stamp: u64, reply: ReplyId },
     Foreground { reply: ReplyId },
     Background { reply: ReplyId },
     PowerSaving { saving: bool, reply: ReplyId },
@@ -41,6 +46,8 @@ pub enum NetworkInput {
 pub struct NetworkState {
     mode: NetworkMode,
     online_stamp: u64,
+    /// D-491: `(network, kind)` of the last applied path, `None` until the first path.
+    route: Option<(u64, NetworkKind)>,
     pending_snapshots: Vec<(Peer, Epoch)>,
 }
 
@@ -50,7 +57,7 @@ impl Default for NetworkState {
 
 impl NetworkState {
     /// `online = None` until the first `SetOnline`, `saving = false` until the first input.
-    pub fn new() -> Self { Self { mode: NetworkMode::Open { online: None, online_seq: 0, foreground_seq: 0, foreground: true, saving: false }, online_stamp: 0, pending_snapshots: Vec::new() } }
+    pub fn new() -> Self { Self { mode: NetworkMode::Open { online: None, online_seq: 0, foreground_seq: 0, foreground: true, saving: false }, online_stamp: 0, route: None, pending_snapshots: Vec::new() } }
 
     pub fn mode(&self) -> NetworkMode { self.mode }
 }
@@ -58,6 +65,32 @@ impl NetworkState {
 fn snapshot(owner: Peer, epoch: Epoch, online: bool, online_seq: u64, saving: bool, foreground: bool) -> NetworkEffect {
     let online = online && (foreground || owner != Peer::Feed);
     NetworkEffect::Snapshot { owner, epoch, online, online_seq, saving: matches!(owner, Peer::Transfer | Peer::Windows).then_some(saving) }
+}
+
+/// A new `online` value: one `Online` to every owner, the waiting snapshots, and fresh connections when the phone is online.
+fn value_changed(state: &mut NetworkState, value: bool, id: ReplyId) -> Vec<NetworkEffect> {
+    let NetworkMode::Open { online, online_seq, foreground_seq, foreground, saving } = state.mode else { return Vec::new() };
+    let online_seq = online_seq + u64::from(value);
+    state.mode = NetworkMode::Open { online: Some(value), online_seq, foreground_seq, foreground, saving };
+    let cable = Some(value && foreground);
+    let cable_changed = cable != online.map(|before| before && foreground);
+    let mut effects = vec![NetworkEffect::Reply { id, closed: false }];
+    if value { effects.push(NetworkEffect::RotateConnections); }
+    effects.push(NetworkEffect::Broadcast { online: value, online_seq, cable: cable.filter(|_| cable_changed) });
+    effects.extend(std::mem::take(&mut state.pending_snapshots).into_iter().map(|(owner, epoch)| snapshot(owner, epoch, value, online_seq, saving, foreground)));
+    effects
+}
+
+/// D-491: the default network changed while the phone stays online: `Online(false)` and `Online(true)` in 1 step, so each owner runs its own offline and online rows one after the other.
+fn path_bounced(state: &mut NetworkState, id: ReplyId) -> Vec<NetworkEffect> {
+    let NetworkMode::Open { online, online_seq, foreground_seq, foreground, saving } = state.mode else { return Vec::new() };
+    state.mode = NetworkMode::Open { online, online_seq: online_seq + 1, foreground_seq, foreground, saving };
+    vec![
+        NetworkEffect::Reply { id, closed: false },
+        NetworkEffect::RotateConnections,
+        NetworkEffect::Broadcast { online: false, online_seq, cable: foreground.then_some(false) },
+        NetworkEffect::Broadcast { online: true, online_seq: online_seq + 1, cable: foreground.then_some(true) },
+    ]
 }
 
 pub struct Network;
@@ -74,18 +107,20 @@ impl StateOwner for Network {
         let reply = |id| NetworkEffect::Reply { id, closed: false };
         match (state.mode, input) {
             (NetworkMode::Open { .. }, NetworkInput::SetOnline { stamp, reply: id, .. }) if stamp <= state.online_stamp => run(vec![reply(id)]),
-            (NetworkMode::Open { online, online_seq, foreground_seq, foreground, saving }, NetworkInput::SetOnline { online: value, stamp, reply: id }) if Some(value) != online => {
+            (NetworkMode::Open { online, .. }, NetworkInput::SetOnline { online: value, stamp, reply: id }) if Some(value) != online => {
                 state.online_stamp = stamp;
-                let online_seq = online_seq + u64::from(value);
-                state.mode = NetworkMode::Open { online: Some(value), online_seq, foreground_seq, foreground, saving };
-                let cable = Some(value && foreground);
-                let cable_changed = cable != online.map(|before| before && foreground);
-                let mut effects = vec![reply(id), NetworkEffect::Broadcast { online: value, online_seq, cable: cable.filter(|_| cable_changed) }];
-                effects.extend(std::mem::take(&mut state.pending_snapshots).into_iter().map(|(owner, epoch)| snapshot(owner, epoch, value, online_seq, saving, foreground)));
-                run(effects)
+                run(value_changed(state, value, id))
             }
             (NetworkMode::Open { .. }, NetworkInput::SetOnline { stamp, reply: id, .. }) => {
                 state.online_stamp = stamp;
+                run(vec![reply(id)])
+            }
+            (NetworkMode::Open { .. }, NetworkInput::SetPath { stamp, reply: id, .. }) if stamp <= state.online_stamp => run(vec![reply(id)]),
+            (NetworkMode::Open { online, .. }, NetworkInput::SetPath { online: value, network, kind, stamp, reply: id }) => {
+                state.online_stamp = stamp;
+                let before = state.route.replace((network, kind));
+                if Some(value) != online { return run(value_changed(state, value, id)); }
+                if value && before.is_some_and(|route| route != (network, kind)) { return run(path_bounced(state, id)); }
                 run(vec![reply(id)])
             }
             (NetworkMode::Open { foreground: true, .. }, NetworkInput::Foreground { reply: id }) => run(vec![reply(id)]),
@@ -118,7 +153,7 @@ impl StateOwner for Network {
                 state.pending_snapshots.clear();
                 run(vec![NetworkEffect::Drained(Drained { owner: "network" })])
             }
-            (NetworkMode::Closed, NetworkInput::SetOnline { reply: id, .. } | NetworkInput::Foreground { reply: id } | NetworkInput::Background { reply: id } | NetworkInput::PowerSaving { reply: id, .. }) => run(vec![NetworkEffect::Reply { id, closed: true }]),
+            (NetworkMode::Closed, NetworkInput::SetOnline { reply: id, .. } | NetworkInput::SetPath { reply: id, .. } | NetworkInput::Foreground { reply: id } | NetworkInput::Background { reply: id } | NetworkInput::PowerSaving { reply: id, .. }) => run(vec![NetworkEffect::Reply { id, closed: true }]),
             (_, NetworkInput::Idle) | (NetworkMode::Closed, _) => Vec::new(),
         }
     }
