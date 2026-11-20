@@ -177,7 +177,7 @@ fn call_response_transient() {
 fn call_transport_offline() {
     let mut twin = Twin::new();
     twin.feed(run(1));
-    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Online(Online(false)));
+    twin.feed(Input::Online(false));
     twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::TransportError { call_id: 1, error: CallError::Network });
     twin.det.run_until_quiet(100).unwrap();
     assert!(take(&twin.log).is_empty());
@@ -239,7 +239,7 @@ fn call_cancel_before_snapshot() {
 fn call_waiting_network_online() {
     let mut twin = Twin::new();
     twin.feed(Input::Run { epoch: EPOCH, operation: "Op".into(), reply: 1 });
-    twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Online(Online(false)));
+    twin.feed(Input::Online(false));
     twin.det.post(twin.addr, EpochStamp::Epoch(EPOCH), CallsInput::Dropped { call_id: 1 });
     twin.det.run_until_quiet(100).unwrap();
     assert!(take(&twin.log).is_empty());
@@ -920,4 +920,41 @@ fn call_prop_dropped_pair_single_execution() {
             }
         }
     }
+}
+
+/// D-491 bounce rule: `Online(false)` cancels the query in flight, the call waits for the network under the same deadline, `Online(true)` sends it again at once with a new request id and the same attempt count; a mutation in flight is left to Session.
+#[test]
+fn calls_path_bounce_resends_in_flight() {
+    let mut twin = Twin::new();
+    twin.feed(run(1));
+    let first = twin.history.iter().find_map(|effect| if let CallsEffect::Request { request_id, .. } = effect { Some(*request_id) } else { None }).unwrap();
+    let down = twin.feed(Input::Online(false));
+    assert_eq!(down.effects, vec![CallsEffect::Cancel { request_id: first, kind: CallKind::Query }], "the attempt in flight is cancelled and nothing else is said");
+    assert!(down.replies.is_empty(), "the caller keeps waiting");
+    let up = twin.feed(Input::Online(true));
+    let resent: Vec<_> = up.effects.iter().filter_map(|effect| if let CallsEffect::Request { call_id: 1, request_id, reason, .. } = effect { Some((*request_id, *reason)) } else { None }).collect();
+    assert_eq!(resent.len(), 1, "one request at once, no Backoff wait: {:?}", up.effects);
+    assert_ne!(resent[0].0, first, "a query gets a new request id");
+    twin.det.tick(crate::runtime::Time(29_999));
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).is_empty(), "the deadline of the call was not reset or moved");
+    twin.det.tick(crate::runtime::Time(30_000));
+    twin.det.run_until_quiet(100).unwrap();
+    assert!(take(&twin.log).iter().any(|effect| matches!(effect, CallsEffect::Reply { id: 1, answer: Err(CallError::Network) })), "CALL_DEADLINE counts from the first Run");
+}
+
+/// A waiting retry is taken off the clock by the bounce and starts at once; a mutation in flight is not cancelled by Calls.
+#[test]
+fn calls_path_bounce_leaves_mutation_and_skips_backoff() {
+    let mut twin = Twin::new();
+    twin.feed(run(1));
+    twin.feed(run_mutate(2));
+    twin.feed(Input::TransportError { call_id: 1, error: CallError::Network });
+    let down = twin.feed(Input::Online(false));
+    assert!(down.effects.iter().all(|effect| !matches!(effect, CallsEffect::Cancel { .. } | CallsEffect::Release { .. })), "the retry wait is not an attempt and the mutation stays with Session: {:?}", down.effects);
+    let up = twin.feed(Input::Online(true));
+    assert_eq!(up.effects.iter().filter(|effect| matches!(effect, CallsEffect::Request { call_id: 1, .. })).count(), 1, "the waiting retry starts at once");
+    assert!(!up.effects.iter().any(|effect| matches!(effect, CallsEffect::Request { call_id: 2, .. })), "the mutation is not sent again by Calls");
+    let stale = twin.feed(Input::RetryDue { call_id: 1, attempt: 1 });
+    assert!(stale.effects.is_empty(), "the stale Backoff does not send a second time");
 }

@@ -214,6 +214,20 @@ impl CallsState {
         scheduled.push((call_id, previous, policy));
     }
 
+    /// `Online(false)` (D-491, the bounce rule): a query attempt in flight is cancelled and the call waits for the network, a waiting retry is taken off the clock. `CALL_DEADLINE` and the attempt count stay. A mutation keeps its pair with Session, whose own rows send it again. Returns the calls whose Backoff timer is cancelled.
+    fn park_in_flight(&mut self, fx: &mut Vec<CallsEffect>) -> Vec<CallId> {
+        let mut unbacked = Vec::new();
+        for (call_id, attempt) in &mut self.attempts {
+            let Some((CallPhase::Sending { request_id, kind, releasing: false, .. }, _)) = self.calls.get(call_id) else { continue };
+            if attempt.waiting_network { continue; }
+            if attempt.waiting_retry { unbacked.push(*call_id); }
+            else if *kind == CallKind::Query { fx.push(CallsEffect::Cancel { request_id: *request_id, kind: CallKind::Query }); }
+            else { continue; }
+            attempt.waiting_network = true;
+        }
+        unbacked
+    }
+
     fn send_again(&mut self, call_id: CallId, fx: &mut Vec<CallsEffect>) {
         let Some(CallPhase::Sending { mut request_id, kind, generation, releasing }) = self.phase(call_id) else { return };
         if kind == CallKind::Query {
@@ -238,7 +252,7 @@ impl StateOwner for Calls {
 
     fn step(state: &mut CallsState, input: CallsInput, _now: Time) -> Effects<Self> {
         let mut fx = Vec::new();
-        let (mut deadlines, mut scheduled, mut finished) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut deadlines, mut scheduled, mut finished, mut unbacked) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         match input {
             CallsInput::Run { epoch, reply, .. } if epoch != state.epoch => fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::NoSession) }),
             CallsInput::Run { reply, ref operation, .. } if !state.declared.contains_key(operation) => fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Invalid) }),
@@ -324,6 +338,8 @@ impl StateOwner for Calls {
                 if online {
                     let waiting: Vec<_> = state.attempts.iter().filter(|(_, attempt)| attempt.waiting_network).map(|(id, _)| *id).collect();
                     for id in waiting { state.send_again(id, &mut fx); }
+                } else {
+                    unbacked = state.park_in_flight(&mut fx);
                 }
             }
             CallsInput::Online(_) => {}
@@ -356,6 +372,7 @@ impl StateOwner for Calls {
         let mut out: Effects<Self> = fx.into_iter().map(Effect::Run).collect();
         out.extend(deadlines.into_iter().map(|call_id| Effect::Schedule { id: crate::runtime::ScheduleId(call_id * 2), after: CALL_DEADLINE, input: CallsInput::Deadline { call_id } }));
         out.extend(scheduled.into_iter().map(|(call_id, attempt, policy)| Effect::Backoff { id: crate::runtime::ScheduleId(call_id * 2 + 1), policy, attempt, floor: std::time::Duration::ZERO, input: CallsInput::RetryDue { call_id, attempt } }));
+        out.extend(unbacked.into_iter().map(|call_id: CallId| Effect::Cancel(crate::runtime::ScheduleId(call_id * 2 + 1))));
         for call_id in finished { out.push(Effect::Cancel(crate::runtime::ScheduleId(call_id * 2))); out.push(Effect::Cancel(crate::runtime::ScheduleId(call_id * 2 + 1))); }
         out
     }
