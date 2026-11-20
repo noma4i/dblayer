@@ -278,6 +278,7 @@ pub enum WindowsInput {
     GapDue { key: WindowKey },
     /// The executor of `DerivePreload` found these keys in the rows of a source window.
     PreloadKeys { keys: Vec<WindowKey> },
+    PreloadGate { model: String, field: String, open: bool },
     /// The operations of the `.dbl` are declared: the preload keys of a live session start now.
     RegisterOperations,
     /// A Store broadcast `Committed{tables}`: the models whose tables changed and the revision.

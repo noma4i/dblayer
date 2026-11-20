@@ -22,6 +22,19 @@ use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
 
 const ALL_PEERS: [Peer; 10] = crate::owners::lifecycle::ALL_OWNERS;
 
+fn tell_gates(db: &Store, wiring: &Wiring, restart: bool, touched: Option<&crate::owners::contract::Models>, stamp: EpochStamp) {
+    match db.gate_changes(restart, touched) {
+        Ok(changes) => for (model, field, open) in changes {
+            if db.cable_when().is_some_and(|(cable_model, cable_field)| cable_model == model && cable_field == field) {
+                wiring.to_feed_at(stamp, FeedInput::Gate(open));
+            }
+            let input = WindowsInput::PreloadGate { model, field, open };
+            match stamp { EpochStamp::Epoch(epoch) => wiring.to_windows_in(epoch, input), EpochStamp::Control => wiring.to_windows(input) }
+        },
+        Err(error) => wiring.fault(format!("singleton gate: {error}")),
+    }
+}
+
 pub(super) struct LifecycleRunner {
     pub wiring: Arc<Wiring>,
     pub absent: Vec<Peer>,
@@ -57,6 +70,7 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 wiring.to_windows(WindowsInput::EpochStarted(started.clone()));
                 wiring.to_deliveries(DeliveryInput::EpochStarted(started.clone()));
                 wiring.to_feed(FeedInput::EpochStarted(started.clone()));
+                tell_gates(&self.db, wiring, true, None, EpochStamp::Epoch(epoch));
                 for owner in self.absent.iter().copied().filter(|owner| matches!(owner, Peer::Outbox | Peer::Transfer | Peer::Session)) {
                     wiring.to_lifecycle(LifecycleInput::Started { owner, epoch });
                     wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner, epoch });
@@ -129,14 +143,6 @@ impl StoreRunner {
         back.reply(EpochStamp::Control, StoreInput::Erased { io_id, result });
     }
 
-    fn tell_gate(&self, restart: bool, stamp: EpochStamp) {
-        match self.db.cable_gate_change(restart) {
-            Ok(Some(open)) => self.wiring.to_feed_at(stamp, FeedInput::Gate(open)),
-            Ok(None) => {}
-            Err(error) => self.wiring.fault(format!("cable gate: {error}")),
-        }
-    }
-
     fn revision(&self) -> Result<u64, String> { self.db.revision_seq().map_err(|error| error.to_string()).and_then(revision_of) }
 }
 
@@ -162,8 +168,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             StoreEffect::Write { batch, min_pin_revision } => {
                 let result = store.write_batch(&batch, self.db.files(), min_pin_revision).map(|written| {
                     for fault in written.faults { wiring.fault(fault); }
-                    let touched = store.cable_when().is_some_and(|(model, _)| written.notice.as_ref().is_some_and(|notice| match &notice.models { crate::owners::contract::Models::All => true, crate::owners::contract::Models::Set(models) => models.contains(model) }));
-                    if touched { self.tell_gate(false, batch.stamp); }
+                    if let Some(notice) = &written.notice { tell_gates(store, wiring, false, Some(&notice.models), batch.stamp); }
                     WriteDone { revision: written.revision, observed: written.observed, expiring: written.expiring, removed_memory: written.removed_memory, stale_parents: written.stale_parents, removed_operations: written.removed_operations, removed_rows: written.removed_rows, ended_temps: written.ended_temps, swaps: written.swaps, resets: written.resets, notice: written.notice, shown: written.shown, files_removed: written.files_removed, refused: written.refused }
                 }).map_err(|error| error.reject_reason());
                 back.reply(EpochStamp::Control, StoreInput::Written { author: batch.author, batch: batch.id, result });
@@ -210,7 +215,6 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             StoreEffect::Saved { publication_id } => wiring.to_lifecycle(LifecycleInput::Saved { publication_id }),
             StoreEffect::SaveFailed { publication_id, error } => wiring.to_lifecycle(LifecycleInput::SaveFailed { publication_id, error }),
             StoreEffect::ReadIntents { epoch, direct } => {
-                self.tell_gate(true, EpochStamp::Epoch(epoch));
                 let restore = if direct { Ok(None) } else { self.db.read_restore().map(Some) };
                 let orphan_pending = restore.as_ref().is_ok_and(|read| read.as_ref().is_some_and(|read| read.transfer_pending_orphan));
                 let fail = |wiring: &Wiring, error: String| {

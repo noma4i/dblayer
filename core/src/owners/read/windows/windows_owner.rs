@@ -233,6 +233,8 @@ pub struct WindowsState {
     pub(super) saving: bool,
     pub(super) generation: u64,
     pub(super) preload: Vec<WindowKey>,
+    pub(super) preload_gates: BTreeMap<(String, String), (String, String)>,
+    pub(super) open_gates: BTreeSet<(String, String)>,
     pub(super) operations_awaited: bool,
     pub(super) identity: bool,
     pub(super) ended: Option<EndCause>,
@@ -276,7 +278,7 @@ pub struct WindowsPeers {
 impl WindowsState {
     /// `online` is the value of the first addressed `Online`, `None` before it.
     pub fn new(epoch: Epoch, online: Option<bool>, peers: WindowsPeers) -> Self {
-        Self { epoch, online, online_seq: 0, saving: false, generation: 0, preload: Vec::new(), operations_awaited: false, identity: false, ended: None, sources: BTreeSet::new(), request_ids: RequestIds::Process, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), local_order: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, store_seen: 0, peers, held_nowait: Vec::new(), reserved: BTreeSet::new(), held_loads: BTreeMap::new(), held_leaves: Vec::new(), #[cfg(test)] rested: None }
+        Self { epoch, online, online_seq: 0, saving: false, generation: 0, preload: Vec::new(), preload_gates: BTreeMap::new(), open_gates: BTreeSet::new(), operations_awaited: false, identity: false, ended: None, sources: BTreeSet::new(), request_ids: RequestIds::Process, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), local_order: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, store_seen: 0, peers, held_nowait: Vec::new(), reserved: BTreeSet::new(), held_loads: BTreeMap::new(), held_leaves: Vec::new(), #[cfg(test)] rested: None }
     }
 
     #[cfg(test)]
@@ -289,6 +291,16 @@ impl WindowsState {
     pub fn with_preload(mut self, keys: Vec<WindowKey>) -> Self {
         self.preload = keys;
         self
+    }
+
+    pub fn with_preload_gates(mut self, gates: BTreeMap<(String, String), (String, String)>) -> Self {
+        self.preload_gates = gates;
+        self
+    }
+
+    fn preload_allowed(&self, key: &WindowKey) -> bool {
+        let Ok(WindowKind::Relation { relation, .. }) = key.kind() else { return true };
+        self.preload_gates.get(&(key.model.clone(), relation)).is_none_or(|gate| self.open_gates.contains(gate))
     }
 
     /// The preload keys wait for `RegisterOperations`: a request built before its operation is declared fails.
@@ -537,6 +549,7 @@ impl Windows {
     }
 
     pub(super) fn interest_preload(state: &mut WindowsState, key: WindowKey, now: i64, out: &mut Effects<Self>) {
+        if !state.identity || state.operations_awaited || !state.preload_allowed(&key) { return; }
         match state.windows.get(&key) {
             None => state.ensure(&key, now, out),
             Some(window) if window.interest().contains(&PRELOAD) => return,
@@ -686,6 +699,19 @@ impl StateOwner for Windows {
                     Self::interest_preload(state, key, now, &mut out);
                 }
             }
+            WindowsInput::PreloadGate { model, field, open } => {
+                let gate = (model, field);
+                let changed = if open { state.open_gates.insert(gate.clone()) } else { state.open_gates.remove(&gate) };
+                if changed && open {
+                    Self::start_preload(state, now, &mut out);
+                    if state.identity && !state.operations_awaited {
+                        if let Some(key) = state.sources.first() { out.push(Effect::Run(WindowsEffect::Window { key: key.clone(), effect: WindowEffect::DerivePreload { revision: state.store_seen } })); }
+                    }
+                } else if changed {
+                    let keys: Vec<WindowKey> = state.windows.keys().filter(|key| !state.preload_allowed(key)).cloned().collect();
+                    for key in keys { Self::on(state, &key, Ev::InterestMinus { id: PRELOAD }, now, &mut out); }
+                }
+            }
             WindowsInput::RegisterOperations => {
                 state.operations_awaited = false;
                 Self::start_preload(state, now, &mut out);
@@ -751,6 +777,7 @@ impl StateOwner for Windows {
                 state.epoch = started.epoch;
                 state.generation = started.generation;
                 state.windows.clear();
+                state.open_gates.clear();
                 state.online = None;
                 state.online_seq = 0;
                 state.saving = false;

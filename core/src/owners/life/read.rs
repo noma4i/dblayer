@@ -69,7 +69,8 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
         wiring.fault(format!("the preload of the schema is invalid: {error}"));
         Vec::new()
     });
-    let state = WindowsState::new(0, None, WindowsPeers { store, deliveries: deliveries_at }).with_preload(preload).with_operations_awaited().with_sources(preload_sources(&db)).with_lifetimes(lifetimes(db.clone())).with_max_pages(max_pages(db.clone())).with_members_complete(members_complete(db.clone())).with_media(has_media(db.clone())).with_local_order(has_local_order(db.clone())).with_foreground(refreshes_on_foreground(db.clone()));
+    let gates = db.specs().iter().flat_map(|(model, spec)| spec.relations.iter().filter_map(move |relation| relation.preload_when.as_ref().map(|gate| ((model.clone(), relation.name.clone()), (gate.of.clone(), gate.field.clone()))))).collect();
+    let state = WindowsState::new(0, None, WindowsPeers { store, deliveries: deliveries_at }).with_preload(preload).with_preload_gates(gates).with_operations_awaited().with_sources(preload_sources(&db)).with_lifetimes(lifetimes(db.clone())).with_max_pages(max_pages(db.clone())).with_members_complete(members_complete(db.clone())).with_media(has_media(db.clone())).with_local_order(has_local_order(db.clone())).with_foreground(refreshes_on_foreground(db.clone()));
     let windows_wiring = wiring.clone();
     let (derive_db, derive_executor, derive_handle, derive_wiring) = (db.clone(), ports.executor.clone(), handle.clone(), wiring.clone());
     let read_db = db.clone();

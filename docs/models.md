@@ -246,6 +246,8 @@ end
 
 `preload`, `preload channel: ["lobby", "stage"]` or `preload vibeId: { from: "Vibe.list" }, limit: 40` makes the library load the scope after open with a session, sign-in, reset, return of the network and the end of power saving. Fresh windows send no request, and neither do offline, signed-out and power-saving states. With `from`, a positive `limit` is required, and the windows follow the rows of the source scope.
 
+`preload when: { of: CurrentUser, field: :registrationCompleted }` loads only while the stored singleton has that bool field set to true. A missing row, missing field, null or false closes the condition. The condition can accompany preload parameters and does not restrict application readers.
+
 ### Edge values
 
 A connection edge can carry data next to `node`, such as `impressionUuid`. The value belongs to the connection, not to the row: each connection keeps its own value for the same row.

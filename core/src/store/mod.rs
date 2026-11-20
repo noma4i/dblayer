@@ -239,7 +239,7 @@ pub struct Store {
     generation_now: std::sync::atomic::AtomicU64,
     committed_revision: Arc<std::sync::atomic::AtomicI64>,
     line: AnnounceLine,
-    cable_open: std::sync::atomic::AtomicBool,
+    gate_values: Mutex<BTreeMap<(String, String), bool>>,
     #[cfg(test)]
     pub(crate) read_threads: Mutex<Vec<std::thread::ThreadId>>,
     #[cfg(test)]
@@ -286,7 +286,7 @@ impl Store {
             generation_now: std::sync::atomic::AtomicU64::new(Generation::INITIAL.value()),
             committed_revision: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             line: AnnounceLine::default(),
-            cable_open: std::sync::atomic::AtomicBool::new(false),
+            gate_values: Mutex::new(BTreeMap::new()),
             #[cfg(test)]
             read_threads: Mutex::new(Vec::new()),
             #[cfg(test)]

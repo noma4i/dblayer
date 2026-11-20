@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Support conditional preload based on a singleton boolean field.
+
 ## 6.45.0 - 2026-11-21
 
 ### Added
