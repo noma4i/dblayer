@@ -264,3 +264,23 @@ fn changes_is_one_top_level_channel() {
     }).collect();
     assert!(missed.is_empty(), "{missed:#?}");
 }
+
+/// D-495: `preload when: { of:, field: }` names a bool attribute of a singleton model and goes into the relation as `preload_when`; another model or a non-bool field stops the generator with its line.
+#[test]
+fn preload_when_names_a_bool_attribute_of_a_singleton() {
+    let source = |when: &str| format!("model Viewer do\n  attribute :id, :id\n  attribute :registered, :bool, null: true\n  attribute :name, :string\n  scope :current do\n    query \"ViewerQuery\"\n  end\nend\nmodel Item do\n  attribute :id, :id\n  attribute :done, :bool, null: true\n  scope :feed do\n    query \"ItemsFeed\"\n    preload when: {when}\n  end\nend\n");
+    let models = parse_models(&source("{ of: Viewer, field: :registered }")).unwrap_or_else(|errors| panic!("{errors:?}"));
+    let item = models.iter().find(|model| model.name == "Item").unwrap();
+    let feed = serde_json::to_value(item).unwrap()["relations"].as_array().unwrap().iter().find(|relation| relation["name"] == "feed").cloned().unwrap();
+    assert_eq!(feed["preload_when"], serde_json::json!({"of": "Viewer", "field": "registered"}));
+    assert!(!feed["preload"].is_null(), "the scope still preloads");
+    for (when, expected) in [
+        ("{ of: Item, field: :done }", "preload when requires a singleton model"),
+        ("{ of: Viewer, field: :name }", "preload when requires a bool attribute"),
+        ("{ of: Viewer, field: :missing }", "preload when requires a bool attribute"),
+        ("{ of: Missing, field: :registered }", "preload when names an unknown model"),
+    ] {
+        let errors = parse_models(&source(when)).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains(expected)), "{expected}: {errors:?}");
+    }
+}

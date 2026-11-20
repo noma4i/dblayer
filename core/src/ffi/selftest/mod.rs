@@ -40,6 +40,7 @@ mod data_touch_tests;
 mod node_event_other_load_tests;
 mod node_absent_tests;
 mod cable_close_tests;
+mod preload_when_tests;
 mod request_gap_tests;
 mod request_log_tests;
 mod singleton_action_tests;
