@@ -598,3 +598,15 @@ fn feed_inputs_that_do_not_apply_change_nothing() {
         assert_eq!(twin.state().mode(), mode, "{name}");
     }
 }
+
+/// D-491 bounce: `Online(false)` and `Online(true)` of one step close the cable and open it once, at once: no Backoff, `attempts = 0`, the reopen carries the gap (the windows get 1 `Gap` from the new `online_seq`).
+#[test]
+fn feed_path_bounce_reopens_once() {
+    let mut twin = live();
+    twin.step(chat("c1"));
+    assert_eq!(twin.step(Input::Online(false)), [Effect::Commit, Effect::Commit, Effect::SealUnsubscribe, Effect::Close, Effect::ScheduleDrain]);
+    assert!(twin.step(Input::Online(true)).is_empty(), "the cable closes before it opens: nothing opens during the drain");
+    assert_eq!(twin.step(Input::Drain { own: true }), [Effect::Cancel, Effect::Connect], "one reopen when the drain is over");
+    assert!(matches!(twin.state().mode(), f::Mode::Opening { gap: true }), "the reopen is a gap");
+    assert_eq!(twin.state().attempts(), 0, "the bounce is no failed attempt");
+}
