@@ -270,8 +270,8 @@ fn changes_is_one_top_level_channel() {
 fn preload_when_names_a_bool_attribute_of_a_singleton() {
     let source = |when: &str| format!("model Viewer do\n  attribute :id, :id\n  attribute :registered, :bool, null: true\n  attribute :name, :string\n  scope :current do\n    query \"ViewerQuery\"\n  end\nend\nmodel Item do\n  attribute :id, :id\n  attribute :done, :bool, null: true\n  scope :feed do\n    query \"ItemsFeed\"\n    preload when: {when}\n  end\nend\n");
     let models = parse_models(&source("{ of: Viewer, field: :registered }")).unwrap_or_else(|errors| panic!("{errors:?}"));
-    let item = models.iter().find(|model| model.name == "Item").unwrap();
-    let feed = serde_json::to_value(item).unwrap()["relations"].as_array().unwrap().iter().find(|relation| relation["name"] == "feed").cloned().unwrap();
+    let item = models.iter().map(|model| serde_json::to_value(model).unwrap()).find(|model| model["key"] == "Item").unwrap();
+    let feed = item["relations"].as_array().unwrap().iter().find(|relation| relation["name"] == "feed").cloned().unwrap();
     assert_eq!(feed["preload_when"], serde_json::json!({"of": "Viewer", "field": "registered"}));
     assert!(!feed["preload"].is_null(), "the scope still preloads");
     for (when, expected) in [
