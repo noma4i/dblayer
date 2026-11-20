@@ -564,3 +564,22 @@ fn xfer_orders_orphan_abort() {
         assert_eq!(removed, usize::from(answered), "{order:?}");
     }
 }
+
+/// D-491 bounce: `Online(false)` and `Online(true)` of one step cancel the step in flight and send the same step again at once, no retry wait, no second step in flight.
+#[test]
+fn transfer_path_bounce_restarts_step() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    twin.step_ok(id, 1, Some("u1"));
+    twin.commit();
+    assert_eq!(twin.stage(id), TransferStage::Uploading);
+    let part = twin.t(id).confirmed_parts + 1;
+    let down = twin.online(false);
+    assert_eq!((down.cancel_steps(), twin.stage(id)), (1, TransferStage::Ready), "the step in flight is cancelled");
+    let up = twin.online(true);
+    assert_eq!(twin.stage(id), TransferStage::PersistingAttempt, "the next attempt is written at once: {up:?}");
+    let restarted = twin.commit();
+    assert_eq!(restarted.steps().iter().map(|(step, _)| *step).collect::<Vec<_>>(), vec![Some(part)], "the same part goes out once");
+    assert_eq!(twin.stage(id), TransferStage::Uploading);
+    assert_eq!(twin.t(id).confirmed_parts + 1, part, "the confirmed parts did not move");
+}
