@@ -69,14 +69,20 @@ run_id="${RELEASE_RUN_ID:-standalone}"
 record() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$source_sha" "$run_id" >> "$stage/sequences.tsv" || fail 'cannot write sequences.tsv'; }
 
 lane_core() {
-  local log="$logs/core.log" name
+  local log="$logs/core.log" name out="$tmp/core.run" rc runner="$root/.claude/test-fast"
   : > "$log"
-  (
-    cd -- "$root" || exit 1
-    while IFS= read -r name; do
-      bounded "${SEQ_CORE_LIMIT:-900}" sequences-core cargo test -p dblayer --lib "$name" >> "$log" 2>&1 || exit $?
-    done < "$tmp/core.tests"
-  )
+  : > "$tmp/core.passed"
+  [ -f "$runner" ] || runner="$(cd -- "$(git -C "$root" rev-parse --git-common-dir)/.." && pwd -P)/.claude/test-fast"
+  [ -f "$runner" ] || { echo "test-fast runner not found: $root/.claude/test-fast" > "$log"; return 1; }
+  while IFS= read -r name; do
+    printf '== core test %s (selector (^|::)%s$)\n' "$name" "$name" >> "$log"
+    bounded "${SEQ_CORE_LIMIT:-900}" sequences-core bash "$runner" "$root" --lib "(^|::)${name}\$" > "$out" 2>&1
+    rc=$?
+    cat "$out" >> "$log"
+    [ "$rc" = 0 ] || return "$rc"
+    if [ "$(grep -Ec 'Finished 1 tests passed' "$out")" = 1 ] && ! grep -Eq 'Finished ([02-9]|[0-9]{2,}) tests' "$out"; then printf '%s\n' "$name" >> "$tmp/core.passed"; fi
+  done < "$tmp/core.tests"
+  return 0
 }
 
 lane_swift() {
@@ -100,8 +106,7 @@ lane_kotlin() {
 count_passed() {
   local lane="$1" log="$logs/$1.log" passed=0 name
   case "$lane" in
-    core)
-      while IFS= read -r name; do grep -Eq "^test (.*::)?${name} \.\.\. ok$" "$log" && passed=$((passed + 1)); done < "$tmp/core.tests" ;;
+    core) passed="$(wc -l < "$tmp/core.passed" | tr -d ' ')" ;;
     swift)
       passed="$(python3 -I - "$logs" "$tmp/swift.tests" <<'PY'
 import sys
