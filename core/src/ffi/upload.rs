@@ -29,10 +29,10 @@ struct Plan<'a> {
     effects: IntentEffects,
 }
 
-struct Single {
-    declaration: ActionDeclaration,
+pub(super) struct Single {
+    pub(super) declaration: ActionDeclaration,
     mutation: String,
-    source: Option<(Source, bool)>,
+    pub(super) source: Option<(Source, bool)>,
 }
 
 fn file_name(file: &UploadFile, path: &str) -> String {
@@ -106,7 +106,7 @@ impl Database {
         }
     }
 
-    async fn measured_file(&self, declaration: &ActionDeclaration, file: &UploadFile) -> Map<String, Value> {
+    pub(super) async fn measured_file(&self, declaration: &ActionDeclaration, file: &UploadFile) -> Map<String, Value> {
         let Some(path) = file.source.path() else { return Map::new() };
         self.measured(declaration, path, (file.source.name(), file.source.mime()), file.source.prepare()).await
     }
@@ -135,7 +135,7 @@ impl Database {
         Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), held: false, fields, urgent: false, source: source.map(|(source, _)| source), prepare: plan.file.source.prepare().map(<[u8]>::to_vec), max_bytes: plan.file.source.max_bytes(), mutation: self.upload_mutation(plan, mutation)?, steps, dimensions: None })
     }
 
-    fn single_of(&self, model: &str, action: &str, file: &UploadFile, held: bool) -> Result<Single, DbError> {
+    pub(super) fn single_of(&self, model: &str, action: &str, file: &UploadFile, held: bool) -> Result<Single, DbError> {
         self.upload_operations()?;
         let spec = self.db.spec(model)?;
         let declaration = spec.upload_action(action).filter(|declared| declared.batch.is_none()).cloned().ok_or_else(|| invalid(format!("{model} declares no single upload action {action}")))?;
@@ -143,7 +143,7 @@ impl Database {
         Ok(Single { declaration, mutation, source: self.checked_source(&file.source, held)? })
     }
 
-    fn single_upload(&self, (model, row, action): (&str, &str, &str), single: Single, file: &UploadFile, effects: IntentEffects) -> Result<BatchItem, DbError> {
+    pub(super) fn single_upload(&self, (model, row, action): (&str, &str, &str), single: Single, file: &UploadFile, effects: IntentEffects) -> Result<BatchItem, DbError> {
         let mut variables = file.variables.clone();
         variables.insert("signedId".into(), Value::String(SIGNED_ID_SENTINEL.into()));
         self.upload_item(&Plan { model, row, action, declaration: &single.declaration, variables, file, effects }, &single.mutation, (Map::new(), row), single.source)
@@ -200,7 +200,7 @@ impl Database {
         Ok(Joint { minimum: batch.min, maximum: batch.max, items_key, mutation: template, renumber })
     }
 
-    async fn transfer_answer(&self, waiter: crate::runtime::Waiter<LifeReply>, what: &str) -> Result<TransferAnswer, DbError> {
+    pub(super) async fn transfer_answer(&self, waiter: crate::runtime::Waiter<LifeReply>, what: &str) -> Result<TransferAnswer, DbError> {
         match self.await_life(waiter).await? {
             LifeReply::Transfer(TransferAnswer::Err(fault)) => Err(refused(fault, what)),
             LifeReply::Transfer(answer) => Ok(answer),
