@@ -72,6 +72,7 @@ mod upload_stand;
 mod upload_answer_tests;
 mod upload_refusal_tests;
 mod upload_prepare_tests;
+mod upload_prepared_cache_tests;
 mod upload_prepare_discard_tests;
 mod upload_progress_tests;
 mod upload_decisions_tests;
