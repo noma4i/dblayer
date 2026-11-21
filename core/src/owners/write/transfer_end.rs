@@ -86,7 +86,8 @@ impl TransferState {
     pub(super) fn run_waiting_removals(&mut self, now: crate::runtime::Time, fx: &mut Fx) {
         for id in std::mem::take(&mut self.removal_pending) {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };
-            if Self::defers_removal(transfer.stage, transfer.batch_id.is_some(), transfer.supply_back.is_some(), transfer.commit_reply.is_some()) {
+            let expired_commit = transfer.stage == TransferStage::Uploading && now.0 >= transfer.created_at.0.saturating_add(EXPIRY_MS) && transfer.commands.iter().any(|command| matches!(command, Waiting::Commit(..)));
+            if Self::defers_removal(transfer.stage, transfer.batch_id.is_some(), transfer.supply_back.is_some(), transfer.commit_reply.is_some()) || expired_commit {
                 self.removal_pending.insert(id);
                 continue;
             }
@@ -111,7 +112,7 @@ impl TransferState {
                     Waiting::Removal(rep, cancel) => self.cancel(now, &key, rep, cancel, fx),
                     Waiting::Retry(Some(_), rep) if stage != TransferStage::Failed => Self::refuse(fx, rep, Fault::InFlight),
                     Waiting::Retry(source, rep) => self.retry(&key, source, rep, fx),
-                    Waiting::Commit(epoch, request, rep) => self.commit(epoch, &key, request, rep, fx),
+                    Waiting::Commit(epoch, request, rep) => self.commit(now, epoch, &key, request, rep, fx),
                     Waiting::Asked { rep, ids, answer } => self.apply_retry_answer(&key, id, rep, ids, answer, fx),
                 }
                 if let Some(transfer) = self.transfers.get_mut(&id) {

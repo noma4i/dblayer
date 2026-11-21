@@ -42,6 +42,7 @@ mod read;
 mod queue;
 mod transport;
 mod upload;
+mod upload_staged;
 mod upload_rounds;
 mod preparer;
 mod event;

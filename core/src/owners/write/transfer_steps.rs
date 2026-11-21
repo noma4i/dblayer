@@ -33,7 +33,7 @@ impl TransferState {
     fn can_start(&self, transfer: &Transfer) -> bool {
         let opened = !transfer.restored || self.phase == Phase::Ready;
         let allowed = !self.saving || transfer.urgent;
-        opened && allowed && transfer.stage == TransferStage::Ready && (transfer.pending_step.is_none() || transfer.attempts >= ATTEMPT_LIMIT)
+        opened && allowed && transfer.stage == TransferStage::Ready && !transfer.commands.iter().any(|command| matches!(command, Waiting::Commit(..))) && (transfer.pending_step.is_none() || transfer.attempts >= ATTEMPT_LIMIT)
     }
 
     /// No transfer has work that runs without a new external event. A PUT outside the process, a backoff, the network, a slot, the source, the declaration and the preparation are not such work. The final mutation belongs to Outbox.

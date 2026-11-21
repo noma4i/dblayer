@@ -132,7 +132,7 @@ impl Database {
             let name = file_name(plan.file, &file.path);
             StepsBody { multipart: *multipart, mime: plan.file.source.mime().map_or_else(|| mime_of(&name).to_string(), str::to_string), name, signed_variable: "signedId".into(), item: item.to_string() }.steps()
         });
-        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), held: false, fields, urgent: false, source: source.map(|(source, _)| source), prepare: plan.file.source.prepare().map(<[u8]>::to_vec), max_bytes: plan.file.source.max_bytes(), mutation: self.upload_mutation(plan, mutation)?, steps, dimensions: None })
+        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), held: false, on_row: false, fields, urgent: false, source: source.map(|(source, _)| source), prepare: plan.file.source.prepare().map(<[u8]>::to_vec), max_bytes: plan.file.source.max_bytes(), mutation: self.upload_mutation(plan, mutation)?, steps, dimensions: None })
     }
 
     pub(super) fn single_of(&self, model: &str, action: &str, file: &UploadFile, held: bool) -> Result<Single, DbError> {
@@ -277,17 +277,22 @@ impl Database {
 
     pub async fn commit_staged(&self, epoch: u64, model: String, row_id: String, action: String, values_json: String, variables_json: String) -> Result<WireOperationReceipt, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
         this_db.account_call(epoch)?;
-        let shown = match this_db.transfer_answer(this_db.life.staged_dimensions(epoch, key_of(&model, &row_id, &action)), "commit").await? {
-            TransferAnswer::Dimensions(shown) => shown.unwrap_or_default(),
+        let (shown, on_row) = match this_db.transfer_answer(this_db.life.staged_dimensions(epoch, key_of(&model, &row_id, &action)), "commit").await? {
+            TransferAnswer::Dimensions(shown, on_row) => (shown.unwrap_or_default(), on_row),
             _ => return Err(super::database::foreign_reply()),
         };
-        let (db, name, row) = (this_db.db.clone(), model.clone(), row_id.clone());
+        let (db, name, row, verb) = (this_db.db.clone(), model.clone(), row_id.clone(), action.clone());
         let (planned, variables) = this_db.offload(move || {
             let mut values = super::upload_wire::object(&values_json)?;
-            values.insert("id".into(), Value::String(row));
             values.extend(shown.clone());
             let mut variables = super::upload_wire::object(&variables_json)?;
             variables.extend(shown);
+            if on_row {
+                let target = id(&row)?;
+                db.validate_act(&name, values.clone(), &variables)?;
+                return Ok((Some(db.plan_act(&name, &verb, &target, values, variables.clone())?.effects), variables));
+            }
+            values.insert("id".into(), Value::String(row));
             match db.plan_create(&name, values, Map::new()) {
                 Ok(planned) => Ok((Some(planned.effects), variables)),
                 Err(crate::store::CoreError::AlreadyExists { .. }) => Ok((None, variables)),

@@ -58,9 +58,10 @@ impl TransferState {
         let (transfer_id, seq) = (self.next_id, self.next_seq);
         self.next_id += 1;
         self.next_seq += 1;
-        let BatchItem { key, held, fields, urgent, source, prepare, max_bytes, mutation, steps, dimensions } = item;
+        let BatchItem { key, held, on_row, fields, urgent, source, prepare, max_bytes, mutation, steps, dimensions } = item;
         let transfer = Transfer {
             held,
+            on_row,
             multipart_forced: held,
             commit_reply: None,
             commit: None,

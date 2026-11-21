@@ -333,7 +333,20 @@ impl TransferState {
                         ops.push(StoreOp::Upload { row: upload_row(transfer, kind), kind: UploadKind::Retrying });
                     }
                     let upload_kind = if kind == StoreKind::SyncUpload && matches!(transfer.stage, TransferStage::Accepting | TransferStage::AwaitingSource) && transfer.source.is_none() { UploadKind::AwaitingSource } else { upload_kind(kind) };
-                    ops.push(StoreOp::Upload { row: upload_row(transfer, kind), kind: upload_kind });
+                    let mut row = upload_row(transfer, kind);
+                    if kind == StoreKind::Commit && transfer.commit.as_ref().is_some_and(|plan| plan.restart) {
+                        if let Some(upload_id) = transfer.upload_id.clone() { ops.push(StoreOp::UploadOrphan { upload_id, key: transfer.key.clone() }); }
+                        row.cycle_id += 1;
+                        row.upload_id = None;
+                        row.confirmed_parts = 0;
+                        row.etags.clear();
+                        row.signed_id = None;
+                        row.completed = false;
+                        row.aborted = false;
+                        row.blob_created_at = None;
+                        row.attempts = 0;
+                    }
+                    ops.push(StoreOp::Upload { row, kind: upload_kind });
                     if transfer.prepare.is_some() && matches!(transfer.stage, TransferStage::PersistingCopy | TransferStage::PersistingRetry) && matches!(kind, StoreKind::SyncUpload | StoreKind::Retrying) {
                         ops.push(Self::shown_op(transfer, Shown::Preparing { progress: 0 }));
                     }
@@ -850,7 +863,7 @@ impl TransferState {
             return;
         }
         if pending.kind == StoreKind::StagedCleared { return; }
-        if pending.kind == StoreKind::Commit { return self.commit_rejected(pending.ids[0], rejected.reason, fx); }
+        if pending.kind == StoreKind::Commit { return self.commit_rejected(now, pending.ids[0], rejected.reason, fx); }
         if matches!(pending.kind, StoreKind::Shown | StoreKind::BatchShown) { return self.shown_rejected(&pending, rejected.reason, fx); }
         if pending.kind == StoreKind::StagedRestored { return self.staged_restore_rejected(pending.ids[0], rejected.reason, fx); }
         if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::ControlOrphan) {
@@ -1015,10 +1028,10 @@ impl TransferState {
             TransferInput::Rejected(rejected) => self.rejected(now, rejected, fx),
             TransferInput::Cancel { key, reply } => self.cancel(now, &key, reply, true, fx),
             TransferInput::SupplySource { epoch, key, source, reply } => self.supply_source(epoch, &key, source, reply, fx),
-            TransferInput::Commit { epoch, key, request, reply } => self.commit(epoch, &key, request, reply, fx),
+            TransferInput::Commit { epoch, key, request, reply } => self.commit(now, epoch, &key, request, reply, fx),
             TransferInput::StagedDimensions { key, reply: rep } => {
-                let dimensions = self.open_id(&key).and_then(|id| self.transfers.get(&id)).and_then(|transfer| transfer.dimensions.clone());
-                reply(fx, rep, TransferAnswer::Dimensions(dimensions));
+                let transfer = self.open_id(&key).and_then(|id| self.transfers.get(&id));
+                reply(fx, rep, TransferAnswer::Dimensions(transfer.and_then(|transfer| transfer.dimensions.clone()), transfer.is_some_and(|transfer| transfer.on_row)));
             }
             TransferInput::SourceFailed { epoch, key, message, reply } => self.source_failed(now, epoch, &key, message, reply, fx),
             TransferInput::Discard { key, reply } => self.cancel(now, &key, reply, false, fx),

@@ -257,6 +257,7 @@ pub enum BatchPhase {
 #[derive(Clone, Debug)]
 pub struct BatchItem {
     pub key: Key,
+    pub on_row: bool,
     /// The final mutation waits for `Commit`: the file goes up to the last part (D-372).
     pub held: bool,
     /// The fields of the element in the list of the mutation of the batch: `SIGNED_ID_SENTINEL` stands for the signed id.
@@ -289,6 +290,8 @@ pub struct CommitRequest {
 pub struct CommitPlan {
     pub effects: crate::owners::store::IntentEffects,
     pub body: String,
+    pub restart: bool,
+    pub stage: TransferStage,
 }
 
 /// The refusal of an `abort`: `status` is the HTTP status of the answer, `None` when the call dropped before an answer.
@@ -450,7 +453,7 @@ pub enum TransferAnswer {
     #[cfg(test)]
     Quiet(u64),
     Cancelled(bool),
-    Dimensions(Option<serde_json::Map<String, serde_json::Value>>),
+    Dimensions(Option<serde_json::Map<String, serde_json::Value>>, bool),
     Err(Fault),
 }
 
@@ -604,6 +607,7 @@ pub enum RetryAnswer {
 #[cfg_attr(test, derive(PartialEq))]
 pub struct Transfer {
     pub held: bool,
+    pub on_row: bool,
     /// The file was staged: it goes multipart whatever its size, also after `Commit` (D-372).
     pub multipart_forced: bool,
     pub commit_reply: Option<ReplyId>,
