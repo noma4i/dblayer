@@ -1,5 +1,23 @@
 # Changelog
 
+## 6.47.0 - 2026-11-21
+
+### Added
+
+- Add `StagedUpload.cancelUpload()`: it keeps the prepared file for the next upload of the same source.
+- Add `forgetPrepared(request)` to drop a kept prepared file after a cancelled upload.
+- Add `stage(..., row:)` to stage a file for an action on an existing row.
+
+### Changed
+
+- Reuse a prepared file kept by `cancelUpload` for 7 days, also after a restart.
+- Make `StagedUpload.discard()` remove the prepared file of its source too.
+- Restart a staged upload from part 1 when it is committed after 7 days.
+
+### Fixed
+
+- Remove deleted rows at the head of an ordered list when its first page is read again.
+
 ## 6.46.0 - 2026-11-21
 
 ### Added
