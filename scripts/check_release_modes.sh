@@ -390,7 +390,7 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         print("ok incomplete stage of the same source is rejected")
         (stage / "SOURCE").write_text("other\n")
         run(["bash", "scripts/release.sh", version], incomplete, incomplete_env, contains="Package.swift to be written:")
-        assert (incomplete / "target/release-1.2.3.stale-other").is_dir() and (stage / "SOURCE").read_text().strip() == subprocess.check_output([real_git, "-C", str(incomplete), "rev-parse", "HEAD"], text=True).strip()
+        assert len(list((incomplete / "target").glob("release-1.2.3.stale-other-*"))) == 1 and (stage / "SOURCE").read_text().strip() == subprocess.check_output([real_git, "-C", str(incomplete), "rev-parse", "HEAD"], text=True).strip()
         print("ok a stage of another source is moved aside and built again")
 
     def block_6():
@@ -447,7 +447,7 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         def report_case(case):
             kind, variable, mode, touch = case
             bad, bad_env = fixture(base / f"report-{kind}-{mode}", touch=touch)
-            text = f"release: {kind}.tsv is missing or empty" if mode == "missing-file" else "lane reports are missing or incomplete"
+            text = f"release receipt: {kind}.tsv is missing or empty" if mode == "missing-file" else "lane reports are missing or incomplete"
             run(["bash", "scripts/release.sh", version, "--publish"], bad, dict(bad_env, **{variable: mode}), expected=1, contains=text)
             assert_no_release(bad, bad_env, base / f"report-{kind}-{mode}/events")
             assert not (bad / "target/release-1.2.3/RECEIPT.json").exists()
