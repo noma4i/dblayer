@@ -6,7 +6,7 @@ set -euo pipefail
 
 LEGACY_RE='[Ll]egacy|LEGACY|[Cc]ompat([^i]|$|i[^b]|ib[^l]|ibl[^e])|COMPAT|Leases|Admitted|(^|[^A-Za-z])Origin::|DeliveryUnknown|DELIVERY_UNKNOWN|deliveryUnknown|delivery_unknown|_for_testing|reach_stream|resync_stream|reachStream|resyncStream|session_resume|sessionResume|set_listening|setListening|retry_all|retryAll|batch_outcome|batchOutcome|refresh_preloads|refreshPreloads|resume_uploads|resumeUploads|round_(begin|next|leave|abandon)|round(Begin|Next|Leave|Abandon)|awaitingSnapshot|mutate_wait|forget_credential|start_session_in_tests|fn[[:space:]]+(flush|resume|maintain|warm)[[:space:]]*\(|crate::sync([^_[:alnum:]]|$)|ffi::stream|ffi/stream|ffi/live|Authority::|WriteOrigin|CommitEnvelope|commit_as|lifecycle::authority|Quarantined|StreamTable|sync::(send|upload|load|subscribe|live|invalidate|model_event|entity_fetch|preload|online)|upload::machine|resume_machine|db::(upload_round|dispatch|observe|watch)|migrate_transfer_identity|state\.cached|_in_tests([^_[:alnum:]]|$)|write_store|mutate_wait|after_publish: Mutex|settle_after_epoch|release_held|set_ending|wait_store_closed|cable::lifecycle|listening|(^|[^A-Za-z])(RX|NB|BR)[0-9]|INV-|\.flush\(|wrapper-glue|OnlineRelay|needsAttention|roundNext|roundLeave|roundAbandon|opened = false|reported = false'
 LEGACY_PATHS='core/src gen/src swift/Sources swift/Tests kotlin/src scripts docs README.md fixtures Makefile'
-DEV_RE='specs/|CLAUDE\.md|AGENTS\.md|\.artifacts|(^|[^/])\.claude/'
+DEV_RE='specs/|CLAUDE\.md|AGENTS\.md|(^|[^[:alnum:]_])\.artifacts/|(^|[^/])\.claude/'
 LEGACY_NAME_RE='(^|[/._-])(legacy|compat|old|v1|shim|adapter)([/._-]|$)'
 DEV_NAME_RE='(^|/)(specs|\.claude|\.artifacts)/|(^|/)(CLAUDE|AGENTS)\.md$|\.log$|(^|/)api_gap[^/]*\.md$'
 
