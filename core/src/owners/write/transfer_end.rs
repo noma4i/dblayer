@@ -529,9 +529,7 @@ impl TransferState {
 
     /// `Online(true)` asks for the check of the `Failed` transfers at once.
     pub(super) fn expire_failed(&mut self, fx: &mut Fx) {
-        if self.scan().any(|transfer| transfer.stage == TransferStage::Failed) {
-            self.schedule_expire(fx);
-        }
+        self.schedule_expire(fx);
     }
 
     /// `Tick(expire)`: a `Failed` transfer older than 7 days is discarded.

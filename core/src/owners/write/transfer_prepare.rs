@@ -180,6 +180,7 @@ impl TransferState {
 
     /// The result is the file of the transfer: the upload goes on from the first part.
     pub(super) fn prepared_ready(&mut self, now: Time, id: TransferId, fx: &mut Fx) {
+        self.schedule_expire(fx);
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.prepare = None;
         transfer.prep = None;

@@ -218,6 +218,7 @@ impl TransferState {
     }
 
     pub(super) fn restored(&mut self, now: crate::runtime::Time, mut uploads: Vec<StoredTransfer>, outcomes: TransferOutcomes, fx: &mut Fx) {
+        self.schedule_expire(fx);
         uploads.sort_by_key(|row| row.seq);
         self.open_groups = uploads.iter().filter_map(|row| row.batch).collect();
         for mut row in uploads {
