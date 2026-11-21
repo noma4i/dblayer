@@ -19,12 +19,13 @@ pub(crate) struct ReplaceRequest {
     pub coverage: Coverage,
     pub replace_all: bool,
     pub ordered_complete: bool,
+    pub first_page: bool,
     pub start_after: Option<String>,
     pub local_order: Option<Vec<SortField>>,
 }
 
 impl ReplaceRequest {
-    pub fn new(scope: ScopeRef, coverage: Coverage) -> Self { Self { scope, coverage, replace_all: false, ordered_complete: false, start_after: None, local_order: None } }
+    pub fn new(scope: ScopeRef, coverage: Coverage) -> Self { Self { scope, coverage, replace_all: false, ordered_complete: false, first_page: false, start_after: None, local_order: None } }
 }
 
 struct Member {
@@ -110,6 +111,7 @@ fn ordered_plan(reader: &Reader<'_>, request: &ReplaceRequest, fields: &[SortFie
     let model = &request.scope.model;
     let info = reader.models().get(model.as_str()).ok_or_else(|| CoreError::UnknownModel(model.to_string()))?;
     let mut keys = incoming.iter().map(|(_, row)| ordered_key(&info.spec, fields, row)).collect::<Result<Vec<_>, _>>()?;
+    let direction = keys.first().zip(keys.last()).map(|(first, last)| first.cmp(last));
     keys.sort();
     let bounds = keys.first().zip(keys.last());
     let orders = fields.iter().map(|field| crate::store::query::Order::new(&field.column, field.direction)).collect();
@@ -120,7 +122,12 @@ fn ordered_plan(reader: &Reader<'_>, request: &ReplaceRequest, fields: &[SortFie
     let mut removed = HashSet::new();
     for row in rows {
         let key = crate::store::query::place_of(&row.cells, &ranked.descending);
-        if (request.ordered_complete || bounds.is_some_and(|(low, high)| &key > low && &key < high)) && !seen.contains(&row.id) && row.revision <= base_revision && membership.get(&row.id) != Some(&true) {
+        let covered = bounds.is_some_and(|(low, high)| match (request.first_page, direction) {
+            (true, Some(std::cmp::Ordering::Less)) => &key < high,
+            (true, Some(std::cmp::Ordering::Greater)) => &key > low,
+            _ => &key > low && &key < high,
+        });
+        if (request.ordered_complete || covered) && !seen.contains(&row.id) && row.revision <= base_revision && membership.get(&row.id) != Some(&true) {
             removed.insert(row.id);
         }
     }

@@ -99,6 +99,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
         let mut request = ReplaceRequest::new(scope.clone(), remote.coverage());
         request.replace_all = to_end;
         request.ordered_complete = first && page.cursor.is_none();
+        request.first_page = first && !page.replace_all;
         request.start_after = start_after;
         request.local_order = if page.replace_all { None } else { local_order.clone() };
         replace_plan(&reader, &request, &accepted, page.base_revision).map_err(fault)?
