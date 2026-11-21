@@ -530,6 +530,7 @@ impl TransferState {
 
     /// `Tick(expire)`: a `Failed` transfer older than 7 days is discarded.
     pub(super) fn expire(&mut self, now: crate::runtime::Time, fx: &mut Fx) {
+        self.send_batch(vec![crate::owners::store::StoreOp::PreparedCacheExpire { now: now.0 }], fx);
         let old: Vec<TransferId> = self.scan().filter(|transfer| transfer.stage == TransferStage::Failed && transfer.failed_at.is_some_and(|failed_at| now.0.saturating_sub(failed_at.0) > EXPIRY_MS)).map(|transfer| transfer.transfer_id).collect();
         for id in old {
             self.discard_failed(id, None, fx);
