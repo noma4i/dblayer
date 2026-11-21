@@ -23,14 +23,14 @@ public struct UploadRequest: Sendable {
   }
 }
 
-/// A file sent before its row exists. `id` is the id of the row `commit` creates.
+/// A staged file associated with a new or existing row.
 public struct StagedUpload<Model: DBModel>: Sendable {
   public let id: String
   public let action: String
   let database: Database
   let epoch: UInt64
 
-  /// Creates the row with `values` and sends the final mutation with `variables`. A second call throws `Invalid`.
+  /// Sends the final mutation with `values` and `variables`. A second call throws `Invalid`.
   nonisolated(nonsending) public func commit(values: [String: JSONValue], variables: [String: JSONValue] = [:]) async throws -> MutationReceipt<Model> {
     try await DB.ordered(database, epoch: epoch) { root, database, epoch in
       let receipt = try await database.commitStaged(epoch: epoch, model: Model.modelName, rowId: id, action: action, valuesJson: JSONValue.object(values).text, variablesJson: JSONValue.object(variables).text)
@@ -40,6 +40,12 @@ public struct StagedUpload<Model: DBModel>: Sendable {
 
   /// Removes the transfer and its files. Returns the value of the core.
   nonisolated(nonsending) public func discard() async throws -> Bool {
+    try await DB.ordered(database, epoch: epoch) { root, database, epoch in
+      try await database.discardStaged(epoch: epoch, model: Model.modelName, rowId: id, action: action)
+    }
+  }
+
+  nonisolated(nonsending) public func cancelUpload() async throws -> Bool {
     try await DB.ordered(database, epoch: epoch) { root, database, epoch in
       try await database.cancelUpload(epoch: epoch, model: Model.modelName, rowId: id, action: action)
     }

@@ -400,7 +400,7 @@ A finished upload closes its operation and removes its entry from `uploads`, . T
 
 ## Upload before the final mutation
 
-A file may go up before its row exists, such as a photo the user picks while the form is still open. Start it with `stage`, then end it with `commit` or `discard`. `discard` works in any stage of the file, also while its parts go up: it aborts the multipart and removes the copy. After `commit`, `discard` returns `true` (the upload is removed with its row) or `false` (the final mutation already left and the row stays). A single staged upload never throws `InFlight`, also when `discard` follows `commit` at once.
+A file may go up before its row exists, such as a photo the user picks while the form is still open. Start it with `stage`, then end it with `commit` or `discard`. `discard` works in any stage of the file, also while its parts go up: it aborts the multipart and removes the copy and prepared file. A single staged upload never throws `InFlight`, also when `discard` follows `commit` at once.
 
 ```swift
 let staged = try await scope.stage(Moment.self, action: "upload_clip", UploadRequest(path: path, prepare: prepare))
@@ -422,7 +422,8 @@ val removed = staged.discard()
 - Start `stage` when the user picks the file. The library copies, prepares and sends the parts at once and holds the last step. No row exists and no final mutation leaves the device.
 - `scope.uploadStatus(staged)` streams the status before `commit`. A transfer that sent all parts shows `uploading` with the share 0.99. After `commit` the same stream and `uploads[action]` of the row go on.
 - `commit(values, variables)` creates the row with `values`, sends the final mutation with `variables` and returns the `MutationReceipt` of `send`. The typed variables builders of the model build `variables`. A second `commit` of the same `staged` throws `Invalid`. A `commit` before the end of the transfer lets the transfer go on. A `commit` of a failed transfer shows the row with the error, and `retry` and `discard` work as for any row.
-- `discard()` stops the transfer, removes its files and aborts the multipart upload of the server. It returns the value of the core, `true` when it removed the transfer.
+- `discard()` stops the transfer, removes its files including the prepared file, and aborts the multipart upload of the server. It returns `true` when it removed the transfer.
+- `cancelUpload()` stops the transfer and keeps the prepared file for reuse. `forgetPrepared(request)` removes that prepared file.
 - The app that closes before `commit` ends the transfer: the next open removes it with its files. The library keeps no staged upload for the next run, so the app starts `stage` again.
 
 ## Upload to a row that does not exist

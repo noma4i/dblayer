@@ -293,10 +293,12 @@ class AccountScope private constructor(val epoch: ULong, internal val database: 
     suspend fun <Model : DBModel> upload(row: Model, action: String, request: UploadRequest, decoder: ModelDecoder<Model>): MutationReceipt<Model> = upload(decoder, row.id, action, request)
 
     /** Sends the file before its row exists. [StagedUpload.commit] creates the row and sends the final mutation, [StagedUpload.discard] removes the transfer. */
-    suspend fun <Model : DBModel> stage(decoder: ModelDecoder<Model>, action: String, request: UploadRequest): StagedUpload<Model> {
-        val staged = offCallerInOrder(database) { it.stage(epoch, decoder.modelName, action, request.wire()) }
+    suspend fun <Model : DBModel> stage(decoder: ModelDecoder<Model>, action: String, request: UploadRequest, row: String? = null): StagedUpload<Model> {
+        val staged = offCallerInOrder(database) { if (row == null) it.stage(epoch, decoder.modelName, action, request.wire()) else it.stageOnRow(epoch, decoder.modelName, row, action, request.wire()) }
         return StagedUpload(database, epoch, decoder, staged.rowId, action)
     }
+
+    suspend fun forgetPrepared(request: UploadRequest): Boolean = offCallerInOrder(database) { it.forgetPrepared(epoch, request.wire()) }
 
     suspend fun <Model : DBModel> uploadBatch(decoder: ModelDecoder<Model>, items: List<UploadItem>, request: UploadBatchRequest): OperationReceipt<Model> =
         offCallerInOrder(database) { ordered -> OperationReceipt(database, decoder, ordered.uploadCreateBatch(epoch, decoder.modelName, items.map { it.wire() }, request.wire())) }

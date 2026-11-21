@@ -435,6 +435,19 @@ public struct AccountScope: Sendable {
     }
   }
 
+  nonisolated(nonsending) public func stage<Model: DBModel>(_: Model.Type, action: String, _ request: UploadRequest, row: String) async throws -> StagedUpload<Model> {
+    try await DB.ordered(database, epoch: epoch) { root, database, epoch in
+      let staged = try await database.stageOnRow(epoch: epoch, model: Model.modelName, rowId: row, action: action, request: request.wire)
+      return StagedUpload(id: staged.rowId, action: action, database: root, epoch: epoch)
+    }
+  }
+
+  nonisolated(nonsending) public func forgetPrepared(_ request: UploadRequest) async throws -> Bool {
+    try await DB.ordered(database, epoch: epoch) { root, database, epoch in
+      try await database.forgetPrepared(epoch: epoch, request: request.wire)
+    }
+  }
+
   nonisolated(nonsending) public func uploadBatch<Model: DBModel>(_: Model.Type, items: [UploadItem], request: UploadBatchRequest) async throws -> OperationReceipt<Model> {
     try await DB.ordered(database, epoch: epoch) { root, database, epoch in
       let receipt = try await database.uploadCreateBatch(epoch: epoch, model: Model.modelName, items: items.map { try $0.wire }, request: request.wire)
