@@ -49,6 +49,7 @@ async fn xfer_cancel_keeps_the_prepared_file() {
         if restart {
             database.close_now();
             database = stand.open(Some(&path), &[super::upload_stand::CREATE_MOMENT]).await;
+            assert_eq!((prepared_files(&path), cache_rows(&database)), (1, 1), "the kept file and its row survive the restart");
         }
         stand.script.data("CreateBlob", BLOB);
         stand.script.data("CreateMoment", LANDED);
@@ -132,6 +133,7 @@ async fn xfer_discard_then_stage_prepares_again() {
         } else {
             assert!(bound(database.discard_staged(epoch, "Moment".into(), first.row_id.clone(), "upload_clip".into())).await.unwrap());
         }
+        answers(&stand);
         let second = bound(database.stage(epoch, "Moment".into(), "upload_clip".into(), prepared_request(&source))).await.unwrap();
         crate::test_wait::settled(&database, "the second prepared file is on the server", || stand.puts.seen.lock().unwrap().len() == 2).await;
         assert_eq!(preparer.runs().len(), 2, "forget {forget}: the second stage prepares again");

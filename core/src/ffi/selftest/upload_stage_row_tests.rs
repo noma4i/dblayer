@@ -66,6 +66,7 @@ async fn xfer_stage_commit_after_blob_lifetime_restarts_the_upload() {
     let staged = bound(database.stage(epoch, "Moment".into(), "upload_clip".into(), prepared_request(&source))).await.unwrap();
     crate::test_wait::settled(&database, "the prepared file is on the server", || stand.puts.seen.lock().unwrap().len() == 1).await;
     clock.advance(WEEK_MS);
+    answers(&stand);
     let committed = bound(database.commit_staged(epoch, "Moment".into(), staged.row_id, "upload_clip".into(), r#"{"text":"late"}"#.into(), "{}".into())).await.unwrap();
     bound(database.confirmed(committed, false)).await.unwrap();
     let names = stand.script.names();
