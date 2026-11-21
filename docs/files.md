@@ -96,7 +96,7 @@ DBlayer.open(context, modelsJson = modelsJSON, uploadNotification = notification
 - One preparation runs at a time in operation order, without a network requirement.
 - A restart repeats preparation from the retained source and descriptor. The prior attempt cannot remove the new result.
 - A failed producer keeps the source for `retry(action)`. `CannotDecode` gives `prepare_failed` with reason `device_cannot_decode`.
-- `cancelUpload(action)` stops the attempt and removes its files.
+- `cancelUpload(action)` stops the attempt and keeps the prepared result for reuse. `discard(action)` removes it. See [upload before the final mutation](#upload-before-the-final-mutation).
 - During a database format change, `importDescriptor` converts retained settings through the media library. A refused import retains the settings and source and sends nothing.
 - A descriptor without a connected `Preparer` is `Invalid` before the upload is accepted.
 
@@ -419,11 +419,14 @@ val removed = staged.discard()
 ```
 
 - `stage` takes the same `UploadRequest` as `upload`: a file, `name`, `mime`, `prepare` and `maxBytes`. A request with no file is refused with `Invalid`. `staged.id` is the id of the row that `commit` creates, `staged.action` the declared action. The typed call of a generated model is `Model.stage<Action>(source:, in:)`.
-- Start `stage` when the user picks the file. The library copies, prepares and sends the parts at once and holds the last step. No row exists and no final mutation leaves the device.
+- To stage an action on an existing row, pass `row: id` in Swift or `row = id` in Kotlin. A missing row returns `NotFound`. `staged.id` is that row's id. `commit` runs the action on the same row and returns a `MutationReceipt`. Its `.answered(T)` gives the typed answer.
+- Start `stage` when the user picks the file. The library copies, prepares and sends the parts at once and holds the last step. Without `row`, no row exists yet. No final mutation leaves the device before `commit`.
 - `scope.uploadStatus(staged)` streams the status before `commit`. A transfer that sent all parts shows `uploading` with the share 0.99. After `commit` the same stream and `uploads[action]` of the row go on.
 - `commit(values, variables)` creates the row with `values`, sends the final mutation with `variables` and returns the `MutationReceipt` of `send`. The typed variables builders of the model build `variables`. A second `commit` of the same `staged` throws `Invalid`. A `commit` before the end of the transfer lets the transfer go on. A `commit` of a failed transfer shows the row with the error, and `retry` and `discard` work as for any row.
 - `discard()` stops the transfer, removes its files including the prepared file, and aborts the multipart upload of the server. It returns `true` when it removed the transfer.
-- `cancelUpload()` stops the transfer and keeps the prepared file for reuse. `forgetPrepared(request)` removes that prepared file.
+- `cancelUpload()` stops the transfer and keeps the prepared file for reuse. This also applies to `cancelUpload(action)` on a row. The prepared result stays for 7 days, including across restarts. The next upload or stage of the same source content with the same preparation settings skips preparation.
+- `discard(action)`, `staged.discard()` and `scope.forgetPrepared(request)` remove the prepared result. `forgetPrepared` hashes the source file, so call it before deleting the draft. A missing source file returns `Invalid`. A new stage after discard or forget prepares again.
+- A staged upload committed 7 days or more after `stage` uploads again from part 1 before the final mutation. The receipt stays the same and the app does nothing.
 - The app that closes before `commit` ends the transfer: the next open removes it with its files. The library keeps no staged upload for the next run, so the app starts `stage` again.
 
 ## Upload to a row that does not exist

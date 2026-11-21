@@ -564,7 +564,8 @@ What a refresh does, in one commit:
 - Rows from the response are merged field by field. Rows that did not change keep their revision and are not reported as updated.
 - Records that the server has not confirmed yet (a message being sent, a failed one waiting for retry) stay in the list where they are.
 - For a paged list the response is the first page. The last row of the response is looked up in the old list. If it is found, the new first page is followed by the old rows that came after it, so a long list that the user scrolled does not jump. If it is not found, the old tail is dropped and `loadMore()` loads the next pages again.
-- Rows that are missing from the response leave the list but stay in the database, because they may belong to other lists. A row is deleted when the server says so (`delete_if:`, a null or `NOT_FOUND` node answer, a delete event).
+- For a list with declared `order`, rereading the first page with a next page removes head rows the server no longer returns. The answer order identifies the side where the server starts. Rows past the end of the answer stay.
+- Rows removed from the list stay in the database, because they may belong to other lists. A row is deleted when the server says so (`delete_if:`, a null or `NOT_FOUND` node answer, a delete event).
 - A failed request changes nothing.
 - Every read of one list, node or set of ids shares the request in flight. A request goes to the network at least 1 second after the previous answer of the same read landed: `refresh()` and forced reads inside that second get the previous answer, event rereads, the reread after a gap or a return of the network, a mutation `refetch` and the reread after a refusal wait for the end of the second and go once. A test clock that does not move never sends them: a test advances it by 1 second. A failed request leaves no wait.
 

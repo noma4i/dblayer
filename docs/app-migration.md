@@ -216,3 +216,10 @@ val receipt = staged.commit(values, variables)
 ```
 
 - The first open after the update rebuilds the server cache. Queued operations, the session and uploads stay.
+
+## 13. After 6.47.0
+
+- Call `staged.cancelUpload()` to cancel an upload and keep its prepared result for reuse. Call `staged.discard()` when leaving the editor to remove it.
+- Call `scope.forgetPrepared(request)` before deleting a draft whose upload was cancelled. The source file must still exist.
+- Use `scope.stage(..., row: id)` in Swift or `scope.stage(..., row = id)` in Kotlin for an action on an existing row.
+- An ordered list removes missing rows at its head when its first page is read again. The app changes nothing.

@@ -78,7 +78,7 @@ Every public name of the Swift package and the Kotlin module, with the section t
 | `UploadInfo`, `UploadStatus`                                                                      | [state](files.md#state)                                                                                                                  |
 | `multipart`, `roots` for `initiate`, `presign`, `complete`                                                             | [uploads of a record](files.md#uploads-of-a-record)                                                                                       |
 | `TransferItem` (`UploadInfo`), `UploadStatusStream` (Swift), `AccountScope.uploadStatus` as a `ValueStream` (Kotlin)                                                                     | [rules](files.md#transfer-rules)                                                                                                                |
-| `AccountScope.stage`, `StagedUpload` (`id`, `action`, `commit`, `discard`), `AccountScope.uploadStatus(staged)`, `Model.stage<Action>` | [upload before the final mutation](files.md#upload-before-the-final-mutation) |
+| `AccountScope.stage`, `AccountScope.stage(..., row:)`, `AccountScope.forgetPrepared`, `StagedUpload` (`id`, `action`, `commit`, `discard`, `cancelUpload`), `AccountScope.uploadStatus(staged)`, `Model.stage<Action>` | [upload before the final mutation](files.md#upload-before-the-final-mutation) |
 | `cancelUpload`                                                                                                          | [rules](files.md#transfer-rules)                                                                                                                |
 
 ## Values inside generated code
