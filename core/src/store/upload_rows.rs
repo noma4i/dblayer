@@ -248,6 +248,18 @@ impl Store {
         }
     }
 
+    pub(crate) fn prepared_cache_lookup(&self, source: &str, prepare: &str) -> Option<crate::owners::write::transfer::PreparedCacheEntry> {
+        use crate::owners::write::transfer::{PreparedCacheEntry, EXPIRY_MS};
+        let now = u64::try_from(self.lock().now_ms()).unwrap_or(0);
+        self.read_locked(|connection| rusqlite::OptionalExtension::optional(connection.query_row(
+            "SELECT file, size, sha256, name, mime, created_at FROM prepared_cache WHERE source_sha256 = ?1 AND prepare_sha256 = ?2",
+            rusqlite::params![source, prepare], |row| {
+                let created_at = u64::try_from(row.get::<_, i64>(5)?).unwrap_or(0);
+                Ok(PreparedCacheEntry { file: row.get(0)?, size: u64::try_from(row.get::<_, i64>(1)?).unwrap_or(0), sha256: row.get(2)?, name: row.get(3)?, mime: row.get(4)?, fresh: now < created_at.saturating_add(EXPIRY_MS) })
+            },
+        ))).ok().flatten()
+    }
+
     /// The elements of the batch `group` that still wait for the answer: the row id and the fields the element sends.
     pub(crate) fn batch_rows(&self, model: &str, action: &str, group: u64) -> Result<Vec<BatchRow>, CoreError> {
         let found = self

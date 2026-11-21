@@ -38,7 +38,7 @@ impl TransferState {
         transfer.supply_reply = Some(rep);
         transfer.stage = TransferStage::Copying;
         transfer.attempt_id = attempt_id;
-        let effect = TransferEffect::Copy { transfer_id: id, attempt_id, key: transfer.key.clone(), source: file, staged };
+        let effect = TransferEffect::Copy { transfer_id: id, attempt_id, key: transfer.key.clone(), source: file, staged, prepare: transfer.prepare.clone() };
         run(fx, effect);
         self.rounds_needed(vec![id], fx);
     }
@@ -121,6 +121,9 @@ impl TransferState {
             has_operation: false,
             waits_outbox: false,
             from_cache: false,
+            keep_prepared: None,
+            prepared_hit: false,
+            prepared_stale: false,
             cache_stale: false,
             round_error: None,
             stored_shown: None,
@@ -271,7 +274,7 @@ impl TransferState {
             transfer.stage = TransferStage::Copying;
             transfer.attempt_id = attempt_id;
             let Some(source) = transfer.source.clone() else { continue };
-            let effect = TransferEffect::Copy { transfer_id: id, attempt_id, key: transfer.key.clone(), source, staged: false };
+            let effect = TransferEffect::Copy { transfer_id: id, attempt_id, key: transfer.key.clone(), source, staged: false, prepare: transfer.prepare.clone() };
             self.show(id, Shown::Copying, fx);
             run(fx, effect);
         }
@@ -306,23 +309,43 @@ impl TransferState {
 
     pub(super) fn copy_done(&mut self, now: Time, id: TransferId, attempt_id: AttemptId, copy: CopiedBlob, fx: &mut Fx) {
         if self.stage_of(id) == Some(TransferStage::Measuring) { return self.measured(now, id, attempt_id, copy, fx); }
+        let sizing = self.sizing;
         let CopiedBlob { size, sha256, place, cached } = copy;
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if transfer.stage != TransferStage::Copying || transfer.attempt_id != attempt_id {
             return;
         }
+        let (cached, source_sha256, source_size) = match cached {
+            CachedBlob::Prepared { source_sha256, source_size, name, mime, blob } => {
+                transfer.prepared_hit = true;
+                let (parts, multipart) = sizing.of(size, transfer.multipart_forced);
+                if let Some(source) = transfer.source.as_mut() { source.parts = parts; }
+                if let Some(steps) = transfer.steps.as_mut() {
+                    if let Ok(mut body) = serde_json::from_str::<super::upload_codec::StepsBody>(&steps.body) {
+                        body.multipart = multipart;
+                        if let Some(name) = name { body.name = name; }
+                        if let Some(mime) = mime { body.mime = mime; }
+                        transfer.steps = Some(body.steps());
+                    }
+                }
+                (*blob, source_sha256, source_size)
+            }
+            CachedBlob::PreparedStale => { transfer.prepared_stale = true; (CachedBlob::Miss, sha256.clone(), size) }
+            cached => (cached, sha256.clone(), size),
+        };
         if let Some(descriptor) = &transfer.prepare {
             use sha2::Digest;
-            transfer.source_sha256 = Some(sha256.clone());
+            transfer.source_sha256 = Some(source_sha256);
             transfer.prepare_sha256 = Some(format!("{:x}", sha2::Sha256::digest(descriptor)));
         } else {
             transfer.source_sha256 = None;
             transfer.prepare_sha256 = None;
         }
+        if transfer.prepared_hit { transfer.prepare = None; }
         let cached = if transfer.prepare.is_some() || transfer.held || transfer.over_limit(size) { CachedBlob::Miss } else { cached };
         if transfer.weight.is_none() {
-            transfer.weight = Some(size);
-            transfer.weighed_prepare = transfer.prepare.is_some();
+            transfer.weight = Some(source_size);
+            transfer.weighed_prepare = transfer.prepare.is_some() || transfer.prepared_hit;
         }
         transfer.size = size;
         transfer.sha256 = sha256;

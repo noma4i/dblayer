@@ -489,7 +489,7 @@ impl Life {
                         }),
                     },
                     { let db = ports.db.clone(); Arc::new(move |sha256: &str| db.blob_cache_lookup(sha256)) },
-                ).with_preparer(port.preparer.clone());
+                ).with_preparer(port.preparer.clone()).with_prepared_cache({ let db = ports.db.clone(); Arc::new(move |source, prepare| db.prepared_cache_lookup(source, prepare)) });
                 let mut transfers = TransferState::new(0, port.slots, TransferPeers { store, outbox, rounds: rounds_at });
                 transfers.put_timeout = port.put_timeout;
                 transfers.sizing = port.sizing;

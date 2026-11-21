@@ -300,6 +300,14 @@ impl TransferState {
                 let own = transfer.op_id.filter(|_| !transfer.submitted || transfer.prior == Some(TransferStage::Failed));
                 let mut ops = Vec::new();
                 if kind == StoreKind::Removed {
+                    if let (Some(source_sha256), Some(prepare_sha256)) = (&transfer.source_sha256, &transfer.prepare_sha256) {
+                        if let Some((file, created_at)) = &transfer.keep_prepared {
+                            let steps = transfer.steps.as_ref().and_then(|steps| serde_json::from_str::<super::upload_codec::StepsBody>(&steps.body).ok());
+                            ops.push(StoreOp::PreparedCachePut { source_sha256: source_sha256.clone(), prepare_sha256: prepare_sha256.clone(), file: file.clone(), size: transfer.size, sha256: transfer.sha256.clone(), name: steps.as_ref().map(|steps| steps.name.clone()), mime: steps.map(|steps| steps.mime), created_at: *created_at });
+                        } else if matches!(transfer.removal, Some(Removal::Discarded)) || transfer.cancel_replies.iter().any(|(_, cancel)| !cancel) {
+                            ops.push(StoreOp::PreparedCacheRemove { source_sha256: source_sha256.clone(), prepare_sha256: prepare_sha256.clone() });
+                        }
+                    }
                     ops.push(Self::remove_upload(transfer));
                     if transfer.restore_element.is_some() { ops.push(Self::shown_op(transfer, Shown::Gone)); }
                     ops.push(StoreOp::Outcome { owner: OutcomeOwner::Transfer, id, cycle_id: transfer.cycle_id, model: transfer.mutation.model.clone(), outcome: transfer.outcomes.get(&transfer.cycle_id).filter(|outcome| !matches!(outcome, OutboxOutcome::Ended(_))).cloned().unwrap_or(OutboxOutcome::Discarded) });
@@ -347,6 +355,12 @@ impl TransferState {
                         row.attempts = 0;
                     }
                     ops.push(StoreOp::Upload { row, kind: upload_kind });
+                    if transfer.stage == TransferStage::PersistingCopy && (transfer.prepared_hit || transfer.prepared_stale) {
+                        if let (Some(source_sha256), Some(prepare_sha256)) = (&transfer.source_sha256, &transfer.prepare_sha256) {
+                            ops.push(StoreOp::PreparedCacheRemove { source_sha256: source_sha256.clone(), prepare_sha256: prepare_sha256.clone() });
+                        }
+                        if transfer.prepared_hit { ops.push(StoreOp::RemovePrepare { key: transfer.key.clone() }); }
+                    }
                     if transfer.prepare.is_some() && matches!(transfer.stage, TransferStage::PersistingCopy | TransferStage::PersistingRetry) && matches!(kind, StoreKind::SyncUpload | StoreKind::Retrying) {
                         ops.push(Self::shown_op(transfer, Shown::Preparing { progress: 0 }));
                     }

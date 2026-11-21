@@ -95,7 +95,12 @@ pub enum CachedBlob {
     Fresh { blob_id: String },
     Stale,
     Miss,
+    Prepared { source_sha256: String, source_size: u64, name: Option<String>, mime: Option<String>, blob: Box<CachedBlob> },
+    PreparedStale,
 }
+
+#[derive(Clone, Debug)]
+pub struct PreparedCacheEntry { pub file: String, pub size: u64, pub sha256: String, pub name: Option<String>, pub mime: Option<String>, pub fresh: bool }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Source {
@@ -493,7 +498,7 @@ pub enum StoreKind {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TransferEffect {
     /// Copy `source` into the file directory in chunks of 1 MiB.
-    Copy { transfer_id: TransferId, attempt_id: AttemptId, key: Key, source: Source, staged: bool },
+    Copy { transfer_id: TransferId, attempt_id: AttemptId, key: Key, source: Source, staged: bool, prepare: Option<Vec<u8>> },
     /// The temporary file of the copy takes the place of the copy: the answer comes back as `StagedPromoted`.
     PromoteStaged { transfer_id: TransferId },
     CopyCancel { transfer_id: TransferId },
@@ -511,6 +516,7 @@ pub enum TransferEffect {
     CancelStep { transfer_id: TransferId },
     ReleaseStep { request_id: u64 },
     DeleteFile { path: String },
+    KeepPrepared { transfer_id: TransferId, file: String },
     ClearPrepare { transfer_id: TransferId, clear_id: AttemptId },
     Reply { reply: ReplyId, answer: TransferAnswer },
     /// The receipt of a transfer that is no longer in memory: the record of the Store answers.
@@ -679,6 +685,9 @@ pub struct Transfer {
     pub from_cache: bool,
     /// The cache entry of the content is old: the write of the copy removes it.
     pub cache_stale: bool,
+    pub keep_prepared: Option<(String, u64)>,
+    pub prepared_hit: bool,
+    pub prepared_stale: bool,
     pub round_error: Option<String>,
     /// The columns of `sync_upload` that the last shown value wrote: `None` while no batch wrote the row.
     pub stored_shown: Option<Columns>,

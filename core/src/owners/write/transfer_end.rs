@@ -38,6 +38,9 @@ impl TransferState {
             transfer.cancel_replies.push((rep, cancel));
             return;
         }
+        if cancel && stage != TransferStage::Mutating && transfer.prepare.is_none() && transfer.source_sha256.is_some() && transfer.prepare_sha256.is_some() {
+            transfer.keep_prepared = Some((uuid::Uuid::new_v4().to_string(), now.0));
+        }
         match stage {
             TransferStage::AwaitingSource => self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::AwaitingSource), fx),
             TransferStage::Copying => {
@@ -449,7 +452,9 @@ impl TransferState {
                 Removal::Confirmed { revision, result, row_id } => self.settle(id, OutboxOutcome::Confirmed { revision, result, row_id }, fx),
                 Removal::CopyFailed { .. } | Removal::Storage | Removal::Invalid { .. } => run(fx, TransferEffect::DeleteFile { path: file_id(id) }),
             }
-            if matches!(removal, Removal::Cancel | Removal::Discarded | Removal::Confirmed { .. }) && self.transfers.get(&id).is_some_and(|transfer| transfer.source.is_some() || transfer.restore_element.as_ref().is_some_and(|(_, holder)| holder.is_some())) {
+            if let Some((file, _)) = self.transfers.get(&id).and_then(|transfer| transfer.keep_prepared.as_ref()) {
+                run(fx, TransferEffect::KeepPrepared { transfer_id: id, file: file.clone() });
+            } else if matches!(removal, Removal::Cancel | Removal::Discarded | Removal::Confirmed { .. }) && self.transfers.get(&id).is_some_and(|transfer| transfer.source.is_some() || transfer.restore_element.as_ref().is_some_and(|(_, holder)| holder.is_some())) {
                 self.delete_copy(id, fx);
             }
             self.finish(id, fx);

@@ -187,7 +187,9 @@ pub(crate) struct TransferExecutor {
     preparer: Arc<std::sync::OnceLock<Arc<dyn crate::ffi::Preparer>>>,
     /// The cache of blobs: what is known of a server blob for the content of a copy.
     cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>,
+    prepared_cache: Arc<dyn Fn(&str, &str) -> Option<super::transfer::PreparedCacheEntry> + Send + Sync>,
     doomed: Vec<String>,
+    kept: Vec<(TransferId, String)>,
     answers: Vec<(ReplyId, TransferAnswer)>,
     /// The owner's way back, kept by the first effect: `finish_files` runs when the step is over, with no effect in hand.
     back: Option<Back<Transfers>>,
@@ -205,26 +207,29 @@ pub struct TransferSinks {
 impl TransferExecutor {
     pub fn new(wire: Wire, codec: Arc<dyn StepCodec>, files: Arc<FileDirectories>, sinks: TransferSinks, cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>) -> Self {
         let TransferSinks { read_outcome, settle, status, drained, signal } = sinks;
-        Self { wire, codec, files, settle, read_outcome, status, drained, signal, copies: Flights::default(), steps: Flights::default(), prepares: Flights::default(), preparer: Arc::default(), cache, doomed: Vec::new(), answers: Vec::new(), back: None }
+        Self { wire, codec, files, settle, read_outcome, status, drained, signal, copies: Flights::default(), steps: Flights::default(), prepares: Flights::default(), preparer: Arc::default(), cache, prepared_cache: Arc::new(|_, _| None), doomed: Vec::new(), kept: Vec::new(), answers: Vec::new(), back: None }
     }
+
+    pub fn with_prepared_cache(mut self, read: Arc<dyn Fn(&str, &str) -> Option<super::transfer::PreparedCacheEntry> + Send + Sync>) -> Self { self.prepared_cache = read; self }
 
     pub fn with_preparer(mut self, preparer: Arc<std::sync::OnceLock<Arc<dyn crate::ffi::Preparer>>>) -> Self {
         self.preparer = preparer;
         self
     }
 
-    fn copy(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), source: Source, staged: bool) { self.copy_into(stamp, back, (transfer_id, attempt_id), source, (staged, None)); }
+    fn copy(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), source: Source, staged: bool, prepare: Option<Vec<u8>>) { self.copy_into(stamp, back, (transfer_id, attempt_id), source, (staged, None), prepare); }
 
     /// The result of the platform is read in chunks into the temporary file of the transfer and goes.
     fn measure(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64)) {
         let prepared = prepared_file_id(transfer_id);
         let path = self.files.path(&prepared).unwrap_or_else(|| self.files.cache_target(&prepared, "prepared"));
-        self.copy_into(stamp, back, (transfer_id, attempt_id), Source { path: path.to_string_lossy().into_owned(), parts: 0 }, (true, Some(prepared)));
+        self.copy_into(stamp, back, (transfer_id, attempt_id), Source { path: path.to_string_lossy().into_owned(), parts: 0 }, (true, Some(prepared)), None);
     }
 
-    fn copy_into(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), source: Source, (staged, consume): (bool, Option<String>)) {
+    fn copy_into(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), source: Source, (staged, consume): (bool, Option<String>), prepare: Option<Vec<u8>>) {
         let cancelled = Arc::new(AtomicBool::new(false));
         let (files, copies, back, flag, id, cache) = (self.files.clone(), self.copies.clone(), back.clone(), cancelled.clone(), if staged { staged_file_id(transfer_id) } else { file_id(transfer_id) }, self.cache.clone());
+        let prepared_cache = self.prepared_cache.clone();
         let running = self.wire.tasks.start_blocking(back.watch(task_id(TaskKind::Copy, transfer_id)), Box::new(move || {
             let result = files.copy_source(&id, std::path::Path::new(&source.path));
             if let Some(consumed) = &consume { let _ = files.discard(std::slice::from_ref(consumed)); }
@@ -234,7 +239,18 @@ impl TransferExecutor {
             } else {
                 Some(match result {
                     Ok(CopiedSource::Ready { size, sha256, location, data }) => match keep_small_copy(&files, &id, location, &data) {
-                        Ok(location) => TransferInput::CopyDone { transfer_id, attempt_id, size, cached: cache(&sha256), sha256, place: location },
+                        Ok(location) => {
+                            use sha2::Digest;
+                            let found = prepare.as_ref().and_then(|descriptor| prepared_cache(&sha256, &format!("{:x}", sha2::Sha256::digest(descriptor))));
+                            if let Some(entry) = found {
+                                let path = format!("prepared/{}", entry.file);
+                                if entry.fresh && files.path(&path).is_some_and(|path| path.exists()) && files.promote(&path, &id).is_ok() {
+                                    TransferInput::CopyDone { transfer_id, attempt_id, size: entry.size, cached: CachedBlob::Prepared { source_sha256: sha256, source_size: size, name: entry.name, mime: entry.mime, blob: Box::new(cache(&entry.sha256)) }, sha256: entry.sha256, place: location }
+                                } else {
+                                    TransferInput::CopyDone { transfer_id, attempt_id, size, cached: CachedBlob::PreparedStale, sha256, place: location }
+                                }
+                            } else { TransferInput::CopyDone { transfer_id, attempt_id, size, cached: cache(&sha256), sha256, place: location } }
+                        },
                         Err(error) => TransferInput::CopyFailed { transfer_id, attempt_id, error: error.to_string() },
                     },
                     Ok(CopiedSource::Unreadable(error)) => TransferInput::CopyFailed { transfer_id, attempt_id, error },
@@ -398,8 +414,8 @@ impl TransferExecutor {
     }
 
     fn finish_files(&mut self) {
-        let (doomed, answers) = (std::mem::take(&mut self.doomed), std::mem::take(&mut self.answers));
-        if doomed.is_empty() {
+        let (doomed, kept, answers) = (std::mem::take(&mut self.doomed), std::mem::take(&mut self.kept), std::mem::take(&mut self.answers));
+        if doomed.is_empty() && kept.is_empty() {
             for (reply, answer) in answers {
                 (self.settle)(reply, answer);
             }
@@ -409,6 +425,7 @@ impl TransferExecutor {
         let replies = FileReplies { settle: self.settle.clone(), answers };
         let Some(back) = self.back.as_ref() else { return };
         let _ = self.wire.tasks.start_blocking(back.watch(DETACHED_TASK), Box::new(move || {
+            for (id, file) in kept { let _ = files.keep_prepared(&file_id(id), &file); }
             for path in doomed {
                 let _ = files.discard(&[path]);
             }
@@ -445,7 +462,7 @@ impl EffectRunner<Transfers> for TransferExecutor {
     fn run(&mut self, stamp: EpochStamp, effect: TransferEffect, back: &Back<Transfers>) {
         self.back.get_or_insert_with(|| back.clone());
         match effect {
-            TransferEffect::Copy { transfer_id, attempt_id, source, staged, .. } => self.copy(stamp, back, (transfer_id, attempt_id), source, staged),
+            TransferEffect::Copy { transfer_id, attempt_id, source, staged, prepare, .. } => self.copy(stamp, back, (transfer_id, attempt_id), source, staged, prepare),
             TransferEffect::PromoteStaged { transfer_id } => {
                 match self.files.promote(&staged_file_id(transfer_id), &file_id(transfer_id)) {
                     Ok(_) => back.reply(stamp, TransferInput::StagedPromoted { transfer_id }),
@@ -466,6 +483,7 @@ impl EffectRunner<Transfers> for TransferExecutor {
             TransferEffect::CancelStep { transfer_id } => self.steps.cancel(&transfer_id),
             TransferEffect::ReleaseStep { request_id } => (self.signal)(LifeSignal::ReleaseStep(request_id)),
             TransferEffect::DeleteFile { path } => self.doomed.push(path),
+            TransferEffect::KeepPrepared { transfer_id, file } => self.kept.push((transfer_id, file)),
             TransferEffect::ClearPrepare { transfer_id, clear_id } => self.clear_prepare(stamp, back, transfer_id, clear_id),
             TransferEffect::Reply { reply, answer } => self.answers.push((reply, answer)),
             TransferEffect::ReadOutcome { reply, id, cycle_id } => (self.read_outcome)(crate::owners::store::OutcomeOwner::Transfer, id, cycle_id, reply, Box::new(back.watch(task_id(TaskKind::OutcomeRead, reply)))),

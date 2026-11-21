@@ -241,6 +241,13 @@ impl FileDirectories {
         swap_file(&self.cache.join(from), &self.cache.join(to))
     }
 
+    pub(crate) fn keep_prepared(&self, from: &str, file: &str) -> io::Result<()> {
+        let target = self.path(&format!("prepared/{file}")).ok_or_else(|| io::Error::new(io::ErrorKind::Unsupported, "no file directory"))?;
+        if let Some(parent) = target.parent() { fs::create_dir_all(parent)?; }
+        let source = self.path(from).ok_or_else(|| io::Error::new(io::ErrorKind::Unsupported, "no file directory"))?;
+        fs::rename(source, target)
+    }
+
     pub(crate) fn discard(&self, ids: &[String]) -> io::Result<()> {
         for id in ids {
             #[cfg(test)] super::tests::directories_tests::record_io(id, "discard");
