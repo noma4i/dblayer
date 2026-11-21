@@ -4,12 +4,33 @@ use super::crash_image_support::advancing_by;
 use super::rig_tests::bound;
 use super::upload_stand::{clip, shows, watched, Answer, Stand, BLOB, CREATE_MOMENT};
 use crate::ffi::wire::{WireRow, WireSyncState};
+use crate::ffi::tape::{Reader, Rows, StreamDelivery};
 use crate::ffi::{Database, DbError};
 use crate::owners::write::upload::MEBIBYTE;
 use crate::test_wait::settled;
 
 const ROW: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#;
 const EXPIRY_OPERATIONS: [(&str, &str); 2] = [("CreateBlob", "mutation CreateBlob { createBlob { signedId } }"), ("CreateMoment", "mutation CreateMoment { createMoment { id } }")];
+
+/// The upload status of `upload_clip` and the sync state of the first row of every frame the watch delivered.
+#[derive(Default)]
+struct Frames {
+    rows: Rows,
+    seen: std::sync::Mutex<Vec<(Option<String>, String)>>,
+}
+
+impl Reader for Frames {
+    fn delivered(&self, delivery: StreamDelivery) {
+        self.rows.delivered(delivery);
+        let shown = self.rows.0.lock().unwrap();
+        if let Some(row) = shown.first() {
+            let upload = row.uploads.iter().find(|entry| entry.action == "upload_clip").map(|entry| format!("{:?}", entry.upload.status));
+            self.seen.lock().unwrap().push((upload, format!("{:?}", row.sync.state)));
+        }
+    }
+}
+
+fn failed((upload, sync): &(Option<String>, String)) -> bool { upload.as_deref() == Some("Failed") || sync == "Failed" }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_refused_upload_mutation_retries_without_uploading_the_file_again() {
@@ -26,25 +47,25 @@ async fn a_refused_upload_mutation_retries_without_uploading_the_file_again() {
             let epoch = database.session_epoch();
             let sent = bound(database.send(clip("Moment", r#"{"text":"photo"}"#, "upload_clip", &source, epoch))).await.unwrap();
             let id = sent.optimistic_value.as_ref().unwrap().id.clone();
-            let stream = database.subscribe_values(epoch, crate::ffi::ReadRequest::Entity { model: "Moment".into(), id: id.clone(), fetch: crate::ffi::ReadFetch::Never });
+            let frames = Arc::new(Frames::default());
+            drop(database.watch(crate::ffi::ReadRequest::Entity { model: "Moment".into(), id: id.clone(), fetch: crate::ffi::ReadFetch::Never }, frames.clone()));
             let original = tokio::spawn(crate::runtime::counted(Some(database.life.launch()), {
                 let database = database.clone();
                 async move { database.confirmed(sent, false).await }
             }));
             refusal.entered().await;
             refusal.release();
-            loop {
-                let rows = match bound(stream.pull_next()).await.unwrap() {
-                    crate::ffi::ReadValue::Snapshot { rows, .. } => rows,
-                    crate::ffi::ReadValue::Delta { edits, .. } => crate::ffi::RowEdit::carried(&edits),
-                    _ => continue,
-                };
-                if rows.iter().any(|row| row.sync.state == WireSyncState::Failed || row.uploads.iter().any(|entry| entry.upload.status == crate::ffi::WireUploadStatus::Failed)) { break; }
-            }
+            settled(&database, "the row shows the failure", || frames.seen.lock().unwrap().last().is_some_and(failed)).await;
+            let before = frames.seen.lock().unwrap().len();
             stand.script.data("CreateMoment", ROW);
 
             let retried = bound(database.retry(epoch, "Moment".into(), id, action.clone(), None)).await.unwrap();
             let confirmed = bound(database.confirmed(retried, false)).await.unwrap();
+            let life = database.life_handle();
+            bound(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
+            let after: Vec<_> = frames.seen.lock().unwrap()[before..].to_vec();
+            let left = after.iter().position(|frame| !failed(frame));
+            assert!(left.is_some_and(|left| !after[left..].iter().any(failed)), "{action:?}: a frame after the retry left the failure shows it again: {after:?}");
 
             let refused = bound(original).await.unwrap();
             assert!(matches!(refused, Err(DbError::Rejected { .. })), "{action:?}: {refused:?}");
