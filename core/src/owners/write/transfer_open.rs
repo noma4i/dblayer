@@ -47,6 +47,8 @@ impl TransferState {
             transfer.place = Some(row.place);
             transfer.size = row.size;
             transfer.sha256 = row.sha256.clone();
+            transfer.source_sha256 = row.source_sha256.clone();
+            transfer.prepare_sha256 = row.prepare_sha256.clone();
             transfer.cycle_id = row.cycle_id.max(1);
             transfer.next_step = if row.source.as_ref().is_some_and(|source| row.confirmed_parts >= source.parts) { NextStep::Complete } else { NextStep::Part(row.confirmed_parts + 1) };
             let group = transfer.batch_id;

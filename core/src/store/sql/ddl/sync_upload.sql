@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS sync_upload (
   inline INTEGER,
   size INTEGER,
   sha256 TEXT,
+  source_sha256 TEXT,
+  prepare_sha256 TEXT,
   mutation_path TEXT,
   mutation_body TEXT,
   on_failure TEXT,

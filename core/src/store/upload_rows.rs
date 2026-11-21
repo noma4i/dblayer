@@ -34,6 +34,8 @@ pub(crate) struct UploadRaw {
     inline: bool,
     size: i64,
     sha256: String,
+    source_sha256: Option<String>,
+    prepare_sha256: Option<String>,
     path: String,
     body: String,
     on_failure: String,
@@ -116,6 +118,8 @@ pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result
             weight: row.get(33)?,
             weighed_prepare: row.get(34)?,
             batch_progress: row.get(35)?,
+            source_sha256: row.get(36)?,
+            prepare_sha256: row.get(37)?,
         })
     })?;
     rows.collect()
@@ -140,6 +144,7 @@ impl Store {
             etags: Vec::new(), completed: false, signed_id: None, failed: None, aborted: false, op_id: number("op_id"), copying: false,
             file_present, created_at: Time(number("created_at").unwrap_or(0)), place: Location::Directory, size: number("size").unwrap_or(0),
             sha256: text("sha256").unwrap_or_default(), cycle_id: number("cycle_id").unwrap_or(1).max(1), has_intent: false, has_operation: false,
+            source_sha256: text("source_sha256"), prepare_sha256: text("prepare_sha256"),
             mutation, steps: None, staged: false, failed_at: None, blob_created_at: None, held: false, restore_failed: Some(row.reason.clone()), prepare: None, max_bytes: number("max_bytes"),
             restore_element: Some((row.key.clone(), holder)), pending_step: None, saved_answer: None,
         }))
@@ -204,6 +209,8 @@ impl Store {
             place,
             size: unsigned(raw.size, "size")?,
             sha256: raw.sha256,
+            source_sha256: raw.source_sha256,
+            prepare_sha256: raw.prepare_sha256,
             cycle_id: raw.cycle_id.map_or(Ok(1), |value| unsigned(value, "cycle_id"))?,
             has_intent: false,
             has_operation: false,

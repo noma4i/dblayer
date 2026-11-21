@@ -103,6 +103,8 @@ impl TransferState {
             place: None,
             size: 0,
             sha256: String::new(),
+            source_sha256: None,
+            prepare_sha256: None,
             mutation,
             fields,
             steps,
@@ -308,6 +310,14 @@ impl TransferState {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if transfer.stage != TransferStage::Copying || transfer.attempt_id != attempt_id {
             return;
+        }
+        if let Some(descriptor) = &transfer.prepare {
+            use sha2::Digest;
+            transfer.source_sha256 = Some(sha256.clone());
+            transfer.prepare_sha256 = Some(format!("{:x}", sha2::Sha256::digest(descriptor)));
+        } else {
+            transfer.source_sha256 = None;
+            transfer.prepare_sha256 = None;
         }
         let cached = if transfer.prepare.is_some() || transfer.held || transfer.over_limit(size) { CachedBlob::Miss } else { cached };
         if transfer.weight.is_none() {

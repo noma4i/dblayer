@@ -114,6 +114,8 @@ pub struct UploadRow {
     pub inline: bool,
     pub size: u64,
     pub sha256: String,
+    pub source_sha256: Option<String>,
+    pub prepare_sha256: Option<String>,
     /// The final mutation: `path` and `body` of the request.
     pub path: String,
     pub body: String,
