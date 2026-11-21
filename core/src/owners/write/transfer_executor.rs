@@ -462,6 +462,10 @@ impl EffectRunner<Transfers> for TransferExecutor {
     fn run(&mut self, stamp: EpochStamp, effect: TransferEffect, back: &Back<Transfers>) {
         self.back.get_or_insert_with(|| back.clone());
         match effect {
+            TransferEffect::LookupPrepared { source_sha256, prepare_sha256, reply } => {
+                let found = (self.prepared_cache)(&source_sha256, &prepare_sha256).is_some();
+                back.reply(stamp, TransferInput::PreparedLookup { source_sha256, prepare_sha256, reply, found });
+            }
             TransferEffect::Copy { transfer_id, attempt_id, source, staged, prepare, .. } => self.copy(stamp, back, (transfer_id, attempt_id), source, staged, prepare),
             TransferEffect::PromoteStaged { transfer_id } => {
                 match self.files.promote(&staged_file_id(transfer_id), &file_id(transfer_id)) {

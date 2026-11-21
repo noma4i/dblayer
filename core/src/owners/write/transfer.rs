@@ -737,6 +737,10 @@ impl TransferState {
     }
 
     fn committed(&mut self, now: Time, (batch, revision, shown): (crate::owners::contract::BatchId, i64, Vec<Option<crate::store::Row>>), fx: &mut Fx) {
+        if let Some(id) = self.forget_batches.remove(&batch) {
+            reply(fx, id, TransferAnswer::Cancelled(true));
+            return self.release_forget(now, fx);
+        }
         let Some(pending) = self.pending.remove(&batch) else { return };
         for id in pending.ids.iter().chain(pending.written.keys()) {
             if let Some(transfer) = self.transfers.get_mut(id) { transfer.storage_refusals = 0; }
@@ -844,6 +848,10 @@ impl TransferState {
     }
 
     fn rejected(&mut self, now: Time, rejected: crate::owners::contract::Rejected, fx: &mut Fx) {
+        if let Some(id) = self.forget_batches.remove(&rejected.batch) {
+            reply(fx, id, TransferAnswer::Err(Fault::Rejected(rejected.reason)));
+            return self.release_forget(now, fx);
+        }
         let Some(pending) = self.pending.remove(&rejected.batch) else { return };
         if !matches!(rejected.reason, RejectReason::Storage(_)) {
             for id in pending.ids.iter().chain(pending.written.keys()) {
@@ -982,6 +990,16 @@ impl TransferState {
             return reply(fx, *id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
         match input {
+            TransferInput::ForgetPrepared { epoch, source_sha256, prepare_sha256, reply: id } => {
+                if epoch != self.epoch { return reply(fx, id, TransferAnswer::Err(Fault::NoSession)); }
+                self.forget_busy = true;
+                run(fx, TransferEffect::LookupPrepared { source_sha256, prepare_sha256, reply: id });
+            }
+            TransferInput::PreparedLookup { source_sha256, prepare_sha256, reply: id, found } => {
+                if !found { reply(fx, id, TransferAnswer::Cancelled(false)); return self.release_forget(now, fx); }
+                let batch = self.send_batch(vec![StoreOp::PreparedCacheRemove { source_sha256, prepare_sha256 }], fx);
+                self.forget_batches.insert(batch, id);
+            }
             TransferInput::Accept { epoch, item, reply } => self.accept(now, epoch, vec![*item], None, reply, fx),
             TransferInput::AcceptBatch { epoch, items, joint, reply } => self.accept(now, epoch, items, Some(*joint), reply, fx),
             TransferInput::Restored { .. } | TransferInput::RestoreFailed { .. } | TransferInput::ReservedFloor { .. } => {}
@@ -1122,20 +1140,26 @@ impl TransferState {
         *self = kept;
     }
 
-    fn in_epoch(input: &TransferInput, epoch: Epoch) -> bool { matches!(input, TransferInput::Accept { epoch: found, .. } | TransferInput::AcceptBatch { epoch: found, .. } if *found == epoch) }
+    fn in_epoch(input: &TransferInput, epoch: Epoch) -> bool { matches!(input, TransferInput::Accept { epoch: found, .. } | TransferInput::AcceptBatch { epoch: found, .. } | TransferInput::ForgetPrepared { epoch: found, .. } if *found == epoch) }
 
     fn is_call(input: &TransferInput, epoch: Epoch) -> bool {
         match input {
-            TransferInput::Accept { .. } | TransferInput::AcceptBatch { .. } => Self::in_epoch(input, epoch),
+            TransferInput::Accept { .. } | TransferInput::AcceptBatch { .. } | TransferInput::ForgetPrepared { .. } => Self::in_epoch(input, epoch),
             _ => matches!(input, TransferInput::Cancel { .. } | TransferInput::SupplySource { .. } | TransferInput::Commit { .. } | TransferInput::StagedDimensions { .. } | TransferInput::SourceFailed { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::SelectRow { .. } | TransferInput::Outcome { .. } | TransferInput::MutationOutcome { .. } | TransferInput::MutationOutcomes { .. }),
         }
     }
 
     fn route(&mut self, now: Time, input: TransferInput, fx: &mut Fx) {
         self.handled += 1;
+        if self.forget_busy && Self::is_call(&input, self.epoch) { self.forget_held.push(input); return; }
         if self.phase == Phase::Restoring { self.restoring(now, input, fx); }
         else if self.phase == Phase::Classified && !self.held.is_empty() && Self::is_call(&input, self.epoch) { self.held.push(input); }
         else { self.handle(now, input, fx); }
+    }
+
+    fn release_forget(&mut self, now: Time, fx: &mut Fx) {
+        self.forget_busy = false;
+        for input in std::mem::take(&mut self.forget_held) { self.route(now, input, fx); }
     }
 
     /// `Restored`: the accepts replay, the other calls on the keys of the base wait for `RestoreReady`.
@@ -1161,7 +1185,7 @@ impl TransferState {
         let fault = Fault::Ended(cause.clone());
         for input in std::mem::take(&mut self.held) {
             match input {
-                TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::Commit { reply: id, .. } | TransferInput::StagedDimensions { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::SelectRow { reply: id, .. } => reply(fx, id, TransferAnswer::Err(fault.clone())),
+                TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::ForgetPrepared { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::SupplySource { reply: id, .. } | TransferInput::Commit { reply: id, .. } | TransferInput::StagedDimensions { reply: id, .. } | TransferInput::SourceFailed { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::SelectRow { reply: id, .. } => reply(fx, id, TransferAnswer::Err(fault.clone())),
                 TransferInput::Outcome { reply: id, .. } => reply(fx, id, TransferAnswer::Outcome(OutboxOutcome::Ended(cause.clone()), None)),
                 _ => {}
             }

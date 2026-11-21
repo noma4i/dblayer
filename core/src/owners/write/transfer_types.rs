@@ -310,6 +310,8 @@ pub struct AbortFault {
 
 #[derive(Clone, Debug)]
 pub enum TransferInput {
+    ForgetPrepared { epoch: Epoch, source_sha256: String, prepare_sha256: String, reply: ReplyId },
+    PreparedLookup { source_sha256: String, prepare_sha256: String, reply: ReplyId, found: bool },
     Accept { epoch: Epoch, item: Box<BatchItem>, reply: ReplyId },
     AcceptBatch { epoch: Epoch, items: Vec<BatchItem>, joint: Box<Joint>, reply: ReplyId },
     Restored { uploads: Vec<StoredTransfer>, outcomes: TransferOutcomes, orphans: Vec<(String, String)>, batches: BTreeMap<u64, StoredGroup>, held_orphan: Option<String> },
@@ -497,6 +499,7 @@ pub enum StoreKind {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TransferEffect {
+    LookupPrepared { source_sha256: String, prepare_sha256: String, reply: ReplyId },
     /// Copy `source` into the file directory in chunks of 1 MiB.
     Copy { transfer_id: TransferId, attempt_id: AttemptId, key: Key, source: Source, staged: bool, prepare: Option<Vec<u8>> },
     /// The temporary file of the copy takes the place of the copy: the answer comes back as `StagedPromoted`.
@@ -797,6 +800,9 @@ pub struct TransferState {
     pub(super) selecting: BTreeMap<ReplyId, (TransferId, super::outbox_types::SelectKind)>,
     pub(super) removal_pending: BTreeSet<TransferId>,
     pub(super) pending: BTreeMap<BatchId, Pending>,
+    pub(super) forget_busy: bool,
+    pub(super) forget_batches: BTreeMap<BatchId, ReplyId>,
+    pub(super) forget_held: Vec<TransferInput>,
     pub(super) replacements: BTreeMap<TransferId, (TransferId, Option<super::outbox::ReplacementOperation>)>,
     /// Per key, the value each Blob stream got last with its revision: a stream gets a value only when it differs.
     pub(super) subscribers: BTreeMap<Key, BTreeMap<StreamId, (Shown, i64)>>,
@@ -859,6 +865,9 @@ impl TransferState {
             selecting: BTreeMap::new(),
             removal_pending: BTreeSet::new(),
             pending: BTreeMap::new(),
+            forget_busy: false,
+            forget_batches: BTreeMap::new(),
+            forget_held: Vec::new(),
             replacements: BTreeMap::new(),
             subscribers: BTreeMap::new(),
             published: BTreeMap::new(),

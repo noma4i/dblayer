@@ -39,6 +39,8 @@ impl Life {
 
     pub fn discard_upload(&self, epoch: Epoch, key: String) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Discard { key, reply }) }
 
+    pub fn forget_prepared(&self, epoch: Epoch, source_sha256: String, prepare_sha256: String) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::ForgetPrepared { epoch, source_sha256, prepare_sha256, reply }) }
+
     pub fn upload_outcome(&self, epoch: Epoch, receipt: Receipt, discard_on_failure: bool) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Outcome { receipt, reply, discard_on_failure }) }
 
     pub fn jobs_sink_set(&self) { self.wiring.to_rounds(RoundsInput::JobsSinkSet); }

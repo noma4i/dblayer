@@ -367,6 +367,30 @@ impl Database {
             _ => Err(DbError::Internal { detail: "the owner answered a discard with no result".into() }),
         }
     }).await? }
+
+    pub async fn forget_prepared(&self, epoch: u64, request: WireUploadRequest) -> Result<bool, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
+        this_db.account_call(epoch)?;
+        let path = request.source.path().ok_or_else(|| invalid("forget prepared needs a file"))?.to_string();
+        let prepare = request.source.prepare().ok_or_else(|| invalid("forget prepared needs prepare settings"))?.to_vec();
+        let (source_sha256, prepare_sha256) = this_db.offload(move || {
+            use sha2::Digest;
+            use std::io::Read;
+            let mut file = std::fs::File::open(path).map_err(|error| invalid(error.to_string()))?;
+            let mut digest = sha2::Sha256::new();
+            let mut buffer = [0u8; 65536];
+            loop {
+                let count = file.read(&mut buffer).map_err(|error| invalid(error.to_string()))?;
+                if count == 0 { break; }
+                digest.update(&buffer[..count]);
+            }
+            Ok((format!("{:x}", digest.finalize()), format!("{:x}", sha2::Sha256::digest(prepare))))
+        }).await?;
+        let waiter = this_db.life.forget_prepared(epoch, source_sha256, prepare_sha256);
+        match this_db.transfer_answer(waiter, "forget prepared").await? {
+            TransferAnswer::Cancelled(found) => Ok(found),
+            _ => Err(DbError::Internal { detail: "the owner answered forget with no result".into() }),
+        }
+    }).await? }
 }
 
 impl Database {
