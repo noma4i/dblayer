@@ -242,6 +242,8 @@ pub enum StoreOp {
     /// The server blob of a file with this content: a later upload of the same bytes skips the steps while the blob lives.
     BlobCachePut { content_sha256: String, blob_id: String, created_at: u64 },
     BlobCacheRemove { content_sha256: String },
+    PreparedCachePut { source_sha256: String, prepare_sha256: String, file: String, size: u64, sha256: String, name: Option<String>, mime: Option<String>, created_at: u64 },
+    PreparedCacheRemove { source_sha256: String, prepare_sha256: String },
     /// A page of a window: the rows of the answer, the window record (`page`, `cursor`) and whether it replaces the rows of the window.
     /// `source` = `NodeReread` when the window owner marked the load for a reread by event (P-DATA-100).
     Window { landed_at: i64, key: String, model: String, page: u32, replace_all: bool, cursor: Option<String>, roots: Vec<RowValue>, related: Vec<(String, RowValue)>, total: Option<i64>, base_revision: i64, source: crate::schema::RowSource },

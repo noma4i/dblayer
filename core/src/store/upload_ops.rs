@@ -140,6 +140,10 @@ pub(super) fn apply_upload(connection: &Connection, op: &StoreOp) -> Result<bool
             connection.execute(include_str!("sql/upload_ops/apply_upload_insert_blob_cache.sql"), params![content_sha256, blob_id, i64::try_from(*created_at).unwrap_or(i64::MAX)])?;
         }
         StoreOp::BlobCacheRemove { content_sha256 } => { connection.execute(include_str!("sql/upload_ops/apply_upload_delete_blob_cache.sql"), [content_sha256])?; }
+        StoreOp::PreparedCachePut { source_sha256, prepare_sha256, file, size, sha256, name, mime, created_at } => {
+            connection.execute("INSERT OR REPLACE INTO prepared_cache (source_sha256, prepare_sha256, file, size, sha256, name, mime, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![source_sha256, prepare_sha256, file, i64::try_from(*size).unwrap_or(i64::MAX), sha256, name, mime, i64::try_from(*created_at).unwrap_or(i64::MAX)])?;
+        }
+        StoreOp::PreparedCacheRemove { source_sha256, prepare_sha256 } => { connection.execute("DELETE FROM prepared_cache WHERE source_sha256 = ?1 AND prepare_sha256 = ?2", params![source_sha256, prepare_sha256])?; }
         _ => return Ok(false),
     }
     Ok(true)
