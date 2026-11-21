@@ -80,6 +80,7 @@ mod upload_init_release_tests;
 mod upload_batch_shift_tests;
 mod upload_pending_tests;
 mod upload_stage_tests;
+mod upload_stage_row_tests;
 mod upload_local_url_tests;
 mod upload_missing_file_release_tests;
 mod upload_release_tests;
