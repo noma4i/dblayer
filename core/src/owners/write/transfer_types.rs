@@ -691,6 +691,7 @@ pub struct Transfer {
     pub keep_prepared: Option<(String, u64)>,
     pub prepared_hit: bool,
     pub prepared_stale: bool,
+    pub skip_keep: bool,
     pub round_error: Option<String>,
     /// The columns of `sync_upload` that the last shown value wrote: `None` while no batch wrote the row.
     pub stored_shown: Option<Columns>,

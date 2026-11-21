@@ -240,8 +240,7 @@ impl TransferExecutor {
                 Some(match result {
                     Ok(CopiedSource::Ready { size, sha256, location, data }) => match keep_small_copy(&files, &id, location, &data) {
                         Ok(location) => {
-                            use sha2::Digest;
-                            let found = prepare.as_ref().and_then(|descriptor| prepared_cache(&sha256, &format!("{:x}", sha2::Sha256::digest(descriptor))));
+                            let found = prepare.as_ref().and_then(|descriptor| prepared_cache(&sha256, &crate::store::files::sha256_hex(descriptor)));
                             if let Some(entry) = found {
                                 let path = format!("prepared/{}", entry.file);
                                 if entry.fresh && files.path(&path).is_some_and(|path| path.exists()) && files.promote(&path, &id).is_ok() {
@@ -422,10 +421,14 @@ impl TransferExecutor {
             return;
         }
         let files = self.files.clone();
-        let replies = FileReplies { settle: self.settle.clone(), answers };
+        let mut replies = FileReplies { settle: self.settle.clone(), answers };
         let Some(back) = self.back.as_ref() else { return };
         let _ = self.wire.tasks.start_blocking(back.watch(DETACHED_TASK), Box::new(move || {
-            for (id, file) in kept { let _ = files.keep_prepared(&file_id(id), &file); }
+            for (id, file) in kept {
+                if let Err(error) = files.keep_prepared(&file_id(id), &file) {
+                    for (_, answer) in &mut replies.answers { *answer = TransferAnswer::Err(super::outbox::Fault::Copy(error.to_string())); }
+                }
+            }
             for path in doomed {
                 let _ = files.discard(&[path]);
             }

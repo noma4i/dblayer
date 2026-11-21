@@ -37,6 +37,8 @@ impl TransferState {
         transfer.supply_back = Some(back);
         transfer.supply_reply = Some(rep);
         transfer.stage = TransferStage::Copying;
+        transfer.prepared_hit = false;
+        transfer.prepared_stale = false;
         transfer.attempt_id = attempt_id;
         let effect = TransferEffect::Copy { transfer_id: id, attempt_id, key: transfer.key.clone(), source: file, staged, prepare: transfer.prepare.clone() };
         run(fx, effect);
@@ -124,6 +126,7 @@ impl TransferState {
             keep_prepared: None,
             prepared_hit: false,
             prepared_stale: false,
+            skip_keep: false,
             cache_stale: false,
             round_error: None,
             stored_shown: None,
@@ -334,9 +337,8 @@ impl TransferState {
             cached => (cached, sha256.clone(), size),
         };
         if let Some(descriptor) = &transfer.prepare {
-            use sha2::Digest;
             transfer.source_sha256 = Some(source_sha256);
-            transfer.prepare_sha256 = Some(format!("{:x}", sha2::Sha256::digest(descriptor)));
+            transfer.prepare_sha256 = Some(crate::store::files::sha256_hex(descriptor));
         } else {
             transfer.source_sha256 = None;
             transfer.prepare_sha256 = None;

@@ -156,6 +156,7 @@ pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool) -> Resu
     connection.execute_batch(include_str!("sql/reset/wipe_all_cache_delete_scope_member.sql"))?;
     clear_sync(connection, None)?;
     clear_all(connection)?;
+    connection.execute("DELETE FROM prepared_cache", [])?;
     Ok(())
 }
 
@@ -319,7 +320,6 @@ impl Store {
         write_intent(&inner.connection, if erase_encrypted { "session_end" } else { "account" }, now)?;
         let transaction = inner.connection.unchecked_transaction()?;
         wipe_all_cache(&transaction, false)?;
-        transaction.execute("DELETE FROM prepared_cache", [])?;
         transaction.execute_batch(include_str!("sql/reset/clear_row_alias.sql"))?;
         retire_operations(&transaction, None, None)?;
         session_state::remove_resume_answer(&transaction)?;

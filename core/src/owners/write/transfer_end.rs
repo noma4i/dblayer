@@ -25,6 +25,7 @@ impl TransferState {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let (stage, batched, committing) = (transfer.stage, transfer.batch_id.is_some(), transfer.commit_reply.is_some());
         let supplying = transfer.supply_back.is_some();
+        if cancel && stage == TransferStage::PersistingPrepared { transfer.skip_keep = true; }
         if stage == TransferStage::Mutating && !Self::defers_removal(stage, batched, supplying, committing) && self.group_entry(id).is_some_and(|group| self.phase_of(group) == Some(BatchPhase::Mutating)) {
             return Self::refuse(fx, rep, Fault::InFlight);
         }
@@ -38,7 +39,7 @@ impl TransferState {
             transfer.cancel_replies.push((rep, cancel));
             return;
         }
-        if cancel && stage != TransferStage::Mutating && transfer.prepare.is_none() && transfer.source_sha256.is_some() && transfer.prepare_sha256.is_some() {
+        if cancel && !transfer.skip_keep && stage != TransferStage::Mutating && transfer.prepare.is_none() && transfer.source_sha256.is_some() && transfer.prepare_sha256.is_some() {
             transfer.keep_prepared = Some((uuid::Uuid::new_v4().to_string(), now.0));
         }
         match stage {

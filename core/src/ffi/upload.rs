@@ -383,7 +383,7 @@ impl Database {
                 if count == 0 { break; }
                 digest.update(&buffer[..count]);
             }
-            Ok((format!("{:x}", digest.finalize()), format!("{:x}", sha2::Sha256::digest(prepare))))
+            Ok((digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect(), crate::store::files::sha256_hex(&prepare)))
         }).await?;
         let waiter = this_db.life.forget_prepared(epoch, source_sha256, prepare_sha256);
         match this_db.transfer_answer(waiter, "forget prepared").await? {
