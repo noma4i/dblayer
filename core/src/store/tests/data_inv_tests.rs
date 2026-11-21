@@ -153,7 +153,7 @@ fn store_retry_preserves_transfer_outcome() {
     use crate::schema::OnFailure;
     let db = open();
     put(&db, "moments", json!({"id":"m1", "userId":"u1", "text":"old"}));
-    let row = UploadRow {
+    let row = UploadRow { source_sha256: None, prepare_sha256: None,
         key: "moments:m1:upload".into(), seq: 3, source: Some("/source".into()), parts: 1,
         batch: None, fields: None, upload_id: None, confirmed_parts: 1, progress: 0, weight: None, weighed_prepare: false, batch_progress: 0, attempts: 1,
         completed: true, failed: Some("refused".into()), created_at: 1, inline: false,

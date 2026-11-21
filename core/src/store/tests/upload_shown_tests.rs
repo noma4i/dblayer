@@ -13,7 +13,7 @@ fn write(db: &Store, ops: Vec<StoreOp>) {
 }
 
 fn row() -> UploadRow {
-    UploadRow {
+    UploadRow { source_sha256: None, prepare_sha256: None,
         key: KEY.into(), seq: 1, source: Some("/source".into()), parts: 3, batch: None, fields: None, upload_id: None, confirmed_parts: 1, progress: 0, weight: None, weighed_prepare: false, batch_progress: 0, attempts: 2, completed: false, failed: None,
         created_at: 1, inline: false, size: 9, sha256: "hash".into(), path: "/mutation".into(), body: "{}".into(), on_failure: OnFailure::Keep, steps_path: None, steps_body: None,
         transfer_id: 2, cycle_id: 1, signed_id: None, aborted: false, staged: false, failed_at: None, blob_created_at: None, held: false, op_id: None, etags: vec![Some("etag".into())], prepare: None, max_bytes: None,

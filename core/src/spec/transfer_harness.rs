@@ -168,7 +168,7 @@ pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.in
 pub(super) fn joint() -> Joint { Joint { minimum: 2, maximum: 10, items_key: "items".into(), mutation: mutation("Batch:r:upload"), renumber: None } }
 
 pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
-    StoredTransfer {
+    StoredTransfer { source_sha256: None, prepare_sha256: None,
         transfer_id: id,
         attempts: 0,
         key: key.into(),

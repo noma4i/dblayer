@@ -51,7 +51,7 @@ fn is_release(input: &SessionInput) -> bool { matches!(input, SessionInput::Rele
 fn undeclared_op() -> crate::owners::write::outbox::NewOp { crate::owners::write::outbox::NewOp { action: "send".into(), ..model_op("r", Policy::Rollback, false) } }
 
 fn upload(transfer_id: u64, cycle_id: u64) -> crate::owners::store::UploadRow {
-    crate::owners::store::UploadRow {
+    crate::owners::store::UploadRow { source_sha256: None, prepare_sha256: None,
         key: format!("Moment:{transfer_id}:upload"), seq: transfer_id, source: Some(String::new()), parts: 1,
         batch: Some(9), fields: None, upload_id: None, confirmed_parts: 1, progress: 0, weight: None, weighed_prepare: false, batch_progress: 0, attempts: 1, completed: true,
         failed: None, created_at: 0, inline: true, size: 1, sha256: String::new(), path: String::new(),
