@@ -114,6 +114,7 @@ impl Store {
         inner.connection.execute(include_str!("sql/boot/boot_delete_stale_outcome.sql"), [now.saturating_sub(7 * 86_400_000)])?;
         let database: String = inner.connection.query_row(include_str!("sql/boot/boot_select_pragma_database_list.sql"), [], |row| row.get(0))?;
         let files: std::collections::HashSet<String> = inner.connection.prepare(include_str!("sql/boot/boot_select_file.sql"))?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
+        let prepared_files: std::collections::HashSet<String> = inner.connection.prepare("SELECT file FROM prepared_cache")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
         let mut transfer_holders: std::collections::HashSet<String> = inner.connection.prepare(include_str!("sql/boot/boot_select_sync_upload.sql"))?.query_map([], |row| row.get::<_, i64>(0).map(|id| id.to_string()))?.collect::<rusqlite::Result<_>>()?;
         let failed = super::restore::read_failed(&inner.connection)?;
         transfer_holders.extend(failed.iter().filter_map(|row| row.transfer_id().map(|id| id.to_string())));
@@ -122,15 +123,33 @@ impl Store {
         drop(reading_models);
         if !database.is_empty() {
             let directories = crate::store::files::FileDirectories::beside(std::path::Path::new(&database));
-            if files.is_empty() && transfer_holders.is_empty() {
+            if files.is_empty() && transfer_holders.is_empty() && prepared_files.is_empty() {
                 directories.remove_all()?;
             } else {
                 directories.recover_partials(&files)?;
                 remove_unheld_transfer_copies(&directories, &transfer_holders)?;
+                remove_unheld_prepared(&directories, &prepared_files)?;
             }
         }
         Ok(BootReport { recreated, verdict, finished_interrupted_reset, tombstone_drops, reset_models, dropped })
     }
+}
+
+fn remove_unheld_prepared(directories: &crate::store::files::FileDirectories, files: &std::collections::HashSet<String>) -> std::io::Result<()> {
+    let Some(prepared) = directories.path("prepared") else { return Ok(()) };
+    let entries = match std::fs::read_dir(&prepared) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        if entry.file_type()?.is_file() && !name.to_str().is_some_and(|name| files.contains(name)) {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 fn remove_unheld_transfer_copies(directories: &crate::store::files::FileDirectories, holders: &std::collections::HashSet<String>) -> std::io::Result<()> {
