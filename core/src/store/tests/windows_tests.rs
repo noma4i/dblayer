@@ -62,7 +62,7 @@ fn store_ordered_page_open_interval() {
     use serde_json::json;
     for (seed, page_rows, number, cursor, expected) in [
         (vec![("old", 2)], vec![("new1", 2), ("new2", 2)], 1, Some("next"), vec!["new1", "new2", "old"]),
-        (vec![("low", 1), ("middle", 2), ("high", 3)], vec![("new_low", 1), ("new_high", 3)], 1, Some("next"), vec!["high", "low", "new_high", "new_low"]),
+        (vec![("low", 1), ("middle", 2), ("high", 3)], vec![("new_low", 1), ("new_high", 3)], 1, Some("next"), vec!["high", "new_high", "new_low"]),
         (vec![("old", 2)], vec![("new", 2)], 1, Some("next"), vec!["new", "old"]),
         (vec![("old", 2)], vec![("new", 2)], 1, None, vec!["new"]),
         (vec![("old", 2)], vec![("new", 2)], 2, None, vec!["new", "old"]),
@@ -81,6 +81,39 @@ fn store_ordered_page_open_interval() {
         let mut members: Vec<_> = db.read(&["messages"], |reader| reader.scope_members("messages", scope.as_str())).unwrap().into_iter().map(|(id, _)| id).collect();
         members.sort();
         assert_eq!(members, expected, "seed={seed:?}, page={page_rows:?}");
+    }
+}
+
+/// D-499: a partial first page (request without `after`, a next cursor) of a selection with a local `order` covers the head of the list on the side the server starts from (read from the order of the answer: its first row against its last row), so a member the server no longer returns at the head leaves; members past the far end of the answer stay; an answer whose rows have one order key covers only its open interval (D-297).
+#[test]
+fn store_first_page_covers_the_head_on_the_server_side() {
+    use crate::owners::read::windows::WindowKey;
+    use crate::owners::store::{RowValue, StoreOp};
+    use serde_json::json;
+    type Rows<'a> = &'a [(&'a str, i64)];
+    let cases: [(&str, Rows, Option<(Rows, Option<&str>)>, Rows, Vec<&str>); 5] = [
+        ("server in local order, head deleted", &[("gone", 1), ("a", 2), ("b", 3)], None, &[("a", 2), ("b", 3)], vec!["a", "b"]),
+        ("server opposite to local order, head deleted", &[("gone", 9), ("b", 8), ("a", 7)], None, &[("b", 8), ("a", 7)], vec!["a", "b"]),
+        ("members past the far end stay", &[("a", 2), ("b", 3)], Some((&[("c", 4), ("d", 5)], None)), &[("a", 2), ("b", 3)], vec!["a", "b", "c", "d"]),
+        ("head deleted, the tail page stays", &[("gone", 1), ("a", 2), ("b", 3)], Some((&[("c", 4)], None)), &[("a", 2), ("b", 3)], vec!["a", "b", "c"]),
+        ("one order key in the answer covers its open interval only", &[("old", 2)], None, &[("new1", 2), ("new2", 2)], vec!["new1", "new2", "old"]),
+    ];
+    for (case, seed, tail, refreshed, expected) in cases {
+        let db = Store::open_models(None, vec![crate::schema_fixtures::messages_spec(false)], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+        let params = json!({"chatId":"c1"}).as_object().unwrap().clone();
+        let key = WindowKey::relation("messages", "thread", &params);
+        let scope = db.spec("messages").unwrap().selection_key("thread", &params).unwrap();
+        let page = |rows: Rows, page, cursor: Option<&str>| StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0,
+            key: key.name.clone(), model: key.model.clone(), page, replace_all: false, cursor: cursor.map(str::to_string),
+            roots: rows.iter().map(|(id, seq)| RowValue { row_id: (*id).into(), values: json!({"id": id, "chatId":"c1", "sequenceNumber":seq}).to_string() }).collect(),
+            related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap(),
+        };
+        db.write_queue_ops(&[page(seed, 1, Some("next"))]).unwrap();
+        if let Some((rows, cursor)) = tail { db.write_queue_ops(&[page(rows, 2, cursor)]).unwrap(); }
+        db.write_queue_ops(&[page(refreshed, 1, Some("next"))]).unwrap();
+        let mut members: Vec<_> = db.read(&["messages"], |reader| reader.scope_members("messages", scope.as_str())).unwrap().into_iter().map(|(id, _)| id).collect();
+        members.sort();
+        assert_eq!(members, expected, "{case}");
     }
 }
 
