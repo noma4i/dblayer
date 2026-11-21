@@ -162,7 +162,7 @@ pub(super) fn mutation(key: &str) -> NewOp {
 /// The body the Transfer owner writes for the steps of an upload.
 pub(super) fn steps_body() -> String { crate::owners::write::upload_codec::StepsBody { multipart: false, name: "clip.mp4".into(), mime: "video/mp4".into(), signed_variable: "signedId".into(), item: "id".into() }.steps().body }
 
-pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.into(), held: false, fields: Default::default(), urgent: false, source: Some(Source { path: format!("/src/{key}"), parts }), prepare: None, mutation: mutation(key), steps: Some(Steps { path: "/upload".into(), body: steps_body() }), dimensions: None, max_bytes: None } }
+pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.into(), held: false, on_row: false, fields: Default::default(), urgent: false, source: Some(Source { path: format!("/src/{key}"), parts }), prepare: None, mutation: mutation(key), steps: Some(Steps { path: "/upload".into(), body: steps_body() }), dimensions: None, max_bytes: None } }
 
 /// The batch of the tests: two to ten elements go in one mutation.
 pub(super) fn joint() -> Joint { Joint { minimum: 2, maximum: 10, items_key: "items".into(), mutation: mutation("Batch:r:upload"), renumber: None } }

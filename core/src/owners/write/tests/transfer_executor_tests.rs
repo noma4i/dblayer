@@ -126,7 +126,7 @@ impl World {
     }
 
     fn accept_input(&self, key: &str, path: PathBuf, parts: u32) -> TransferInput {
-        TransferInput::Accept { epoch: EPOCH, item: Box::new(BatchItem { key: key.into(), held: false, fields: Default::default(), urgent: false, source: Some(Source { path: path.to_string_lossy().into_owned(), parts }), prepare: None, mutation: mutation(), steps: Some(Steps { path: "/upload".into(), body: super::upload_codec::StepsBody { multipart: false, name: "clip.mp4".into(), mime: "video/mp4".into(), signed_variable: "signedId".into(), item: "id".into() }.steps().body }), dimensions: None, max_bytes: None }), reply: 1 }
+        TransferInput::Accept { epoch: EPOCH, item: Box::new(BatchItem { key: key.into(), held: false, on_row: false, fields: Default::default(), urgent: false, source: Some(Source { path: path.to_string_lossy().into_owned(), parts }), prepare: None, mutation: mutation(), steps: Some(Steps { path: "/upload".into(), body: super::upload_codec::StepsBody { multipart: false, name: "clip.mp4".into(), mime: "video/mp4".into(), signed_variable: "signedId".into(), item: "id".into() }.steps().body }), dimensions: None, max_bytes: None }), reply: 1 }
     }
 
     fn post(&mut self, input: TransferInput) {
