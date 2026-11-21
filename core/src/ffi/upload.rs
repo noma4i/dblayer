@@ -357,6 +357,16 @@ impl Database {
             _ => Err(DbError::Internal { detail: "the owner answered a cancel with no result".into() }),
         }
     }).await? }
+
+    pub async fn discard_staged(&self, epoch: u64, model: String, row_id: String, action: String) -> Result<bool, DbError> { let this_db = self.clone(); super::database::on_core(self.scope(), async move {
+        this_db.account_call(epoch)?;
+        let row = id(&row_id)?;
+        let waiter = this_db.life.discard_upload(epoch, key_of(&model, row.as_str(), &action));
+        match this_db.transfer_answer(waiter, "discard staged").await? {
+            TransferAnswer::Ok => Ok(true),
+            _ => Err(DbError::Internal { detail: "the owner answered a discard with no result".into() }),
+        }
+    }).await? }
 }
 
 impl Database {
