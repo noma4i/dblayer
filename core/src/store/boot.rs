@@ -112,6 +112,7 @@ impl Store {
 
         let tombstone_drops = prune_tombstones(&inner.connection, now, &TombstoneRetention::DEFAULT, None)?;
         inner.connection.execute(include_str!("sql/boot/boot_delete_stale_outcome.sql"), [now.saturating_sub(7 * 86_400_000)])?;
+        inner.connection.execute("DELETE FROM prepared_cache WHERE created_at <= ?1", [now.saturating_sub(crate::owners::write::transfer::EXPIRY_MS as i64)])?;
         let database: String = inner.connection.query_row(include_str!("sql/boot/boot_select_pragma_database_list.sql"), [], |row| row.get(0))?;
         let files: std::collections::HashSet<String> = inner.connection.prepare(include_str!("sql/boot/boot_select_file.sql"))?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
         let prepared_files: std::collections::HashSet<String> = inner.connection.prepare("SELECT file FROM prepared_cache")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;

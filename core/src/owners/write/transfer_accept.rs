@@ -282,7 +282,7 @@ impl TransferState {
             run(fx, effect);
         }
         let live: Vec<TransferId> = ids.iter().copied().filter(|id| self.stage_of(*id) == Some(TransferStage::Copying)).collect();
-        self.schedule_expire(fx);
+        if live.len() != ids.len() { self.schedule_expire(fx); }
         if live.is_empty() {
             let receipts: Vec<_> = ids.iter().map(|id| self.receipt(*id)).collect();
             if let Some(group) = ids.first().and_then(|id| self.group_of(*id)) {

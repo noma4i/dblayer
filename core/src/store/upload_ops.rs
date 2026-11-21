@@ -148,13 +148,6 @@ pub(super) fn apply_upload(connection: &Connection, op: &StoreOp) -> Result<bool
             connection.execute("INSERT OR IGNORE INTO batch_file_deletions SELECT 'prepared/' || file FROM prepared_cache WHERE source_sha256 = ?1 AND prepare_sha256 = ?2", params![source_sha256, prepare_sha256])?;
             connection.execute("DELETE FROM prepared_cache WHERE source_sha256 = ?1 AND prepare_sha256 = ?2", params![source_sha256, prepare_sha256])?;
         }
-        StoreOp::PreparedCacheExpire { now } => {
-            let before = i64::try_from(now.saturating_sub(crate::owners::write::transfer::EXPIRY_MS)).unwrap_or(i64::MAX);
-            if *now >= crate::owners::write::transfer::EXPIRY_MS {
-                connection.execute("INSERT OR IGNORE INTO batch_file_deletions SELECT 'prepared/' || file FROM prepared_cache WHERE created_at <= ?1", [before])?;
-                connection.execute("DELETE FROM prepared_cache WHERE created_at <= ?1", [before])?;
-            }
-        }
         _ => return Ok(false),
     }
     Ok(true)
