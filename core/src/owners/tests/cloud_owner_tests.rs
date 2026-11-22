@@ -19,7 +19,7 @@ fn cloud_account_replacement_waits_for_erase_and_discards_the_old_read() {
     let account = |key: &str| CloudInput::Provider { observation, account: crate::ffi::CloudAccount::Available { key: key.into() } };
     assert!(step(account("first")).is_empty());
     let effects = step(CloudInput::Online(true));
-    let [CloudEffect::Start(first)] = effects.as_slice() else { panic!("expected the first read: {effects:?}") };
+    let [CloudEffect::Start { scope: first, .. }] = effects.as_slice() else { panic!("expected the first read: {effects:?}") };
     assert!(!first.domain.is_empty());
     let effects = step(account("second"));
     let [CloudEffect::Stop { generation }] = effects.as_slice() else {
@@ -33,7 +33,7 @@ fn cloud_account_replacement_waits_for_erase_and_discards_the_old_read() {
     assert_eq!(domain, &first.domain);
     assert!(step(CloudInput::Erased { token: token + 1 }).is_empty());
     let effects = step(CloudInput::Erased { token: *token });
-    let [CloudEffect::Start(third)] = effects.as_slice() else { panic!("expected new scope: {effects:?}") };
+    let [CloudEffect::Start { scope: third, .. }] = effects.as_slice() else { panic!("expected new scope: {effects:?}") };
     assert_ne!(third.domain, first.domain);
     assert!(third.generation > first.generation);
     assert_eq!(step(CloudInput::InitialRead { generation: third.generation }), vec![CloudEffect::Bootstrap(third.clone())]);
@@ -63,12 +63,15 @@ fn cloud_disable_waits_for_account_erase_to_finish() {
     step(CloudInput::Observed { observation });
     step(CloudInput::Provider { observation, account: CloudAccount::Available { key: "provider".into() } });
     let start = step(CloudInput::Online(true));
-    let [CloudEffect::Start(scope)] = start.as_slice() else { panic!("expected cloud start") };
+    let [CloudEffect::Start { scope, .. }] = start.as_slice() else { panic!("expected cloud start") };
     step(CloudInput::Provider { observation, account: CloudAccount::SignedOut });
     let erase = step(CloudInput::Stopped { generation: scope.generation });
     let [CloudEffect::Erase { token, .. }] = erase.as_slice() else { panic!("expected account erase") };
     assert_eq!(step(CloudInput::SetEnabled { enabled: false, reply: 2 }), [CloudEffect::WriteEnabled(false)]);
-    assert_eq!(step(CloudInput::PreferenceWritten(Ok(()))), [CloudEffect::Unobserve { observation }]);
+    let paused = step(CloudInput::PreferenceWritten(Ok(())));
+    let [CloudEffect::Unobserve { observation: detached }, CloudEffect::RestoreCapture { token: restore, .. }] = paused.as_slice() else { panic!("expected to detach and check local capture") };
+    assert_eq!(*detached, observation);
+    assert!(step(CloudInput::CaptureRestored { token: *restore }).is_empty());
     assert!(step(CloudInput::Unobserved { observation }).is_empty());
     assert_eq!(step(CloudInput::Erased { token: *token }), [CloudEffect::Reply { id: 2, answer: Ok(false) }]);
 }
@@ -88,7 +91,7 @@ fn cloud_relay_suspension_retires_its_timer_and_a_live_retry_renews_the_scope() 
     step(CloudInput::Observed { observation });
     assert!(step(CloudInput::Provider { observation, account: CloudAccount::Available { key: "provider".into() } }).is_empty());
     let starting = step(CloudInput::Online(true));
-    let [Effect::Run(CloudEffect::Start(scope))] = starting.as_slice() else { panic!("expected cloud start") };
+    let [Effect::Run(CloudEffect::Start { scope, .. })] = starting.as_slice() else { panic!("expected cloud start") };
     let relay = |event| CloudInput::Relay { scope: scope.clone(), event };
     let leased = step(relay(CloudRelayEvent::Lease { milliseconds: 71 }));
     let [Effect::Schedule { id: ScheduleId(1), after, input: CloudInput::RelayDue { generation, token } }] = leased.as_slice() else { panic!("expected lease renewal") };
@@ -101,7 +104,7 @@ fn cloud_relay_suspension_retires_its_timer_and_a_live_retry_renews_the_scope() 
     assert!(matches!(step(CloudInput::RelayDue { generation: *generation, token: *token }).as_slice(),
         [Effect::Cancel(ScheduleId(0)), Effect::Cancel(ScheduleId(1)), Effect::Run(CloudEffect::Stop { generation })] if *generation == scope.generation));
     let restarted = step(CloudInput::Stopped { generation: scope.generation });
-    let [Effect::Run(CloudEffect::Start(current))] = restarted.as_slice() else { panic!("expected a new generation") };
+    let [Effect::Run(CloudEffect::Start { scope: current, .. })] = restarted.as_slice() else { panic!("expected a new generation") };
     assert_eq!(current.domain, scope.domain);
     assert!(current.generation > scope.generation);
     assert!(step(relay(CloudRelayEvent::Ended)).is_empty());

@@ -444,3 +444,57 @@ async fn cloud_disable_joins_the_generation_and_reopens_the_same_cursor() {
     port.release_unobserve.notify_one();
     within(db.close_database()).await.unwrap();
 }
+
+#[tokio::test]
+async fn cloud_disabled_reopen_captures_local_changes_for_the_same_account() {
+    use crate::ffi::CloudPhase;
+    use crate::owners::life::LifeReply;
+    use crate::schema::{FieldSpec, ModelSpec, Storage};
+    use crate::test_wait::within;
+    use crate::value::ScalarKind;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("paused.sqlite").to_string_lossy().into_owned();
+    let notes = ModelSpec { storage: Storage::Local, ..ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]) };
+    let models = crate::ffi::specs(serde_json::to_string(&[notes]).unwrap());
+    let open = |port| Database::open(Config { path: Some(path.clone()) }, models.clone(), OpenPorts {
+        cloud: Some(CloudConfig { backend: CloudBackend::Drive, application: CloudApplication::Standalone { namespace: "notes".into() }, port }),
+        ..Default::default()
+    });
+    let (calls, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let port = Arc::new(RecordingCloudPort { calls, hold_first: false.into(), release: Default::default(), release_unobserve: Default::default(), signals: Default::default(), conflict: Default::default() });
+    let db = within(open(port.clone())).await.unwrap();
+    assert_eq!(within(received.recv()).await, Some(PortCall::Observe));
+    let changes = db.cloud_changes().unwrap();
+    within(db.set_online(true)).await.unwrap();
+    let Some(PortCall::Start(first, None)) = within(received.recv()).await else { panic!("expected the original generation") };
+    within(port.signals().fetched(CloudFetched { scope: first.clone(), records: Vec::new(), progress: Some(b"saved".to_vec()), initial_complete: true })).await.unwrap();
+    within(async { while changes.next().await.unwrap().phase != CloudPhase::Ready {} }).await;
+    changes.cancel();
+    port.release_unobserve.notify_one();
+    assert_eq!(within(db.await_life(db.life.set_cloud_enabled(false))).await.unwrap(), LifeReply::CloudEnabled(Ok(false)));
+    assert_eq!(received.try_recv().unwrap(), PortCall::Stop(first.generation));
+    assert_eq!(received.try_recv().unwrap(), PortCall::Unobserve);
+    within(db.close_database()).await.unwrap();
+    drop(db);
+
+    let db = within(open(port.clone())).await.unwrap();
+    assert_eq!(db.cloud_status().phase, CloudPhase::Disabled);
+    within(db.set_online(true)).await.unwrap();
+    let edit = within(db.create(db.session_epoch(), "notes".into(), r#"{"text":"saved while disabled"}"#.into(), "{}".into())).await.unwrap();
+    assert!(received.try_recv().is_err());
+    assert_eq!(within(db.await_life(db.life.set_cloud_enabled(true))).await.unwrap(), LifeReply::CloudEnabled(Ok(true)));
+    assert_eq!(within(received.recv()).await, Some(PortCall::Observe));
+    let Some(PortCall::Start(resumed, cursor)) = within(received.recv()).await else { panic!("expected the same account to resume") };
+    assert_eq!(resumed.domain, first.domain);
+    assert_eq!(cursor.as_deref(), Some(b"saved".as_slice()));
+    within(port.signals().fetched(CloudFetched { scope: resumed, records: Vec::new(), progress: None, initial_complete: true })).await.unwrap();
+    let Some(PortCall::Send(_, records)) = within(received.recv()).await else { panic!("the edit from the disabled open did not send") };
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].version, edit.revision);
+    let record = crate::cloud::decode(&records[0].key, &records[0].payload).unwrap();
+    assert_eq!(record.row_id, edit.optimistic_value.unwrap().id);
+    assert_eq!(record.fields[0].data.value, "saved while disabled");
+    port.release_unobserve.notify_one();
+    within(db.close_database()).await.unwrap();
+}
