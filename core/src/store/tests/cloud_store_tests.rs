@@ -513,3 +513,42 @@ fn cloud_cursor_keeps_a_held_disk_record_durable_across_reopen() {
     store.erase_cloud_domain(&scope.domain).unwrap();
     assert!(read().is_empty());
 }
+
+#[test]
+fn cloud_child_and_cursor_wait_for_the_declared_parent_across_reopen() {
+    use crate::cloud::{CloudField, CloudRecord, CloudStamp, StampedValue};
+    use crate::schema::{AssociationKind, AssociationSpec};
+    use crate::store::cloud_waiting;
+    use serde_json::json;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("relationships.sqlite");
+    let parent = ModelSpec { storage: Storage::Local, ..ModelSpec::new("parents", vec![FieldSpec::scalar("id", ScalarKind::Id)]) };
+    let child = ModelSpec {
+        storage: Storage::Local,
+        associations: vec![AssociationSpec::new("parent", AssociationKind::BelongsTo, "parents", "parent_id")],
+        ..ModelSpec::new("children", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("parent_id", ScalarKind::Id).indexed()])
+    };
+    let open = || Store::open_models(Some(&path), vec![parent.clone(), child.clone()], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let scope = CloudScope { epoch: 1, generation: 1, domain: "example".into(), provider_fingerprint: "provider".into() };
+    let store = open();
+    store.activate_cloud_scope(scope.clone()).unwrap();
+    let stamp = CloudStamp { millis: 120, counter: 3, replica: [6; 16] };
+    let incoming = CloudRecord { model: "children".into(), row_id: "child".into(), server_revision: None, deleted: false,
+        fields: vec![CloudField { path: vec!["parent_id".into()], data: StampedValue { value: json!("parent"), stamp } }],
+    };
+    store.land_local_cloud(&scope, vec![(incoming.clone(), Some(b"provider-fields".to_vec()))], Some(b"child-page")).unwrap();
+    assert!(store.read(&["children"], |reader| reader.point("children", "child")).unwrap().is_none());
+    drop(store);
+
+    let reopened = open();
+    reopened.activate_cloud_scope(scope.clone()).unwrap();
+    assert_eq!(reopened.cloud_resume(&scope).unwrap().as_deref(), Some(b"child-page".as_slice()));
+    let connection = Connection::open(&path).unwrap();
+    assert!(cloud::field_stamp(&connection, &scope.domain, "children", "child", &["parent_id".into()]).unwrap().is_none());
+    assert!(cloud_waiting::entries(&connection, &scope.domain, "parents", "unrelated").unwrap().is_empty());
+    let queued = cloud_waiting::entries(&connection, &scope.domain, "parents", "parent").unwrap();
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].record, incoming);
+    assert_eq!(queued[0].system_fields.as_deref(), Some(b"provider-fields".as_slice()));
+}
