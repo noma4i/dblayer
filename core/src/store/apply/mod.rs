@@ -28,10 +28,11 @@ use super::tombstones::write_tombstone;
 use super::{Committed, Inner, ModelInfo, Store, StoreError};
 
 impl Store {
-    pub(crate) fn land_local_cloud(&self, domain: &str, records: Vec<crate::cloud::CloudRecord>, progress: &[u8]) -> Result<(), StoreError> {
+    pub(crate) fn land_local_cloud(&self, scope: &crate::owners::cloud::CloudScope, records: Vec<crate::cloud::CloudRecord>, progress: &[u8]) -> Result<(), StoreError> {
         let inner = self.lock();
         inner.ensure_healthy()?;
-        if inner.active_cloud_domain.as_deref() != Some(domain) { return Err(StoreError::Invalid("stale cloud domain".into())); }
+        inner.require_cloud_scope(scope)?;
+        let domain = scope.domain.as_str();
         let now_ms = inner.now_ms();
         let transaction = inner.connection.unchecked_transaction()?;
         let revision = Reader::new(&transaction, &inner.models).revision_seq()? + 1;
@@ -105,12 +106,12 @@ fn attempt(store: &Store, inner: &Inner, envelope: &BatchPlan, now_ms: i64) -> R
 
 fn apply_transaction(store: &Store, inner: &Inner, transaction: rusqlite::Transaction<'_>, envelope: &BatchPlan, now_ms: i64, revision: i64, capture: bool) -> Result<(CommitResult, u32), StoreError> {
     let mut originals = BTreeMap::new();
-    let capture_rows = capture && inner.active_cloud_domain.is_some();
+    let capture_rows = capture && inner.cloud_scope.is_some();
     let first = apply_envelope_at(&transaction, &inner.models, envelope, (now_ms, revision, inner.generation), capture_rows.then_some(&mut originals), None)?;
     let apply = |plan: BatchPlan| apply_envelope_at(&transaction, &inner.models, &plan, (now_ms, revision, inner.generation), capture_rows.then_some(&mut originals), None);
     let (derived, _, _) = super::follow_pointer::settle_parents(&Reader::new(&transaction, &inner.models), &inner.models, std::slice::from_ref(&first), apply)?;
     let outcome = match derived { Some(derived) => super::batch_result::consolidate(&transaction, &inner.models, &BTreeMap::new(), vec![first, derived], revision)?, None => first };
-    if capture { super::cloud::capture_local(&transaction, inner.active_cloud_domain.as_deref(), &inner.models, &originals, &outcome, now_ms)?; }
+    if capture { super::cloud::capture_local(&transaction, inner.cloud_scope.as_ref().map(|attachment| attachment.scope.domain.as_str()), &inner.models, &originals, &outcome, now_ms)?; }
     let journal = store.context.changed.prepare_commit(&outcome);
     if capture && outcome.is_noop() && envelope.window.is_none() && envelope.window_debts.is_empty() && envelope.pending_locals.is_empty() {
         transaction.rollback()?;

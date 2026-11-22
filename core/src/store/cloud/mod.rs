@@ -15,7 +15,9 @@ pub(crate) struct PendingCloudRecord {
 }
 
 impl super::Store {
-    pub(crate) fn pending_cloud_records(&self, domain: &str, limit: u32) -> Result<Vec<PendingCloudRecord>, StoreError> {
+    pub(crate) fn pending_cloud_records(&self, scope: &crate::owners::cloud::CloudScope, limit: u32) -> Result<Vec<PendingCloudRecord>, StoreError> {
+        self.lock().require_cloud_scope(scope)?;
+        let domain = scope.domain.as_str();
         self.read(&[], |reader| {
             let mut records = Vec::new();
             for pending in pending(reader.connection(), domain, limit)? {

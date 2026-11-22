@@ -119,7 +119,7 @@ impl ModelInfo {
 
 pub(crate) struct Inner {
     pub connection: Connection,
-    pub active_cloud_domain: Option<String>,
+    pub cloud_scope: Option<CloudAttachment>,
     pub models: Arc<BTreeMap<String, ModelInfo>>,
     pub clock: Arc<dyn Clock>,
     pub generation: Generation,
@@ -128,7 +128,17 @@ pub(crate) struct Inner {
     pub counters: Counters,
 }
 
+pub(crate) struct CloudAttachment {
+    scope: crate::owners::cloud::CloudScope,
+    live: bool,
+}
+
 impl Inner {
+    fn require_cloud_scope(&self, scope: &crate::owners::cloud::CloudScope) -> Result<(), StoreError> {
+        if self.cloud_scope.as_ref().is_some_and(|attachment| attachment.live && attachment.scope == *scope) { return Ok(()); }
+        Err(StoreError::Invalid("stale cloud scope".into()))
+    }
+
     pub(crate) fn now_ms(&self) -> i64 {
         i64::try_from(self.clock.now().as_millis()).unwrap_or(i64::MAX)
     }
@@ -266,7 +276,7 @@ impl Store {
         let poison = Arc::new(Mutex::new(None));
         let inner = Inner {
             connection,
-            active_cloud_domain: None,
+            cloud_scope: None,
             models: models.clone(),
             clock,
             generation: Generation::INITIAL,
@@ -313,13 +323,24 @@ impl Store {
         crate::lock::acquire(&self.inner)
     }
 
-    pub(crate) fn activate_cloud_domain(&self, domain: String) -> Result<(), StoreError> {
+    pub(crate) fn activate_cloud_scope(&self, scope: crate::owners::cloud::CloudScope) -> Result<(), StoreError> {
         let mut inner = self.lock();
+        if let Some(current) = &inner.cloud_scope {
+            if current.live && current.scope == scope { return Ok(()); }
+            if scope.generation <= current.scope.generation { return Err(StoreError::Invalid("stale cloud scope".into())); }
+        }
         let transaction = inner.connection.unchecked_transaction()?;
         cloud::enable(&transaction)?;
         transaction.commit()?;
-        inner.active_cloud_domain = Some(domain);
+        inner.cloud_scope = Some(CloudAttachment { scope, live: true });
         Ok(())
+    }
+
+    pub(crate) fn retire_cloud_scope(&self, scope: &crate::owners::cloud::CloudScope) {
+        let mut inner = self.lock();
+        if let Some(current) = &mut inner.cloud_scope {
+            if current.scope == *scope { current.live = false; }
+        }
     }
 
     pub(crate) fn set_hook(&self, hook: StoreHook) -> Result<(), StoreError> {
