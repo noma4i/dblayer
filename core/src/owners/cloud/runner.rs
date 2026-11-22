@@ -142,8 +142,13 @@ impl EffectRunner<Cloud> for CloudRunner {
                 })));
             }
             CloudEffect::Drained => {
-                crate::lock::effect(|| self.port.unobserve());
-                if let Some(wiring) = self.wiring.upgrade() { wiring.to_lifecycle(LifecycleInput::Drained(Drained { owner: "cloud" })); }
+                let Some(wiring) = self.wiring.upgrade() else { return; };
+                let port = self.port.clone();
+                let launch = wiring.handle.launch();
+                drop(crate::task::spawn_on(&self.executor, crate::runtime::counted(Some(launch), async move {
+                    crate::lock::effect(|| port.unobserve()).await;
+                    wiring.to_lifecycle(LifecycleInput::Drained(Drained { owner: "cloud" }));
+                })));
             }
             CloudEffect::Erase { domain, token } => {
                 let Some(wiring) = self.wiring.upgrade() else { return; };

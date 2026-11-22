@@ -261,7 +261,7 @@ impl Database {
 
     async fn open_at(config: Config, models_json: String, ports: super::OpenPorts, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
         let super::OpenPorts { transport, encrypted, credentials, http, endpoint, preparer, partial_operations, cloud, .. } = ports;
-        blocking(move || {
+        let database = blocking(move || {
             let database = match encrypted {
                 Some(encrypted) => {
                     let credentials = credentials.ok_or_else(|| DbError::Invalid { detail: "encrypted requires credentials".into() })?;
@@ -282,7 +282,9 @@ impl Database {
             database.partial_operations.store(partial_operations, std::sync::atomic::Ordering::SeqCst);
             super::transport::follow_life(&database.life);
             Ok(database)
-        }).await
+        }).await?;
+        database.life.observe_cloud().await;
+        Ok(database)
     }
 
     /// F1: the owners of direction A on the threads of the core, started from the booted `Store`. It returns after the first `Publish`.

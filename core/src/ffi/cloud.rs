@@ -46,8 +46,8 @@ pub enum CloudSendStatus {
 #[uniffi::export(with_foreign)]
 #[async_trait]
 pub trait CloudPort: Send + Sync {
-    fn observe(&self, signals: Arc<CloudSignals>);
-    fn unobserve(&self);
+    async fn observe(&self, signals: Arc<CloudSignals>);
+    async fn unobserve(&self);
     async fn start(&self, scope: CloudWireScope, progress: Option<Vec<u8>>, signals: Arc<CloudSignals>) -> Result<(), DbError>;
     async fn stop(&self, generation: u64);
     async fn send(&self, scope: CloudWireScope, records: Vec<CloudOutbound>) -> Result<Vec<CloudSendResult>, DbError>;

@@ -7,49 +7,48 @@ extension CloudConfig {
   }
 }
 
-final class CloudKitSync: CloudPort, @unchecked Sendable {
+actor CloudKitSync: CloudPort {
   private let container: CKContainer
-  private let lock = NSLock()
   private var observation: UInt64 = 0
   private var accountRequest: UInt64 = 0
   private var observer: NSObjectProtocol?
   private var signals: CloudSignals?
   private var active: CloudKitGeneration?
+  private var accountTask: Task<Void, Never>?
 
   init(container: CKContainer = .default()) { self.container = container }
 
-  func observe(signals: CloudSignals) {
-    lock.lock()
+  func observe(signals: CloudSignals) async {
     observation &+= 1
     accountRequest &+= 1
     let token = observation
     self.signals = signals
     let previous = observer
     observer = NotificationCenter.default.addObserver(forName: .CKAccountChanged, object: nil, queue: nil) { [weak self] _ in
-      self?.resolveAccount(token: token)
+      Task { await self?.resolveAccount(token: token) }
     }
-    lock.unlock()
     if let previous { NotificationCenter.default.removeObserver(previous) }
     resolveAccount(token: token)
   }
 
-  func unobserve() {
-    lock.lock()
+  func unobserve() async {
     observation &+= 1
     signals = nil
     let previous = observer
     observer = nil
-    lock.unlock()
     if let previous { NotificationCenter.default.removeObserver(previous) }
+    let task = accountTask
+    accountTask = nil
+    task?.cancel()
+    await task?.value
   }
 
   private func resolveAccount(token: UInt64) {
-    lock.lock()
-    guard observation == token, signals != nil else { lock.unlock(); return }
+    guard observation == token, signals != nil else { return }
     accountRequest &+= 1
     let request = accountRequest
-    lock.unlock()
-    Task {
+    accountTask?.cancel()
+    accountTask = Task {
       let account: CloudAccount
       do {
         switch try await container.accountStatus() {
@@ -63,21 +62,17 @@ final class CloudKitSync: CloudPort, @unchecked Sendable {
       } catch {
         account = .unavailable
       }
-      let target = lock.withLock { observation == token && accountRequest == request ? signals : nil }
-      target?.account(account: account)
+      guard !Task.isCancelled, observation == token, accountRequest == request else { return }
+      signals?.account(account: account)
     }
   }
 
   func start(scope: CloudWireScope, progress: Data?, signals: CloudSignals) async throws {
     let generation = try CloudKitGeneration(container: container, scope: scope, progress: progress, signals: signals) { [weak self] in
-      self?.reportUnavailable(scope: scope)
+      Task { await self?.reportUnavailable(scope: scope) }
     }
-    let installed = lock.withLock {
-      guard active == nil else { return false }
-      active = generation
-      return true
-    }
-    guard installed else { throw DbError.InFlight(detail: "cloud generation active") }
+    guard active == nil else { throw DbError.InFlight(detail: "cloud generation active") }
+    active = generation
     do { try await generation.start() } catch {
       await stop(generation: scope.generation)
       throw error
@@ -85,22 +80,19 @@ final class CloudKitSync: CloudPort, @unchecked Sendable {
   }
 
   func stop(generation: UInt64) async {
-    let current = lock.withLock {
-      let current = active?.scope.generation == generation ? active : nil
-      if current != nil { active = nil }
-      return current
-    }
+    let current = active?.scope.generation == generation ? active : nil
+    if current != nil { active = nil }
     await current?.stop()
   }
 
   func send(scope: CloudWireScope, records: [CloudOutbound]) async throws -> [CloudSendResult] {
-    let current = lock.withLock { active?.scope == scope ? active : nil }
+    let current = active?.scope == scope ? active : nil
     guard let current else { throw DbError.NoSession(detail: "cloud generation ended") }
     return try await current.send(records)
   }
 
   private func reportUnavailable(scope: CloudWireScope) {
-    let target = lock.withLock { active?.scope == scope ? signals : nil }
+    let target = active?.scope == scope ? signals : nil
     target?.account(account: .unavailable)
   }
 }

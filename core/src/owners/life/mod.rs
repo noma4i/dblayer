@@ -349,6 +349,7 @@ type NetworkSink = Arc<dyn Fn(NetworkEvent) + Send + Sync>;
 
 pub struct Life {
     wiring: Arc<Wiring>,
+    cloud_observer: Option<(Arc<dyn crate::ffi::CloudPort>, Arc<crate::ffi::CloudSignals>)>,
     operations: OperationLookup,
     runtime: Runtime,
     shut: AtomicBool,
@@ -565,9 +566,13 @@ impl Life {
             Err((error, corrupt)) => return Err(if corrupt { LifeError::CorruptManifest(error) } else { LifeError::Storage(error) }),
         };
         answer.map_err(|error| LifeError::Storage(format!("the first publication was not saved: {error:?}")))?;
-        if let (Some(config), Some((_, signals))) = (&ports.cloud, cloud) { crate::lock::effect(|| config.port.observe(signals)); }
+        let cloud_observer = ports.cloud.as_ref().zip(cloud).map(|(config, (_, signals))| (config.port.clone(), signals));
         let alive = runtime.alive();
-        Ok(Self { wiring, operations: ports.operations.clone(), runtime, shut: AtomicBool::new(false), with_session: session.is_some(), graphql_path: session.as_ref().map(|session| session.0.graphql_path().to_string()), alive, #[cfg(test)] rounds_needed })
+        Ok(Self { wiring, cloud_observer, operations: ports.operations.clone(), runtime, shut: AtomicBool::new(false), with_session: session.is_some(), graphql_path: session.as_ref().map(|session| session.0.graphql_path().to_string()), alive, #[cfg(test)] rounds_needed })
+    }
+
+    pub(crate) async fn observe_cloud(&self) {
+        if let Some((port, signals)) = &self.cloud_observer { crate::lock::effect(|| port.observe(signals.clone())).await; }
     }
 
     #[cfg(test)]
