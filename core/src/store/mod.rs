@@ -130,12 +130,21 @@ pub(crate) struct Inner {
 
 pub(crate) struct CloudAttachment {
     scope: crate::owners::cloud::CloudScope,
-    live: bool,
+    mode: CloudAttachmentMode,
+}
+
+#[derive(PartialEq, Eq)]
+enum CloudAttachmentMode { Live, Offline, Erased }
+
+impl CloudAttachment {
+    fn capture_domain(&self) -> Option<&str> {
+        (self.mode != CloudAttachmentMode::Erased).then_some(self.scope.domain.as_str())
+    }
 }
 
 impl Inner {
     fn require_cloud_scope(&self, scope: &crate::owners::cloud::CloudScope) -> Result<(), StoreError> {
-        if self.cloud_scope.as_ref().is_some_and(|attachment| attachment.live && attachment.scope == *scope) { return Ok(()); }
+        if self.cloud_scope.as_ref().is_some_and(|attachment| attachment.mode == CloudAttachmentMode::Live && attachment.scope == *scope) { return Ok(()); }
         Err(StoreError::Invalid("stale cloud scope".into()))
     }
 
@@ -323,23 +332,31 @@ impl Store {
         crate::lock::acquire(&self.inner)
     }
 
+    pub(crate) fn cloud_domain(&self) -> Result<Option<String>, StoreError> {
+        Ok(ddl::manifest_read(&self.lock().connection, "cloud_domain")?)
+    }
+
     pub(crate) fn activate_cloud_scope(&self, scope: crate::owners::cloud::CloudScope) -> Result<(), StoreError> {
         let mut inner = self.lock();
         if let Some(current) = &inner.cloud_scope {
-            if current.live && current.scope == scope { return Ok(()); }
+            if current.mode == CloudAttachmentMode::Live && current.scope == scope { return Ok(()); }
             if scope.generation <= current.scope.generation { return Err(StoreError::Invalid("stale cloud scope".into())); }
         }
         let transaction = inner.connection.unchecked_transaction()?;
+        if ddl::manifest_read(&transaction, "cloud_domain")?.is_some_and(|domain| domain != scope.domain) {
+            return Err(StoreError::Invalid("cloud domain requires erase".into()));
+        }
         cloud::enable(&transaction)?;
+        ddl::manifest_write(&transaction, "cloud_domain", &scope.domain)?;
         transaction.commit()?;
-        inner.cloud_scope = Some(CloudAttachment { scope, live: true });
+        inner.cloud_scope = Some(CloudAttachment { scope, mode: CloudAttachmentMode::Live });
         Ok(())
     }
 
     pub(crate) fn retire_cloud_scope(&self, scope: &crate::owners::cloud::CloudScope) {
         let mut inner = self.lock();
         if let Some(current) = &mut inner.cloud_scope {
-            if current.scope == *scope { current.live = false; }
+            if current.scope == *scope && current.mode == CloudAttachmentMode::Live { current.mode = CloudAttachmentMode::Offline; }
         }
     }
 
