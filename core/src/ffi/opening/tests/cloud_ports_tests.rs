@@ -332,3 +332,63 @@ async fn cloud_conflict_keeps_both_edits_and_retries_the_same_version() {
     port.release_unobserve.notify_one();
     within(db.close_database()).await.unwrap();
 }
+
+#[tokio::test]
+async fn cloud_account_erasure_fails_a_queued_receipt_without_ending_the_app_session() {
+    use crate::cloud::{CloudField, CloudRecord, CloudStamp, StampedValue};
+    use crate::ffi::tests::encrypted_tests::{Held, SubscriptionsOnly, ThroughServer};
+    use crate::schema::{ActionDeclaration, FieldSpec, ModelSpec, OnFailure, RootShape};
+    use crate::test_wait::within;
+    use crate::transport::encrypted::tests::fake_server_tests::{FakeServer, MemoryCredentials};
+    use crate::value::ScalarKind;
+
+    let server = FakeServer::new(Arc::new(crate::runtime::SystemClock));
+    let credentials = Arc::new(MemoryCredentials::default());
+    let mut update = ActionDeclaration::new("update", RootShape::Upsert);
+    update.mutation = Some("NoteUpdate".into());
+    update.root = Some("noteUpdate".into());
+    update.variables = [("id".into(), "id".into()), ("text".into(), "text".into())].into();
+    update.args.insert("text".into(), "string".into());
+    update.on_failure = OnFailure::Keep;
+    let model = ModelSpec {
+        actions: vec![update],
+        ..ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)])
+    };
+    let (calls, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let port = Arc::new(RecordingCloudPort { calls, hold_first: false.into(), release: Default::default(), release_unobserve: Default::default(), signals: OnceLock::new(), conflict: Default::default() });
+    let db = within(Database::open(Config { path: None }, crate::ffi::specs(serde_json::to_string(&[model]).unwrap()), OpenPorts {
+        cloud: Some(CloudConfig { backend: CloudBackend::Drive, application: CloudApplication::Session { account_path: "nextStep".into() }, port: port.clone() }),
+        transport: Some(Arc::new(SubscriptionsOnly)),
+        encrypted: Some(crate::transport::encrypted::tests::protocol_tests::config()),
+        credentials: Some(Arc::new(Held(credentials))),
+        http: Some(Arc::new(ThroughServer(server))),
+        endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()),
+        partial_operations: true,
+        ..Default::default()
+    })).await.unwrap();
+    assert_eq!(received.try_recv().unwrap(), PortCall::Observe);
+    within(db.register_operations(r#"[{"name":"NoteUpdate","document":"mutation NoteUpdate($id: ID!, $text: String!) { noteUpdate(id: $id, text: $text) { id text } }"}]"#.into())).await.unwrap();
+    within(db.set_online(true)).await.unwrap();
+    within(db.session_call("social".into(), "{}".into())).await.unwrap();
+    let app = db.session_status().unwrap();
+    let Some(PortCall::Start(scope, None)) = within(received.recv()).await else { panic!("cloud did not start") };
+    let body = CloudRecord { model: "Note".into(), row_id: "tracked".into(), server_revision: None, deleted: false, fields: vec![
+        CloudField { path: vec!["text".into()], data: StampedValue { value: "from cloud".into(), stamp: CloudStamp { millis: 100, counter: 0, replica: [2; 16] } } },
+    ] };
+    let record = CloudInbound { key: crate::cloud::record_key("Note", "tracked"), payload: crate::cloud::encode(&body).unwrap(), system_fields: None };
+    let signals = port.signals.get().unwrap();
+    within(signals.fetched(CloudFetched { scope: scope.clone(), records: vec![record], progress: Some(b"cursor".to_vec()), initial_complete: true })).await.unwrap();
+
+    within(db.set_online(false)).await.unwrap();
+    assert_eq!(within(received.recv()).await, Some(PortCall::Stop(scope.generation)));
+    let receipt = within(db.update(app.epoch, "Note".into(), "tracked".into(), r#"{"text":"queued"}"#.into(), "{}".into())).await.unwrap();
+    assert!(receipt.operation.is_some());
+    signals.account(CloudAccount::Available { key: "different-cloud-account".into() });
+    let Err(DbError::Rejected { failure, kept: true }) = within(db.confirmed(receipt, false)).await else { panic!("cloud erasure did not fail the pending receipt") };
+    assert_eq!(failure.message, "cloud account changed");
+    assert!(within(db.read_row(app.epoch, "Note".into(), "tracked".into())).await.unwrap().is_none());
+    let retained = db.session_status().unwrap();
+    assert_eq!((retained.epoch, retained.identity, retained.phase), (app.epoch, app.identity, app.phase));
+    port.release_unobserve.notify_one();
+    within(db.close_database()).await.unwrap();
+}

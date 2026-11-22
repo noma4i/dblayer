@@ -25,7 +25,7 @@ fn cloud_account_replacement_waits_for_erase_and_discards_the_old_read() {
     assert!(step(account("third")).is_empty());
     assert!(step(CloudInput::InitialRead { generation: first.generation }).is_empty());
     let effects = step(CloudInput::Stopped { generation: first.generation });
-    let [CloudEffect::Erase { domain, token }] = effects.as_slice() else { panic!("expected erase after stop: {effects:?}") };
+    let [CloudEffect::Erase { domain, token, epoch: 3 }] = effects.as_slice() else { panic!("expected erase after stop: {effects:?}") };
     assert_eq!(domain, &first.domain);
     assert!(step(CloudInput::Erased { token: token + 1 }).is_empty());
     let effects = step(CloudInput::Erased { token: *token });
