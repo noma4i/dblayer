@@ -301,3 +301,32 @@ fn cloud_account_erase_fences_reopen_and_only_evicts_tracked_rows() {
     reopened.erase_cloud_domain("first-owner").unwrap();
     assert!(has(&reopened, "tracked"));
 }
+
+#[test]
+fn cloud_bootstrap_resumes_its_checkpoint_after_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cloud.sqlite");
+    let model = ModelSpec { storage: Storage::Local, ..ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id)]) };
+    let open = || Store::open_models(Some(&path), vec![model.clone()], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let first = open();
+    let rows = (0..129).map(|index| {
+        let row_id = format!("note-{index:03}");
+        RowValue { values: serde_json::json!({"id": row_id}).to_string(), row_id }
+    }).collect();
+    first.write_queue_ops(&[StoreOp::LocalRows { model: "notes".into(), rows }]).unwrap();
+    let scope = CloudScope { epoch: 1, generation: 1, domain: "example".into() };
+    first.activate_cloud_scope(scope.clone()).unwrap();
+    assert!(!first.bootstrap_cloud_chunk(&scope).unwrap());
+    assert_eq!(first.pending_cloud_records(&scope, 130).unwrap().len(), 128);
+    drop(first);
+
+    let second = open();
+    second.activate_cloud_scope(scope.clone()).unwrap();
+    assert!(second.bootstrap_cloud_chunk(&scope).unwrap());
+    let records = second.pending_cloud_records(&scope, 130).unwrap();
+    assert_eq!(records.len(), 129);
+    assert_eq!(records.last().unwrap().row_id, "note-128");
+    second.confirm_cloud_send(&scope, &records[0], None).unwrap();
+    assert!(second.bootstrap_cloud_chunk(&scope).unwrap());
+    assert_eq!(second.pending_cloud_records(&scope, 130).unwrap().len(), 128);
+}

@@ -31,7 +31,9 @@ fn cloud_account_replacement_waits_for_erase_and_discards_the_old_read() {
     let [CloudEffect::Start(third)] = effects.as_slice() else { panic!("expected new scope: {effects:?}") };
     assert_eq!(third.domain, "third");
     assert!(third.generation > first.generation);
-    assert_eq!(step(CloudInput::InitialRead { generation: third.generation }), vec![CloudEffect::Ready(third.clone()), CloudEffect::Send(third.clone())]);
+    assert_eq!(step(CloudInput::InitialRead { generation: third.generation }), vec![CloudEffect::Bootstrap(third.clone())]);
+    assert!(step(CloudInput::BootstrapDone { generation: first.generation }).is_empty());
+    assert_eq!(step(CloudInput::BootstrapDone { generation: third.generation }), vec![CloudEffect::Ready(third.clone()), CloudEffect::Send(third.clone())]);
     assert_eq!(step(CloudInput::AccountUnavailable { epoch: 3 }), vec![CloudEffect::Stop { generation: third.generation }]);
     assert!(step(CloudInput::Online(true)).is_empty());
     assert!(step(CloudInput::Close).is_empty());

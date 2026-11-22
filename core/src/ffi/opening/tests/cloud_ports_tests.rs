@@ -79,6 +79,8 @@ async fn cloud_open_stops_its_generation_and_detaches_on_close() {
     }).await.unwrap();
     assert_eq!(received.try_recv().unwrap(), PortCall::Observe);
     let signals = port.signals.get().unwrap();
+    let previous = db.create(db.session_epoch(), "notes".into(), r#"{"text":"saved before attaching"}"#.into(), "{}".into()).await.unwrap();
+    let previous = previous.optimistic_value.unwrap();
 
     db.set_online(true).await.unwrap();
     let Some(PortCall::Start(first, None)) = crate::test_wait::within(received.recv()).await else { panic!("cloud did not start with an absent cursor") };
@@ -91,6 +93,13 @@ async fn cloud_open_stops_its_generation_and_detaches_on_close() {
     crate::test_wait::within(signals.fetched(page)).await.unwrap();
     let row = db.read_row(first.epoch, "notes".into(), "restored".into()).await.unwrap();
     assert_eq!(row.unwrap().id, "restored");
+    let Some(PortCall::Send(seed_scope, seeded)) = crate::test_wait::within(received.recv()).await else { panic!("first read did not seed the existing local row") };
+    assert_eq!(seed_scope, first);
+    assert_eq!(seeded.len(), 1);
+    let seed = crate::cloud::decode(&seeded[0].key, &seeded[0].payload).unwrap();
+    assert_eq!(seed.row_id, previous.id);
+    assert_eq!(seed.fields[0].data.value, "saved before attaching");
+    assert_eq!((seed.fields[0].data.stamp.millis, seed.fields[0].data.stamp.counter), (0, 0));
 
     db.set_online(false).await.unwrap();
     assert_eq!(crate::test_wait::within(received.recv()).await, Some(PortCall::CancelStart(first.generation)));
@@ -127,6 +136,7 @@ async fn cloud_open_stops_its_generation_and_detaches_on_close() {
     assert_eq!(third.epoch, second.epoch);
     assert_eq!(cursor, None);
     assert!(db.read_row(third.epoch, "notes".into(), "restored".into()).await.unwrap().is_none());
+    assert!(db.read_row(third.epoch, "notes".into(), previous.id).await.unwrap().is_none());
     assert!(db.read_row(third.epoch, "notes".into(), edited.id).await.unwrap().is_none());
 
     let mut closing = Box::pin(db.close_database());
