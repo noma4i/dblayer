@@ -18,6 +18,7 @@ const IDENTITY: u64 = 1;
 
 fn ports(db: std::sync::Arc<Store>, transport: Arc<MockTransport>) -> Ports {
     Ports {
+        cloud: None,
         db,
         transport: Some(transport),
         executor: tokio::runtime::Handle::current(),

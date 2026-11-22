@@ -302,7 +302,7 @@ async fn a_negative_stored_sequence_fails_the_open() {
     db.lock().connection.execute("UPDATE encrypted_session SET sequence = -1", []).unwrap();
     let client = Client::new(&config(), world.server.clone(), world.credentials.clone(), db.clone(), world.clock.clone(), Arc::new(crate::transport::MockTransport::new())).unwrap();
     let seal = Arc::new(crate::owners::session_seal::SealConfig::new(&config(), world.clock.clone()).unwrap());
-    let ports = super::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), secret: Some(client.secret.clone()), exchange: Some(client.exchange.clone()), seal: Some(seal), transfer: None, cable: None, read_operations: None };
+    let ports = super::Ports { cloud: None, db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), secret: Some(client.secret.clone()), exchange: Some(client.exchange.clone()), seal: Some(seal), transfer: None, cable: None, read_operations: None };
     let error = super::Life::start(ports).err().expect("the open fails");
     assert!(matches!(error, super::LifeError::Storage(_)), "{error:?}");
 }
