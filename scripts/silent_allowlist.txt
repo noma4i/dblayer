@@ -4,3 +4,4 @@ swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode(
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode(String.self) { self = .string(value) }	picks the variant of a JSON value
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode([JSONValue].self) { self = .array(value) }	picks the variant of a JSON value
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode([String: JSONValue].self) { self = .object(value) }	picks the variant of a JSON value
+swift/Sources/DBlayer/ICloudDocuments.swift	defer { try? manager.removeItem(at: replacement) }	staging cleanup cannot change the published file outcome
