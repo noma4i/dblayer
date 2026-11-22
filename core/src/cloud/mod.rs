@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+mod field;
+
+pub(crate) use field::{choose_field, Choice, StampConflict, StampedValue};
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Stamp {
     pub millis: u64,
