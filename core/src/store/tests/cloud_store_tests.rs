@@ -25,13 +25,13 @@ fn delayed_cloud_acknowledgement_keeps_the_newer_change_across_reopen() {
 
     let transaction = connection.transaction().unwrap();
     cloud::stage(&transaction, "account-a", &deletion).unwrap();
-    cloud::acknowledge(&transaction, "account-a", &original).unwrap();
+    cloud::acknowledge(&transaction, "account-a", &original, None).unwrap();
     cloud::write_progress(&transaction, "account-a", b"committed-cursor").unwrap();
     transaction.commit().unwrap();
 
     let transaction = connection.transaction().unwrap();
     cloud::write_progress(&transaction, "account-a", b"uncommitted-cursor").unwrap();
-    cloud::acknowledge(&transaction, "account-a", &deletion).unwrap();
+    cloud::acknowledge(&transaction, "account-a", &deletion, None).unwrap();
     transaction.rollback().unwrap();
     drop(connection);
 
@@ -40,7 +40,7 @@ fn delayed_cloud_acknowledgement_keeps_the_newer_change_across_reopen() {
     assert_eq!(cloud::progress(&reopened, "account-a").unwrap().as_deref(), Some(b"committed-cursor".as_slice()));
 
     let transaction = reopened.transaction().unwrap();
-    cloud::acknowledge(&transaction, "account-a", &deletion).unwrap();
+    cloud::acknowledge(&transaction, "account-a", &deletion, None).unwrap();
     cloud::stage(&transaction, "account-a", &deletion).unwrap();
     transaction.commit().unwrap();
     assert!(cloud::pending(&reopened, "account-a", 1).unwrap().is_empty());
@@ -100,14 +100,31 @@ fn opt_in_captures_local_commits_at_their_row_revision() {
         crate::cloud::decode(&pending[0].key, pending[0].payload.as_ref().unwrap()).unwrap()
     };
     let before = materialized(version);
+    let earlier = store.pending_cloud_records(&scope, 1).unwrap().pop().unwrap();
+    assert_eq!((earlier.model.as_str(), earlier.row_id.as_str()), ("notes", "n1"));
+    store.confirm_cloud_send(&scope, &earlier, Some(b"system")).unwrap();
     let updated_version = write("n1", "save me", "edited");
+    store.confirm_cloud_send(&scope, &earlier, Some(b"stale")).unwrap();
     let after = materialized(updated_version);
+    assert_eq!(store.pending_cloud_records(&scope, 1).unwrap()[0].system_fields.as_deref(), Some(b"system".as_slice()));
     assert_eq!(before.fields.len(), 3);
     assert_eq!(after.fields.len(), 3);
     assert_eq!(after.fields[0].path, ["metadata", "first"]);
     assert_eq!(after.fields[0].data.value, serde_json::json!("edited"));
     assert!(after.fields[0].data.stamp > before.fields[0].data.stamp);
     assert_eq!(after.fields[1..], before.fields[1..]);
+
+    write("n1", &"a".repeat(900_001), "edited");
+    let oversized = store.pending_cloud_records(&scope, 1).unwrap().pop().unwrap();
+    assert_eq!(oversized.payload, Err(crate::cloud::RecordError::TooLarge));
+    store.block_cloud_send(&scope, &oversized).unwrap();
+    write("other", "still sends", "initial");
+    let other = store.pending_cloud_records(&scope, 1).unwrap().pop().unwrap();
+    assert_eq!(other.row_id, "other");
+    store.confirm_cloud_send(&scope, &other, None).unwrap();
+    assert!(store.pending_cloud_records(&scope, 1).unwrap().is_empty());
+    let repaired_version = write("n1", "repaired", "edited");
+    assert!(!materialized(repaired_version).deleted);
 
     let mut deletion = BatchPlan::from_source(RowSource::Local);
     deletion.entity_ops.push(EntityOp::Destroy {
@@ -194,6 +211,7 @@ fn cloud_landing_moves_rows_and_progress_together_without_an_echo() {
     destination.land_local_cloud(&scope, vec![identity], b"identity").unwrap();
     assert!(destination.read(&["notes"], |reader| reader.point("notes", "identity")).unwrap().is_some());
     assert!(destination.pending_cloud_records(&scope, 2).unwrap().is_empty());
+    assert_eq!(destination.cloud_resume(&scope).unwrap().as_deref(), Some(b"identity".as_slice()));
 
     destination.retire_cloud_scope(&scope);
     let current = CloudScope { generation: 2, ..scope.clone() };
