@@ -22,10 +22,11 @@ pub enum Peer {
     Calls,
     LocalWrites,
     Rounds,
+    Cloud,
 }
 
 /// `all owners` of the table.
-pub const ALL_OWNERS: [Peer; 10] = [Peer::Network, Peer::Session, Peer::Windows, Peer::Feed, Peer::Deliveries, Peer::Outbox, Peer::Transfer, Peer::Calls, Peer::LocalWrites, Peer::Rounds];
+pub const ALL_OWNERS: [Peer; 11] = [Peer::Network, Peer::Session, Peer::Windows, Peer::Feed, Peer::Deliveries, Peer::Outbox, Peer::Transfer, Peer::Calls, Peer::LocalWrites, Peer::Rounds, Peer::Cloud];
 
 impl Peer {
     pub fn name(self) -> &'static str {
@@ -40,6 +41,7 @@ impl Peer {
             Self::Calls => "calls",
             Self::LocalWrites => "local_writes",
             Self::Rounds => "rounds",
+            Self::Cloud => "cloud",
         }
     }
 

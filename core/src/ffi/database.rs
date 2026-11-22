@@ -207,8 +207,8 @@ impl Database {
     #[cfg(test)]
     pub(crate) fn store_revision(&self) -> Result<i64, crate::store::StoreError> { self.db.revision_seq() }
 
-    fn start(config: Config, models_json: String, (transport, endpoint): (Option<Arc<dyn Transport>>, Option<String>), (clock, preparer): (Arc<dyn Clock>, Option<Arc<dyn super::Preparer>>)) -> Result<Arc<Self>, DbError> {
-        Self::start_prepared(config, models_json, (clock, preparer), |db, clock| {
+    fn start(config: Config, models_json: String, (transport, endpoint): (Option<Arc<dyn Transport>>, Option<String>), (clock, preparer): (Arc<dyn Clock>, Option<Arc<dyn super::Preparer>>), cloud: Option<super::CloudConfig>) -> Result<Arc<Self>, DbError> {
+        Self::start_prepared(config, models_json, (clock, preparer), cloud, |db, clock| {
             #[cfg(test)]
             if transport.is_some() { super::tests::signed_session_tests::signed_session(db); }
             let _ = db;
@@ -223,7 +223,7 @@ impl Database {
         clock: Arc<dyn Clock>,
         wire: impl FnOnce(&Arc<Store>, &Arc<dyn Clock>) -> Result<Wiring, DbError>,
     ) -> Result<Arc<Self>, DbError> {
-        Self::start_prepared(config, models_json, (clock, None), wire)
+        Self::start_prepared(config, models_json, (clock, None), None, wire)
     }
 
     /// The saved prepare settings are imported before the owners restore the transfers.
@@ -231,6 +231,7 @@ impl Database {
         config: Config,
         models_json: String,
         (clock, preparer): (Arc<dyn Clock>, Option<Arc<dyn super::Preparer>>),
+        cloud: Option<super::CloudConfig>,
         wire: impl FnOnce(&Arc<Store>, &Arc<dyn Clock>) -> Result<Wiring, DbError>,
     ) -> Result<Arc<Self>, DbError> {
         let Specs { models, operations } = Specs::parse(&models_json)?;
@@ -244,7 +245,7 @@ impl Database {
         let jobs: Arc<super::upload_rounds::RoundJobsSlot> = Arc::default();
         let preparer: Arc<OnceLock<Arc<dyn super::Preparer>>> = Arc::new(preparer.map_or_else(OnceLock::new, OnceLock::from));
         let upload_config = crate::owners::write::upload::UploadConfig::default();
-        let life = Self::build_life(&db, transport.clone(), encrypted.as_ref(), cable, seal, reads.clone(), (uploads.clone(), jobs.clone(), preparer.clone()), &upload_config)?;
+        let life = Self::build_life(&db, transport.clone(), encrypted.as_ref(), cable, seal, reads.clone(), (uploads.clone(), jobs.clone(), preparer.clone()), &upload_config, cloud)?;
         let remote = transport.is_some();
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
         Ok(Arc::new_cyclic(|me| Self { me: me.clone(), order: Arc::default(), place: None, lease: Arc::new(OnceLock::new()), life, db, remote, reads, returns, uploads, preparer, partial_operations: Default::default(), jobs, upload_config, wires: Arc::new(wires) }))
@@ -259,7 +260,7 @@ impl Database {
     }
 
     async fn open_at(config: Config, models_json: String, ports: super::OpenPorts, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
-        let super::OpenPorts { transport, encrypted, credentials, http, endpoint, preparer, partial_operations, .. } = ports;
+        let super::OpenPorts { transport, encrypted, credentials, http, endpoint, preparer, partial_operations, cloud, .. } = ports;
         blocking(move || {
             let database = match encrypted {
                 Some(encrypted) => {
@@ -267,7 +268,7 @@ impl Database {
                     let http = http.ok_or_else(|| DbError::Invalid { detail: "encrypted requires http".into() })?;
                     let transport = transport.ok_or_else(|| DbError::Invalid { detail: "encrypted requires transport".into() })?;
                     let _entered = executor()?.enter();
-                    Self::start_prepared(config, models_json, (clock, preparer.clone()), |db, clock| {
+                    Self::start_prepared(config, models_json, (clock, preparer.clone()), cloud, |db, clock| {
                         super::encrypted::wire(db, clock, encrypted, http, credentials, transport)
                     })?
                 }
@@ -275,7 +276,7 @@ impl Database {
                     if credentials.is_some() || http.is_some() {
                         return Err(DbError::Invalid { detail: "credentials and http require encrypted".into() });
                     }
-                    Self::start(config, models_json, (transport, endpoint), (clock, preparer.clone()))?
+                    Self::start(config, models_json, (transport, endpoint), (clock, preparer.clone()), cloud)?
                 }
             };
             database.partial_operations.store(partial_operations, std::sync::atomic::Ordering::SeqCst);
@@ -285,7 +286,7 @@ impl Database {
     }
 
     /// F1: the owners of direction A on the threads of the core, started from the booted `Store`. It returns after the first `Publish`.
-    fn build_life(db: &Arc<Store>, transport: Option<Arc<dyn core::Upstream>>, encrypted: Option<&Encrypted>, cable: Option<Arc<dyn core::CableLines>>, seal: Option<Arc<crate::owners::session_seal::SealConfig>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, preparer): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<OnceLock<Arc<dyn super::Preparer>>>), config: &crate::owners::write::upload::UploadConfig) -> Result<Arc<crate::owners::life::Life>, DbError> {
+    fn build_life(db: &Arc<Store>, transport: Option<Arc<dyn core::Upstream>>, encrypted: Option<&Encrypted>, cable: Option<Arc<dyn core::CableLines>>, seal: Option<Arc<crate::owners::session_seal::SealConfig>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, preparer): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<OnceLock<Arc<dyn super::Preparer>>>), config: &crate::owners::write::upload::UploadConfig, cloud: Option<super::CloudConfig>) -> Result<Arc<crate::owners::life::Life>, DbError> {
         let executor = executor()?.handle().clone();
         let operations = operations_lookup(&read_operations);
         let transfer = uploads.filter(|_| encrypted.is_some()).map(|operations| crate::owners::write::transfer_executor::TransferPort {
@@ -298,6 +299,7 @@ impl Database {
             slots: 1,
         });
         let ports = crate::owners::life::Ports {
+            cloud,
             db: db.clone(),
             transport,
             executor,

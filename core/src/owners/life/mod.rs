@@ -53,6 +53,7 @@ impl Drop for EpochWait {
 pub type OperationLookup = Arc<dyn Fn(&str) -> Option<(String, String)> + Send + Sync>;
 
 pub struct Ports {
+    pub(crate) cloud: Option<crate::ffi::CloudConfig>,
     pub db: std::sync::Arc<Store>,
     pub transport: Option<Arc<dyn crate::transport::Upstream>>,
     pub executor: tokio::runtime::Handle,
@@ -70,6 +71,7 @@ pub struct Ports {
 }
 #[derive(Clone, Copy)]
 pub(crate) struct Addresses {
+    pub cloud: Option<Address<super::cloud::Cloud>>,
     pub lifecycle: Address<Lifecycle>,
     pub store: Address<StoreWriter>,
     pub network: Address<Network>,
@@ -117,6 +119,11 @@ pub(crate) struct Wiring {
 }
 
 impl Wiring {
+    pub(crate) fn current_epoch(&self) -> Epoch { self.published.get().unwrap_or_else(Published::initial).epoch }
+
+    pub(crate) fn to_cloud(&self, input: super::cloud::CloudInput) {
+        if let Some(Addresses { cloud: Some(cloud), .. }) = self.addresses() { self.handle.post(cloud, EpochStamp::Control, input); }
+    }
     /// The epoch is the published one, open, and has an identity: a request to the server needs a session.
     pub(crate) fn admits_session(&self, epoch: Epoch) -> bool { self.published.read(|published| published.is_some_and(|published| published.epoch == epoch && !published.closed && published.identity.is_some())) }
 
@@ -355,7 +362,7 @@ pub struct Life {
 }
 
 /// Peers of `all owners` without an installed owner answer `Drained` at `Closing`.
-fn absent(session: bool, transfer: bool) -> Vec<Peer> {
+fn absent(session: bool, transfer: bool, cloud: bool) -> Vec<Peer> {
     let mut peers: Vec<Peer> = Vec::new();
     if !session {
         peers.push(Peer::Session);
@@ -365,6 +372,7 @@ fn absent(session: bool, transfer: bool) -> Vec<Peer> {
         peers.push(Peer::Transfer);
         peers.push(Peer::Rounds);
     }
+    if !cloud { peers.push(Peer::Cloud); }
     peers
 }
 
@@ -402,10 +410,20 @@ impl Life {
         })); }
         let open_wait = wiring.outcomes.register(Epoch::MAX);
         wiring.open_id.set(open_wait.id().raw()).map_err(|_| LifeError::Storage("the wait of open is set twice".into()))?;
-        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new(), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new(), held_read: None });
+        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new(), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some(), ports.cloud.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new(), held_read: None });
         builder.on_executor_failed(lifecycle);
         let store = builder.reserve::<StoreWriter>();
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), held_replies: Vec::new(), transport: ports.transport.clone() });
+        let cloud_domain = if ports.cloud.is_some() { ports.db.cloud_domain().map_err(|error| LifeError::Storage(error.to_string()))? } else { None };
+        let cloud = ports.cloud.as_ref().map(|config| {
+            let signals = super::cloud::runner::signals(config, Arc::downgrade(&wiring), ports.db.clone(), ports.executor.clone());
+            let address = builder.add::<super::cloud::Cloud>("cloud", super::cloud::CloudState::with_domain(0, cloud_domain), super::cloud::runner::CloudRunner { port: config.port.clone(), signals: signals.clone(), executor: ports.executor.clone(), wiring: Arc::downgrade(&wiring), active: None, db: ports.db.clone(), standalone: matches!(&config.application, crate::ffi::CloudApplication::Standalone { .. }) });
+            let weak = Arc::downgrade(&wiring);
+            wiring.on_network(Peer::Cloud, move |event| {
+                if let (NetworkEvent::Online { online, .. }, Some(wiring)) = (event, weak.upgrade()) { wiring.to_cloud(super::cloud::CloudInput::Online(online)); }
+            });
+            (address, signals)
+        });
         let calls = builder.add::<Calls>("calls", CallsState::new(0, None, &[]), calls_runner::CallsRunner::new(wiring.clone(), &ports));
         let session_address = session.as_ref().zip(restored).map(|((exchange, secret, seal), restored)| {
             let state = SessionState::with_operations(exchange.session_operations(), None);
@@ -531,7 +549,7 @@ impl Life {
             });
         }
         let read = read::add(&mut builder, &wiring, &ports, store);
-        wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, local_writes, transfer: transfer.map(|(address, _)| address), rounds: transfer.map(|(_, rounds)| rounds), windows: None, deliveries: None, feed: None }.with_read(&read)).map_err(|_| LifeError::Storage("the addresses are set twice".into()))?;
+        wiring.addresses.set(Addresses { cloud: cloud.as_ref().map(|(address, _)| *address), lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, local_writes, transfer: transfer.map(|(address, _)| address), rounds: transfer.map(|(_, rounds)| rounds), windows: None, deliveries: None, feed: None }.with_read(&read)).map_err(|_| LifeError::Storage("the addresses are set twice".into()))?;
         let session_open = session_address.map(|(_, restored)| SessionInput::Open { credential: restored.credential, pending: restored.pending, dropped_pending: restored.dropped_pending, secret: restored.secret });
         builder.install(store, "store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), secret: ports.secret.clone(), exchange: ports.exchange.clone(), executor: ports.executor.clone(), restore_error, session_open });
         let runtime = builder.start().map_err(|error| LifeError::Storage(error.to_string()))?;
@@ -547,6 +565,7 @@ impl Life {
             Err((error, corrupt)) => return Err(if corrupt { LifeError::CorruptManifest(error) } else { LifeError::Storage(error) }),
         };
         answer.map_err(|error| LifeError::Storage(format!("the first publication was not saved: {error:?}")))?;
+        if let (Some(config), Some((_, signals))) = (&ports.cloud, cloud) { crate::lock::effect(|| config.port.observe(signals)); }
         let alive = runtime.alive();
         Ok(Self { wiring, operations: ports.operations.clone(), runtime, shut: AtomicBool::new(false), with_session: session.is_some(), graphql_path: session.as_ref().map(|session| session.0.graphql_path().to_string()), alive, #[cfg(test)] rounds_needed })
     }

@@ -176,6 +176,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     });
     let commit_wiring = wiring.clone();
     db.on_commit(move |notice| {
+        commit_wiring.to_cloud(crate::owners::cloud::CloudInput::Wake);
         let windows = match &notice.models { Models::All => Vec::new(), Models::Set(models) => models.iter().cloned().collect() };
         let committed = notice.for_deliveries();
         let revision = committed.revision;

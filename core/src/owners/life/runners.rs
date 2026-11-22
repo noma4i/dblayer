@@ -20,7 +20,7 @@ use crate::owners::write::rounds::RoundsInput;
 use crate::owners::write::transfer::TransferInput;
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
 
-const ALL_PEERS: [Peer; 10] = crate::owners::lifecycle::ALL_OWNERS;
+const ALL_PEERS: [Peer; 11] = crate::owners::lifecycle::ALL_OWNERS;
 
 fn tell_gates(db: &Store, wiring: &Wiring, restart: bool, touched: Option<&crate::owners::contract::Models>, stamp: EpochStamp) {
     match db.gate_changes(restart, touched) {

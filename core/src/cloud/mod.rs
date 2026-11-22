@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 mod field;
 mod record;
 
-pub(crate) use field::{choose_field, Choice, StampConflict, StampedValue};
+pub(crate) use field::{choose_field, Choice, StampedValue};
+#[cfg(test)]
+pub(crate) use field::StampConflict;
 pub(crate) use record::{decode, encode, record_key, CloudField, CloudRecord, RecordError};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

@@ -1,6 +1,7 @@
 mod database;
 mod contract;
 mod cable;
+mod cloud;
 mod receipt;
 #[cfg(test)]
 pub(crate) async fn owners_drained(database: &Database) -> Result<(), DbError> {
@@ -82,6 +83,7 @@ mod fixtures;
 #[cfg(test)]
 pub(crate) use fixtures::{EncryptedReply, FakeHttp, FakeTransport, TransportRequest, FAKE_ENDPOINT};
 pub use cable::{PlatformSocket, CableEvents, CableOutcome};
+pub use cloud::{CloudAccount, CloudApplication, CloudBackend, CloudConfig, CloudFetched, CloudInbound, CloudOutbound, CloudPort, CloudSendResult, CloudSendStatus, CloudSignals, CloudWireScope};
 pub use crate::transport::{HttpRequest, RawFailure, RawOutcome};
 pub use transport::{ByteProgress, OnlineSink, PlatformObserver, PutTarget, Transport};
 

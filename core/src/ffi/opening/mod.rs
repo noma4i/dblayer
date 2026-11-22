@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use crate::transport::{HttpRequest, RawOutcome};
 use super::open_slot::OpenSlot;
 use super::transport::ObserverStop;
-use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, PlatformObserver, Preparer, TestClock, Transport};
+use super::{CloudConfig, Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, PlatformObserver, Preparer, TestClock, Transport};
 
 /// A GraphQL operation the app declares: its name and its document.
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]
@@ -40,6 +40,8 @@ pub struct OpenPorts {
     /// Test stands set it: the database accepts a registration that leaves out an operation the library sends by itself. The `open` of an app never sets it.
     #[uniffi(default = false)]
     pub partial_operations: bool,
+    #[uniffi(default = None)]
+    pub cloud: Option<CloudConfig>,
 }
 
 struct ExecutorHttp(Arc<dyn Transport>);

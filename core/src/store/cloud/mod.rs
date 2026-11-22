@@ -114,6 +114,7 @@ pub(crate) fn stage(tx: &Transaction<'_>, domain: &str, record: &PendingRecord) 
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn pending(connection: &Connection, domain: &str, limit: u32) -> Result<Vec<PendingRecord>, StoreError> {
     Ok(pending_with_fields(connection, domain, limit)?.into_iter().map(|(record, _)| record).collect())
 }

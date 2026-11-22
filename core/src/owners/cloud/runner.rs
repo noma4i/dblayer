@@ -1,0 +1,219 @@
+use std::sync::{Arc, Weak};
+use sha2::{Digest, Sha256};
+use crate::ffi::{CloudAccount, CloudApplication, CloudBackend, CloudConfig, CloudOutbound, CloudSendStatus, CloudSignals, CloudWireScope, DbError};
+use crate::owners::contract::Drained;
+use crate::owners::life::Wiring;
+use crate::owners::lifecycle::LifecycleInput;
+use crate::runtime::{Back, EffectRunner, EpochStamp};
+use super::{Cloud, CloudEffect, CloudInput, CloudScope};
+
+pub(crate) struct Active {
+    scope: CloudScope,
+    prepare: tokio::task::JoinHandle<()>,
+    start: tokio::task::JoinHandle<()>,
+    send: Option<tokio::task::JoinHandle<()>>,
+}
+
+pub(crate) struct CloudRunner {
+    pub port: Arc<dyn crate::ffi::CloudPort>,
+    pub signals: Arc<CloudSignals>,
+    pub executor: tokio::runtime::Handle,
+    pub wiring: Weak<Wiring>,
+    pub active: Option<Active>,
+    pub db: Arc<crate::store::Store>,
+    pub standalone: bool,
+}
+
+pub(crate) fn signals(config: &CloudConfig, wiring: Weak<Wiring>, db: Arc<crate::store::Store>, executor: tokio::runtime::Handle) -> Arc<CloudSignals> {
+    let backend = match &config.backend { CloudBackend::CloudKit => "cloudkit", CloudBackend::Drive => "drive" };
+    let namespace = match &config.application { CloudApplication::Standalone { namespace } => Some(namespace.clone()), CloudApplication::Session { .. } => None };
+    let fetch_wiring = wiring.clone();
+    Arc::new(CloudSignals::new(move |account| {
+        let Some(wiring) = wiring.upgrade() else { return; };
+        let epoch = wiring.current_epoch();
+        let input = match account {
+            CloudAccount::Available { key } => match &namespace {
+                Some(namespace) => {
+                    let mut hash = Sha256::new();
+                    for part in [backend, key.as_str(), namespace.as_str()] {
+                        hash.update((part.len() as u64).to_be_bytes());
+                        hash.update(part.as_bytes());
+                    }
+                    let domain = hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
+                    CloudInput::Account { epoch, domain: Some(domain) }
+                }
+                None => CloudInput::AccountUnavailable { epoch },
+            },
+            CloudAccount::SignedOut => CloudInput::Account { epoch, domain: None },
+            CloudAccount::Unavailable => CloudInput::AccountUnavailable { epoch },
+        };
+        wiring.to_cloud(input);
+    }, move |fetched| {
+        let (weak, db, executor) = (fetch_wiring.clone(), db.clone(), executor.clone());
+        Box::pin(async move {
+            let wiring = weak.upgrade().ok_or_else(|| DbError::Closed { detail: "database closed".into() })?;
+            let launch = wiring.handle.launch();
+            let scope = CloudScope { epoch: fetched.scope.epoch, generation: fetched.scope.generation, domain: fetched.scope.domain };
+            let generation = scope.generation;
+            let initial_complete = fetched.initial_complete;
+            let result = crate::task::spawn_blocking_on(&executor, Some(launch), move || {
+                let records = fetched.records.into_iter().map(|record| {
+                    crate::cloud::decode(&record.key, &record.payload).map(|body| (body, record.system_fields)).map_err(|_| DbError::Invalid { detail: "invalid cloud record".into() })
+                }).collect::<Result<Vec<_>, _>>()?;
+                db.land_local_cloud(&scope, records, fetched.progress.as_deref()).map_err(DbError::from)
+            }).await.map_err(|error| DbError::Runtime { detail: error.to_string() })?;
+            result?;
+            if initial_complete { wiring.to_cloud(CloudInput::InitialRead { generation }); }
+            Ok(())
+        })
+    }))
+}
+
+impl EffectRunner<Cloud> for CloudRunner {
+    fn run(&mut self, _stamp: EpochStamp, effect: CloudEffect, back: &Back<Cloud>) {
+        match effect {
+            CloudEffect::Start(scope) => {
+                let (port, signals, back, weak) = (self.port.clone(), self.signals.clone(), back.clone(), self.wiring.clone());
+                let Some(wiring) = self.wiring.upgrade() else { return; };
+                let db = self.db.clone();
+                let prepare_scope = scope.clone();
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                let prepare = crate::task::spawn_blocking_on(&self.executor, Some(wiring.handle.launch()), move || {
+                    let result = db.activate_cloud_scope(prepare_scope.clone()).and_then(|()| db.cloud_resume(&prepare_scope));
+                    let _ = crate::lock::effect(|| tx.send(result));
+                });
+                let launch = wiring.handle.launch();
+                let generation = scope.generation;
+                let wire = CloudWireScope { epoch: scope.epoch, generation, domain: scope.domain.clone() };
+                let gate = wiring.gate.clone();
+                let epoch = (!self.standalone).then_some(scope.epoch);
+                let start = crate::task::spawn_on(&self.executor, crate::runtime::counted(Some(launch), async move {
+                    let result: Result<(), String> = match rx.await {
+                        Ok(Ok(progress)) => crate::runtime::send_in_epoch(&gate, epoch, || async move {
+                            crate::lock::effect(|| port.start(wire, progress, signals)).await.map_err(|error| crate::transport::TransportError::Internal(error.to_string()))
+                        }).await.map_err(|error| error.to_string()),
+                        Ok(Err(error)) => Err(error.to_string()),
+                        Err(error) => Err(error.to_string()),
+                    };
+                    if let Err(error) = result {
+                        if let Some(wiring) = weak.upgrade() { wiring.fault(format!("cloud start: {error}")); }
+                        back.reply(EpochStamp::Control, CloudInput::StartFailed { generation });
+                    }
+                }));
+                self.active = Some(Active { scope, prepare, start, send: None });
+            }
+            CloudEffect::Send(scope) => {
+                let Some(wiring) = self.wiring.upgrade() else { return; };
+                let Some(active) = self.active.as_mut().filter(|active| active.scope == scope) else { return; };
+                let (db, port, back, executor) = (self.db.clone(), self.port.clone(), back.clone(), self.executor.clone());
+                let (gate, counted, weak) = (wiring.gate.clone(), wiring.handle.clone(), self.wiring.clone());
+                let epoch = (!self.standalone).then_some(scope.epoch);
+                let launch = counted.launch();
+                active.send = Some(crate::task::spawn_on(&self.executor, crate::runtime::counted(Some(launch), async move {
+                    let generation = scope.generation;
+                    let result = send_pass(db, port, scope, gate, epoch, executor, counted).await;
+                    let (more, retry) = match result {
+                        Ok(result) => result,
+                        Err(error) => {
+                            if let Some(wiring) = weak.upgrade() { wiring.fault(format!("cloud send: {error}")); }
+                            (false, true)
+                        }
+                    };
+                    back.reply(EpochStamp::Control, CloudInput::SendDone { generation, more, retry });
+                })));
+            }
+            CloudEffect::Stop { generation } => {
+                let (port, back) = (self.port.clone(), back.clone());
+                let Some(wiring) = self.wiring.upgrade() else { return; };
+                let launch = wiring.handle.launch();
+                let active = self.active.take().filter(|active| active.scope.generation == generation);
+                if let Some(active) = &active { crate::lock::effect(|| active.start.abort()); }
+                if let Some(send) = active.as_ref().and_then(|active| active.send.as_ref()) { crate::lock::effect(|| send.abort()); }
+                let db = self.db.clone();
+                drop(crate::task::spawn_on(&self.executor, crate::runtime::counted(Some(launch), async move {
+                    if let Some(active) = active {
+                        let _ = active.start.await;
+                        if let Some(send) = active.send { let _ = send.await; }
+                        let _ = active.prepare.await;
+                        db.retire_cloud_scope(&active.scope);
+                    }
+                    port.stop(generation).await;
+                    back.reply(EpochStamp::Control, CloudInput::Stopped { generation });
+                })));
+            }
+            CloudEffect::Drained => {
+                crate::lock::effect(|| self.port.unobserve());
+                if let Some(wiring) = self.wiring.upgrade() { wiring.to_lifecycle(LifecycleInput::Drained(Drained { owner: "cloud" })); }
+            }
+            CloudEffect::Erase { domain, token } => {
+                let Some(wiring) = self.wiring.upgrade() else { return; };
+                let (db, back, weak) = (self.db.clone(), back.clone(), self.wiring.clone());
+                drop(crate::task::spawn_blocking_on(&self.executor, Some(wiring.handle.launch()), move || {
+                    let input = match db.erase_cloud_domain(&domain) {
+                        Ok(()) => CloudInput::Erased { token },
+                        Err(error) => {
+                            if let Some(wiring) = weak.upgrade() { wiring.fault(format!("cloud erase: {error}")); }
+                            CloudInput::EraseFailed { token }
+                        }
+                    };
+                    back.reply(EpochStamp::Control, input);
+                }));
+            }
+            CloudEffect::TokenExhausted => {
+                if let Some(wiring) = self.wiring.upgrade() { wiring.fault("cloud generation exhausted".into()); }
+            }
+            CloudEffect::Ready(_) => {}
+        }
+    }
+}
+
+async fn send_pass(
+    db: Arc<crate::store::Store>, port: Arc<dyn crate::ffi::CloudPort>, scope: CloudScope,
+    gate: Arc<crate::runtime::EpochGate>, epoch: Option<u64>, executor: tokio::runtime::Handle, counted: crate::runtime::Handle,
+) -> Result<(bool, bool), DbError> {
+    let read_db = db.clone();
+    let read_scope = scope.clone();
+    let (valid, outgoing, full, blocked) = crate::task::spawn_blocking_on(&executor, Some(counted.launch()), move || -> Result<_, DbError> {
+        let records = read_db.pending_cloud_records(&read_scope, 16)?;
+        let full = records.len() == 16;
+        let mut outgoing = Vec::new();
+        let mut valid = Vec::new();
+        let mut blocked = false;
+        for record in records {
+            match &record.payload {
+                Ok(payload) => outgoing.push(CloudOutbound { key: record.key.clone(), version: record.version, payload: payload.clone(), system_fields: record.system_fields.clone() }),
+                Err(crate::cloud::RecordError::TooLarge) => { read_db.block_cloud_send(&read_scope, &record)?; blocked = true; continue; }
+                Err(crate::cloud::RecordError::Invalid) => return Err(DbError::Invalid { detail: "invalid cloud materialization".into() }),
+            }
+            valid.push(record);
+        }
+        read_db.cloud_resume(&read_scope)?;
+        Ok((valid, outgoing, full, blocked))
+    }).await.map_err(|error| DbError::Runtime { detail: error.to_string() })??;
+    if outgoing.is_empty() { return Ok((full && blocked, false)); }
+    let wire = CloudWireScope { epoch: scope.epoch, generation: scope.generation, domain: scope.domain.clone() };
+    let results = crate::runtime::send_in_epoch(&gate, epoch, || async move {
+        crate::lock::effect(|| port.send(wire, outgoing)).await.map_err(|error| crate::transport::TransportError::Internal(error.to_string()))
+    }).await.map_err(DbError::from)?;
+    crate::task::spawn_blocking_on(&executor, Some(counted.launch()), move || -> Result<_, DbError> {
+      let mut progress = blocked;
+      let mut retry = false;
+      for record in valid {
+        let mut matching = results.iter().filter(|result| result.key == record.key && result.version == record.version);
+        let Some(result) = matching.next() else { retry = true; continue; };
+        if matching.next().is_some() { retry = true; continue; }
+        match &result.status {
+            CloudSendStatus::Saved { system_fields } => { db.confirm_cloud_send(&scope, &record, system_fields.as_deref())?; progress = true; }
+            CloudSendStatus::Failed { .. } => { db.block_cloud_send(&scope, &record)?; progress = true; }
+            CloudSendStatus::Retryable { .. } => retry = true,
+            CloudSendStatus::Conflict { record: incoming } => {
+                if incoming.key != record.key { retry = true; continue; }
+                let body = crate::cloud::decode(&incoming.key, &incoming.payload).map_err(|_| DbError::Invalid { detail: "invalid cloud record".into() })?;
+                db.land_local_cloud(&scope, vec![(body, incoming.system_fields.clone())], None)?;
+                retry = true;
+            }
+        }
+      }
+      Ok((full && progress, retry))
+    }).await.map_err(|error| DbError::Runtime { detail: error.to_string() })?
+}

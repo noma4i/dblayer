@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
+pub(crate) mod runner;
 
-use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
+use crate::runtime::{Cause, Effect, Effects, Epoch, RetryPolicy, ScheduleId, StateOwner, Time};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CloudScope {
@@ -18,7 +19,12 @@ pub(crate) enum CloudInput {
     AccountUnavailable { epoch: Epoch },
     InitialRead { generation: u64 },
     Erased { token: u64 },
+    EraseFailed { token: u64 },
     Stopped { generation: u64 },
+    StartFailed { generation: u64 },
+    Wake,
+    SendDone { generation: u64, more: bool, retry: bool },
+    Retry { generation: u64 },
     Close,
 }
 
@@ -28,6 +34,7 @@ pub(crate) enum CloudEffect {
     Stop { generation: u64 },
     Erase { domain: String, token: u64 },
     Ready(CloudScope),
+    Send(CloudScope),
     TokenExhausted,
     Drained,
 }
@@ -47,11 +54,22 @@ pub(crate) struct CloudState {
     next_token: u64,
     exhausted: bool,
     closed: bool,
+    retry_held: bool,
+    sending: bool,
+    wake: bool,
+    backoff: bool,
+    attempts: u32,
 }
 
 impl CloudState {
     pub(crate) fn new(epoch: Epoch) -> Self {
-        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, exhausted: false, closed: false }
+        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, exhausted: false, closed: false, retry_held: false, sending: false, wake: false, backoff: false, attempts: 0 }
+    }
+
+    pub(crate) fn with_domain(epoch: Epoch, domain: Option<String>) -> Self {
+        let mut state = Self::new(epoch);
+        state.domain = domain;
+        state
     }
 
     fn token(&mut self, fx: &mut Effects<Cloud>) -> Option<u64> {
@@ -68,8 +86,23 @@ impl CloudState {
     fn stop(&mut self, fx: &mut Effects<Cloud>) {
         if let Some(scope) = self.active.take() {
             self.ready = false;
+            self.sending = false;
+            self.wake = false;
+            self.backoff = false;
+            self.attempts = 0;
+            fx.push(Effect::Cancel(ScheduleId(0)));
             self.stopping.insert(scope.generation);
             fx.push(Effect::Run(CloudEffect::Stop { generation: scope.generation }));
+        }
+    }
+
+    fn start_pass(&mut self, fx: &mut Effects<Cloud>) {
+        if self.ready && !self.sending && !self.backoff {
+            if let Some(scope) = &self.active {
+                self.sending = true;
+                self.wake = false;
+                fx.push(Effect::Run(CloudEffect::Send(scope.clone())));
+            }
         }
     }
 
@@ -77,16 +110,16 @@ impl CloudState {
         if self.exhausted || self.erasing.is_some() || !self.attached || !self.available { return; }
         if self.domain != self.desired {
             self.stop(fx);
+            if !self.stopping.is_empty() || self.retry_held { return; }
             if let Some(domain) = self.domain.clone() {
                 let Some(token) = self.token(fx) else { return; };
-                self.domain = None;
                 self.erasing = Some(token);
                 fx.push(Effect::Run(CloudEffect::Erase { domain, token }));
                 return;
             }
             self.domain.clone_from(&self.desired);
         }
-        if self.online && self.active.is_none() {
+        if self.online && self.active.is_none() && self.stopping.is_empty() && !self.retry_held {
             if let Some(domain) = self.domain.clone() {
                 let Some(generation) = self.token(fx) else { return; };
                 let scope = CloudScope { epoch: self.epoch, generation, domain };
@@ -108,11 +141,12 @@ impl StateOwner for Cloud {
     fn step(state: &mut CloudState, input: CloudInput, _now: Time) -> Effects<Self> {
         let mut fx = Vec::new();
         if state.closed {
-            if let CloudInput::Stopped { generation } = input {
-                if state.stopping.remove(&generation) && state.stopping.is_empty() {
-                    fx.push(Effect::Run(CloudEffect::Drained));
-                }
+            match input {
+                CloudInput::Stopped { generation } if state.stopping.remove(&generation) => {}
+                CloudInput::Erased { token } | CloudInput::EraseFailed { token } if state.erasing == Some(token) => { state.erasing = None; }
+                _ => return fx,
             }
+            if state.stopping.is_empty() && state.erasing.is_none() { fx.push(Effect::Run(CloudEffect::Drained)); }
             return fx;
         }
         if state.exhausted && !matches!(input, CloudInput::Close | CloudInput::Stopped { .. }) { return fx; }
@@ -123,21 +157,21 @@ impl StateOwner for Cloud {
                 state.attached = true;
                 state.available = false;
                 state.desired = None;
-                state.domain = None;
             }
             CloudInput::EpochEnded(epoch) if epoch == state.epoch && state.attached => {
                 state.stop(&mut fx);
                 state.attached = false;
                 state.available = false;
                 state.desired = None;
-                state.domain = None;
             }
             CloudInput::Online(online) => {
+                state.retry_held = false;
                 state.online = online;
                 if !online { state.stop(&mut fx); }
                 state.reconcile(&mut fx);
             }
             CloudInput::Account { epoch, domain } if epoch == state.epoch && state.attached => {
+                state.retry_held = false;
                 state.available = true;
                 state.desired = domain;
                 state.reconcile(&mut fx);
@@ -151,18 +185,46 @@ impl StateOwner for Cloud {
                     if scope.generation == generation && !state.ready {
                         state.ready = true;
                         fx.push(Effect::Run(CloudEffect::Ready(scope.clone())));
+                        state.start_pass(&mut fx);
                     }
                 }
             }
             CloudInput::Erased { token } if state.erasing == Some(token) => {
                 state.erasing = None;
+                state.domain = None;
                 state.reconcile(&mut fx);
             }
-            CloudInput::Stopped { generation } => { state.stopping.remove(&generation); }
+            CloudInput::EraseFailed { token } if state.erasing == Some(token) => {
+                state.erasing = None;
+                state.retry_held = true;
+            }
+            CloudInput::Stopped { generation } => {
+                if state.stopping.remove(&generation) { state.reconcile(&mut fx); }
+            }
+            CloudInput::StartFailed { generation } if state.active.as_ref().is_some_and(|scope| scope.generation == generation) => {
+                state.retry_held = true;
+                state.stop(&mut fx);
+            }
+            CloudInput::Wake => { state.wake = true; state.start_pass(&mut fx); }
+            CloudInput::SendDone { generation, more, retry } if state.sending && state.active.as_ref().is_some_and(|scope| scope.generation == generation) => {
+                state.sending = false;
+                if retry {
+                    state.attempts = state.attempts.saturating_add(1);
+                    state.backoff = true;
+                    fx.push(Effect::Backoff { id: ScheduleId(0), policy: RetryPolicy::Bootstrap, attempt: state.attempts, floor: std::time::Duration::ZERO, input: CloudInput::Retry { generation } });
+                } else {
+                    state.attempts = 0;
+                    if more || state.wake { state.start_pass(&mut fx); }
+                }
+            }
+            CloudInput::Retry { generation } if state.backoff && state.active.as_ref().is_some_and(|scope| scope.generation == generation) => {
+                state.backoff = false;
+                state.start_pass(&mut fx);
+            }
             CloudInput::Close => {
                 state.closed = true;
                 state.stop(&mut fx);
-                if state.stopping.is_empty() { fx.push(Effect::Run(CloudEffect::Drained)); }
+                if state.stopping.is_empty() && state.erasing.is_none() { fx.push(Effect::Run(CloudEffect::Drained)); }
             }
             _ => {}
         }
