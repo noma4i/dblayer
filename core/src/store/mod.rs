@@ -348,18 +348,30 @@ impl Store {
     }
 
     pub(crate) fn activate_cloud_scope(&self, scope: crate::owners::cloud::CloudScope) -> Result<(), StoreError> {
+        self.activate_cloud_scope_with_binding(scope, None)
+    }
+
+    pub(crate) fn activate_cloud_scope_with_binding(&self, scope: crate::owners::cloud::CloudScope, binding: Option<&str>) -> Result<(), StoreError> {
         let mut inner = self.lock();
         if let Some(current) = &inner.cloud_scope {
-            if current.mode == CloudAttachmentMode::Live && current.scope == scope { return Ok(()); }
-            if scope.generation <= current.scope.generation { return Err(StoreError::Invalid("stale cloud scope".into())); }
+            if !(current.mode == CloudAttachmentMode::Live && current.scope == scope) && scope.generation <= current.scope.generation {
+                return Err(StoreError::Invalid("stale cloud scope".into()));
+            }
         }
         let transaction = inner.connection.unchecked_transaction()?;
         if ddl::manifest_read(&transaction, "cloud_domain")?.is_some_and(|domain| domain != scope.domain) {
             return Err(StoreError::Invalid("cloud domain requires erase".into()));
         }
         cloud::enable(&transaction)?;
-        if inner.cloud_scope.is_none() { cloud_waiting::mark_all(&transaction, &scope.domain)?; }
+        if inner.cloud_scope.as_ref().is_none_or(|current| current.mode == CloudAttachmentMode::Offline && current.scope.generation == 0) {
+            cloud_waiting::mark_all(&transaction, &scope.domain)?;
+        }
         ddl::manifest_write(&transaction, "cloud_domain", &scope.domain)?;
+        if let Some(binding) = binding {
+            ddl::manifest_write(&transaction, "cloud_capture_binding", binding)?;
+        } else {
+            transaction.execute(include_str!("sql/boot/boot_delete_manifest.sql"), ["cloud_capture_binding"])?;
+        }
         transaction.commit()?;
         inner.cloud_scope = Some(CloudAttachment { scope, mode: CloudAttachmentMode::Live });
         Ok(())
