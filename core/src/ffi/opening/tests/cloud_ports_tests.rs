@@ -153,3 +153,45 @@ async fn cloud_open_stops_its_generation_and_detaches_on_close() {
     crate::test_wait::within(closing).await.unwrap();
     assert!(received.try_recv().is_err());
 }
+
+#[tokio::test]
+async fn cloud_session_uses_a_confirmed_application_account_after_reopen() {
+    use crate::ffi::tests::encrypted_tests::{Held, SubscriptionsOnly, ThroughServer};
+    use crate::transport::encrypted::tests::fake_server_tests::{FakeServer, MemoryCredentials};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cloud-session.sqlite").to_string_lossy().into_owned();
+    let server = FakeServer::new(Arc::new(crate::runtime::SystemClock));
+    let credentials = Arc::new(MemoryCredentials::default());
+    let open = |port| Database::open(Config { path: Some(path.clone()) }, crate::ffi::EMPTY_SPECS.into(), OpenPorts {
+        cloud: Some(CloudConfig { backend: CloudBackend::Drive, application: CloudApplication::Session { account_path: "nextStep".into() }, port }),
+        transport: Some(Arc::new(SubscriptionsOnly)),
+        encrypted: Some(crate::transport::encrypted::tests::protocol_tests::config()),
+        credentials: Some(Arc::new(Held(credentials.clone()))),
+        http: Some(Arc::new(ThroughServer(server.clone()))),
+        endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()),
+        partial_operations: true,
+        ..Default::default()
+    });
+
+    let mut previous = None;
+    for restored in [false, true] {
+        let (calls, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let port = Arc::new(RecordingCloudPort { calls, hold_first: false.into(), release: Default::default(), release_unobserve: Default::default(), signals: OnceLock::new() });
+        let db = crate::test_wait::within(open(port.clone())).await.unwrap();
+        assert_eq!(received.try_recv().unwrap(), PortCall::Observe);
+        db.set_online(true).await.unwrap();
+        if !restored {
+            crate::test_wait::settled(&db, "cloud waits for confirmed app sign-in", || received.try_recv().is_err()).await;
+            let answer = crate::test_wait::within(db.session_call("social".into(), "{}".into())).await.unwrap();
+            assert_eq!(answer, r#"{"nextStep":"authenticated"}"#);
+        }
+        let Some(PortCall::Start(scope, _)) = crate::test_wait::within(received.recv()).await else { panic!("confirmed application account did not start cloud") };
+        assert_eq!(scope.epoch, db.session_epoch());
+        assert_eq!(scope.provider_fingerprint, "3001f754dd606e290b8f3c77e4246d6c2293435f9bf1cf970059e0f7dfb90b2e");
+        if let Some(previous) = &previous { assert_eq!(&scope.domain, previous); }
+        previous = Some(scope.domain);
+        port.release_unobserve.notify_one();
+        crate::test_wait::within(db.close_database()).await.unwrap();
+    }
+}

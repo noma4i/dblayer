@@ -84,7 +84,7 @@ fn opt_in_captures_local_commits_at_their_row_revision() {
     assert!(!store.table_exists("cloud_record").unwrap());
     assert!(!store.table_exists("cloud_progress").unwrap());
 
-    let scope = CloudScope { epoch: 1, generation: 1, domain: "example".into() };
+    let scope = CloudScope { epoch: 1, generation: 1, domain: "example".into(), provider_fingerprint: "provider".into() };
     store.activate_cloud_scope(scope.clone()).unwrap();
     let version = write("n1", "save me", "initial");
     let connection = Connection::open(&path).unwrap();
@@ -183,7 +183,7 @@ fn cloud_landing_moves_rows_and_progress_together_without_an_echo() {
         row_id: id.into(), values: serde_json::json!({"id": id, "text": text}).to_string(),
     }] }]).unwrap();
     write_local(&destination, "existing", "before attaching");
-    let scope = CloudScope { epoch: 1, generation: 1, domain: "example".into() };
+    let scope = CloudScope { epoch: 1, generation: 1, domain: "example".into(), provider_fingerprint: "provider".into() };
     for store in [&source, &destination] {
         store.activate_cloud_scope(scope.clone()).unwrap();
     }
@@ -273,7 +273,7 @@ fn cloud_account_erase_fences_reopen_and_only_evicts_tracked_rows() {
     store.write_queue_ops(&[StoreOp::LocalRows { model: "notes".into(), rows: vec![RowValue {
         row_id: "untracked".into(), values: r#"{"id":"untracked"}"#.into(),
     }] }]).unwrap();
-    let first = CloudScope { epoch: 1, generation: 1, domain: "first-owner".into() };
+    let first = CloudScope { epoch: 1, generation: 1, domain: "first-owner".into(), provider_fingerprint: "first".into() };
     store.activate_cloud_scope(first.clone()).unwrap();
     let row = crate::cloud::CloudRecord { model: "notes".into(), row_id: "tracked".into(), server_revision: None, deleted: false, fields: Vec::new() };
     let removed_row = crate::cloud::CloudRecord { model: "removed".into(), ..row.clone() };
@@ -281,7 +281,7 @@ fn cloud_account_erase_fences_reopen_and_only_evicts_tracked_rows() {
     drop(store);
 
     let reopened = open(vec![notes]);
-    let second = CloudScope { epoch: 1, generation: 2, domain: "next-owner".into() };
+    let second = CloudScope { epoch: 1, generation: 2, domain: "next-owner".into(), provider_fingerprint: "second".into() };
     assert_eq!(reopened.cloud_domain().unwrap().as_deref(), Some("first-owner"));
     assert!(reopened.activate_cloud_scope(second.clone()).is_err());
     assert!(has(&reopened, "tracked"));
@@ -314,7 +314,7 @@ fn cloud_bootstrap_resumes_its_checkpoint_after_reopen() {
         RowValue { values: serde_json::json!({"id": row_id}).to_string(), row_id }
     }).collect();
     first.write_queue_ops(&[StoreOp::LocalRows { model: "notes".into(), rows }]).unwrap();
-    let scope = CloudScope { epoch: 1, generation: 1, domain: "example".into() };
+    let scope = CloudScope { epoch: 1, generation: 1, domain: "example".into(), provider_fingerprint: "provider".into() };
     first.activate_cloud_scope(scope.clone()).unwrap();
     assert!(!first.bootstrap_cloud_chunk(&scope).unwrap());
     assert_eq!(first.pending_cloud_records(&scope, 130).unwrap().len(), 128);
