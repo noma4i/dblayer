@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::{CommitResult, ModelInfo, Reader, RowChangeKind};
 use super::operation::{has_open_row_operation, row_operation_sequences_sql};
 pub(super) mod project;
-mod status;
+pub(super) mod status;
 
 #[derive(Debug)]
 pub(crate) struct PendingCloudRecord {

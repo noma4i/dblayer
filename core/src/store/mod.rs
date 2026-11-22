@@ -86,6 +86,7 @@ mod write;
 pub use admission::{admit_upsert, UpsertAdmission};
 pub use context::{DroppedRecord, OpenReport};
 pub(crate) use context::Context;
+pub(crate) use cloud::status::CloudRecordDisposition;
 pub use db_error::CoreError;
 pub use record::{Record, Row};
 pub(crate) use record::row_bytes;
