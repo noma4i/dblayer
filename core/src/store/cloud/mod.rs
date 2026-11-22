@@ -142,15 +142,18 @@ pub(crate) fn capture_local(tx: &Transaction<'_>, domain: Option<&str>, models: 
         let Some(info) = models.get(change.row.model.as_str()).filter(|info| !info.spec.is_memory()) else { continue };
         if change.row.id.is_temp() || captured.contains(&change.row) { continue; }
         if !info.spec.is_local() && (server_removed.contains(&change.row) || has_open_operation(tx, change.row.model.as_str(), change.row.id.as_str())?) { continue; }
-        let deleted = change.kind == RowChangeKind::Destroyed;
-        if deleted && !info.spec.is_local() { continue; }
+        let confirmed = change.kind == RowChangeKind::Synced && !info.spec.is_local();
+        let deleted = change.kind == RowChangeKind::Destroyed || (confirmed && reader.tombstone_seq(change.row.model.as_str(), change.row.id.as_str())? == Some(version));
+        if deleted && !info.spec.is_local() && !confirmed { continue; }
         let eligible = if deleted {
             reader.tombstone_seq(change.row.model.as_str(), change.row.id.as_str())? == Some(version)
         } else {
-            if !matches!(change.kind, RowChangeKind::Inserted | RowChangeKind::Updated) { continue; }
+            if !matches!(change.kind, RowChangeKind::Inserted | RowChangeKind::Updated) && !confirmed { continue; }
             let before = originals.get(&change.row).and_then(Option::as_ref).map(|row| project::project(&info.spec, row)).unwrap_or_default();
             let Some(after) = reader.stored_row(change.row.model.as_str(), change.row.id.as_str())? else { continue };
-            let changed: Vec<_> = project::project(&info.spec, &after.row).into_iter().filter(|(path, value)| before.get(path) != Some(value)).collect();
+            let changed: Vec<_> = project::project(&info.spec, &after.row).into_iter().filter(|(path, value)| {
+                if confirmed { after.field_rev.get(&path[0]) == Some(&version) } else { before.get(path) != Some(value) }
+            }).collect();
             if changed.is_empty() && change.kind != RowChangeKind::Inserted { continue; }
             if !changed.is_empty() {
                 let stamp = tick_stamp(tx, domain, u64::try_from(now).unwrap_or(0))?;
