@@ -18,6 +18,7 @@ struct RecordingCloudPort {
     release: tokio::sync::Notify,
     release_unobserve: tokio::sync::Notify,
     signals: OnceLock<Arc<CloudSignals>>,
+    conflict: std::sync::Mutex<Option<CloudInbound>>,
 }
 
 struct Starting<'a>(&'a RecordingCloudPort, u64);
@@ -52,8 +53,13 @@ impl CloudPort for RecordingCloudPort {
     async fn stop(&self, generation: u64) { self.calls.send(PortCall::Stop(generation)).unwrap(); }
 
     async fn send(&self, scope: CloudWireScope, records: Vec<CloudOutbound>) -> Result<Vec<CloudSendResult>, DbError> {
-        let results = records.iter().map(|record| CloudSendResult {
-            key: record.key.clone(), version: record.version, status: CloudSendStatus::Saved { system_fields: None },
+        let conflict = self.conflict.lock().unwrap().take();
+        let results = records.iter().map(|record| {
+            let status = match conflict.as_ref().filter(|remote| remote.key == record.key) {
+                Some(remote) => CloudSendStatus::Conflict { record: remote.clone() },
+                None => CloudSendStatus::Saved { system_fields: None },
+            };
+            CloudSendResult { key: record.key.clone(), version: record.version, status }
         }).collect();
         self.calls.send(PortCall::Send(scope, records)).unwrap();
         Ok(results)
@@ -68,7 +74,7 @@ async fn cloud_open_stops_its_generation_and_detaches_on_close() {
     let model = ModelSpec { storage: Storage::Local, ..ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]) };
     let models = crate::ffi::specs(serde_json::to_string(&[model]).unwrap());
     let (calls, mut received) = tokio::sync::mpsc::unbounded_channel();
-    let port = Arc::new(RecordingCloudPort { calls, hold_first: true.into(), release: Default::default(), release_unobserve: Default::default(), signals: OnceLock::new() });
+    let port = Arc::new(RecordingCloudPort { calls, hold_first: true.into(), release: Default::default(), release_unobserve: Default::default(), signals: OnceLock::new(), conflict: Default::default() });
     let db = Database::open(Config { path: None }, models, OpenPorts {
         cloud: Some(CloudConfig {
             backend: CloudBackend::Drive,
@@ -177,7 +183,7 @@ async fn cloud_session_uses_a_confirmed_application_account_after_reopen() {
     let mut previous = None;
     for restored in [false, true] {
         let (calls, mut received) = tokio::sync::mpsc::unbounded_channel();
-        let port = Arc::new(RecordingCloudPort { calls, hold_first: false.into(), release: Default::default(), release_unobserve: Default::default(), signals: OnceLock::new() });
+        let port = Arc::new(RecordingCloudPort { calls, hold_first: false.into(), release: Default::default(), release_unobserve: Default::default(), signals: OnceLock::new(), conflict: Default::default() });
         let db = crate::test_wait::within(open(port.clone())).await.unwrap();
         assert_eq!(received.try_recv().unwrap(), PortCall::Observe);
         db.set_online(true).await.unwrap();
@@ -224,7 +230,7 @@ async fn cloud_status_reopens_a_blocked_record_and_clears_it_on_a_new_version() 
     let mut row_id = None;
     for reopen in [false, true] {
         let (calls, mut received) = tokio::sync::mpsc::unbounded_channel();
-        let port = Arc::new(RecordingCloudPort { calls, hold_first: false.into(), release: Default::default(), release_unobserve: Default::default(), signals: OnceLock::new() });
+        let port = Arc::new(RecordingCloudPort { calls, hold_first: false.into(), release: Default::default(), release_unobserve: Default::default(), signals: OnceLock::new(), conflict: Default::default() });
         let db = Database::open(Config { path: Some(path.clone()) }, crate::ffi::specs(models.clone()), OpenPorts {
             cloud: Some(CloudConfig { backend: CloudBackend::Drive, application: CloudApplication::Standalone { namespace: "notes".into() }, port: port.clone() }),
             ..Default::default()
@@ -276,4 +282,53 @@ async fn cloud_status_reopens_a_blocked_record_and_clears_it_on_a_new_version() 
         assert!(closed.issues.is_empty());
         assert!(within(changes.next()).await.is_none());
     }
+}
+
+#[tokio::test]
+async fn cloud_conflict_keeps_both_edits_and_retries_the_same_version() {
+    use crate::cloud::{CloudField, CloudRecord, CloudStamp, StampedValue};
+    use crate::schema::{FieldSpec, ModelSpec, Storage};
+    use crate::test_wait::within;
+    use crate::value::ScalarKind;
+
+    let clock = crate::ffi::TestClock::new(0);
+    let model = ModelSpec { storage: Storage::Local, ..ModelSpec::new("notes", vec![
+        FieldSpec::scalar("id", ScalarKind::Id),
+        FieldSpec::scalar("title", ScalarKind::Str),
+        FieldSpec::scalar("text", ScalarKind::Str),
+    ]) };
+    let (calls, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let port = Arc::new(RecordingCloudPort { calls, hold_first: false.into(), release: Default::default(), release_unobserve: Default::default(), signals: OnceLock::new(), conflict: Default::default() });
+    let db = Database::open_with_clock(Config { path: None }, crate::ffi::specs(serde_json::to_string(&[model]).unwrap()), OpenPorts {
+        cloud: Some(CloudConfig { backend: CloudBackend::CloudKit, application: CloudApplication::Standalone { namespace: "notes".into() }, port: port.clone() }),
+        ..Default::default()
+    }, clock.clone()).await.unwrap();
+    assert_eq!(received.try_recv().unwrap(), PortCall::Observe);
+    let row = db.create(db.session_epoch(), "notes".into(), r#"{"title":"left edit","text":"before"}"#.into(), "{}".into()).await.unwrap().optimistic_value.unwrap();
+    let stamp = CloudStamp { millis: 100, counter: 0, replica: [7; 16] };
+    let remote = CloudRecord { model: "notes".into(), row_id: row.id.clone(), server_revision: None, deleted: false,
+        fields: vec![CloudField { path: vec!["text".into()], data: StampedValue { value: "right edit".into(), stamp } }],
+    };
+    let key = crate::cloud::record_key("notes", &row.id);
+    let tag = b"remote-system".to_vec();
+    *port.conflict.lock().unwrap() = Some(CloudInbound { key: key.clone(), payload: crate::cloud::encode(&remote).unwrap(), system_fields: Some(tag.clone()) });
+
+    db.set_online(true).await.unwrap();
+    let Some(PortCall::Start(scope, None)) = within(received.recv()).await else { panic!("cloud did not start") };
+    within(port.signals.get().unwrap().fetched(CloudFetched { scope, records: Vec::new(), progress: None, initial_complete: true })).await.unwrap();
+    let Some(PortCall::Send(_, first)) = within(received.recv()).await else { panic!("cloud did not send before conflict") };
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].key, key);
+    within(clock.await_armed(0)).await;
+    clock.advance(2_000);
+    let Some(PortCall::Send(_, retried)) = within(received.recv()).await else { panic!("cloud did not retry the merged version") };
+    assert_eq!(retried.len(), 1);
+    assert_eq!(retried[0].version, first[0].version);
+    assert_eq!(retried[0].system_fields.as_ref(), Some(&tag));
+    let merged = crate::cloud::decode(&key, &retried[0].payload).unwrap();
+    assert_eq!((&merged.fields[0].data.value, merged.fields[0].data.stamp), (&serde_json::json!("right edit"), stamp));
+    assert_eq!(merged.fields[1].data.value, "left edit");
+
+    port.release_unobserve.notify_one();
+    within(db.close_database()).await.unwrap();
 }
