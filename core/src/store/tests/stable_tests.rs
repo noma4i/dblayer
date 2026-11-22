@@ -73,7 +73,7 @@ fn data_stable_order_places() {
 
     let reopened = open(Some(&path), messages_spec(true));
     assert_eq!(members(&reopened, &key), before, "the places live in the cache and survive a restart, a temp row without an operation does not");
-    reopened.erase_account(reopened.generation(), false).unwrap();
+    reopened.erase_account(reopened.generation(), false, false).unwrap();
     assert!(members(&reopened, &key).is_empty(), "a reset of the session erases the places");
     land(&reopened, &scope, &[("a", json!(10))], &["a"]);
     drop(reopened);

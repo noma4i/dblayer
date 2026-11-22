@@ -190,7 +190,21 @@ async fn cloud_session_uses_a_confirmed_application_account_after_reopen() {
         assert_eq!(scope.epoch, db.session_epoch());
         assert_eq!(scope.provider_fingerprint, "3001f754dd606e290b8f3c77e4246d6c2293435f9bf1cf970059e0f7dfb90b2e");
         if let Some(previous) = &previous { assert_eq!(&scope.domain, previous); }
-        previous = Some(scope.domain);
+        previous = Some(scope.domain.clone());
+        if restored {
+            let signals = port.signals.get().unwrap();
+            let page = CloudFetched { scope: scope.clone(), records: Vec::new(), progress: Some(b"old-cursor".to_vec()), initial_complete: true };
+            crate::test_wait::within(signals.fetched(page)).await.unwrap();
+            crate::test_wait::within(db.session_reset()).await.unwrap();
+            assert_eq!(crate::test_wait::within(received.recv()).await, Some(PortCall::Stop(scope.generation)));
+            let stale = CloudFetched { scope: scope.clone(), records: Vec::new(), progress: Some(b"late".to_vec()), initial_complete: true };
+            assert!(crate::test_wait::within(signals.fetched(stale)).await.is_err());
+            crate::test_wait::within(db.session_call("social".into(), "{}".into())).await.unwrap();
+            let Some(PortCall::Start(resumed, cursor)) = crate::test_wait::within(received.recv()).await else { panic!("sign-in did not restart cloud after reset") };
+            assert_eq!(resumed.domain, scope.domain);
+            assert!(resumed.epoch > scope.epoch);
+            assert_eq!(cursor, None);
+        }
         port.release_unobserve.notify_one();
         crate::test_wait::within(db.close_database()).await.unwrap();
     }

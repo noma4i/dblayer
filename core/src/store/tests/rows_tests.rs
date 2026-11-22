@@ -22,13 +22,13 @@ fn revision_reads_and_resets_distinguish_missing_corrupt_and_unreadable_values()
             None | Some("17") => {
                 let expected = if value.is_none() { 0 } else { 17 };
                 assert_eq!(store.revision_seq().unwrap(), expected);
-                store.erase_account(store.generation().next(), false).unwrap();
+                store.erase_account(store.generation().next(), false, false).unwrap();
                 assert_eq!(store.revision_seq().unwrap(), expected + 1);
             }
             _ => {
                 let read = store.revision_seq();
                 assert!(matches!(read, Err(StoreError::Constraint(_))), "{value:?} {read:?}");
-                let erased = store.erase_account(store.generation().next(), false);
+                let erased = store.erase_account(store.generation().next(), false, false);
                 assert!(matches!(erased, Err(StoreError::Constraint(_))), "{value:?} {erased:?}");
             }
         }

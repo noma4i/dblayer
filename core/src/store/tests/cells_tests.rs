@@ -57,7 +57,7 @@ fn store_erased_file_orphans() {
     let db = Arc::new(Store::open_models(None, all_specs(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     row_with_file(&db, vec![1, 2, 3]);
     assert_eq!(count(&db, "SELECT COUNT(*) FROM file"), 1);
-    db.erase_account(db.generation().next(), false).unwrap();
+    db.erase_account(db.generation().next(), false, false).unwrap();
     assert_eq!(count(&db, "SELECT COUNT(*) FROM file"), 0);
 }
 
@@ -70,7 +70,7 @@ fn store_reset_models_removes_unheld_file() {
         row_with_file(&db, vec![7; size]);
         let path = db.url("moments", &id("m1"), "media").unwrap().unwrap();
         assert!(path.exists(), "file must exist before reset: {path:?}");
-        db.erase_account(db.generation().next(), false).unwrap();
+        db.erase_account(db.generation().next(), false, false).unwrap();
         assert_eq!(count(&db, "SELECT COUNT(*) FROM file"), 0);
         assert!(!path.exists(), "reset left the unheld file at {path:?}, size {size}");
     }
@@ -138,6 +138,6 @@ fn store_prop_edge_read() {
     let after = db.counters();
     assert_eq!(after.edge_read_scans - before.edge_read_scans, 0);
     assert!(after.edge_read_steps - before.edge_read_steps < 100);
-    db.erase_account(db.generation().next(), false).unwrap();
+    db.erase_account(db.generation().next(), false, false).unwrap();
     assert_eq!(edges(&db, &["m1"]), json!({}));
 }

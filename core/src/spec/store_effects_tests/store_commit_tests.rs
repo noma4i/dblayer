@@ -44,7 +44,7 @@ fn login_after_epoch_end(persist_first: bool) {
     twin.send(StoreInput::EpochEnded(EpochEnded { epoch: 1, cause: Cause::SessionReset }));
     let effects = twin.send(StoreInput::ClearAccount { epoch_old: 1, cause: Cause::SessionReset, generation_new: 1, erase_id: 3 });
     let io_id = effects.iter().find_map(|effect| match effect { StoreEffect::EraseAccount { io_id, .. } => Some(*io_id), _ => None }).unwrap();
-    let revision = db.erase_account(crate::identity::Generation::from_value(1), true).unwrap();
+    let revision = db.erase_account(crate::identity::Generation::from_value(1), true, false).unwrap();
     let effects = twin.send(StoreInput::Erased { io_id, result: Ok(Done { revision: revision as u64 }) });
     assert!(effects.iter().any(|effect| matches!(effect, StoreEffect::ClearSecret { .. })));
     twin.send(StoreInput::Erased { io_id, result: Ok(Done { revision: 0 }) });

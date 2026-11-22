@@ -149,7 +149,7 @@ fn data_orders_ephemeral_write_against_destroy_and_erase() {
             for event in order {
                 match event {
                     Write => { set_typing(&db, "m1", true); }
-                    Remove if erase => { db.erase_account(db.generation().next(), false).unwrap(); }
+                    Remove if erase => { db.erase_account(db.generation().next(), false, false).unwrap(); }
                     Remove => {
                         let delete = json!({"op": "delete", "id": "m1"}).to_string();
                         let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, stamp: crate::runtime::EpochStamp::Epoch(1), rows: vec![("moments".into(), delete)], intents: 0, credential: None, ops: Vec::new() };

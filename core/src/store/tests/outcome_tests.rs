@@ -26,7 +26,7 @@ fn an_operation_outcome_written_with_the_intent_removal_survives_a_reopen_and_go
     let db = Store::open_models(Some(file.as_path()), all_specs(), Arc::new(crate::runtime::SystemClock)).unwrap();
     assert!(matches!(db.read_outcome(OutcomeOwner::Operation, 5, 1).unwrap(), Some(OutboxOutcome::Confirmed { result: Some(_), row_id: Some(_), .. })), "the record outlives the process with its result and row");
     assert_eq!(db.read_outcome(OutcomeOwner::Transfer, 5, 1).unwrap(), None, "the owner is part of the key");
-    db.erase_account(db.generation().next(), false).unwrap();
+    db.erase_account(db.generation().next(), false, false).unwrap();
     assert_eq!(db.read_outcome(OutcomeOwner::Operation, 5, 1).unwrap(), None, "the end of the session removes the records of the account");
 }
 

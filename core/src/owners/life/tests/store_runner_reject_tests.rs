@@ -14,7 +14,7 @@ fn batch(author: BatchAuthor, rows: Vec<(&str, &str)>, ops: Vec<StoreOp>) -> Sto
 /// The places of the events refused alone, or the refusal of the batch.
 fn answer(db: &Arc<crate::store::Store>, batch: StoreBatch) -> Result<Vec<usize>, RejectReason> {
     let wiring = Arc::new(Wiring::new(Default::default()));
-    let mut runner = StoreRunner { wiring, db: db.clone(), secret: None, exchange: None, executor: tokio::runtime::Handle::current(), restore_error: None, session_open: None };
+    let mut runner = StoreRunner { wiring, db: db.clone(), secret: None, exchange: None, executor: tokio::runtime::Handle::current(), restore_error: None, session_open: None, session_cloud: false };
     let answers = Arc::new(Mutex::new(Vec::new()));
     let sink = answers.clone();
     let back = Back::<StoreWriter>::new(move |_, input| sink.lock().unwrap().push(input), |_| {});

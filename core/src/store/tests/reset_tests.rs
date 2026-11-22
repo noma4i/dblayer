@@ -58,7 +58,7 @@ fn store_reset_error_keeps_journal() {
     seed_two_models(&store);
     assert_eq!(store.reset_intent().unwrap(), None);
     exec(&store, "CREATE TRIGGER refuse_reset BEFORE DELETE ON row_messages BEGIN SELECT RAISE(ABORT, 'reset refused'); END");
-    let result = store.erase_account(store.generation().next(), false);
+    let result = store.erase_account(store.generation().next(), false, false);
     assert!(result.is_err(), "the failed erase must report an error");
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 1, "the erase transaction rolled back");
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_items"), 1);
@@ -70,7 +70,7 @@ fn mismatched_clears_all_cache_tables_and_the_outbox_and_keeps_the_other_user_ta
     let (store, _) = booted_store();
     seed_two_models(&store);
     user_tables(&store);
-    store.erase_account(store.generation().next(), false).unwrap();
+    store.erase_account(store.generation().next(), false, false).unwrap();
     assert_eq!(cache_counts(&store), vec![0, 0, 0, 0, 0, 0, 0]);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine"), 1);
@@ -81,7 +81,7 @@ fn mismatched_clears_all_cache_tables_and_the_outbox_and_keeps_the_other_user_ta
 fn mismatched_restores_manifest_atomically() {
     let (store, _) = booted_store();
     seed_two_models(&store);
-    store.erase_account(store.generation().next(), false).unwrap();
+    store.erase_account(store.generation().next(), false, false).unwrap();
     assert_eq!(count(&store, "SELECT COUNT(*) FROM manifest WHERE key = 'format_version'"), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM manifest WHERE key LIKE 'fingerprint:%'"), 2);
 }
@@ -90,7 +90,7 @@ fn mismatched_restores_manifest_atomically() {
 fn writes_work_again_after_reset() {
     let (store, _) = booted_store();
     seed_two_models(&store);
-    store.erase_account(store.generation().next(), false).unwrap();
+    store.erase_account(store.generation().next(), false, false).unwrap();
     store.commit(envelope(vec![upsert("messages", message("m2", "c1"))], vec![])).unwrap();
     assert_eq!(store.row_count("messages").unwrap(), 1);
 }
@@ -109,7 +109,7 @@ fn resets_advance_the_revision_and_tell_the_hook() {
         }
     })).unwrap();
     let before = store.generation();
-    store.erase_account(store.generation().next(), false).unwrap();
+    store.erase_account(store.generation().next(), false, false).unwrap();
     assert!(store.generation() > before);
     assert_eq!(store.revision_seq().unwrap(), 2);
     assert_eq!(*seen.lock().unwrap(), vec![(2, None)]);
@@ -132,6 +132,6 @@ fn erasing_the_account_forgets_the_real_ids_of_its_temporary_rows() {
     let temp = id("temp-00000000-0000-0000-0000-6c616e646564");
     exec(&db, "INSERT INTO row_alias (model, temp, real) VALUES ('messages', 'temp-00000000-0000-0000-0000-6c616e646564', 'm7')");
     assert_eq!(db.resolve("messages", &temp).unwrap(), id("m7"), "the landed temporary id reads as its server row in its account");
-    db.erase_account(db.generation().next(), false).unwrap();
+    db.erase_account(db.generation().next(), false, false).unwrap();
     assert_eq!(db.resolve("messages", &temp).unwrap(), temp, "after the end of the account the temporary id is its own");
 }

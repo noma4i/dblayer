@@ -274,7 +274,7 @@ fn second_apply_failure_poisons_reads_until_reset() {
             store.commit(envelope(vec![upsert("items", json!({"id": "i1"}))], vec![])),
             Err(StoreError::Poisoned(_))
         ));
-        store.erase_account(store.generation().next(), false).unwrap();
+        store.erase_account(store.generation().next(), false, false).unwrap();
         assert!(store.apply_failure().is_none());
         assert!(store.point("items", "i1").unwrap().is_none());
     }
