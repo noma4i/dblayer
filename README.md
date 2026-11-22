@@ -47,6 +47,7 @@ iOS 17, macOS 14, or Android 13 (API 33) or newer.
 - [Writing data](docs/writing-data.md)
 - [Sync state of a record](docs/sync-state.md)
 - [Server sync](docs/server-sync.md)
+- [Cloud sync](docs/cloud-sync.md)
 - [Drive notifications](docs/drive-notifications.md)
 - [Cable protocol](docs/cable-protocol.md)
 - [Files](docs/files.md)
@@ -176,7 +177,7 @@ DBlayer.sessionCall<PhoneBody, JsonElement>("otp", PhoneBody("+61400000000"))
 
 Await `DB.open` in Swift or call suspend `DBlayer.open` from a Kotlin coroutine.
 The optional `cloud` argument defaults to `nil` in Swift and `null` in Kotlin.
-Pass a supplied `CloudConfig` to enable cloud sync:
+Cloud sync is off by default. Configure CloudKit or Drive to enable it, as shown in [cloud sync](docs/cloud-sync.md):
 
 ```swift
 try await DB.open(modelsJSON: modelsJSON, uploadTaskTitle: "Uploading", cloud: cloud)

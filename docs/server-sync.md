@@ -39,7 +39,7 @@ DBlayer.open(context, endpoint = endpoint, modelsJson = modelsJson, operations =
 ```
 
 `endpoint`, `encrypted`, `credentials`, `transport`, `path`, `http` and `cloud` default to `nil` in Swift or `null` in Kotlin.
-Pass a supplied `CloudConfig` to enable cloud sync:
+Cloud sync is off by default. Configure CloudKit or Drive to enable it, as shown in [cloud sync](cloud-sync.md):
 
 ```swift
 try await DB.open(modelsJSON: modelsJSON, uploadTaskTitle: "Uploading", cloud: cloud)

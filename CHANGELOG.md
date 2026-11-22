@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Add opt-in CloudKit and Drive sync for persisted model data.
+
 ## 6.47.0 - 2026-11-21
 
 ### Added
