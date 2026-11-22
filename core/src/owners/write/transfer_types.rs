@@ -310,6 +310,7 @@ pub struct AbortFault {
 
 #[derive(Clone, Debug)]
 pub enum TransferInput {
+    CloudRowsErased { rows: BTreeSet<(String, String)> },
     ForgetPrepared { epoch: Epoch, source_sha256: String, prepare_sha256: String, reply: ReplyId },
     PreparedLookup { source_sha256: String, prepare_sha256: String, reply: ReplyId, found: bool },
     Accept { epoch: Epoch, item: Box<BatchItem>, reply: ReplyId },

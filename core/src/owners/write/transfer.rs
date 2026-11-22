@@ -836,7 +836,7 @@ impl TransferState {
             Some(TransferStage::PersistingRetry) if self.transfers.get(&pending.ids[0]).is_some_and(|transfer| transfer.next_step == NextStep::Mutation && !transfer.intent_live) => self.retry_recreate_committed(pending.ids[0], fx),
             Some(TransferStage::PersistingRetry) if self.transfers.get(&pending.ids[0]).is_some_and(|transfer| transfer.next_step == NextStep::Mutation) => self.retry_mutation_committed(&pending.ids, fx),
             Some(TransferStage::PersistingRetry) => self.retry_committed(now, pending.ids[0], fx),
-            Some(TransferStage::PersistingFailure) => {
+            Some(TransferStage::PersistingFailure) if pending.kind == StoreKind::Failed => {
                 for &id in &pending.ids {
                     self.failure_committed(now, id, fx);
                 }
@@ -915,6 +915,7 @@ impl TransferState {
             return;
         }
         let stage = pending.ids.first().and_then(|id| self.stage_of(*id));
+        if matches!(stage, Some(TransferStage::PersistingFailure | TransferStage::Failed)) && pending.kind != StoreKind::Failed { return; }
         let persisting = matches!(stage, Some(TransferStage::PersistingCopy | TransferStage::PersistingAttempt | TransferStage::PersistingBatchIntent | TransferStage::PersistingRetry | TransferStage::PersistingPart | TransferStage::PersistingComplete | TransferStage::PersistingFailure | TransferStage::PersistingPrepared | TransferStage::Removing));
         match (&rejected.reason, persisting) {
             (RejectReason::Invalid(_), true) if stage == Some(TransferStage::Removing) && pending.kind == StoreKind::Removed => {}
@@ -990,6 +991,10 @@ impl TransferState {
             return reply(fx, *id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
         match input {
+            TransferInput::CloudRowsErased { rows } => {
+                let ids: Vec<_> = self.transfers.values().filter(|transfer| !transfer.submitted && !matches!(transfer.stage, TransferStage::PersistingFailure | TransferStage::Removing | TransferStage::Failed | TransferStage::Done) && rows.contains(&(transfer.mutation.model.clone(), transfer.mutation.row_id.clone()))).map(|transfer| transfer.transfer_id).collect();
+                for id in ids { self.begin_failure(now, id, "cloud account changed".into(), true, fx); }
+            }
             TransferInput::ForgetPrepared { epoch, source_sha256, prepare_sha256, reply: id } => {
                 if epoch != self.epoch { return reply(fx, id, TransferAnswer::Err(Fault::NoSession)); }
                 self.forget_busy = true;
@@ -1115,7 +1120,7 @@ impl TransferState {
                 run(fx, TransferEffect::RestoreClassified { epoch: self.epoch });
                 self.replay_held(now, fx);
             }
-            held if Self::is_call(&held, self.epoch) => self.held.push(held),
+            held if matches!(held, TransferInput::CloudRowsErased { .. }) || Self::is_call(&held, self.epoch) => self.held.push(held),
             TransferInput::EpochStarted(started) => {
                 self.epoch = started.epoch;
                 run(fx, TransferEffect::Started { epoch: started.epoch });

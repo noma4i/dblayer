@@ -203,6 +203,7 @@ pub enum LocalWriteKind {
 
 #[derive(Clone, Debug)]
 pub enum OutboxInput {
+    CloudRowsErased { rows: std::collections::BTreeSet<(String, String)> },
     ActivateEpoch(Epoch),
     Submit { epoch: Epoch, op: NewOp, reply: ReplyId },
     /// Transfer asks for the `op_id` of the optimistic effects it writes with the acceptance (`out_reserve_op`).

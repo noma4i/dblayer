@@ -936,6 +936,17 @@ impl OutboxState {
             return Self::reply(fx, *reply, OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
         match input {
+            OutboxInput::CloudRowsErased { rows } => {
+                let ids: Vec<_> = self.ops.values().filter(|operation| !matches!(operation.stage, Stage::Landing | Stage::RollingBack(_) | Stage::MarkingFailed | Stage::Failed | Stage::Done) && rows.iter().any(|(model, row)| Self::addresses_row(operation, model, row))).map(|operation| operation.op_id).collect();
+                for id in ids {
+                    let operation = &self.ops[&id];
+                    if operation.stage == Stage::Sending {
+                        if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Cancel { req_id: operation.request_id }))); }
+                    }
+                    self.waiting.remove(&id);
+                    self.fail_with(id, "cloud account changed".into(), fx);
+                }
+            }
             OutboxInput::Submit { epoch, op, reply } => self.submit(now, epoch, op, reply, fx),
             OutboxInput::ReserveOp { epoch, target } => self.reserve_op(epoch, target, fx),
             OutboxInput::ReserveReplacement { epoch, target, transfer_id, cycle_id } => self.reserve_replacement(epoch, target, transfer_id, cycle_id, fx),
