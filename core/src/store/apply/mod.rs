@@ -159,6 +159,7 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
     use super::cloud::{self, project};
     use crate::cloud::{Choice, StampedValue};
     let mut plan = BatchPlan::from_source(crate::schema::RowSource::Local);
+    let reader = Reader::new(tx, models);
     let mut seen = BTreeSet::new();
     for (record, system_fields) in records {
         if !seen.insert((record.model.clone(), record.row_id.clone())) { return Err(StoreError::Invalid("duplicate cloud record".into())); }
@@ -169,13 +170,16 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
         if let (Some(name), Some(incoming)) = (&info.spec.server_revision, record.server_revision) {
             if record.fields.iter().any(|field| field.path.as_slice() == [name.as_str()] && field.data.value.as_i64() != Some(incoming)) { return Err(StoreError::Invalid("conflicting cloud revision".into())); }
         }
-        let mut declared = BTreeSet::new();
+        let mut fields = Vec::with_capacity(record.fields.len());
         for field in &record.fields {
-            project::field(&info.spec, &field.path).ok_or_else(|| StoreError::Invalid("invalid cloud field".into()))?;
-            if declared.iter().any(|path: &Vec<String>| path.starts_with(&field.path) || field.path.starts_with(path)) { return Err(StoreError::Invalid("overlapping cloud fields".into())); }
-            declared.insert(field.path.clone());
+            let (_, rule, local) = project::field(&info.spec, &field.path).ok_or_else(|| StoreError::Invalid("invalid cloud field".into()))?;
+            fields.push((field, rule, local));
         }
-        if !info.spec.is_local() && !super::operation::row_operation_sequences(tx, &BTreeSet::from([(record.model.clone(), record.row_id.clone())]))?.is_empty() {
+        fields.sort_unstable_by(|left, right| left.0.path.cmp(&right.0.path));
+        if fields.windows(2).any(|pair| pair[1].0.path.starts_with(&pair[0].0.path)) {
+            return Err(StoreError::Invalid("overlapping cloud fields".into()));
+        }
+        if !info.spec.is_local() && super::operation::has_open_row_operation(tx, &record.model, &record.row_id)? {
             super::cloud_waiting::enqueue(tx, domain, &record, system_fields.as_deref(), &[(record.model.as_str(), record.row_id.as_str())])?;
             continue;
         }
@@ -189,16 +193,16 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
             continue;
         }
         if deleted { continue; }
-        let stored = Reader::new(tx, models).stored_row(&record.model, &record.row_id)?;
+        let stored = reader.stored_row(&record.model, &record.row_id)?;
         let current_revision = info.spec.server_revision.as_ref().and_then(|field| stored.as_ref()?.row.get(field)).and_then(Value::as_i64);
         let revision_order = record.server_revision.zip(current_revision).map(|(incoming, current)| incoming.cmp(&current));
         let mut row = stored.as_ref().map(|row| row.row.clone()).unwrap_or_else(|| Map::from_iter([("id".into(), Value::String(record.row_id.clone()))]));
+        let before = project::project(&info.spec, &row);
         let mut changed = stored.is_none();
         let mut marks = Vec::new();
-        for field in &record.fields {
-            let (_, rule, local) = project::field(&info.spec, &field.path).ok_or_else(|| StoreError::Invalid("invalid cloud field".into()))?;
+        for (field, rule, local) in fields {
             if !local && revision_order.is_some_and(|order| order.is_lt()) { continue; }
-            let old = project::project(&info.spec, &row).get(&field.path).cloned();
+            let old = before.get(&field.path);
             let value = if field.data.value.is_null() { Value::Null } else {
                 let mut candidate = row.clone();
                 project::set(&mut candidate, &field.path, field.data.value.clone())?;
@@ -209,13 +213,13 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
             let stamp = cloud::field_stamp(tx, domain, &record.model, &record.row_id, &field.path)?;
             let wins = match stamp {
                 Some(stamp) => {
-                    let stored = StampedValue { value: old.unwrap_or(Value::Null), stamp };
+                    let stored = StampedValue { value: old.cloned().unwrap_or(Value::Null), stamp };
                     let choice = crate::cloud::choose_field(&stored, &incoming, rule).map_err(|_| StoreError::Invalid("conflicting cloud stamp".into()))?;
                     if !local && revision_order.is_some_and(|order| order.is_gt()) && stamp != incoming.stamp {
                         rule.map_or(std::cmp::Ordering::Equal, |rule| rule.rank(&stored.value, &incoming.value)).is_le()
                     } else { choice == Choice::Incoming }
                 }
-                _ => old.as_ref().is_none_or(|old| rule.is_none_or(|rule| !rule.rank(old, &incoming.value).is_gt())),
+                _ => old.is_none_or(|old| rule.is_none_or(|rule| !rule.rank(old, &incoming.value).is_gt())),
             };
             if wins {
                 project::set(&mut row, &field.path, incoming.value)?;
@@ -231,7 +235,6 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
         }
         let mut normalized = apply_rows::without_nulls(info, &row);
         apply_rows::canonicalize(info, &mut normalized)?;
-        let reader = Reader::new(tx, models);
         let mut missing = Vec::new();
         for association in info.spec.associations.iter().filter(|association| association.kind == crate::schema::AssociationKind::BelongsTo) {
             if let Some(parent) = normalized.get(&association.foreign_key).and_then(crate::value::read_id) {
@@ -245,9 +248,11 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
             super::cloud_waiting::enqueue(tx, domain, &record, system_fields.as_deref(), &dependencies)?;
             continue;
         }
-        for (path, stamp) in marks {
-            cloud::write_field_stamp(tx, domain, &record.model, &record.row_id, path, stamp)?;
-            cloud::observe_stamp(tx, domain, stamp)?;
+        for (path, stamp) in &marks {
+            cloud::write_field_stamp(tx, domain, &record.model, &record.row_id, path, *stamp)?;
+        }
+        if let Some(latest) = marks.into_iter().map(|(_, stamp)| stamp).max() {
+            cloud::observe_stamp(tx, domain, latest)?;
         }
         if changed {
             plan.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(&record.model), id, row });
