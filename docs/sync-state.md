@@ -2,6 +2,8 @@
 
 Every record knows whether the server has seen it. The state is live like everything else, so you can build UI and logic on it: show a spinner on a moment that is still being sent, a retry button on a message that failed, a badge on a record that has unsaved edits.
 
+For CloudKit and Drive, see [cloud synchronization settings and status](cloud-sync.md#status).
+
 ## What a record exposes
 
 | Property | Meaning |

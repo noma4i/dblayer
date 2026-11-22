@@ -15,7 +15,7 @@ pub const SCHEMA_VERSION: i64 = 2;
 pub const FORMAT_VERSION_KEY: &str = "format_version";
 pub const REVISION_SEQ_KEY: &str = "revision_seq";
 pub(crate) const TRANSFER_ID_KEY: &str = "transfer_id";
-pub(crate) const CARRIED_MANIFEST_KEYS: [&str; 8] = ["saved_epoch", "saved_generation", REVISION_SEQ_KEY, TRANSFER_ID_KEY, "resume_answer_outcome", "resume_answer_detail", "cloud_application_key", "cloud_application_credential"];
+pub(crate) const CARRIED_MANIFEST_KEYS: [&str; 9] = ["saved_epoch", "saved_generation", REVISION_SEQ_KEY, TRANSFER_ID_KEY, "resume_answer_outcome", "resume_answer_detail", "cloud_application_key", "cloud_application_credential", super::cloud_settings::CLOUD_ENABLED];
 /// The tables a format change moves into the new layout (`store_boot_format_change`).
 pub(crate) const CARRIED_TABLES: [&str; 18] = ["op", "op_transfer", "outcome", "op_row", "op_value", "op_error", "encrypted_session", "encrypted_pending", "encrypted_answer", "sync_upload", "sync_upload_part", "sync_upload_prepare", "sync_upload_prepare_step", "local_pending", "restore_failed", "upload_orphan", "sync_upload_batch", "row_alias"];
 

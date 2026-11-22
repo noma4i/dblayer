@@ -177,7 +177,7 @@ DBlayer.sessionCall<PhoneBody, JsonElement>("otp", PhoneBody("+61400000000"))
 
 Await `DB.open` in Swift or call suspend `DBlayer.open` from a Kotlin coroutine.
 The optional `cloud` argument defaults to `nil` in Swift and `null` in Kotlin.
-Cloud sync is off by default. Configure CloudKit or Drive to enable it, as shown in [cloud sync](docs/cloud-sync.md):
+Cloud sync is off by default. Pass a CloudKit or Drive configuration to make it available.
 
 ```swift
 try await DB.open(modelsJSON: modelsJSON, uploadTaskTitle: "Uploading", cloud: cloud)
@@ -186,6 +186,9 @@ try await DB.open(modelsJSON: modelsJSON, uploadTaskTitle: "Uploading", cloud: c
 ```kotlin
 DBlayer.open(context, modelsJson = modelsJson, uploadNotification = notification, cloud = cloud)
 ```
+
+Set `initiallyEnabled` to false when users opt in from app settings. The database saves later changes.
+See the [cloud sync guide](docs/cloud-sync.md) for the toggle, sync state, and record status.
 
 Opening files, WAL and format checks runs on the library's worker pool.
 Open the database once at app start. A second `open` while it is open throws, whatever its parameters. Failed opens allow retry.

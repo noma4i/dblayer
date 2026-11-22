@@ -14,7 +14,16 @@ pub enum CloudIssueCause { TooLarge, Rejected }
 pub struct CloudIssue { pub model: String, pub row_id: String, pub cause: CloudIssueCause }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct CloudStatus { pub phase: CloudPhase, pub issues: Vec<CloudIssue> }
+pub struct CloudStatus { pub configured: bool, pub enabled: bool, pub phase: CloudPhase, pub activity: CloudActivity, pub issues: Vec<CloudIssue> }
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum CloudActivity { Idle, ObservingAccount, Reading, Bootstrapping, Sending, WaitingToRetry, Stopping, Erasing }
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct CloudModelStatus { pub model: String, pub eligible: bool }
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum CloudRecordStatus { NotAttached, Excluded, Held, Waiting, Missing, Queued, QueuedDeletion, Synchronized, Deleted, TooLarge, Rejected }
 
 #[derive(uniffi::Object)]
 pub struct CloudSubscription(super::reading::Reader<CloudStatus>, std::sync::atomic::AtomicBool);
@@ -34,11 +43,44 @@ impl CloudSubscription {
 #[uniffi::export]
 impl Database {
     pub fn cloud_status(&self) -> CloudStatus {
-        self.life.cloud_status().map(|value| value.borrow().clone()).unwrap_or(CloudStatus { phase: CloudPhase::Disabled, issues: Vec::new() })
+        self.life.cloud_status().map(|value| value.borrow().clone()).unwrap_or(CloudStatus { configured: false, enabled: false, phase: CloudPhase::Disabled, activity: CloudActivity::Idle, issues: Vec::new() })
     }
     pub fn cloud_changes(&self) -> Option<Arc<CloudSubscription>> {
         self.life.cloud_status().map(|value| Arc::new(CloudSubscription(super::reading::Reader::of(value), std::sync::atomic::AtomicBool::new(false))))
     }
+    pub async fn set_cloud_enabled(&self, enabled: bool) -> Result<bool, DbError> { let this = self.clone(); super::database::on_core(self.scope(), async move {
+        this.not_closed()?;
+        if this.life.cloud_status().is_none() {
+            return if enabled { Err(DbError::Invalid { detail: "cloud is not configured".into() }) } else { Ok(false) };
+        }
+        match this.await_life(this.life.set_cloud_enabled(enabled)).await? {
+            crate::owners::life::LifeReply::CloudEnabled(result) => result.map_err(|detail| DbError::Storage { detail }),
+            _ => Err(super::database::foreign_reply()),
+        }
+    }).await? }
+    pub async fn cloud_models(&self) -> Result<Vec<CloudModelStatus>, DbError> { let this = self.clone(); super::database::on_core(self.scope(), async move {
+        this.not_closed()?;
+        let db = this.db.clone();
+        let result = this.offload(move || Ok(db.cloud_models().into_iter().map(|(model, eligible)| CloudModelStatus { model, eligible }).collect())).await?;
+        this.not_closed()?;
+        Ok(result)
+    }).await? }
+    pub async fn cloud_record_status(&self, model: String, row_id: String) -> Result<CloudRecordStatus, DbError> { let this = self.clone(); super::database::on_core(self.scope(), async move {
+        this.not_closed()?;
+        this.wire(&model)?;
+        let row_id = super::database::id(&row_id)?;
+        let db = this.db.clone();
+        let result = this.offload(move || {
+            if !db.cloud_model_eligible(&model)? || row_id.is_temp() { return Ok(CloudRecordStatus::Excluded); }
+            let Some(scope) = db.cloud_status_scope() else { return Ok(CloudRecordStatus::NotAttached); };
+            use crate::store::CloudRecordDisposition as D;
+            Ok(match db.cloud_record_disposition(&scope, &model, &row_id)? {
+                D::Excluded => CloudRecordStatus::Excluded, D::Held => CloudRecordStatus::Held, D::Waiting => CloudRecordStatus::Waiting, D::Missing => CloudRecordStatus::Missing, D::Queued => CloudRecordStatus::Queued, D::QueuedDeletion => CloudRecordStatus::QueuedDeletion, D::Synchronized => CloudRecordStatus::Synchronized, D::Deleted => CloudRecordStatus::Deleted, D::TooLarge => CloudRecordStatus::TooLarge, D::Rejected => CloudRecordStatus::Rejected,
+            })
+        }).await?;
+        this.not_closed()?;
+        Ok(result)
+    }).await? }
 }
 
 #[derive(uniffi::Record)]
@@ -46,6 +88,8 @@ pub struct CloudConfig {
     pub backend: CloudBackend,
     pub application: CloudApplication,
     pub port: Arc<dyn CloudPort>,
+    #[uniffi(default = true)]
+    pub initially_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]

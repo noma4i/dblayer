@@ -7,6 +7,8 @@ use crate::identity::RowId;
 const TOO_LARGE: i64 = 2;
 const REJECTED: i64 = 3;
 
+fn eligible(info: &super::super::ModelInfo) -> bool { !info.spec.is_memory() }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CloudRecordDisposition {
     Excluded, Held, Waiting, Missing, Queued, QueuedDeletion, Synchronized, Deleted, TooLarge, Rejected,
@@ -15,7 +17,12 @@ pub(crate) enum CloudRecordDisposition {
 impl super::super::Store {
     pub(crate) fn cloud_models(&self) -> Vec<(String, bool)> {
         let models = self.models.read().unwrap_or_else(|error| error.into_inner());
-        models.iter().map(|(name, info)| (name.clone(), !info.spec.is_memory())).collect()
+        models.iter().map(|(name, info)| (name.clone(), eligible(info))).collect()
+    }
+
+    pub(crate) fn cloud_model_eligible(&self, model: &str) -> Result<bool, StoreError> {
+        let models = self.models.read().unwrap_or_else(|error| error.into_inner());
+        models.get(model).map(eligible).ok_or_else(|| StoreError::UnknownModel(model.into()))
     }
 
     pub(crate) fn cloud_record_disposition(&self, scope: &CloudScope, model: &str, row_id: &RowId) -> Result<CloudRecordDisposition, StoreError> {
@@ -30,7 +37,7 @@ impl super::super::Store {
         check_scope()?;
         let disposition = self.read(&[model], |reader| {
             let info = reader.models().get(model).ok_or_else(|| StoreError::UnknownModel(model.into()))?;
-            if info.spec.is_memory() || row_id.is_temp() { return Ok(CloudRecordDisposition::Excluded); }
+            if !eligible(info) || row_id.is_temp() { return Ok(CloudRecordDisposition::Excluded); }
             let connection = reader.connection();
             if !info.spec.is_local() && super::has_open_row_operation(connection, model, row_id.as_str())? {
                 return Ok(CloudRecordDisposition::Held);

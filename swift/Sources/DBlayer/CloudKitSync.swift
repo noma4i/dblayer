@@ -3,8 +3,8 @@ import CryptoKit
 import Foundation
 
 extension CloudConfig {
-  public static func cloudKit(application: CloudApplication, container: CKContainer = .default()) -> CloudConfig {
-    CloudConfig(backend: .cloudKit, application: application, port: CloudKitSync(container: container))
+  public static func cloudKit(application: CloudApplication, container: CKContainer = .default(), initiallyEnabled: Bool = true) -> CloudConfig {
+    CloudConfig(backend: .cloudKit, application: application, port: CloudKitSync(container: container), initiallyEnabled: initiallyEnabled)
   }
 }
 

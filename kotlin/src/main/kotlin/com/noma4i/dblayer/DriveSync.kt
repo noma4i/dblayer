@@ -39,11 +39,11 @@ class DriveSync internal constructor(
     private val relay: HttpUrl? = null,
 ) : CloudPort {
     companion object {
-        fun configuration(application: CloudApplication, authorization: StateFlow<DriveAuthorization>, directory: File, replica: String, relay: String? = null): CloudConfig {
+        fun configuration(application: CloudApplication, authorization: StateFlow<DriveAuthorization>, directory: File, replica: String, relay: String? = null, initiallyEnabled: Boolean = true): CloudConfig {
             require(replica.isNotEmpty())
             val origin = relay?.toHttpUrl()?.also { require(it.isHttps && it.username.isEmpty() && it.password.isEmpty()) }
                 ?.newBuilder()?.encodedPath("/")?.query(null)?.fragment(null)?.build()
-            return CloudConfig(CloudBackend.DRIVE, application, DriveSync(authorization, directory, replica, relay = origin))
+            return CloudConfig(CloudBackend.DRIVE, application, DriveSync(authorization, directory, replica, relay = origin), initiallyEnabled)
         }
     }
 

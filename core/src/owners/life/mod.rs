@@ -416,14 +416,15 @@ impl Life {
         let store = builder.reserve::<StoreWriter>();
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), held_replies: Vec::new(), transport: ports.transport.clone() });
         let cloud_domain = if ports.cloud.is_some() { ports.db.cloud_domain().map_err(|error| LifeError::Storage(error.to_string()))? } else { None };
-        let cloud_enabled = if ports.cloud.is_some() { ports.db.stored_cloud_enabled().map_err(|error| LifeError::Storage(error.to_string()))?.unwrap_or(true) } else { false };
+        let saved_cloud_enabled = if ports.cloud.is_some() { ports.db.stored_cloud_enabled().map_err(|error| LifeError::Storage(error.to_string()))? } else { None };
+        let cloud_enabled = ports.cloud.as_ref().is_some_and(|config| saved_cloud_enabled.unwrap_or(config.initially_enabled));
         let (cloud_sender, cloud_status) = if ports.cloud.is_some() {
-            let (sender, receiver) = tokio::sync::watch::channel(crate::ffi::CloudStatus { phase: if cloud_enabled { crate::ffi::CloudPhase::WaitingForAccount } else { crate::ffi::CloudPhase::Disabled }, issues: Vec::new() });
+            let (sender, receiver) = tokio::sync::watch::channel(crate::ffi::CloudStatus { configured: true, enabled: cloud_enabled, phase: if cloud_enabled { crate::ffi::CloudPhase::WaitingForAccount } else { crate::ffi::CloudPhase::Disabled }, activity: crate::ffi::CloudActivity::Idle, issues: Vec::new() });
             (Some(sender), Some(receiver))
         } else { (None, None) };
         let cloud = ports.cloud.as_ref().zip(cloud_sender).map(|(config, status)| {
             let mut state = super::cloud::CloudState::configured(0, cloud_domain, &config.backend, &config.application);
-            state.initial_enabled(cloud_enabled);
+            state.initial_enabled(cloud_enabled, saved_cloud_enabled.is_some());
             let address = builder.add::<super::cloud::Cloud>("cloud", state, super::cloud::runner::CloudRunner { port: config.port.clone(), signals: None, executor: ports.executor.clone(), wiring: Arc::downgrade(&wiring), active: None, db: ports.db.clone(), standalone: matches!(&config.application, crate::ffi::CloudApplication::Standalone { .. }), status });
             let weak = Arc::downgrade(&wiring);
             wiring.on_network(Peer::Cloud, move |event| {

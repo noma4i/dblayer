@@ -40,6 +40,12 @@ public enum DB {
 
   public static func cloudChanges() throws -> CloudChanges { CloudChanges(database: try database) }
 
+  public static func setCloudEnabled(_ enabled: Bool) async throws -> Bool { try await database.setCloudEnabled(enabled: enabled) }
+
+  public static func cloudModels() async throws -> [CloudModelStatus] { try await database.cloudModels() }
+
+  public static func cloudRecordStatus(model: String, rowID: String) async throws -> CloudRecordStatus { try await database.cloudRecordStatus(model: model, rowId: rowID) }
+
   nonisolated(nonsending) public static func call<Answer: Decodable & Sendable>(_ operation: String, variables: [String: JSONValue], as _: Answer.Type, in scope: AccountScope? = nil) async throws -> Answer {
     try await DB.ordered(scope) { root, database, epoch in
       return try JSONDecoder().decode(Answer.self, from: Data(try await database.call(epoch: epoch, operation: operation, variablesJson: JSONValue.object(variables).text).utf8))

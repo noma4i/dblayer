@@ -4,7 +4,7 @@ use super::{ddl, session_state, CloudAttachment, CloudAttachmentMode, Store, Sto
 use crate::owners::cloud::CloudScope;
 use crate::runtime::Epoch;
 
-const CLOUD_ENABLED: &str = "cloud_enabled";
+pub(super) const CLOUD_ENABLED: &str = "cloud_enabled";
 
 fn read(connection: &Connection) -> Result<Option<bool>, StoreError> {
     match ddl::manifest_read(connection, CLOUD_ENABLED)?.as_deref() {

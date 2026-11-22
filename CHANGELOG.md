@@ -5,6 +5,7 @@
 ### Added
 
 - Add opt-in CloudKit and Drive sync for persisted model data.
+- Add cloud enablement settings and report sync status for models and records.
 
 ## 6.47.0 - 2026-11-21
 

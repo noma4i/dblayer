@@ -40,6 +40,12 @@ object DBlayer {
 
     fun cloudChanges(): kotlinx.coroutines.flow.Flow<CloudStatus> = cloudChanges(database)
 
+    suspend fun setCloudEnabled(enabled: Boolean): Boolean = database.setCloudEnabled(enabled)
+
+    suspend fun cloudModels(): List<CloudModelStatus> = database.cloudModels()
+
+    suspend fun cloudRecordStatus(model: String, rowId: String): CloudRecordStatus = database.cloudRecordStatus(model, rowId)
+
     suspend fun <Answer> call(operation: String, variables: JsonObject, serializer: KSerializer<Answer>, account: AccountScope? = null): Answer =
         onAccountOf(account) { _, database, epoch -> dbJson.decodeFromString(serializer, database.call(epoch, operation, variables.jsonText())) }
 

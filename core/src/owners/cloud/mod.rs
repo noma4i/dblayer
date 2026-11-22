@@ -90,6 +90,7 @@ pub(crate) struct CloudState {
     issues: Vec<crate::ffi::CloudIssue>,
     issues_revision: u64,
     enabled: bool,
+    preference_saved: bool,
     initialized: bool,
     observation: Option<u64>,
     observing: bool,
@@ -103,7 +104,7 @@ pub(crate) struct CloudState {
 
 impl CloudState {
     pub(crate) fn new(epoch: Epoch) -> Self {
-        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, bootstrapping: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, exhausted: false, closed: false, retry_held: false, sending: false, wake: false, backoff: false, attempts: 0, relay_attempts: 0, relay_token: None, backend: None, provider: None, application: None, standalone: false, provider_fingerprint: String::new(), issues: Vec::new(), issues_revision: 0, enabled: true, initialized: false, observation: None, observing: false, unobserving: false, settings: VecDeque::new(), setting: None, writing: false, restoring: None, restored_binding: None }
+        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, bootstrapping: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, exhausted: false, closed: false, retry_held: false, sending: false, wake: false, backoff: false, attempts: 0, relay_attempts: 0, relay_token: None, backend: None, provider: None, application: None, standalone: false, provider_fingerprint: String::new(), issues: Vec::new(), issues_revision: 0, enabled: true, preference_saved: false, initialized: false, observation: None, observing: false, unobserving: false, settings: VecDeque::new(), setting: None, writing: false, restoring: None, restored_binding: None }
     }
 
     fn phase(&self) -> crate::ffi::CloudPhase {
@@ -127,13 +128,19 @@ impl CloudState {
         state
     }
 
-    pub(crate) fn initial_enabled(&mut self, enabled: bool) { self.enabled = enabled; }
+    pub(crate) fn initial_enabled(&mut self, enabled: bool, saved: bool) { self.enabled = enabled; self.preference_saved = saved; }
+
+    fn activity(&self) -> crate::ffi::CloudActivity {
+        use crate::ffi::{CloudActivity as A, CloudPhase};
+        let phase = self.phase();
+        if self.erasing.is_some() { A::Erasing } else if !self.stopping.is_empty() || self.unobserving { A::Stopping } else if self.observing { A::ObservingAccount } else if self.backoff || self.retry_held { A::WaitingToRetry } else if self.bootstrapping { A::Bootstrapping } else if self.sending { A::Sending } else if phase == CloudPhase::Reading && self.active.is_some() { A::Reading } else { A::Idle }
+    }
 
     fn settings_next(&mut self, fx: &mut Effects<Cloud>) {
         if self.closed || self.setting.is_some() { return; }
         let Some((enabled, reply, initialize)) = self.settings.pop_front() else { return; };
         self.setting = Some((enabled, reply, initialize));
-        if !initialize && enabled != self.enabled {
+        if !initialize && (!self.preference_saved || enabled != self.enabled) {
             self.writing = true;
             fx.push(Effect::Run(CloudEffect::WriteEnabled(enabled)));
         } else { self.apply_setting(fx); }
@@ -286,14 +293,11 @@ impl StateOwner for Cloud {
     type Effect = CloudEffect;
 
     fn step(state: &mut CloudState, input: CloudInput, _now: Time) -> Effects<Self> {
-        let phase = state.phase();
-        let issues_revision = state.issues_revision;
+        let previous = (state.phase(), state.activity(), state.enabled, state.issues_revision);
         let mut fx = Self::transition(state, input);
-        let next = state.phase();
-        if phase != next || issues_revision != state.issues_revision {
-            let closed = next == crate::ffi::CloudPhase::Closed;
-            let publish = Effect::Run(CloudEffect::Publish(crate::ffi::CloudStatus { phase: next, issues: state.issues.clone() }));
-            if closed { fx.insert(0, publish); } else { fx.push(publish); }
+        let next = (state.phase(), state.activity(), state.enabled, state.issues_revision);
+        if previous != next {
+            fx.insert(0, Effect::Run(CloudEffect::Publish(crate::ffi::CloudStatus { configured: true, enabled: next.2, phase: next.0, activity: next.1, issues: state.issues.clone() })));
         }
         fx
     }
@@ -343,7 +347,7 @@ impl Cloud {
             CloudInput::PreferenceWritten(result) if state.writing => {
                 state.writing = false;
                 match result {
-                    Ok(()) => state.apply_setting(&mut fx),
+                    Ok(()) => { state.preference_saved = true; state.apply_setting(&mut fx); },
                     Err(error) => {
                         if let Some((_, id, _)) = state.setting.take() { fx.push(Effect::Run(CloudEffect::Reply { id, answer: Err(error) })); }
                         state.settings_next(&mut fx);
