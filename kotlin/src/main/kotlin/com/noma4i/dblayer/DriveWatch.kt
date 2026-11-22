@@ -17,10 +17,14 @@ import okhttp3.Response
 internal enum class DriveWatchEvent { READY, CHANGED }
 
 internal class DriveWatch(private val relay: HttpUrl) {
-    val secret: String = ByteArray(32).also { SecureRandom().nextBytes(it) }
+    private companion object {
+        val random = SecureRandom()
+        val client = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
+            .readTimeout(0, TimeUnit.MILLISECONDS).build()
+    }
+
+    val secret: String = ByteArray(32).also(random::nextBytes)
         .let { Base64.getUrlEncoder().withoutPadding().encodeToString(it) }
-    private val client = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
-        .readTimeout(0, TimeUnit.MILLISECONDS).build()
 
     fun events(): Flow<DriveWatchEvent> = callbackFlow {
         val request = Request.Builder().url(relay.newBuilder().addPathSegment("events").build())
