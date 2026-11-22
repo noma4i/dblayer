@@ -23,9 +23,11 @@ impl HybridClock {
         Self { replica, last: last.map(|stamp| (stamp.millis, stamp.counter)) }
     }
 
-    pub fn observe(&mut self, remote: Stamp) {
+    pub fn observe(&mut self, remote: Stamp) -> Stamp {
         let observed = (remote.millis, remote.counter);
-        self.last = Some(self.last.map_or(observed, |last| last.max(observed)));
+        let (millis, counter) = self.last.map_or(observed, |last| last.max(observed));
+        self.last = Some((millis, counter));
+        Stamp { millis, counter, replica: self.replica }
     }
 
     pub fn tick(&mut self, wall_millis: u64) -> Option<Stamp> {
