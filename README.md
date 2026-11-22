@@ -175,6 +175,17 @@ DBlayer.sessionCall<PhoneBody, JsonElement>("otp", PhoneBody("+61400000000"))
 ```
 
 Await `DB.open` in Swift or call suspend `DBlayer.open` from a Kotlin coroutine.
+The optional `cloud` argument defaults to `nil` in Swift and `null` in Kotlin.
+Pass a supplied `CloudConfig` to enable cloud sync:
+
+```swift
+try await DB.open(modelsJSON: modelsJSON, uploadTaskTitle: "Uploading", cloud: cloud)
+```
+
+```kotlin
+DBlayer.open(context, modelsJson = modelsJson, uploadNotification = notification, cloud = cloud)
+```
+
 Opening files, WAL and format checks runs on the library's worker pool.
 Open the database once at app start. A second `open` while it is open throws, whatever its parameters. Failed opens allow retry.
 `AppCredentials` is app code that implements `CredentialStore` over the Keychain or the Keystore, see [server sync](docs/server-sync.md).

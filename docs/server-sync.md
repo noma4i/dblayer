@@ -38,7 +38,17 @@ try await DB.open(endpoint: endpoint, modelsJSON: modelsJSON, operations: [Greet
 DBlayer.open(context, endpoint = endpoint, modelsJson = modelsJson, operations = listOf(Greeting), uploadNotification = notification)
 ```
 
-`endpoint`, `encrypted`, `credentials`, `transport`, `path` and `http` default to nil or null.
+`endpoint`, `encrypted`, `credentials`, `transport`, `path`, `http` and `cloud` default to `nil` in Swift or `null` in Kotlin.
+Pass a supplied `CloudConfig` to enable cloud sync:
+
+```swift
+try await DB.open(modelsJSON: modelsJSON, uploadTaskTitle: "Uploading", cloud: cloud)
+```
+
+```kotlin
+DBlayer.open(context, modelsJson = modelsJson, uploadNotification = notification, cloud = cloud)
+```
+
 `headers` is a closure that returns the request headers, `@Sendable () -> [String: String]` in Swift and `() -> Map<String, String>` in Kotlin. It defaults to an empty map and is called for each request and cable connection to the database origin. Presigned file uploads use their supplied headers and User-Agent. `operations` defaults to an empty list. `modelsJSON` or `modelsJson` is required.
 
 The built-in clients send `User-Agent: DBlayer/<version>` on HTTP requests, file PUTs and WebSocket handshakes.

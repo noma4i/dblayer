@@ -1,6 +1,12 @@
 import CloudKit
 import Foundation
 
+extension CloudConfig {
+  public static func cloudKit(application: CloudApplication, container: CKContainer = .default()) -> CloudConfig {
+    CloudConfig(backend: .cloudKit, application: application, port: CloudKitSync(container: container))
+  }
+}
+
 final class CloudKitSync: CloudPort, @unchecked Sendable {
   private let container: CKContainer
   private let lock = NSLock()

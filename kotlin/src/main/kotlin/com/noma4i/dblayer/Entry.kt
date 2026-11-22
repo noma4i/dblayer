@@ -64,11 +64,12 @@ object DBlayer {
         http: EncryptedHttp? = null,
         uploadNotification: UploadNotification,
         preparer: Preparer? = null,
+        cloud: CloudConfig? = null,
     ) {
         offCaller {
             val dataSync = dataSyncDeclared(android.os.Build.VERSION.SDK_INT) { context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty().toList() }
             UploadNotifications.store(context, uploadNotification)
-            val ports = OpenPorts(transport, encrypted, credentials, http, endpoint, OkHttpTransport(headers), dataSync, preparer)
+            val ports = OpenPorts(transport, encrypted, credentials, http, endpoint, OkHttpTransport(headers), dataSync, preparer, cloud = cloud)
             NetworkStatus(context)
             val made = opener.open(Config(path), modelsJson, OpenOptions(definitions(operations)), ports, SystemObservers(context))
             made.setRoundJobs(UploadRounds(context.applicationContext, made))
