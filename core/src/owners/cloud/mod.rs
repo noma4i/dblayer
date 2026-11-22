@@ -20,6 +20,7 @@ pub(crate) enum CloudInput {
     Initialize { reply: u64 },
     SetEnabled { enabled: bool, reply: u64 },
     PreferenceWritten(Result<(), String>),
+    CaptureRestored { token: u64 },
     Observed { observation: u64 },
     Unobserved { observation: u64 },
     Provider { observation: u64, account: crate::ffi::CloudAccount },
@@ -46,7 +47,8 @@ pub(crate) enum CloudEffect {
     Unobserve { observation: u64 },
     Reply { id: u64, answer: Result<bool, String> },
     ReplyClosed { id: u64 },
-    Start(CloudScope),
+    Start { scope: CloudScope, binding: String },
+    RestoreCapture { token: u64, epoch: Epoch, binding: String, application_key: Option<String> },
     Stop { generation: u64 },
     Erase { domain: String, token: u64, epoch: Epoch },
     Ready(CloudScope),
@@ -95,11 +97,13 @@ pub(crate) struct CloudState {
     settings: VecDeque<(bool, u64, bool)>,
     setting: Option<(bool, u64, bool)>,
     writing: bool,
+    restoring: Option<u64>,
+    restored_binding: Option<String>,
 }
 
 impl CloudState {
     pub(crate) fn new(epoch: Epoch) -> Self {
-        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, bootstrapping: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, exhausted: false, closed: false, retry_held: false, sending: false, wake: false, backoff: false, attempts: 0, relay_attempts: 0, relay_token: None, backend: None, provider: None, application: None, standalone: false, provider_fingerprint: String::new(), issues: Vec::new(), issues_revision: 0, enabled: true, initialized: false, observation: None, observing: false, unobserving: false, settings: VecDeque::new(), setting: None, writing: false }
+        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, bootstrapping: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, exhausted: false, closed: false, retry_held: false, sending: false, wake: false, backoff: false, attempts: 0, relay_attempts: 0, relay_token: None, backend: None, provider: None, application: None, standalone: false, provider_fingerprint: String::new(), issues: Vec::new(), issues_revision: 0, enabled: true, initialized: false, observation: None, observing: false, unobserving: false, settings: VecDeque::new(), setting: None, writing: false, restoring: None, restored_binding: None }
     }
 
     fn phase(&self) -> crate::ffi::CloudPhase {
@@ -150,7 +154,31 @@ impl CloudState {
             self.available = false;
             self.detach_observer(fx);
         }
+        self.restore_capture(fx);
         self.finish_setting(fx);
+    }
+
+    fn capture_binding(&self) -> Option<String> {
+        let backend = self.backend.as_ref()?;
+        let application = self.application.as_ref()?;
+        let mode = if self.standalone { "standalone" } else { "session" };
+        let mut hash = Sha256::new();
+        for part in [backend.as_str(), mode, application.as_str()] {
+            hash.update((part.len() as u64).to_be_bytes());
+            hash.update(part.as_bytes());
+        }
+        Some(hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
+    }
+
+    fn restore_capture(&mut self, fx: &mut Effects<Cloud>) {
+        if self.enabled || !self.initialized || !self.attached || self.restoring.is_some() { return; }
+        let Some(binding) = self.capture_binding() else { return; };
+        if self.restored_binding.as_ref() == Some(&binding) { return; }
+        let Some(token) = self.token(fx) else { return; };
+        self.restored_binding = Some(binding.clone());
+        self.restoring = Some(token);
+        let application_key = if self.standalone { None } else { self.application.clone() };
+        fx.push(Effect::Run(CloudEffect::RestoreCapture { token, epoch: self.epoch, binding, application_key }));
     }
 
     fn detach_observer(&mut self, fx: &mut Effects<Cloud>) {
@@ -162,7 +190,7 @@ impl CloudState {
     }
 
     fn finish_setting(&mut self, fx: &mut Effects<Cloud>) {
-        if self.writing || self.observing || self.unobserving || !self.stopping.is_empty() || self.erasing.is_some() { return; }
+        if self.restoring.is_some() || self.writing || self.observing || self.unobserving || !self.stopping.is_empty() || self.erasing.is_some() { return; }
         if let Some((enabled, id, _)) = self.setting.take() {
             fx.push(Effect::Run(CloudEffect::Reply { id, answer: Ok(enabled) }));
         }
@@ -225,7 +253,7 @@ impl CloudState {
     }
 
     fn reconcile(&mut self, fx: &mut Effects<Cloud>) {
-        if !self.enabled || !self.initialized || self.observing || self.unobserving || self.exhausted || self.erasing.is_some() || !self.attached || !self.available { return; }
+        if !self.enabled || !self.initialized || self.restoring.is_some() || self.observing || self.unobserving || self.exhausted || self.erasing.is_some() || !self.attached || !self.available { return; }
         if self.domain != self.desired {
             self.stop(fx);
             if !self.stopping.is_empty() || self.retry_held { return; }
@@ -241,8 +269,9 @@ impl CloudState {
             if let Some(domain) = self.domain.clone() {
                 let Some(generation) = self.token(fx) else { return; };
                 let scope = CloudScope { epoch: self.epoch, generation, domain, provider_fingerprint: self.provider_fingerprint.clone() };
+                let Some(binding) = self.capture_binding() else { return; };
                 self.active = Some(scope.clone());
-                fx.push(Effect::Run(CloudEffect::Start(scope)));
+                fx.push(Effect::Run(CloudEffect::Start { scope, binding }));
             }
         }
     }
@@ -282,6 +311,7 @@ impl Cloud {
                 CloudInput::Stopped { generation } if state.stopping.remove(&generation) => { state.detach_observer(&mut fx); }
                 CloudInput::Erased { token } | CloudInput::EraseFailed { token } if state.erasing == Some(token) => { state.erasing = None; }
                 CloudInput::PreferenceWritten(_) => { state.writing = false; }
+                CloudInput::CaptureRestored { token } if state.restoring == Some(token) => { state.restoring = None; }
                 CloudInput::Observed { observation } if state.observation == Some(observation) => {
                     state.observing = false;
                     state.detach_observer(&mut fx);
@@ -292,10 +322,10 @@ impl Cloud {
                 }
                 _ => return fx,
             }
-            if state.stopping.is_empty() && state.erasing.is_none() && !state.writing && state.observation.is_none() { fx.push(Effect::Run(CloudEffect::Drained)); }
+            if state.stopping.is_empty() && state.erasing.is_none() && state.restoring.is_none() && !state.writing && state.observation.is_none() { fx.push(Effect::Run(CloudEffect::Drained)); }
             return fx;
         }
-        if state.exhausted && !matches!(input, CloudInput::Close | CloudInput::Stopped { .. }) { return fx; }
+        if state.exhausted && !matches!(input, CloudInput::Close | CloudInput::Stopped { .. } | CloudInput::CaptureRestored { .. }) { return fx; }
         match input {
             CloudInput::Initialize { reply } => {
                 state.settings.push_back((state.enabled, reply, true));
@@ -304,6 +334,11 @@ impl Cloud {
             CloudInput::SetEnabled { enabled, reply } => {
                 state.settings.push_back((enabled, reply, false));
                 state.settings_next(&mut fx);
+            }
+            CloudInput::CaptureRestored { token } if state.restoring == Some(token) => {
+                state.restoring = None;
+                state.restore_capture(&mut fx);
+                state.finish_setting(&mut fx);
             }
             CloudInput::PreferenceWritten(result) if state.writing => {
                 state.writing = false;
@@ -327,11 +362,13 @@ impl Cloud {
             CloudInput::EpochStarted(epoch) if epoch > state.epoch => {
                 state.stop(&mut fx);
                 state.epoch = epoch;
+                state.restored_binding = None;
                 state.attached = true;
                 state.available = false;
                 state.desired = None;
                 if !state.standalone { state.application = None; }
                 state.account_inputs(&mut fx);
+                state.restore_capture(&mut fx);
             }
             CloudInput::EpochEnded(epoch) if epoch == state.epoch && state.attached => {
                 state.stop(&mut fx);
@@ -350,6 +387,7 @@ impl Cloud {
             CloudInput::Application { epoch, key } if epoch == state.epoch && state.attached && !state.standalone => {
                 state.application = key;
                 state.account_inputs(&mut fx);
+                state.restore_capture(&mut fx);
             }
             CloudInput::InitialRead { generation } => {
                 if let Some(scope) = &state.active {
@@ -433,7 +471,7 @@ impl Cloud {
                 if let Some((_, id, _)) = state.setting.take() { fx.push(Effect::Run(CloudEffect::ReplyClosed { id })); }
                 for (_, id, _) in state.settings.drain(..) { fx.push(Effect::Run(CloudEffect::ReplyClosed { id })); }
                 state.detach_observer(&mut fx);
-                if state.stopping.is_empty() && state.erasing.is_none() && !state.writing && state.observation.is_none() { fx.push(Effect::Run(CloudEffect::Drained)); }
+                if state.stopping.is_empty() && state.erasing.is_none() && state.restoring.is_none() && !state.writing && state.observation.is_none() { fx.push(Effect::Run(CloudEffect::Drained)); }
             }
             _ => {}
         }

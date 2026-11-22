@@ -347,6 +347,7 @@ impl Store {
         Ok(session.filter(|session| identity_of(&session.credential_digest) == Some(identity) && credential.as_deref() == Some(session.credential_digest.as_str())).and(key))
     }
 
+    #[cfg(test)]
     pub(crate) fn activate_cloud_scope(&self, scope: crate::owners::cloud::CloudScope) -> Result<(), StoreError> {
         self.activate_cloud_scope_with_binding(scope, None)
     }

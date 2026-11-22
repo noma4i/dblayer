@@ -93,7 +93,17 @@ impl EffectRunner<Cloud> for CloudRunner {
             CloudEffect::ReplyClosed { id } => {
                 if let Some(wiring) = self.wiring.upgrade() { wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(id), crate::owners::life::LifeReply::Closed); }
             }
-            CloudEffect::Start(scope) => {
+            CloudEffect::RestoreCapture { token, epoch, binding, application_key } => {
+                let Some(wiring) = self.wiring.upgrade() else { return; };
+                let (db, back, weak) = (self.db.clone(), back.clone(), self.wiring.clone());
+                drop(crate::task::spawn_blocking_on(&self.executor, Some(wiring.handle.launch()), move || {
+                    if let Err(error) = db.restore_cloud_capture(epoch, &binding, application_key.as_deref()) {
+                        if let Some(wiring) = weak.upgrade() { wiring.fault(format!("cloud capture restore: {error}")); }
+                    }
+                    back.reply(EpochStamp::Control, CloudInput::CaptureRestored { token });
+                }));
+            }
+            CloudEffect::Start { scope, binding } => {
                 let Some(signals) = self.signals.clone() else { return; };
                 let (port, back, weak) = (self.port.clone(), back.clone(), self.wiring.clone());
                 let Some(wiring) = self.wiring.upgrade() else { return; };
@@ -101,7 +111,7 @@ impl EffectRunner<Cloud> for CloudRunner {
                 let prepare_scope = scope.clone();
                 let (tx, rx) = tokio::sync::oneshot::channel();
                 let prepare = crate::task::spawn_blocking_on(&self.executor, Some(wiring.handle.launch()), move || {
-                    let result = db.activate_cloud_scope(prepare_scope.clone()).and_then(|()| db.cloud_resume(&prepare_scope));
+                    let result = db.activate_cloud_scope_with_binding(prepare_scope.clone(), Some(&binding)).and_then(|()| db.cloud_resume(&prepare_scope));
                     let _ = crate::lock::effect(|| tx.send(result));
                 });
                 let launch = wiring.handle.launch();
