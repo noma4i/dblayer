@@ -278,7 +278,7 @@ pub(crate) fn field_stamp(connection: &Connection, domain: &str, model: &str, ro
     Ok(connection.query_row(include_str!("../sql/cloud_read_field.sql"), params![domain, model, row_id, path.as_str()], read_stamp).optional()?)
 }
 
-fn field_stamps(connection: &Connection, domain: &str, model: &str, row_id: &str) -> Result<Vec<(Vec<String>, CloudStamp)>, StoreError> {
+pub(super) fn field_stamps(connection: &Connection, domain: &str, model: &str, row_id: &str) -> Result<Vec<(Vec<String>, CloudStamp)>, StoreError> {
     let mut statement = connection.prepare_cached(include_str!("../sql/cloud_read_fields.sql"))?;
     let rows = statement.query_map(params![domain, model, row_id], |row| Ok((row.get::<_, String>(3)?, read_stamp(row)?)))?;
     rows.map(|row| {

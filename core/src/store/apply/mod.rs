@@ -222,10 +222,15 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
         let revision_order = record.server_revision.zip(current_revision).map(|(incoming, current)| incoming.cmp(&current));
         let mut row = stored.as_ref().map(|row| row.row.clone()).unwrap_or_else(|| Map::from_iter([("id".into(), Value::String(record.row_id.clone()))]));
         let before = project::project(&info.spec, &row);
+        let stamps: BTreeMap<_, _> = cloud::field_stamps(tx, domain, &record.model, &record.row_id)?.into_iter().collect();
         let mut changed = stored.is_none();
         let mut marks = Vec::new();
         for (field, rule, local) in fields {
             if !local && revision_order.is_some_and(|order| order.is_lt()) { continue; }
+            if (local || !revision_order.is_some_and(|order| order.is_gt())) &&
+                ((1..field.path.len()).any(|length| stamps.get(&field.path[..length]).is_some_and(|stamp| *stamp >= field.data.stamp)) ||
+                stamps.range(field.path.clone()..).take_while(|(path, _)| path.starts_with(&field.path))
+                    .any(|(path, stamp)| path.len() > field.path.len() && *stamp >= field.data.stamp)) { continue; }
             let old = before.get(&field.path);
             let value = if field.data.value.is_null() { Value::Null } else {
                 let mut candidate = row.clone();
@@ -234,7 +239,7 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
                 project::project(&info.spec, &candidate).get(&field.path).cloned().ok_or_else(|| StoreError::Invalid("invalid cloud value".into()))?
             };
             let incoming = StampedValue { value, stamp: field.data.stamp };
-            let stamp = cloud::field_stamp(tx, domain, &record.model, &record.row_id, &field.path)?;
+            let stamp = stamps.get(&field.path).copied();
             let wins = match stamp {
                 Some(stamp) => {
                     let stored = StampedValue { value: old.cloned().unwrap_or(Value::Null), stamp };
