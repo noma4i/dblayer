@@ -1,5 +1,7 @@
 # Cloud sync
 
+For user-visible files on Apple platforms, see [iCloud Drive documents](icloud-documents.md).
+
 Cloud sync is off by default. Pass a cloud configuration when opening the database to opt in.
 Without one, the database performs no cloud I/O or cloud migration.
 To let users opt in from settings later, supply the configuration with `initiallyEnabled` set to false.

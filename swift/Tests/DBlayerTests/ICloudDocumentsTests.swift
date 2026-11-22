@@ -3,6 +3,41 @@ import Testing
 @testable import DBlayer
 
 struct ICloudDocumentsTests {
+  @Test
+  func snapshotsIncludeUndownloadedDocumentsInTheSelectedFolder() throws {
+    let documents = URL(fileURLWithPath: "/example/Container/Documents", isDirectory: true)
+    let folder = documents.appendingPathComponent("Scans", isDirectory: true)
+    func item(_ path: String, content: [String] = ["com.adobe.pdf", "public.data"]) -> [String: Any] {
+      let url = documents.appendingPathComponent(path)
+      return [
+        NSMetadataItemURLKey: url,
+        NSMetadataItemFSNameKey: url.lastPathComponent,
+        NSMetadataItemContentTypeKey: content[0],
+        NSMetadataItemContentTypeTreeKey: content,
+        NSMetadataUbiquitousItemDownloadingStatusKey: NSMetadataUbiquitousItemDownloadingStatusNotDownloaded,
+        NSMetadataUbiquitousItemIsUploadedKey: true,
+      ]
+    }
+
+    var downloading = item("Scans/Downloading.pdf")
+    downloading[NSMetadataUbiquitousItemIsDownloadingKey] = true
+    downloading[NSMetadataUbiquitousItemUploadingErrorKey] = NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError)
+    let items = [
+      item("Scans/Remote.pdf"), downloading,
+      item("ScansBackup/Other.pdf"), item("Scans/Nested/Other.pdf"), item("Scans/.hidden.pdf"),
+      item("Scans/Nested", content: ["public.folder", "public.directory"]),
+      item("Scans/Link", content: ["public.symlink"]),
+    ]
+    let snapshot = ICloudDocument.snapshot(items: items, folder: folder)
+    #expect(snapshot.map(\.name) == ["Downloading.pdf", "Remote.pdf"])
+    let first = try #require(snapshot.first)
+    let second = try #require(snapshot.last)
+    #expect(first.downloadStatus == .downloading)
+    #expect(first.uploadStatus == .failed)
+    #expect(second.downloadStatus == .notDownloaded)
+    #expect(second.uploadStatus == .uploaded)
+  }
+
   @Test(.timeLimit(.minutes(1)))
   func appAndExternalFilesShareTheSameDocumentsFolder() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)

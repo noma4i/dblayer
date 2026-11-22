@@ -48,6 +48,7 @@ iOS 17, macOS 14, or Android 13 (API 33) or newer.
 - [Sync state of a record](docs/sync-state.md)
 - [Server sync](docs/server-sync.md)
 - [Cloud sync](docs/cloud-sync.md)
+- [iCloud Drive documents](docs/icloud-documents.md)
 - [Drive notifications](docs/drive-notifications.md)
 - [Cable protocol](docs/cable-protocol.md)
 - [Files](docs/files.md)
