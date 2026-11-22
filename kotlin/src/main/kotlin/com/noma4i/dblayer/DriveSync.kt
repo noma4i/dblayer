@@ -13,7 +13,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -23,7 +22,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.coroutines.coroutineContext
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 
@@ -99,8 +97,6 @@ class DriveSync internal constructor(
         val current = active.get()?.takeIf { it.scope == scope } ?: throw DbException.NoSession("cloud generation ended")
         return current.run { ready.await(); sendRecords(records) }
     }
-
-    private class WatchExpired : CancellationException()
 
     private inner class Generation(val scope: CloudWireScope, private val key: String, private val signals: CloudSignals) {
         val job = SupervisorJob()
@@ -181,53 +177,39 @@ class DriveSync internal constructor(
                     awaitClose { stop() }
                 }.collectLatest { foreground ->
                     if (foreground) watchForeground(origin)
+                    else signals.relay(scope, CloudRelayEvent.Suspended)
                 }
             }
         }
 
         private suspend fun watchForeground(origin: HttpUrl) {
-            var backoff = 1000L
-            while (true) {
-                val watch = DriveWatch(origin)
-                var channel: DriveChannel? = null
-                try {
-                    coroutineScope {
-                        val connection = coroutineContext[Job]!!
-                        var expiry: Job? = null
-                        try {
-                            watch.events().collect { event ->
-                                when (event) {
-                                    DriveWatchEvent.READY -> {
-                                        if (channel != null) throw IOException("duplicate relay ready")
-                                        val registered = drive.watch(token(), cursor, origin.newBuilder().encodedPath("/drive/notifications").build().toString(), watch.secret)
-                                        channel = registered
-                                        expiry = launch {
-                                            delay((registered.expiration.toLong() - System.currentTimeMillis()).coerceAtLeast(0))
-                                            connection.cancel(WatchExpired())
-                                        }
-                                        readChanges(cursor)
-                                        backoff = 1000L
-                                    }
-                                    DriveWatchEvent.CHANGED -> readChanges(cursor)
-                                }
-                            }
-                        } finally {
-                            expiry?.cancel()
+            val watch = DriveWatch(origin)
+            var channel: DriveChannel? = null
+            try {
+                watch.events().collect { event ->
+                    when (event) {
+                        DriveWatchEvent.READY -> {
+                            if (channel != null) throw IOException("duplicate relay ready")
+                            val registered = drive.watch(token(), cursor, origin.newBuilder().encodedPath("/drive/notifications").build().toString(), watch.secret)
+                            channel = registered
+                            val remaining = (registered.expiration.toLong() - System.currentTimeMillis()).coerceAtLeast(0).toULong()
+                            signals.relay(scope, CloudRelayEvent.Lease(remaining))
+                            readChanges(cursor)
                         }
-                    }
-                } catch (error: CancellationException) {
-                    if (error !is WatchExpired) throw error
-                } catch (_: IOException) {
-                } finally {
-                    channel?.let { registered ->
-                        withContext(NonCancellable) {
-                            runCatching { withTimeoutOrNull(10000) { drive.stop(token(), registered) } }
-                        }
+                        DriveWatchEvent.CHANGED -> readChanges(cursor)
                     }
                 }
-                delay(backoff)
-                backoff = (backoff * 2).coerceAtMost(30000L)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+            } finally {
+                channel?.let { registered ->
+                    withContext(NonCancellable) {
+                        runCatching { withTimeoutOrNull(10000) { drive.stop(token(), registered) } }
+                    }
+                }
             }
+            signals.relay(scope, CloudRelayEvent.Ended)
         }
 
         suspend fun sendRecords(records: List<CloudOutbound>): List<CloudSendResult> {
