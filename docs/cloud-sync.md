@@ -63,7 +63,7 @@ The first change is the current snapshot. A slow reader receives the latest snap
 Without cloud configuration, the snapshot is Disabled and the changes stream ends after it.
 Closing the database ends the stream. Cancelling a reader leaves other readers active.
 The snapshot reports the cloud phase and record issues for the current domain.
-TooLarge affects only the record whose serialized payload exceeds the cloud limit.
+TooLarge affects only the record whose serialized payload exceeds 900,000 bytes.
 Other records continue syncing. A newer version clears the issue and can be sent.
 
 ## Application accounts
@@ -96,4 +96,5 @@ Ending an app session stops cloud I/O and clears local sync progress. It does no
 Signing in again with the same accounts reads the domain again.
 A confirmed cloud account change or sign-out clears rows tracked by the old cloud domain and its metadata.
 This happens before another account attaches.
+Pending mutations and transfers linked to those rows report an account change failure.
 The GraphQL credential is retained. Temporary account unavailability or an offline connection preserves the domain.
