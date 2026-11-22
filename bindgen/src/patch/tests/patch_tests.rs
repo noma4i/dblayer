@@ -7,14 +7,15 @@ fn swift_template() -> String {
     format!("head\nfileprivate func uniffiRustCallAsync<F, T>(\n    old\n// Callback handlers for an async calls.\n{calls}fatalError(\"Cancellation not supported yet\")\n{GATE_TEMPLATE}{GATE_TEMPLATE}")
 }
 
-fn kotlin_template() -> String {
+fn kotlin_template(methods: usize) -> String {
     let mut text = String::from("        Native.register(UniffiLib::class.java, findLibraryName(componentName = \"dblayer\"))\n");
     for _ in 0..2 {
         text.push_str("    val job = GlobalScope.launch coroutineBlock@ {\n    uniffiOutDroppedCallback.uniffiSetValue(UniffiForeignFutureDroppedCallbackStruct(handle, uniffiForeignFutureDroppedCallbackImpl))\n");
     }
     text.push_str("        uniffiContinuationHandleMap.remove(data).resume(pollResult)\n    external fun ffi_dblayer_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, \n");
-    for kind in ["RustBuffer", "RustBuffer", "RustBuffer", "RustBuffer", "Void", "Void"] {
-        text.push_str(&format!("    external fun ffi(`uniffiFutureCallback`: UniffiForeignFutureComplete{kind},)\n        override fun callback(`uniffiFutureCallback`: UniffiForeignFutureComplete{kind},)\n"));
+    for index in 0..methods {
+        let (kind, call) = if index % 2 == 0 { ("RustBuffer", "uniffiTraitInterfaceCallAsyncWithError") } else { ("Void", "uniffiTraitInterfaceCallAsync") };
+        text.push_str(&format!("    fun callback(`uniffiFutureCallback`: UniffiForeignFutureComplete{kind},)\n        override fun callback(`uniffiFutureCallback`: UniffiForeignFutureComplete{kind},) {{\n            {call}(\n"));
     }
     text
 }
@@ -30,18 +31,22 @@ fn bridge_prop_generated_swift_gate_and_runtime_come_from_the_generator() {
 
 #[test]
 fn bridge_prop_generated_kotlin_patches_name_every_place_they_change() {
-    let patched = kotlin(&kotlin_template()).unwrap();
-    assert_eq!(count_lines(&patched, "        ProcessOwner.claim()"), 1);
-    assert_eq!(count_lines(&patched, "    job.start()"), 2);
-    assert_eq!(patched.matches("            val uniffiFutureCallback = UniffiForeignFutureAnswer").count(), 6);
-    assert_eq!(count_lines(&patched, "internal object RuntimeLane {"), 1);
-    assert_eq!(count_lines(&patched, "internal object ProcessOwner {"), 1);
+    for methods in [6, 9] {
+        let patched = kotlin(&kotlin_template(methods)).unwrap();
+        assert_eq!(count_lines(&patched, "        ProcessOwner.claim()"), 1);
+        assert_eq!(count_lines(&patched, "    job.start()"), 2);
+        assert_eq!(patched.matches("            val uniffiFutureCallback = UniffiForeignFutureAnswer").count(), methods);
+        assert_eq!(count_lines(&patched, "internal object RuntimeLane {"), 1);
+        assert_eq!(count_lines(&patched, "internal object ProcessOwner {"), 1);
+    }
 }
 
 #[test]
 fn bridge_prop_generated_a_changed_template_is_refused() {
-    let drifted = kotlin_template().replacen("        Native.register(UniffiLib::class.java, findLibraryName(componentName = \"dblayer\"))\n", "", 1);
+    let drifted = kotlin_template(6).replacen("        Native.register(UniffiLib::class.java, findLibraryName(componentName = \"dblayer\"))\n", "", 1);
     assert!(kotlin(&drifted).unwrap_err().contains("the UniFFI template changed"));
+    let drifted = kotlin_template(9).replacen("    fun callback(`uniffiFutureCallback`: UniffiForeignFutureCompleteRustBuffer,)\n", "", 1);
+    assert!(kotlin(&drifted).is_err());
     let drifted = swift_template().replacen("    let task = Task {\n", "", 1);
     assert!(swift(&drifted).unwrap_err().contains("the UniFFI template changed"));
 }
