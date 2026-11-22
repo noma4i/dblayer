@@ -5,6 +5,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{CommitResult, ModelInfo, Reader, RowChangeKind};
+use super::operation::{has_open_row_operation, row_operation_sequences_sql};
 pub(super) mod project;
 mod status;
 
@@ -41,7 +42,7 @@ impl super::Store {
                 cursor = (model.clone(), id.clone());
                 count += 1;
                 if crate::identity::RowId::new(&id).map_err(|error| StoreError::Invalid(error.to_string()))?.is_temp() { continue; }
-                if !info.spec.is_local() && has_open_operation(&tx, model, &id)? { continue; }
+                if !info.spec.is_local() && has_open_row_operation(&tx, model, &id)? { continue; }
                 let Some(row) = reader.stored_row(model, &id)? else { continue };
                 let tracked: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM cloud_record WHERE domain = ?1 AND model = ?2 AND row_id = ?3)", params![domain, model, id], |row| row.get(0))?;
                 let mut missing = Vec::new();
@@ -110,13 +111,6 @@ impl super::Store {
         tx.commit()?;
         Ok(())
     }
-
-    pub(crate) fn block_cloud_send(&self, scope: &crate::owners::cloud::CloudScope, record: &PendingCloudRecord) -> Result<(), StoreError> {
-        let inner = self.lock();
-        inner.require_cloud_scope(scope)?;
-        inner.connection.execute(include_str!("../sql/cloud_block_send.sql"), params![scope.domain, record.model, record.row_id, record.version])?;
-        Ok(())
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,48 +135,46 @@ pub(crate) fn capture_local(tx: &Transaction<'_>, domain: Option<&str>, models: 
     for change in &result.rows {
         let Some(info) = models.get(change.row.model.as_str()).filter(|info| !info.spec.is_memory()) else { continue };
         if change.row.id.is_temp() || captured.contains(&change.row) { continue; }
-        if !info.spec.is_local() && (server_removed.contains(&change.row) || has_open_operation(tx, change.row.model.as_str(), change.row.id.as_str())?) { continue; }
-        let confirmed = change.kind == RowChangeKind::Synced && !info.spec.is_local();
-        let deleted = change.kind == RowChangeKind::Destroyed || (confirmed && reader.tombstone_seq(change.row.model.as_str(), change.row.id.as_str())? == Some(version));
-        if deleted && !info.spec.is_local() && !confirmed { continue; }
-        let eligible = if deleted {
-            reader.tombstone_seq(change.row.model.as_str(), change.row.id.as_str())? == Some(version)
-        } else {
-            if !matches!(change.kind, RowChangeKind::Inserted | RowChangeKind::Updated) && !confirmed { continue; }
-            let before = originals.get(&change.row).and_then(Option::as_ref).map(|row| project::project(&info.spec, row)).unwrap_or_default();
-            let Some(after) = reader.stored_row(change.row.model.as_str(), change.row.id.as_str())? else { continue };
-            let changed: Vec<_> = project::project(&info.spec, &after.row).into_iter().filter(|(path, value)| {
-                if confirmed { after.field_rev.get(&path[0]) == Some(&version) } else { before.get(path) != Some(value) }
-            }).collect();
+        let model = change.row.model.as_str();
+        let id = change.row.id.as_str();
+        let local = info.spec.is_local();
+        if !local && (server_removed.contains(&change.row) || has_open_row_operation(tx, model, id)?) { continue; }
+
+        let confirmed = change.kind == RowChangeKind::Synced && !local;
+        let deleted = match change.kind {
+            RowChangeKind::Destroyed if local => {
+                if reader.tombstone_seq(model, id)? != Some(version) { continue; }
+                true
+            }
+            RowChangeKind::Synced if confirmed => reader.tombstone_seq(model, id)? == Some(version),
+            RowChangeKind::Inserted | RowChangeKind::Updated => false,
+            _ => continue,
+        };
+        if !deleted {
+            let Some(after) = reader.stored_row(model, id)? else { continue };
+            let projection = project::project(&info.spec, &after.row);
+            let changed: Vec<_> = if confirmed {
+                projection.into_keys().filter(|path| after.field_rev.get(&path[0]) == Some(&version)).collect()
+            } else {
+                let before = originals.get(&change.row).and_then(Option::as_ref).map(|row| project::project(&info.spec, row)).unwrap_or_default();
+                projection.into_iter().filter_map(|(path, value)| (before.get(&path) != Some(&value)).then_some(path)).collect()
+            };
             if changed.is_empty() && change.kind != RowChangeKind::Inserted { continue; }
             if !changed.is_empty() {
                 let stamp = tick_stamp(tx, domain, u64::try_from(now).unwrap_or(0))?;
-                for (path, _) in changed { write_field_stamp(tx, domain, change.row.model.as_str(), change.row.id.as_str(), &path, stamp)?; }
+                for path in changed { write_field_stamp(tx, domain, model, id, &path, stamp)?; }
             }
-            true
-        };
-        if eligible {
-            stage(tx, domain, &PendingRecord { model: change.row.model.to_string(), row_id: change.row.id.to_string(), version, deleted })?;
-            captured.insert(change.row.clone());
         }
+        stage(tx, domain, &PendingRecord { model: model.into(), row_id: id.into(), version, deleted })?;
+        captured.insert(change.row.clone());
     }
     for row in &result.server_removed {
         if !models.get(row.model.as_str()).is_some_and(|info| !info.spec.is_memory() && !info.spec.is_local()) { continue; }
-        if row.id.is_temp() || captured.contains(row) || has_open_operation(tx, row.model.as_str(), row.id.as_str())? { continue; }
+        if row.id.is_temp() || captured.contains(row) || has_open_row_operation(tx, row.model.as_str(), row.id.as_str())? { continue; }
         stage(tx, domain, &PendingRecord { model: row.model.to_string(), row_id: row.id.to_string(), version, deleted: true })?;
         captured.insert(row.clone());
     }
     Ok(())
-}
-
-fn operation_row_sql(model: &str, row_id: &str) -> String {
-    format!(include_str!("../sql/operation/row_operation_sequences.sql"), OPEN_STATUSES = super::operation::OPEN_STATUSES)
-        .replace("?1", model).replace("?2", row_id)
-}
-
-fn has_open_operation(connection: &Connection, model: &str, row_id: &str) -> Result<bool, StoreError> {
-    let sql = format!("SELECT EXISTS({})", operation_row_sql("?1", "?2"));
-    Ok(connection.query_row(&sql, params![model, row_id], |row| row.get(0))?)
 }
 
 pub(crate) fn stage(tx: &Transaction<'_>, domain: &str, record: &PendingRecord) -> Result<(), StoreError> {
@@ -196,7 +188,7 @@ pub(crate) fn pending(connection: &Connection, domain: &str, limit: u32) -> Resu
 }
 
 fn pending_with_fields(connection: &Connection, domain: &str, limit: u32) -> Result<Vec<(PendingRecord, Option<Vec<u8>>)>, StoreError> {
-    let sql = format!(include_str!("../sql/cloud_pending.sql"), OPEN_OPERATIONS = operation_row_sql("cloud_record.model", "cloud_record.row_id"));
+    let sql = format!(include_str!("../sql/cloud_pending.sql"), OPEN_OPERATIONS = row_operation_sequences_sql("cloud_record.model", "cloud_record.row_id"));
     let mut statement = connection.prepare_cached(&sql)?;
     let rows = statement.query_map(params![domain, limit], |row| {
         Ok((PendingRecord { model: row.get(0)?, row_id: row.get(1)?, version: row.get(2)?, deleted: row.get(3)? }, row.get(4)?))

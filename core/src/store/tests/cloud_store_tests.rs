@@ -118,7 +118,7 @@ fn opt_in_captures_local_commits_at_their_row_revision() {
     write("n1", &"a".repeat(900_001), "edited");
     let oversized = store.pending_cloud_records(&scope, 1).unwrap().pop().unwrap();
     assert_eq!(oversized.payload, Err(crate::cloud::RecordError::TooLarge));
-    store.block_cloud_send(&scope, &oversized).unwrap();
+    store.block_cloud_send(&scope, &oversized, crate::ffi::CloudIssueCause::TooLarge).unwrap();
     write("other", "still sends", "initial");
     let other = store.pending_cloud_records(&scope, 1).unwrap().pop().unwrap();
     assert_eq!(other.row_id, "other");

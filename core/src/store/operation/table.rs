@@ -78,8 +78,17 @@ pub(crate) fn read_operation(connection: &Connection, seq: i64) -> rusqlite::Res
     Ok(Some(operation))
 }
 
+pub(in crate::store) fn row_operation_sequences_sql(model: &str, row_id: &str) -> String {
+    format!(include_str!("../sql/operation/row_operation_sequences.sql"), model = model, row_id = row_id, OPEN_STATUSES = OPEN_STATUSES)
+}
+
+pub(in crate::store) fn has_open_row_operation(connection: &Connection, model: &str, row_id: &str) -> rusqlite::Result<bool> {
+    let query = row_operation_sequences_sql("?1", "?2");
+    connection.prepare_cached(&format!("SELECT EXISTS({query})"))?.query_row(params![model, row_id], |row| row.get(0))
+}
+
 pub(crate) fn row_operation_sequences(connection: &Connection, keys: &BTreeSet<(String, String)>) -> rusqlite::Result<BTreeSet<i64>> {
-    let sql = format!(include_str!("../sql/operation/row_operation_sequences.sql"), OPEN_STATUSES = OPEN_STATUSES);
+    let sql = row_operation_sequences_sql("?1", "?2");
     let mut statement = connection.prepare_cached(&sql)?;
     let mut sequences = BTreeSet::new();
     for (model, id) in keys {

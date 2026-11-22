@@ -1,5 +1,5 @@
 use std::sync::{Arc, Weak};
-use crate::ffi::{CloudConfig, CloudOutbound, CloudSendStatus, CloudSignals, CloudWireScope, DbError};
+use crate::ffi::{CloudConfig, CloudIssueCause, CloudOutbound, CloudSendStatus, CloudSignals, CloudWireScope, DbError};
 use crate::owners::contract::Drained;
 use crate::owners::life::Wiring;
 use crate::owners::lifecycle::LifecycleInput;
@@ -204,7 +204,11 @@ async fn send_pass(
         for record in records {
             match &record.payload {
                 Ok(payload) => outgoing.push(CloudOutbound { key: record.key.clone(), version: record.version, payload: payload.clone(), system_fields: record.system_fields.clone() }),
-                Err(crate::cloud::RecordError::TooLarge) => { read_db.block_cloud_send(&read_scope, &record)?; blocked = true; continue; }
+                Err(crate::cloud::RecordError::TooLarge) => {
+                    read_db.block_cloud_send(&read_scope, &record, CloudIssueCause::TooLarge)?;
+                    blocked = true;
+                    continue;
+                }
                 Err(crate::cloud::RecordError::Invalid) => return Err(DbError::Invalid { detail: "invalid cloud materialization".into() }),
             }
             valid.push(record);
@@ -227,7 +231,10 @@ async fn send_pass(
         if matching.next().is_some() { retry = true; continue; }
         match &result.status {
             CloudSendStatus::Saved { system_fields } => { db.confirm_cloud_send(&scope, &record, system_fields.as_deref())?; progress = true; }
-            CloudSendStatus::Failed { .. } => { db.reject_cloud_send(&scope, &record)?; progress = true; }
+            CloudSendStatus::Failed { .. } => {
+                db.block_cloud_send(&scope, &record, CloudIssueCause::Rejected)?;
+                progress = true;
+            }
             CloudSendStatus::Retryable { .. } => retry = true,
             CloudSendStatus::Conflict { record: incoming } => {
                 if incoming.key != record.key { retry = true; continue; }
