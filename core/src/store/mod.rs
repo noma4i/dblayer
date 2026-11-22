@@ -119,6 +119,7 @@ impl ModelInfo {
 
 pub(crate) struct Inner {
     pub connection: Connection,
+    pub active_cloud_domain: Option<String>,
     pub models: Arc<BTreeMap<String, ModelInfo>>,
     pub clock: Arc<dyn Clock>,
     pub generation: Generation,
@@ -265,6 +266,7 @@ impl Store {
         let poison = Arc::new(Mutex::new(None));
         let inner = Inner {
             connection,
+            active_cloud_domain: None,
             models: models.clone(),
             clock,
             generation: Generation::INITIAL,
@@ -309,6 +311,15 @@ impl Store {
 
     pub(crate) fn lock(&self) -> MutexGuard<'_, Inner> {
         crate::lock::acquire(&self.inner)
+    }
+
+    pub(crate) fn activate_cloud_domain(&self, domain: String) -> Result<(), StoreError> {
+        let mut inner = self.lock();
+        let transaction = inner.connection.unchecked_transaction()?;
+        cloud::enable(&transaction)?;
+        transaction.commit()?;
+        inner.active_cloud_domain = Some(domain);
+        Ok(())
     }
 
     pub(crate) fn set_hook(&self, hook: StoreHook) -> Result<(), StoreError> {

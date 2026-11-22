@@ -1,5 +1,8 @@
 use super::StoreError;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use std::collections::{BTreeMap, BTreeSet};
+
+use super::{CommitResult, ModelInfo, Reader, RowChangeKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PendingRecord {
@@ -11,6 +14,27 @@ pub(crate) struct PendingRecord {
 
 pub(crate) fn enable(tx: &Transaction<'_>) -> Result<(), StoreError> {
     tx.execute_batch(include_str!("../sql/cloud_enable.sql"))?;
+    Ok(())
+}
+
+pub(crate) fn capture_local(tx: &Transaction<'_>, domain: Option<&str>, models: &BTreeMap<String, ModelInfo>, result: &CommitResult) -> Result<(), StoreError> {
+    let (Some(domain), Some(version)) = (domain, result.revision) else { return Ok(()) };
+    let reader = Reader::new(tx, models);
+    let mut captured = BTreeSet::new();
+    for change in &result.rows {
+        let Some(info) = models.get(change.row.model.as_str()).filter(|info| info.spec.is_local()) else { continue };
+        if change.row.id.is_temp() || captured.contains(&change.row) { continue; }
+        let deleted = change.kind == RowChangeKind::Destroyed;
+        let eligible = if deleted {
+            reader.tombstone_seq(change.row.model.as_str(), change.row.id.as_str())? == Some(version)
+        } else {
+            matches!(change.kind, RowChangeKind::Inserted | RowChangeKind::Updated) && info.spec.fields.iter().any(|field| change.fields.contains(&field.name) && !field.derived && !matches!(field.kind, crate::schema::FieldKind::File))
+        };
+        if eligible {
+            stage(tx, domain, &PendingRecord { model: change.row.model.to_string(), row_id: change.row.id.to_string(), version, deleted })?;
+            captured.insert(change.row.clone());
+        }
+    }
     Ok(())
 }
 

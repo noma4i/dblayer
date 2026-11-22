@@ -90,6 +90,7 @@ fn attempt(store: &Store, inner: &Inner, envelope: &BatchPlan, now_ms: i64) -> R
     let apply = |plan: BatchPlan| apply_envelope_at(&transaction, &inner.models, &plan, (now_ms, revision, inner.generation), None, None);
     let (derived, _, _) = super::follow_pointer::settle_parents(&Reader::new(&transaction, &inner.models), &inner.models, std::slice::from_ref(&first), apply)?;
     let outcome = match derived { Some(derived) => super::batch_result::consolidate(&transaction, &inner.models, BTreeMap::new(), vec![first, derived], revision)?, None => first };
+    super::cloud::capture_local(&transaction, inner.active_cloud_domain.as_deref(), &inner.models, &outcome)?;
     let journal = store.context.changed.prepare_commit(&outcome);
     if outcome.is_noop() && envelope.window.is_none() && envelope.window_debts.is_empty() && envelope.pending_locals.is_empty() {
         transaction.rollback()?;
