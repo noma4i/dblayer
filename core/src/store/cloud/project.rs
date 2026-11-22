@@ -1,4 +1,4 @@
-use crate::schema::{FieldKind, FieldSpec, ModelSpec};
+use crate::schema::{FieldKind, FieldSpec, MergeRule, ModelSpec};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
@@ -11,16 +11,25 @@ pub(in crate::store) fn project(spec: &ModelSpec, row: &Map<String, Value>) -> B
     result
 }
 
-pub(in crate::store) fn field<'a>(spec: &'a ModelSpec, path: &[String]) -> Option<&'a FieldSpec> {
+pub(in crate::store) fn field<'a>(spec: &'a ModelSpec, path: &[String]) -> Option<(&'a FieldSpec, Option<&'a MergeRule>, bool)> {
     let (first, rest) = path.split_first()?;
     let mut field = spec.fields.iter().find(|field| field.name == *first)?;
     if field.name == "id" || spec.ephemeral_field(&field.name).is_some() { return None; }
+    let mut rule = field.merge.as_ref();
+    let mut local = field.is_local();
     for segment in rest {
-        if field.derived || !matches!(field.kind, FieldKind::Object) || field.fields.is_empty() { return None; }
-        field = field.fields.iter().find(|child| child.from.as_ref().unwrap_or(&child.name) == segment)?;
+        if field.derived || !matches!(field.kind, FieldKind::Object | FieldKind::Raw) { return None; }
+        let keyed = match rule { Some(MergeRule::Keys { keys }) => keys.get(segment), _ => None };
+        if !field.fields.is_empty() {
+            field = field.fields.iter().find(|child| child.from.as_ref().unwrap_or(&child.name) == segment)?;
+            rule = keyed.or(field.merge.as_ref());
+        } else {
+            rule = keyed;
+        }
+        local |= matches!(rule, Some(MergeRule::Local));
     }
     if field.derived || matches!(field.kind, FieldKind::File) { return None; }
-    Some(field)
+    Some((field, rule, local))
 }
 
 pub(in crate::store) fn set(row: &mut Map<String, Value>, path: &[String], value: Value) -> Result<(), crate::store::StoreError> {
@@ -38,6 +47,16 @@ pub(in crate::store) fn set(row: &mut Map<String, Value>, path: &[String], value
 
 fn visit(field: &FieldSpec, value: &Value, path: Vec<String>, result: &mut BTreeMap<Vec<String>, Value>) {
     if field.derived || matches!(field.kind, FieldKind::File) { return; }
+    if matches!(field.merge, Some(MergeRule::Keys { .. })) && field.fields.is_empty() {
+        if let Some(object) = value.as_object().filter(|object| !object.is_empty()) {
+            for (key, value) in object {
+                let mut child_path = path.clone();
+                child_path.push(key.clone());
+                result.insert(child_path, value.clone());
+            }
+            return;
+        }
+    }
     if matches!(field.kind, FieldKind::Object) && !field.fields.is_empty() {
         if let Some(object) = value.as_object().filter(|object| !object.is_empty()) {
             for child in &field.fields {
