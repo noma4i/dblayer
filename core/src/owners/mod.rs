@@ -1,3 +1,6 @@
+
+pub(crate) mod cloud;
+
 pub mod calls;
 #[cfg(test)]
 mod tests;
