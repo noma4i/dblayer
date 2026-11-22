@@ -153,11 +153,11 @@ pub(crate) fn capture_local(tx: &Transaction<'_>, domain: Option<&str>, models: 
         if !deleted {
             let Some(after) = reader.stored_row(model, id)? else { continue };
             let projection = project::project(&info.spec, &after.row);
-            let changed: Vec<_> = if confirmed {
+            let changed = if confirmed {
                 let prior: BTreeMap<_, _> = field_stamps(tx, domain, model, id)?.into_iter().filter(|(path, _)| after.field_rev.get(&path[0]) == Some(&version)).map(|(path, _)| (path, serde_json::Value::Null)).collect();
                 let current: BTreeMap<_, _> = projection.into_iter().filter(|(path, _)| after.field_rev.get(&path[0]) == Some(&version)).collect();
                 let mut changed = project::changed(&prior, &current);
-                for path in current.into_keys() { if !changed.contains(&path) { changed.push(path); } }
+                changed.extend(current.into_keys());
                 changed
             } else {
                 let before = originals.get(&change.row).and_then(Option::as_ref).map(|row| project::project(&info.spec, row)).unwrap_or_default();

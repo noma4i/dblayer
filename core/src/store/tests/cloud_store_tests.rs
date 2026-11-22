@@ -208,9 +208,13 @@ fn cloud_landing_moves_rows_and_progress_together_without_an_echo() {
     assert_eq!(destination.read(&["notes"], |reader| reader.point("notes", "n1")).unwrap().unwrap()["text"], "saved on the first replica");
     assert!(destination.pending_cloud_records(&scope, 1).unwrap().is_empty());
 
-    let mut cleared = incoming.clone();
-    cleared.fields[0].data.value = serde_json::Value::Null;
-    cleared.fields[0].data.stamp.counter += 1;
+    source.write_queue_ops(&[StoreOp::LocalRows { model: "notes".into(), rows: vec![RowValue {
+        row_id: "n1".into(), values: r#"{"id":"n1","text":null}"#.into(),
+    }] }]).unwrap();
+    let work = source.pending_cloud_records(&scope, 1).unwrap().pop().unwrap();
+    let cleared = crate::cloud::decode(&work.key, work.payload.as_deref().unwrap()).unwrap();
+    assert!(cleared.fields[0].data.value.is_null());
+    assert!(cleared.fields[0].data.stamp > incoming.fields[0].data.stamp);
     destination.land_local_cloud(&scope, vec![(cleared, None)], Some(b"cleared")).unwrap();
     destination.land_local_cloud(&scope, vec![(incoming.clone(), None)], None).unwrap();
     let row = destination.read(&["notes"], |reader| reader.point("notes", "n1")).unwrap().unwrap();
@@ -596,4 +600,37 @@ fn cloud_child_and_cursor_wait_for_the_declared_parent_across_reopen() {
         assert_eq!(reopened.cloud_resume(&scope).unwrap().as_deref(), Some(suffix.as_bytes()));
     }
 
+}
+
+#[test]
+fn cloud_capture_clears_a_typed_object_as_one_path() {
+    use serde_json::json;
+
+    let spec = ModelSpec { storage: Storage::Local, ..ModelSpec::new("notes", vec![
+        FieldSpec::scalar("id", ScalarKind::Id),
+        FieldSpec { app_type: Some("NoteDetail".into()), fields: vec![FieldSpec::scalar("title", ScalarKind::Str)], ..FieldSpec::object("detail").nullable().optional() },
+    ]) };
+    let store = Store::open_models(None, vec![spec], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let scope = CloudScope { epoch: 1, generation: 1, domain: "example".into(), provider_fingerprint: "provider".into() };
+    store.activate_cloud_scope(scope.clone()).unwrap();
+    let write = |detail| {
+        store.write_queue_ops(&[StoreOp::LocalRows { model: "notes".into(), rows: vec![RowValue {
+            row_id: "note".into(), values: json!({"id":"note","detail":detail}).to_string(),
+        }] }]).unwrap();
+        let work = store.pending_cloud_records(&scope, 1).unwrap().pop().unwrap();
+        crate::cloud::decode(&work.key, work.payload.as_deref().unwrap()).unwrap()
+    };
+
+    let original = write(json!({"title":"before"}));
+    assert_eq!(original.fields[0].path, ["detail", "title"]);
+    let cleared = write(serde_json::Value::Null);
+    assert_eq!(cleared.fields.len(), 1);
+    assert_eq!(cleared.fields[0].path, ["detail"]);
+    assert!(cleared.fields[0].data.value.is_null());
+    assert!(cleared.fields[0].data.stamp > original.fields[0].data.stamp);
+
+    let restored = write(json!({"title":"new"}));
+    assert_eq!(restored.fields.len(), 1);
+    assert_eq!(restored.fields[0].path, ["detail", "title"]);
+    assert_eq!(restored.fields[0].data.value, "new");
 }
