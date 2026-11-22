@@ -260,3 +260,44 @@ fn cloud_landing_moves_rows_and_progress_together_without_an_echo() {
     assert_eq!(cloud::progress(&connection, "example").unwrap().as_deref(), Some(b"identity".as_slice()));
     assert!(reopened.read(&["notes"], |reader| reader.point("notes", "n1")).unwrap().is_some());
 }
+
+#[test]
+fn cloud_account_erase_fences_reopen_and_only_evicts_tracked_rows() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cloud.sqlite");
+    let notes = ModelSpec { storage: Storage::Local, ..ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id)]) };
+    let open = |models| Store::open_models(Some(&path), models, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let has = |store: &Store, id: &str| store.read(&["notes"], |reader| reader.point("notes", id)).unwrap().is_some();
+    let removed = ModelSpec { storage: Storage::Local, ..ModelSpec::new("removed", vec![FieldSpec::scalar("id", ScalarKind::Id)]) };
+    let store = open(vec![notes.clone(), removed]);
+    store.write_queue_ops(&[StoreOp::LocalRows { model: "notes".into(), rows: vec![RowValue {
+        row_id: "untracked".into(), values: r#"{"id":"untracked"}"#.into(),
+    }] }]).unwrap();
+    let first = CloudScope { epoch: 1, generation: 1, domain: "first-owner".into() };
+    store.activate_cloud_scope(first.clone()).unwrap();
+    let row = crate::cloud::CloudRecord { model: "notes".into(), row_id: "tracked".into(), server_revision: None, deleted: false, fields: Vec::new() };
+    let removed_row = crate::cloud::CloudRecord { model: "removed".into(), ..row.clone() };
+    store.land_local_cloud(&first, vec![(row.clone(), None), (removed_row, None)], Some(b"first-cursor")).unwrap();
+    drop(store);
+
+    let reopened = open(vec![notes]);
+    let second = CloudScope { epoch: 1, generation: 2, domain: "next-owner".into() };
+    assert_eq!(reopened.cloud_domain().unwrap().as_deref(), Some("first-owner"));
+    assert!(reopened.activate_cloud_scope(second.clone()).is_err());
+    assert!(has(&reopened, "tracked"));
+    reopened.activate_cloud_scope(first.clone()).unwrap();
+    assert!(reopened.erase_cloud_domain(&first.domain).is_err());
+    assert_eq!(reopened.cloud_resume(&first).unwrap().as_deref(), Some(b"first-cursor".as_slice()));
+    reopened.retire_cloud_scope(&first);
+    reopened.erase_cloud_domain(&first.domain).unwrap();
+    assert!(!has(&reopened, "tracked"));
+    assert!(has(&reopened, "untracked"));
+    assert_eq!(reopened.cloud_domain().unwrap(), None);
+    assert!(reopened.activate_cloud_scope(first).is_err());
+
+    reopened.activate_cloud_scope(second.clone()).unwrap();
+    assert_eq!(reopened.cloud_resume(&second).unwrap(), None);
+    reopened.land_local_cloud(&second, vec![(row, None)], None).unwrap();
+    reopened.erase_cloud_domain("first-owner").unwrap();
+    assert!(has(&reopened, "tracked"));
+}
