@@ -194,7 +194,8 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
         let revision_order = record.server_revision.zip(current_revision).map(|(incoming, current)| incoming.cmp(&current));
         let mut row = stored.as_ref().map(|row| row.row.clone()).unwrap_or_else(|| Map::from_iter([("id".into(), Value::String(record.row_id.clone()))]));
         let mut changed = stored.is_none();
-        for field in record.fields {
+        let mut marks = Vec::new();
+        for field in &record.fields {
             let (_, rule, local) = project::field(&info.spec, &field.path).ok_or_else(|| StoreError::Invalid("invalid cloud field".into()))?;
             if !local && revision_order.is_some_and(|order| order.is_lt()) { continue; }
             let old = project::project(&info.spec, &row).get(&field.path).cloned();
@@ -218,8 +219,7 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
             };
             if wins {
                 project::set(&mut row, &field.path, incoming.value)?;
-                cloud::write_field_stamp(tx, domain, &record.model, &record.row_id, &field.path, incoming.stamp)?;
-                cloud::observe_stamp(tx, domain, incoming.stamp)?;
+                marks.push((&field.path, incoming.stamp));
                 changed = true;
             }
         }
@@ -229,9 +229,27 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
                 changed = true;
             }
         }
+        let mut normalized = apply_rows::without_nulls(info, &row);
+        apply_rows::canonicalize(info, &mut normalized)?;
+        let reader = Reader::new(tx, models);
+        let mut missing = Vec::new();
+        for association in info.spec.associations.iter().filter(|association| association.kind == crate::schema::AssociationKind::BelongsTo) {
+            if let Some(parent) = normalized.get(&association.foreign_key).and_then(crate::value::read_id) {
+                if reader.point(association.target.as_str(), parent.as_str())?.is_none() {
+                    missing.push((association.target.as_str(), parent));
+                }
+            }
+        }
+        if !missing.is_empty() {
+            let dependencies: Vec<_> = missing.iter().map(|(model, id)| (*model, id.as_str())).collect();
+            super::cloud_waiting::enqueue(tx, domain, &record, system_fields.as_deref(), &dependencies)?;
+            continue;
+        }
+        for (path, stamp) in marks {
+            cloud::write_field_stamp(tx, domain, &record.model, &record.row_id, path, stamp)?;
+            cloud::observe_stamp(tx, domain, stamp)?;
+        }
         if changed {
-            let mut normalized = apply_rows::without_nulls(info, &row);
-            apply_rows::canonicalize(info, &mut normalized)?;
             plan.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(&record.model), id, row });
         }
         cloud::write_system_fields(tx, domain, &record.model, &record.row_id, system_fields.as_deref())?;
