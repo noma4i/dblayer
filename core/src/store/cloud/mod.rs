@@ -129,6 +129,7 @@ pub(crate) struct PendingRecord {
 
 pub(crate) fn enable(tx: &Transaction<'_>) -> Result<(), StoreError> {
     tx.execute_batch(include_str!("../sql/cloud_enable.sql"))?;
+    tx.execute_batch(&super::nodes::node_table_statement("", "cloud_waiting_value", &[("seq", "INTEGER"), ("field", "INTEGER")]))?;
     Ok(())
 }
 
@@ -220,6 +221,7 @@ pub(crate) fn progress(connection: &Connection, domain: &str) -> Result<Option<V
 }
 
 pub(crate) fn reset(tx: &Transaction<'_>, domain: &str) -> Result<(), StoreError> {
+    super::cloud_waiting::reset(tx, domain)?;
     tx.execute("DELETE FROM cloud_bootstrap WHERE domain = ?1", [domain])?;
     tx.execute(include_str!("../sql/cloud_reset_records.sql"), [domain])?;
     tx.execute(include_str!("../sql/cloud_reset_progress.sql"), [domain])?;

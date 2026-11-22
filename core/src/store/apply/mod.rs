@@ -165,12 +165,22 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
         let info = models.get(&record.model).filter(|info| !info.spec.is_memory()).ok_or_else(|| StoreError::Invalid("invalid cloud model".into()))?;
         let id = crate::identity::RowId::new(&record.row_id).map_err(|error| StoreError::Invalid(error.to_string()))?;
         if id.is_temp() || id.as_str() != record.row_id { return Err(StoreError::Invalid("invalid cloud identity".into())); }
+        if record.deleted && !record.fields.is_empty() { return Err(StoreError::Invalid("cloud tombstone has fields".into())); }
+        if let (Some(name), Some(incoming)) = (&info.spec.server_revision, record.server_revision) {
+            if record.fields.iter().any(|field| field.path.as_slice() == [name.as_str()] && field.data.value.as_i64() != Some(incoming)) { return Err(StoreError::Invalid("conflicting cloud revision".into())); }
+        }
+        let mut declared = BTreeSet::new();
+        for field in &record.fields {
+            project::field(&info.spec, &field.path).ok_or_else(|| StoreError::Invalid("invalid cloud field".into()))?;
+            if declared.iter().any(|path: &Vec<String>| path.starts_with(&field.path) || field.path.starts_with(path)) { return Err(StoreError::Invalid("overlapping cloud fields".into())); }
+            declared.insert(field.path.clone());
+        }
         if !info.spec.is_local() && !super::operation::row_operation_sequences(tx, &BTreeSet::from([(record.model.clone(), record.row_id.clone())]))?.is_empty() {
-            return Err(StoreError::Refused);
+            super::cloud_waiting::enqueue(tx, domain, &record, system_fields.as_deref(), &[(record.model.as_str(), record.row_id.as_str())])?;
+            continue;
         }
         let deleted: bool = tx.query_row(include_str!("../sql/cloud_deleted.sql"), params![domain, record.model, record.row_id], |row| row.get(0)).optional()?.unwrap_or(false);
         if record.deleted {
-            if !record.fields.is_empty() { return Err(StoreError::Invalid("cloud tombstone has fields".into())); }
             let pending = cloud::PendingRecord { model: record.model.clone(), row_id: record.row_id.clone(), version: revision, deleted: true };
             cloud::stage(tx, domain, &pending)?;
             cloud::acknowledge(tx, domain, &pending, None)?;
@@ -183,17 +193,9 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
         let current_revision = info.spec.server_revision.as_ref().and_then(|field| stored.as_ref()?.row.get(field)).and_then(Value::as_i64);
         let revision_order = record.server_revision.zip(current_revision).map(|(incoming, current)| incoming.cmp(&current));
         let mut row = stored.as_ref().map(|row| row.row.clone()).unwrap_or_else(|| Map::from_iter([("id".into(), Value::String(record.row_id.clone()))]));
-        if let (Some(name), Some(incoming)) = (&info.spec.server_revision, record.server_revision) {
-            if let Some(field) = record.fields.iter().find(|field| field.path.as_slice() == [name.as_str()]) {
-                if field.data.value.as_i64() != Some(incoming) { return Err(StoreError::Invalid("conflicting cloud revision".into())); }
-            }
-        }
-        let mut paths = BTreeSet::new();
         let mut changed = stored.is_none();
         for field in record.fields {
             let (_, rule, local) = project::field(&info.spec, &field.path).ok_or_else(|| StoreError::Invalid("invalid cloud field".into()))?;
-            if paths.iter().any(|path: &Vec<String>| path.starts_with(&field.path) || field.path.starts_with(path)) { return Err(StoreError::Invalid("overlapping cloud fields".into())); }
-            paths.insert(field.path.clone());
             if !local && revision_order.is_some_and(|order| order.is_lt()) { continue; }
             let old = project::project(&info.spec, &row).get(&field.path).cloned();
             let value = if field.data.value.is_null() { Value::Null } else {

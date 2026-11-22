@@ -8,6 +8,39 @@ CREATE TABLE IF NOT EXISTS cloud_record (
     system_fields BLOB,
     PRIMARY KEY (domain, model, row_id)
 );
+CREATE TABLE IF NOT EXISTS cloud_waiting (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain TEXT NOT NULL,
+    digest BLOB NOT NULL,
+    model TEXT NOT NULL,
+    row_id TEXT NOT NULL,
+    server_revision INTEGER,
+    deleted INTEGER NOT NULL,
+    system_fields BLOB,
+    UNIQUE (domain, digest)
+);
+CREATE TABLE IF NOT EXISTS cloud_waiting_dependency (
+    domain TEXT NOT NULL,
+    model TEXT NOT NULL,
+    row_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    PRIMARY KEY (domain, model, row_id, seq)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS cloud_waiting_field (
+    seq INTEGER NOT NULL,
+    field INTEGER NOT NULL,
+    millis BLOB NOT NULL CHECK(length(millis) = 8),
+    counter INTEGER NOT NULL,
+    replica BLOB NOT NULL CHECK(length(replica) = 16),
+    PRIMARY KEY (seq, field)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS cloud_waiting_path (
+    seq INTEGER NOT NULL,
+    field INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    segment TEXT NOT NULL,
+    PRIMARY KEY (seq, field, position)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS cloud_progress (
     domain TEXT PRIMARY KEY NOT NULL,
     bytes BLOB NOT NULL
