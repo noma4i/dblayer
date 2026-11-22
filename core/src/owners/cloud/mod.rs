@@ -28,6 +28,7 @@ pub(crate) enum CloudEffect {
     Stop { generation: u64 },
     Erase { domain: String, token: u64 },
     Ready(CloudScope),
+    TokenExhausted,
     Drained,
 }
 
@@ -44,17 +45,24 @@ pub(crate) struct CloudState {
     erasing: Option<u64>,
     stopping: BTreeSet<u64>,
     next_token: u64,
+    exhausted: bool,
     closed: bool,
 }
 
 impl CloudState {
     pub(crate) fn new(epoch: Epoch) -> Self {
-        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, closed: false }
+        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, exhausted: false, closed: false }
     }
 
-    fn token(&mut self) -> u64 {
-        self.next_token = self.next_token.checked_add(1).expect("cloud token exhausted");
-        self.next_token
+    fn token(&mut self, fx: &mut Effects<Cloud>) -> Option<u64> {
+        if let Some(token) = self.next_token.checked_add(1) {
+            self.next_token = token;
+            return Some(token);
+        }
+        self.exhausted = true;
+        self.stop(fx);
+        fx.push(Effect::Run(CloudEffect::TokenExhausted));
+        None
     }
 
     fn stop(&mut self, fx: &mut Effects<Cloud>) {
@@ -66,11 +74,12 @@ impl CloudState {
     }
 
     fn reconcile(&mut self, fx: &mut Effects<Cloud>) {
-        if self.erasing.is_some() || !self.attached || !self.available { return; }
+        if self.exhausted || self.erasing.is_some() || !self.attached || !self.available { return; }
         if self.domain != self.desired {
             self.stop(fx);
-            if let Some(domain) = self.domain.take() {
-                let token = self.token();
+            if let Some(domain) = self.domain.clone() {
+                let Some(token) = self.token(fx) else { return; };
+                self.domain = None;
                 self.erasing = Some(token);
                 fx.push(Effect::Run(CloudEffect::Erase { domain, token }));
                 return;
@@ -79,7 +88,8 @@ impl CloudState {
         }
         if self.online && self.active.is_none() {
             if let Some(domain) = self.domain.clone() {
-                let scope = CloudScope { epoch: self.epoch, generation: self.token(), domain };
+                let Some(generation) = self.token(fx) else { return; };
+                let scope = CloudScope { epoch: self.epoch, generation, domain };
                 self.active = Some(scope.clone());
                 fx.push(Effect::Run(CloudEffect::Start(scope)));
             }
@@ -105,6 +115,7 @@ impl StateOwner for Cloud {
             }
             return fx;
         }
+        if state.exhausted && !matches!(input, CloudInput::Close | CloudInput::Stopped { .. }) { return fx; }
         match input {
             CloudInput::EpochStarted(epoch) if epoch > state.epoch => {
                 state.stop(&mut fx);

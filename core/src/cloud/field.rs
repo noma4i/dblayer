@@ -27,9 +27,5 @@ pub(crate) fn choose_field(stored: &StampedValue, incoming: &StampedValue, rule:
     }
 
     let rank = rule.map_or(Ordering::Equal, |rule| rule.rank(&stored.value, &incoming.value));
-    Ok(match rank.then_with(|| stored.stamp.cmp(&incoming.stamp)) {
-        Ordering::Greater => Choice::Stored,
-        Ordering::Less => Choice::Incoming,
-        Ordering::Equal => unreachable!(),
-    })
+    Ok(if rank.then_with(|| stored.stamp.cmp(&incoming.stamp)).is_lt() { Choice::Incoming } else { Choice::Stored })
 }
