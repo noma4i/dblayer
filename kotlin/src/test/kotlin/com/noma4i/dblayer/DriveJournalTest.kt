@@ -9,7 +9,7 @@ import org.junit.Test
 
 class DriveJournalTest {
     @Test
-    fun compactsOnlyAtTheBoundAndKeepsTheOriginal() {
+    fun compactsOnlyAtTheBoundAndKeepsTheOriginal() = bounded {
         val directory = Files.createTempDirectory("drive-journal").toFile()
         try {
             val key = "a".repeat(64)
