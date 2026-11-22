@@ -179,27 +179,42 @@ fn cloud_landing_moves_rows_and_progress_together_without_an_echo() {
     let open = |name| Store::open_models(Some(&directory.path().join(name)), vec![notes.clone()], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     let source = open("source.sqlite");
     let destination = open("destination.sqlite");
+    let write_local = |store: &Store, id: &str, text: &str| store.write_queue_ops(&[StoreOp::LocalRows { model: "notes".into(), rows: vec![RowValue {
+        row_id: id.into(), values: serde_json::json!({"id": id, "text": text}).to_string(),
+    }] }]).unwrap();
+    write_local(&destination, "existing", "before attaching");
     let scope = CloudScope { epoch: 1, generation: 1, domain: "example".into() };
     for store in [&source, &destination] {
         store.activate_cloud_scope(scope.clone()).unwrap();
     }
+    let identity_only = crate::cloud::CloudRecord {
+        model: "notes".into(), row_id: "existing".into(), server_revision: None, deleted: false, fields: Vec::new(),
+    };
+    destination.land_local_cloud(&scope, vec![(identity_only, Some(b"existing-tag".to_vec()))], None).unwrap();
+    assert!(destination.pending_cloud_records(&scope, 1).unwrap().is_empty());
+    write_local(&destination, "existing", "after fetch");
+    let first = destination.pending_cloud_records(&scope, 1).unwrap().pop().unwrap();
+    assert_eq!(first.row_id, "existing");
+    assert_eq!(first.system_fields.as_deref(), Some(b"existing-tag".as_slice()));
+    destination.confirm_cloud_send(&scope, &first, None).unwrap();
     source.write_queue_ops(&[StoreOp::LocalRows { model: "notes".into(), rows: vec![RowValue {
         row_id: "n1".into(), values: r#"{"id":"n1","text":"saved on the first replica"}"#.into(),
     }] }]).unwrap();
     let sent = source.pending_cloud_records(&scope, 1).unwrap().pop().unwrap();
     let incoming = crate::cloud::decode(&sent.key, &sent.payload.unwrap()).unwrap();
 
-    destination.land_local_cloud(&scope, vec![incoming.clone()], b"first").unwrap();
+    destination.land_local_cloud(&scope, vec![(incoming.clone(), Some(b"first-tag".to_vec()))], Some(b"first")).unwrap();
     assert_eq!(destination.read(&["notes"], |reader| reader.point("notes", "n1")).unwrap().unwrap()["text"], "saved on the first replica");
     assert!(destination.pending_cloud_records(&scope, 1).unwrap().is_empty());
 
     let mut cleared = incoming.clone();
     cleared.fields[0].data.value = serde_json::Value::Null;
     cleared.fields[0].data.stamp.counter += 1;
-    destination.land_local_cloud(&scope, vec![cleared], b"cleared").unwrap();
-    destination.land_local_cloud(&scope, vec![incoming.clone()], b"replay").unwrap();
+    destination.land_local_cloud(&scope, vec![(cleared, None)], Some(b"cleared")).unwrap();
+    destination.land_local_cloud(&scope, vec![(incoming.clone(), None)], None).unwrap();
     let row = destination.read(&["notes"], |reader| reader.point("notes", "n1")).unwrap().unwrap();
     assert!(row.get("text").is_none_or(serde_json::Value::is_null));
+    assert_eq!(destination.cloud_resume(&scope).unwrap().as_deref(), Some(b"cleared".as_slice()));
 
     source.write_queue_ops(&[StoreOp::LocalRows { model: "notes".into(), rows: vec![RowValue {
         row_id: "identity".into(), values: r#"{"id":"identity"}"#.into(),
@@ -208,24 +223,36 @@ fn cloud_landing_moves_rows_and_progress_together_without_an_echo() {
     let identity = source.pending_cloud_records(&scope, 2).unwrap().into_iter().find(|record| record.key == identity_key).unwrap();
     let identity = crate::cloud::decode(&identity.key, &identity.payload.unwrap()).unwrap();
     assert!(identity.fields.is_empty());
-    destination.land_local_cloud(&scope, vec![identity], b"identity").unwrap();
+    destination.land_local_cloud(&scope, vec![(identity, None)], Some(b"identity")).unwrap();
     assert!(destination.read(&["notes"], |reader| reader.point("notes", "identity")).unwrap().is_some());
     assert!(destination.pending_cloud_records(&scope, 2).unwrap().is_empty());
     assert_eq!(destination.cloud_resume(&scope).unwrap().as_deref(), Some(b"identity".as_slice()));
+
+    write_local(&destination, "n1", "local edit");
+    let pending = destination.pending_cloud_records(&scope, 1).unwrap().pop().unwrap();
+    assert_eq!(pending.system_fields.as_deref(), Some(b"first-tag".as_slice()));
+    destination.land_local_cloud(&scope, vec![(incoming.clone(), Some(b"conflict-tag".to_vec()))], None).unwrap();
+    let retained = destination.pending_cloud_records(&scope, 1).unwrap().pop().unwrap();
+    assert_eq!(retained.version, pending.version);
+    assert_eq!(retained.payload, pending.payload);
+    assert_eq!(retained.system_fields.as_deref(), Some(b"conflict-tag".as_slice()));
 
     destination.retire_cloud_scope(&scope);
     let current = CloudScope { generation: 2, ..scope.clone() };
     destination.activate_cloud_scope(current.clone()).unwrap();
     let stale = crate::cloud::CloudRecord { row_id: "stale".into(), ..incoming.clone() };
-    assert!(destination.land_local_cloud(&scope, vec![stale], b"stale").is_err());
+    assert!(destination.land_local_cloud(&scope, vec![(stale, None)], Some(b"stale")).is_err());
     assert!(destination.pending_cloud_records(&scope, 1).is_err());
     assert_eq!(destination.read(&["notes"], |reader| reader.point("notes", "stale")).unwrap(), None);
 
     let second = crate::cloud::CloudRecord { row_id: "n2".into(), ..incoming.clone() };
     let mut malformed = crate::cloud::CloudRecord { row_id: "n3".into(), ..incoming };
     malformed.fields[0].path = vec!["unknown".into()];
-    assert!(destination.land_local_cloud(&current, vec![second, malformed], b"invalid").is_err());
+    assert!(destination.land_local_cloud(&current, vec![(second, Some(b"invalid-tag".to_vec())), (malformed, None)], Some(b"invalid")).is_err());
     assert_eq!(destination.read(&["notes"], |reader| reader.point("notes", "n2")).unwrap(), None);
+    write_local(&destination, "n2", "local edit");
+    let record = destination.pending_cloud_records(&current, 2).unwrap().into_iter().find(|record| record.row_id == "n2").unwrap();
+    assert_eq!(record.system_fields, None);
     drop(destination);
 
     let reopened = open("destination.sqlite");
