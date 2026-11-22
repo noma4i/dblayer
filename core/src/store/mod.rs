@@ -10,6 +10,7 @@ use crate::runtime::{Clock, Counters};
 use crate::schema::{ModelSpec, SearchPath};
 
 pub(crate) mod cloud;
+mod cloud_settings;
 pub(crate) mod cloud_waiting;
 pub mod ddl;
 pub mod files;
