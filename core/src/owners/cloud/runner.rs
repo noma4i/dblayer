@@ -165,12 +165,20 @@ impl EffectRunner<Cloud> for CloudRunner {
                     wiring.to_lifecycle(LifecycleInput::Drained(Drained { owner: "cloud" }));
                 })));
             }
-            CloudEffect::Erase { domain, token } => {
+            CloudEffect::Erase { domain, token, epoch } => {
                 let Some(wiring) = self.wiring.upgrade() else { return; };
                 let (db, back, weak) = (self.db.clone(), back.clone(), self.wiring.clone());
                 drop(crate::task::spawn_blocking_on(&self.executor, Some(wiring.handle.launch()), move || {
                     let input = match db.erase_cloud_domain(&domain) {
-                        Ok(()) => CloudInput::Erased { token },
+                        Ok(rows) => {
+                            if !rows.is_empty() {
+                                if let Some(wiring) = weak.upgrade() {
+                                    wiring.to_outbox_at(EpochStamp::Epoch(epoch), crate::owners::write::outbox_types::OutboxInput::CloudRowsErased { rows: rows.clone() });
+                                    wiring.to_transfer_at(EpochStamp::Epoch(epoch), crate::owners::write::transfer_types::TransferInput::CloudRowsErased { rows });
+                                }
+                            }
+                            CloudInput::Erased { token }
+                        }
                         Err(error) => {
                             if let Some(wiring) = weak.upgrade() { wiring.fault(format!("cloud erase: {error}")); }
                             CloudInput::EraseFailed { token }

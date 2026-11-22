@@ -28,10 +28,10 @@ use super::tombstones::write_tombstone;
 use super::{Committed, Inner, ModelInfo, Store, StoreError};
 
 impl Store {
-    pub(crate) fn erase_cloud_domain(&self, domain: &str) -> Result<(), StoreError> {
+    pub(crate) fn erase_cloud_domain(&self, domain: &str) -> Result<BTreeSet<(String, String)>, StoreError> {
         let mut inner = self.lock();
         inner.ensure_healthy()?;
-        if crate::store::ddl::manifest_read(&inner.connection, "cloud_domain")?.as_deref() != Some(domain) { return Ok(()); }
+        if crate::store::ddl::manifest_read(&inner.connection, "cloud_domain")?.as_deref() != Some(domain) { return Ok(BTreeSet::new()); }
         if inner.cloud_scope.as_ref().is_some_and(|attachment| attachment.mode == super::CloudAttachmentMode::Live) {
             return Err(StoreError::Invalid("cloud scope is active".into()));
         }
@@ -39,6 +39,7 @@ impl Store {
         let transaction = inner.connection.unchecked_transaction()?;
         let revision = Reader::new(&transaction, &inner.models).revision_seq()? + 1;
         let mut plan = BatchPlan::from_source(crate::schema::RowSource::Local);
+        let mut rows = BTreeSet::new();
         {
             let mut statement = transaction.prepare(include_str!("../sql/cloud_identities.sql"))?;
             let identities = statement.query_map([domain], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
@@ -46,6 +47,7 @@ impl Store {
                 let (model, row_id) = identity?;
                 if !inner.models.contains_key(&model) { continue; }
                 let id = crate::identity::RowId::new(&row_id).map_err(|error| StoreError::Invalid(error.to_string()))?;
+                rows.insert((model.clone(), row_id));
                 plan.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(&model), id, reason: DestroyReason::Expired });
             }
         }
@@ -54,7 +56,7 @@ impl Store {
         let result = apply_transaction(self, &inner, transaction, &plan, now_ms, revision, false)?;
         if let Some(attachment) = &mut inner.cloud_scope { attachment.mode = super::CloudAttachmentMode::Erased; }
         self.finish(inner, result).publish();
-        Ok(())
+        Ok(rows)
     }
 
     pub(crate) fn land_local_cloud(&self, scope: &crate::owners::cloud::CloudScope, records: Vec<(crate::cloud::CloudRecord, Option<Vec<u8>>)>, progress: Option<&[u8]>) -> Result<(), StoreError> {

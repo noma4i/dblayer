@@ -38,7 +38,7 @@ pub(crate) enum CloudInput {
 pub(crate) enum CloudEffect {
     Start(CloudScope),
     Stop { generation: u64 },
-    Erase { domain: String, token: u64 },
+    Erase { domain: String, token: u64, epoch: Epoch },
     Ready(CloudScope),
     Bootstrap(CloudScope),
     Send(CloudScope),
@@ -167,7 +167,7 @@ impl CloudState {
             if let Some(domain) = self.domain.clone() {
                 let Some(token) = self.token(fx) else { return; };
                 self.erasing = Some(token);
-                fx.push(Effect::Run(CloudEffect::Erase { domain, token }));
+                fx.push(Effect::Run(CloudEffect::Erase { domain, token, epoch: self.epoch }));
                 return;
             }
             self.domain.clone_from(&self.desired);
