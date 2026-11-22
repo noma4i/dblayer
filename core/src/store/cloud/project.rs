@@ -2,13 +2,38 @@ use crate::schema::{FieldKind, FieldSpec, ModelSpec};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
-pub(super) fn project(spec: &ModelSpec, row: &Map<String, Value>) -> BTreeMap<Vec<String>, Value> {
+pub(in crate::store) fn project(spec: &ModelSpec, row: &Map<String, Value>) -> BTreeMap<Vec<String>, Value> {
     let mut result = BTreeMap::new();
     for field in &spec.fields {
         if field.name == "id" || field.derived || matches!(field.kind, FieldKind::File) || spec.ephemeral_field(&field.name).is_some() { continue; }
         if let Some(value) = row.get(&field.name) { visit(field, value, vec![field.name.clone()], &mut result); }
     }
     result
+}
+
+pub(in crate::store) fn field<'a>(spec: &'a ModelSpec, path: &[String]) -> Option<&'a FieldSpec> {
+    let (first, rest) = path.split_first()?;
+    let mut field = spec.fields.iter().find(|field| field.name == *first)?;
+    if field.name == "id" || spec.ephemeral_field(&field.name).is_some() { return None; }
+    for segment in rest {
+        if field.derived || !matches!(field.kind, FieldKind::Object) || field.fields.is_empty() { return None; }
+        field = field.fields.iter().find(|child| child.from.as_ref().unwrap_or(&child.name) == segment)?;
+    }
+    if field.derived || matches!(field.kind, FieldKind::File) { return None; }
+    Some(field)
+}
+
+pub(in crate::store) fn set(row: &mut Map<String, Value>, path: &[String], value: Value) -> Result<(), crate::store::StoreError> {
+    let (last, parents) = path.split_last().ok_or_else(|| crate::store::StoreError::Invalid("empty cloud path".into()))?;
+    let mut current = row;
+    for segment in parents {
+        let item = current.entry(segment.clone()).or_insert_with(|| Value::Object(Map::new()));
+        if !item.is_object() { *item = Value::Object(Map::new()); }
+        let Value::Object(object) = item else { return Err(crate::store::StoreError::Invalid("invalid cloud path".into())); };
+        current = object;
+    }
+    current.insert(last.clone(), value);
+    Ok(())
 }
 
 fn visit(field: &FieldSpec, value: &Value, path: Vec<String>, result: &mut BTreeMap<Vec<String>, Value>) {

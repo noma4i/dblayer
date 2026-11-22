@@ -5,7 +5,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{CommitResult, ModelInfo, Reader, RowChangeKind};
-mod project;
+pub(super) mod project;
 
 #[derive(Debug)]
 pub(crate) struct PendingCloudRecord {
@@ -66,9 +66,11 @@ pub(crate) fn capture_local(tx: &Transaction<'_>, domain: Option<&str>, models: 
             let before = originals.get(&change.row).and_then(Option::as_ref).map(|row| project::project(&info.spec, row)).unwrap_or_default();
             let Some(after) = reader.stored_row(change.row.model.as_str(), change.row.id.as_str())? else { continue };
             let changed: Vec<_> = project::project(&info.spec, &after.row).into_iter().filter(|(path, value)| before.get(path) != Some(value)).collect();
-            if changed.is_empty() { continue; }
-            let stamp = tick_stamp(tx, domain, u64::try_from(now).unwrap_or(0))?;
-            for (path, _) in changed { write_field_stamp(tx, domain, change.row.model.as_str(), change.row.id.as_str(), &path, stamp)?; }
+            if changed.is_empty() && change.kind != RowChangeKind::Inserted { continue; }
+            if !changed.is_empty() {
+                let stamp = tick_stamp(tx, domain, u64::try_from(now).unwrap_or(0))?;
+                for (path, _) in changed { write_field_stamp(tx, domain, change.row.model.as_str(), change.row.id.as_str(), &path, stamp)?; }
+            }
             true
         };
         if eligible {

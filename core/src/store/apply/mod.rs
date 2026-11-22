@@ -28,6 +28,20 @@ use super::tombstones::write_tombstone;
 use super::{Committed, Inner, ModelInfo, Store, StoreError};
 
 impl Store {
+    pub(crate) fn land_local_cloud(&self, domain: &str, records: Vec<crate::cloud::CloudRecord>, progress: &[u8]) -> Result<(), StoreError> {
+        let inner = self.lock();
+        inner.ensure_healthy()?;
+        if inner.active_cloud_domain.as_deref() != Some(domain) { return Err(StoreError::Invalid("stale cloud domain".into())); }
+        let now_ms = inner.now_ms();
+        let transaction = inner.connection.unchecked_transaction()?;
+        let revision = Reader::new(&transaction, &inner.models).revision_seq()? + 1;
+        let plan = cloud_plan(&transaction, &inner.models, domain, records, revision)?;
+        super::cloud::write_progress(&transaction, domain, progress)?;
+        let result = apply_transaction(self, &inner, transaction, &plan, now_ms, revision, false)?;
+        self.finish(inner, result).publish();
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(crate) fn commit_deferred(&self, envelope: BatchPlan) -> Result<Committed<'_>, StoreError> {
         let inner = self.lock();
@@ -86,14 +100,19 @@ impl Store {
 fn attempt(store: &Store, inner: &Inner, envelope: &BatchPlan, now_ms: i64) -> Result<(CommitResult, u32), StoreError> {
     let transaction = inner.connection.unchecked_transaction()?;
     let revision = Reader::new(&transaction, &inner.models).revision_seq()? + 1;
+    apply_transaction(store, inner, transaction, envelope, now_ms, revision, true)
+}
+
+fn apply_transaction(store: &Store, inner: &Inner, transaction: rusqlite::Transaction<'_>, envelope: &BatchPlan, now_ms: i64, revision: i64, capture: bool) -> Result<(CommitResult, u32), StoreError> {
     let mut originals = BTreeMap::new();
-    let first = apply_envelope_at(&transaction, &inner.models, envelope, (now_ms, revision, inner.generation), inner.active_cloud_domain.as_ref().map(|_| &mut originals), None)?;
-    let apply = |plan: BatchPlan| apply_envelope_at(&transaction, &inner.models, &plan, (now_ms, revision, inner.generation), inner.active_cloud_domain.as_ref().map(|_| &mut originals), None);
+    let capture_rows = capture && inner.active_cloud_domain.is_some();
+    let first = apply_envelope_at(&transaction, &inner.models, envelope, (now_ms, revision, inner.generation), capture_rows.then_some(&mut originals), None)?;
+    let apply = |plan: BatchPlan| apply_envelope_at(&transaction, &inner.models, &plan, (now_ms, revision, inner.generation), capture_rows.then_some(&mut originals), None);
     let (derived, _, _) = super::follow_pointer::settle_parents(&Reader::new(&transaction, &inner.models), &inner.models, std::slice::from_ref(&first), apply)?;
     let outcome = match derived { Some(derived) => super::batch_result::consolidate(&transaction, &inner.models, &BTreeMap::new(), vec![first, derived], revision)?, None => first };
-    super::cloud::capture_local(&transaction, inner.active_cloud_domain.as_deref(), &inner.models, &originals, &outcome, now_ms)?;
+    if capture { super::cloud::capture_local(&transaction, inner.active_cloud_domain.as_deref(), &inner.models, &originals, &outcome, now_ms)?; }
     let journal = store.context.changed.prepare_commit(&outcome);
-    if outcome.is_noop() && envelope.window.is_none() && envelope.window_debts.is_empty() && envelope.pending_locals.is_empty() {
+    if capture && outcome.is_noop() && envelope.window.is_none() && envelope.window_debts.is_empty() && envelope.pending_locals.is_empty() {
         transaction.rollback()?;
     } else if let Some(revision) = outcome.revision {
         let snapshot = store.overlays.next(revision - 1, true).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
@@ -104,6 +123,63 @@ fn attempt(store: &Store, inner: &Inner, envelope: &BatchPlan, now_ms: i64) -> R
     if let Some(journal) = journal { journal.finish(); }
     let acks = outcome.unknown_operation_acks;
     Ok((outcome, acks))
+}
+
+fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInfo>, domain: &str, records: Vec<crate::cloud::CloudRecord>, revision: i64) -> Result<BatchPlan, StoreError> {
+    use super::cloud::{self, project};
+    use crate::cloud::{Choice, StampedValue};
+    let mut plan = BatchPlan::from_source(crate::schema::RowSource::Local);
+    let mut seen = BTreeSet::new();
+    for record in records {
+        if !seen.insert((record.model.clone(), record.row_id.clone())) { return Err(StoreError::Invalid("duplicate cloud record".into())); }
+        let info = models.get(&record.model).filter(|info| info.spec.is_local()).ok_or_else(|| StoreError::Invalid("invalid cloud model".into()))?;
+        let id = crate::identity::RowId::new(&record.row_id).map_err(|error| StoreError::Invalid(error.to_string()))?;
+        if id.is_temp() || id.as_str() != record.row_id { return Err(StoreError::Invalid("invalid cloud identity".into())); }
+        let deleted: bool = tx.query_row(include_str!("../sql/cloud_deleted.sql"), params![domain, record.model, record.row_id], |row| row.get(0)).optional()?.unwrap_or(false);
+        if record.deleted {
+            if !record.fields.is_empty() { return Err(StoreError::Invalid("cloud tombstone has fields".into())); }
+            let pending = cloud::PendingRecord { model: record.model.clone(), row_id: record.row_id.clone(), version: revision, deleted: true };
+            cloud::stage(tx, domain, &pending)?;
+            cloud::acknowledge(tx, domain, &pending)?;
+            plan.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(&record.model), id, reason: DestroyReason::Local });
+            continue;
+        }
+        if deleted { continue; }
+        let stored = Reader::new(tx, models).stored_row(&record.model, &record.row_id)?;
+        let mut row = stored.as_ref().map(|row| row.row.clone()).unwrap_or_else(|| Map::from_iter([("id".into(), Value::String(record.row_id.clone()))]));
+        let mut paths = BTreeSet::new();
+        let mut changed = stored.is_none();
+        for field in record.fields {
+            let declared = project::field(&info.spec, &field.path).ok_or_else(|| StoreError::Invalid("invalid cloud field".into()))?;
+            if paths.iter().any(|path: &Vec<String>| path.starts_with(&field.path) || field.path.starts_with(path)) { return Err(StoreError::Invalid("overlapping cloud fields".into())); }
+            paths.insert(field.path.clone());
+            let old = project::project(&info.spec, &row).get(&field.path).cloned();
+            let value = if field.data.value.is_null() { Value::Null } else {
+                let mut candidate = row.clone();
+                project::set(&mut candidate, &field.path, field.data.value.clone())?;
+                apply_rows::canonicalize(info, &mut candidate)?;
+                project::project(&info.spec, &candidate).get(&field.path).cloned().ok_or_else(|| StoreError::Invalid("invalid cloud value".into()))?
+            };
+            let incoming = StampedValue { value, stamp: field.data.stamp };
+            let stamp = cloud::field_stamp(tx, domain, &record.model, &record.row_id, &field.path)?;
+            let wins = match stamp {
+                Some(stamp) => crate::cloud::choose_field(&StampedValue { value: old.unwrap_or(Value::Null), stamp }, &incoming, declared.merge.as_ref()).map_err(|_| StoreError::Invalid("conflicting cloud stamp".into()))? == Choice::Incoming,
+                _ => true,
+            };
+            if wins {
+                project::set(&mut row, &field.path, incoming.value)?;
+                cloud::write_field_stamp(tx, domain, &record.model, &record.row_id, &field.path, incoming.stamp)?;
+                cloud::observe_stamp(tx, domain, incoming.stamp)?;
+                changed = true;
+            }
+        }
+        if changed {
+            let mut normalized = apply_rows::without_nulls(info, &row);
+            apply_rows::canonicalize(info, &mut normalized)?;
+            plan.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(&record.model), id, row });
+        }
+    }
+    Ok(plan)
 }
 
 mod apply_rows;
