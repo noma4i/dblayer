@@ -648,3 +648,36 @@ fn cloud_capture_clears_a_typed_object_as_one_path() {
     assert_eq!(detail(), Some(json!({"title":"new"})));
     assert!(replica.pending_cloud_records(&scope, 1).unwrap().is_empty());
 }
+
+#[test]
+fn cloud_settings_show_record_disposition_and_fence_replaced_scopes() {
+    use crate::identity::{ModelKey, RowId};
+    use crate::store::CloudRecordDisposition::*;
+    let notes = ModelSpec { storage: Storage::Local, ..ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id)]) };
+    let store = Store::open_models(None, vec![notes], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    assert_eq!(store.cloud_models(), vec![("notes".into(), true)]);
+    assert!(!store.table_exists("cloud_record").unwrap());
+    store.write_queue_ops(&[StoreOp::LocalRows { model: "notes".into(), rows: vec![RowValue {
+        row_id: "existing".into(), values: r#"{"id":"existing"}"#.into(),
+    }] }]).unwrap();
+    let scope = CloudScope { epoch: 1, generation: 1, domain: "example".into(), provider_fingerprint: "provider".into() };
+    store.activate_cloud_scope(scope.clone()).unwrap();
+    let row = RowId::new("existing").unwrap();
+    let status = || store.cloud_record_disposition(&scope, "notes", &row).unwrap();
+    assert_eq!(status(), Waiting);
+    assert!(store.bootstrap_cloud_chunk(&scope).unwrap());
+    assert_eq!(status(), Queued);
+    let pending = store.pending_cloud_records(&scope, 1).unwrap().pop().unwrap();
+    store.confirm_cloud_send(&scope, &pending, None).unwrap();
+    assert_eq!(status(), Synchronized);
+    let mut deletion = BatchPlan::from_source(RowSource::Local);
+    deletion.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("notes"), id: row.clone(), reason: DestroyReason::Local });
+    store.commit(deletion).unwrap();
+    assert_eq!(status(), QueuedDeletion);
+    let pending = store.pending_cloud_records(&scope, 1).unwrap().pop().unwrap();
+    store.confirm_cloud_send(&scope, &pending, None).unwrap();
+    store.retire_cloud_scope(&scope);
+    assert_eq!(status(), Deleted);
+    store.activate_cloud_scope(CloudScope { generation: 2, ..scope.clone() }).unwrap();
+    assert!(store.cloud_record_disposition(&scope, "notes", &row).is_err());
+}
