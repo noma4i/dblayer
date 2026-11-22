@@ -57,7 +57,7 @@ internal object DriveJournal {
         }
     }
 
-    fun readLatest(file: File, consume: (DriveJournalEntry) -> Unit) {
+    suspend fun readLatest(file: File, consume: suspend (DriveJournalEntry) -> Unit) {
         RandomAccessFile(file, "r").use { input ->
             val index = index(input)
             index.forEach { (key, frame) ->

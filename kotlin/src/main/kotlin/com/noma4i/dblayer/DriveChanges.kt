@@ -2,6 +2,7 @@ package com.noma4i.dblayer
 
 import java.io.IOException
 import java.io.File
+import java.util.UUID
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl
@@ -29,6 +30,15 @@ internal data class DriveFileChange(
 internal data class DriveFilePage(val nextPageToken: String?, val files: List<DriveFile>)
 
 internal data class DriveFile(val id: String, val replica: String)
+
+@Serializable
+internal data class DriveChannel(val id: String, val resourceId: String, val expiration: String)
+
+@Serializable
+private data class WatchRequest(val id: String, val type: String, val address: String, val token: String)
+
+@Serializable
+private data class StopRequest(val id: String, val resourceId: String)
 
 @Serializable
 private data class StartToken(val startPageToken: String)
@@ -118,13 +128,38 @@ internal class DriveChanges(private val baseUrl: HttpUrl = "https://www.googleap
         }
     }
 
+    suspend fun watch(token: String, cursor: String, webhook: String, secret: String): DriveChannel {
+        val url = baseUrl.newBuilder().addPathSegments("changes/watch")
+            .addQueryParameter("spaces", "appDataFolder")
+            .addQueryParameter("pageToken", cursor).build()
+        val id = UUID.randomUUID().toString()
+        val body = json.encodeToString(WatchRequest.serializer(), WatchRequest(id, "web_hook", webhook, secret))
+        val channel = json.decodeFromString<DriveChannel>(post(token, url, body))
+        require(channel.id == id && channel.resourceId.isNotEmpty() && channel.expiration.toLongOrNull()?.let { it > 0 } == true)
+        return channel
+    }
+
+    suspend fun stop(token: String, channel: DriveChannel) {
+        val url = baseUrl.newBuilder().addPathSegments("channels/stop").build()
+        post(token, url, json.encodeToString(StopRequest.serializer(), StopRequest(channel.id, channel.resourceId)))
+    }
+
+    private suspend fun post(token: String, url: HttpUrl, body: String): String {
+        val request = Request.Builder().url(url).header("Authorization", "Bearer $token")
+            .post(body.toRequestBody("application/json; charset=utf-8".toMediaType())).build()
+        return client.newCall(request).exchange { response ->
+            if (!response.isSuccessful) throw DriveHttpException(response.code)
+            response.text(1_048_576uL)
+        }
+    }
+
     suspend fun reserveId(token: String): String {
         val url = baseUrl.newBuilder().addPathSegments("files/generateIds")
             .addQueryParameter("count", "1").addQueryParameter("space", "appDataFolder").build()
         return json.decodeFromString<GeneratedIds>(get(token, url)).ids.single().also { require(it.isNotEmpty()) }
     }
 
-    suspend fun upload(token: String, domain: String, replica: String, fileId: String, create: Boolean, candidate: File) {
+    suspend fun upload(token: String, domain: String, replica: String, fileId: String, create: Boolean, candidate: File, authorize: () -> String = { token }) {
         require(domain.length == 64 && domain.all { it in '0'..'9' || it in 'a'..'f' })
         require(replica.isNotEmpty() && fileId.isNotEmpty())
         val url = baseUrl.newBuilder().encodedPath("/upload/drive/v3/files")
@@ -147,7 +182,7 @@ internal class DriveChanges(private val baseUrl: HttpUrl = "https://www.googleap
         val target = requireNotNull(baseUrl.resolve(location))
         require(target.scheme == baseUrl.scheme && target.host == baseUrl.host && target.port == baseUrl.port)
         require(target.username.isEmpty() && target.password.isEmpty())
-        val put = Request.Builder().url(target).header("Authorization", "Bearer $token")
+        val put = Request.Builder().url(target).header("Authorization", "Bearer ${authorize()}")
             .put(candidate.asRequestBody("application/octet-stream".toMediaType())).build()
         client.newCall(put).exchange { response ->
             if (!response.isSuccessful) throw DriveHttpException(response.code)
