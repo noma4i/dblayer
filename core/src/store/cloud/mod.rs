@@ -31,7 +31,7 @@ impl super::Store {
         let mut cursor = checkpoint.map(|(model, id, _)| (model, id)).unwrap_or_default();
         let reader = Reader::new(&tx, &inner.models);
         let mut count = 0;
-        for (model, info) in inner.models.iter().filter(|(_, info)| info.spec.is_local()) {
+        for (model, info) in inner.models.iter().filter(|(_, info)| !info.spec.is_memory()) {
             if model < &cursor.0 { continue; }
             let after = if model == &cursor.0 { cursor.1.as_str() } else { "" };
             let sql = format!("SELECT id FROM {} WHERE id > ?1 ORDER BY id LIMIT ?2", info.table);
@@ -40,6 +40,7 @@ impl super::Store {
                 cursor = (model.clone(), id.clone());
                 count += 1;
                 if crate::identity::RowId::new(&id).map_err(|error| StoreError::Invalid(error.to_string()))?.is_temp() { continue; }
+                if !info.spec.is_local() && has_open_operation(&tx, model, &id)? { continue; }
                 let Some(row) = reader.stored_row(model, &id)? else { continue };
                 let tracked: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM cloud_record WHERE domain = ?1 AND model = ?2 AND row_id = ?3)", params![domain, model, id], |row| row.get(0))?;
                 let mut missing = Vec::new();
@@ -134,10 +135,13 @@ pub(crate) fn capture_local(tx: &Transaction<'_>, domain: Option<&str>, models: 
     let (Some(domain), Some(version)) = (domain, result.revision) else { return Ok(()) };
     let reader = Reader::new(tx, models);
     let mut captured = BTreeSet::new();
+    let server_removed: BTreeSet<_> = result.server_removed.iter().collect();
     for change in &result.rows {
-        let Some(info) = models.get(change.row.model.as_str()).filter(|info| info.spec.is_local()) else { continue };
+        let Some(info) = models.get(change.row.model.as_str()).filter(|info| !info.spec.is_memory()) else { continue };
         if change.row.id.is_temp() || captured.contains(&change.row) { continue; }
+        if !info.spec.is_local() && (server_removed.contains(&change.row) || has_open_operation(tx, change.row.model.as_str(), change.row.id.as_str())?) { continue; }
         let deleted = change.kind == RowChangeKind::Destroyed;
+        if deleted && !info.spec.is_local() { continue; }
         let eligible = if deleted {
             reader.tombstone_seq(change.row.model.as_str(), change.row.id.as_str())? == Some(version)
         } else {
@@ -157,7 +161,23 @@ pub(crate) fn capture_local(tx: &Transaction<'_>, domain: Option<&str>, models: 
             captured.insert(change.row.clone());
         }
     }
+    for row in &result.server_removed {
+        if !models.get(row.model.as_str()).is_some_and(|info| !info.spec.is_memory() && !info.spec.is_local()) { continue; }
+        if row.id.is_temp() || captured.contains(row) || has_open_operation(tx, row.model.as_str(), row.id.as_str())? { continue; }
+        stage(tx, domain, &PendingRecord { model: row.model.to_string(), row_id: row.id.to_string(), version, deleted: true })?;
+        captured.insert(row.clone());
+    }
     Ok(())
+}
+
+fn operation_row_sql(model: &str, row_id: &str) -> String {
+    format!(include_str!("../sql/operation/row_operation_sequences.sql"), OPEN_STATUSES = super::operation::OPEN_STATUSES)
+        .replace("?1", model).replace("?2", row_id)
+}
+
+fn has_open_operation(connection: &Connection, model: &str, row_id: &str) -> Result<bool, StoreError> {
+    let sql = format!("SELECT EXISTS({})", operation_row_sql("?1", "?2"));
+    Ok(connection.query_row(&sql, params![model, row_id], |row| row.get(0))?)
 }
 
 pub(crate) fn stage(tx: &Transaction<'_>, domain: &str, record: &PendingRecord) -> Result<(), StoreError> {
@@ -171,7 +191,8 @@ pub(crate) fn pending(connection: &Connection, domain: &str, limit: u32) -> Resu
 }
 
 fn pending_with_fields(connection: &Connection, domain: &str, limit: u32) -> Result<Vec<(PendingRecord, Option<Vec<u8>>)>, StoreError> {
-    let mut statement = connection.prepare(include_str!("../sql/cloud_pending.sql"))?;
+    let sql = format!(include_str!("../sql/cloud_pending.sql"), OPEN_OPERATIONS = operation_row_sql("cloud_record.model", "cloud_record.row_id"));
+    let mut statement = connection.prepare_cached(&sql)?;
     let rows = statement.query_map(params![domain, limit], |row| {
         Ok((PendingRecord { model: row.get(0)?, row_id: row.get(1)?, version: row.get(2)?, deleted: row.get(3)? }, row.get(4)?))
     })?;
