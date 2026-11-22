@@ -416,7 +416,7 @@ fn disk_cloud_sends_only_settled_changes_and_confirmed_removals() {
         input: json!({"id":"held","text":"unconfirmed"}), base_revision: None, created_at: 0, dedupe_key: None,
         rollback: Some(json!({"rows":[{"kind":"edited","model":"notes","id":"held","before":{"text":"first confirmed"},"owned":{"text":1}}]})),
     })));
-    store.commit(optimistic).unwrap();
+    let operation = *store.commit(optimistic).unwrap().operations.iter().next().unwrap();
 
     write(RowSource::Page, vec![upsert("ready", "confirmed")]);
     let pending = store.pending_cloud_records(&scope, 1).unwrap();
@@ -434,6 +434,37 @@ fn disk_cloud_sends_only_settled_changes_and_confirmed_removals() {
         (body.row_id, body.deleted)
     }).collect::<Vec<_>>();
     assert_eq!(saved, vec![("missing".into(), true), ("ready".into(), true)]);
+    for record in &records { store.confirm_cloud_send(&scope, record, None).unwrap(); }
+
+    let mut confirmed = BatchPlan::from_source(RowSource::Response);
+    confirmed.operation_transitions.push(OperationTransition::Close { seq: operation, status: OperationStatus::Committed });
+    let confirmation = store.commit(confirmed).unwrap().revision.unwrap();
+    let sent = store.pending_cloud_records(&scope, 1).unwrap().pop().unwrap();
+    assert_eq!(sent.version, confirmation);
+    let confirmed_body = crate::cloud::decode(&sent.key, sent.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(confirmed_body.row_id, "held");
+    assert_eq!(confirmed_body.fields[0].data.value, "unconfirmed");
+    assert!(confirmed_body.fields[0].data.stamp.millis > 0);
+    store.confirm_cloud_send(&scope, &sent, None).unwrap();
+
+    let mut optimistic_delete = BatchPlan::from_source(RowSource::Local);
+    optimistic_delete.entity_ops.push(EntityOp::Destroy { model: crate::identity::ModelKey::new("notes"), id: id("held"), reason: DestroyReason::Local });
+    optimistic_delete.operation_transitions.push(OperationTransition::Begin(Box::new(OperationRecord {
+        seq: None, action_key: "notes:delete".into(), status: OperationStatus::Pending, row_ids: vec![id("held")], temp_id: None,
+        input: json!({"id":"held"}), base_revision: None, created_at: 0, dedupe_key: None,
+        rollback: Some(json!({"rows":[{"kind":"destroyed","model":"notes","id":"held","before":{"id":"held","text":"unconfirmed"},"members":[],"files":[]}]})),
+    })));
+    let deleting = *store.commit(optimistic_delete).unwrap().operations.iter().next().unwrap();
+    assert!(store.pending_cloud_records(&scope, 1).unwrap().is_empty());
+
+    let mut confirmed_delete = BatchPlan::from_source(RowSource::Response);
+    confirmed_delete.operation_transitions.push(OperationTransition::Close { seq: deleting, status: OperationStatus::Committed });
+    store.commit(confirmed_delete).unwrap();
+    let deletion = store.pending_cloud_records(&scope, 1).unwrap().pop().unwrap();
+    let body = crate::cloud::decode(&deletion.key, deletion.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(body.row_id, "held");
+    assert!(body.deleted);
+    assert!(body.fields.is_empty());
 }
 
 #[test]
