@@ -16,6 +16,7 @@ struct RecordingCloudPort {
     calls: tokio::sync::mpsc::UnboundedSender<PortCall>,
     hold_first: std::sync::atomic::AtomicBool,
     release: tokio::sync::Notify,
+    release_unobserve: tokio::sync::Notify,
     signals: OnceLock<Arc<CloudSignals>>,
 }
 
@@ -27,13 +28,16 @@ impl Drop for Starting<'_> {
 
 #[async_trait::async_trait]
 impl CloudPort for RecordingCloudPort {
-    fn observe(&self, signals: Arc<CloudSignals>) {
+    async fn observe(&self, signals: Arc<CloudSignals>) {
         assert!(self.signals.set(signals.clone()).is_ok());
         self.calls.send(PortCall::Observe).unwrap();
         signals.account(CloudAccount::Available { key: "test-account".into() });
     }
 
-    fn unobserve(&self) { self.calls.send(PortCall::Unobserve).unwrap(); }
+    async fn unobserve(&self) {
+        self.calls.send(PortCall::Unobserve).unwrap();
+        crate::test_wait::within(self.release_unobserve.notified()).await;
+    }
 
     async fn start(&self, scope: CloudWireScope, progress: Option<Vec<u8>>, _: Arc<CloudSignals>) -> Result<(), DbError> {
         let generation = scope.generation;
@@ -64,7 +68,7 @@ async fn cloud_open_stops_its_generation_and_detaches_on_close() {
     let model = ModelSpec { storage: Storage::Local, ..ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]) };
     let models = crate::ffi::specs(serde_json::to_string(&[model]).unwrap());
     let (calls, mut received) = tokio::sync::mpsc::unbounded_channel();
-    let port = Arc::new(RecordingCloudPort { calls, hold_first: true.into(), release: Default::default(), signals: OnceLock::new() });
+    let port = Arc::new(RecordingCloudPort { calls, hold_first: true.into(), release: Default::default(), release_unobserve: Default::default(), signals: OnceLock::new() });
     let db = Database::open(Config { path: None }, models, OpenPorts {
         cloud: Some(CloudConfig {
             backend: CloudBackend::Drive,
@@ -73,7 +77,7 @@ async fn cloud_open_stops_its_generation_and_detaches_on_close() {
         }),
         ..Default::default()
     }).await.unwrap();
-    assert_eq!(crate::test_wait::within(received.recv()).await, Some(PortCall::Observe));
+    assert_eq!(received.try_recv().unwrap(), PortCall::Observe);
     let signals = port.signals.get().unwrap();
 
     db.set_online(true).await.unwrap();
@@ -125,10 +129,17 @@ async fn cloud_open_stops_its_generation_and_detaches_on_close() {
     assert!(db.read_row(third.epoch, "notes".into(), "restored".into()).await.unwrap().is_none());
     assert!(db.read_row(third.epoch, "notes".into(), edited.id).await.unwrap().is_none());
 
-    crate::test_wait::within(db.close_database()).await.unwrap();
-    let first = received.try_recv().unwrap();
-    let second_call = received.try_recv().unwrap();
-    assert!(matches!((first, second_call),
-        (PortCall::Stop(generation), PortCall::Unobserve) | (PortCall::Unobserve, PortCall::Stop(generation)) if generation == third.generation));
+    let mut closing = Box::pin(db.close_database());
+    crate::test_wait::within(async {
+        tokio::select! {
+            _ = &mut closing => panic!("close returned before the observer detached"),
+            _ = async {
+                assert_eq!(crate::test_wait::within(received.recv()).await, Some(PortCall::Stop(third.generation)));
+                assert_eq!(crate::test_wait::within(received.recv()).await, Some(PortCall::Unobserve));
+            } => {}
+        }
+    }).await;
+    port.release_unobserve.notify_one();
+    crate::test_wait::within(closing).await.unwrap();
     assert!(received.try_recv().is_err());
 }
