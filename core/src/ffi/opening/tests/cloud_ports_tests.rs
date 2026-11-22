@@ -209,3 +209,71 @@ async fn cloud_session_uses_a_confirmed_application_account_after_reopen() {
         crate::test_wait::within(db.close_database()).await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn cloud_status_reopens_a_blocked_record_and_clears_it_on_a_new_version() {
+    use crate::ffi::{CloudIssue, CloudIssueCause, CloudPhase};
+    use crate::schema::{FieldSpec, ModelSpec, Storage};
+    use crate::test_wait::within;
+    use crate::value::ScalarKind;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cloud.sqlite").to_string_lossy().into_owned();
+    let model = ModelSpec { storage: Storage::Local, ..ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]) };
+    let models = serde_json::to_string(&[model]).unwrap();
+    let mut row_id = None;
+    for reopen in [false, true] {
+        let (calls, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let port = Arc::new(RecordingCloudPort { calls, hold_first: false.into(), release: Default::default(), release_unobserve: Default::default(), signals: OnceLock::new() });
+        let db = Database::open(Config { path: Some(path.clone()) }, crate::ffi::specs(models.clone()), OpenPorts {
+            cloud: Some(CloudConfig { backend: CloudBackend::Drive, application: CloudApplication::Standalone { namespace: "notes".into() }, port: port.clone() }),
+            ..Default::default()
+        }).await.unwrap();
+        assert_eq!(received.try_recv().unwrap(), PortCall::Observe);
+        let changes = db.cloud_changes().unwrap();
+        assert!(matches!(within(changes.next()).await.unwrap().phase, CloudPhase::WaitingForAccount | CloudPhase::Offline | CloudPhase::Reading));
+        db.set_online(true).await.unwrap();
+        let Some(PortCall::Start(scope, _)) = within(received.recv()).await else { panic!("cloud did not start") };
+        let signals = port.signals.get().unwrap();
+        within(signals.fetched(CloudFetched { scope: scope.clone(), records: Vec::new(), progress: Some(b"cursor".to_vec()), initial_complete: true })).await.unwrap();
+        if !reopen {
+            within(async {
+                loop {
+                    let status = within(changes.next()).await.unwrap();
+                    if status.phase == CloudPhase::Ready { break; }
+                }
+            }).await;
+            let text = "x".repeat(901_000);
+            let created = db.create(scope.epoch, "notes".into(), serde_json::json!({"text":text}).to_string(), "{}".into()).await.unwrap();
+            row_id = Some(created.optimistic_value.unwrap().id);
+        }
+        let id = row_id.clone().unwrap();
+        let expected = CloudIssue { model: "notes".into(), row_id: id.clone(), cause: CloudIssueCause::TooLarge };
+        let status = within(async {
+            loop {
+                let status = within(changes.next()).await.unwrap();
+                if !status.issues.is_empty() { break status; }
+            }
+        }).await;
+        assert_eq!(status.phase, CloudPhase::Ready);
+        assert_eq!(status.issues, [expected]);
+        assert!(received.try_recv().is_err());
+
+        if reopen {
+            db.update(scope.epoch, "notes".into(), id.clone(), r#"{"text":"smaller"}"#.into(), "{}".into()).await.unwrap();
+            let Some(PortCall::Send(_, records)) = within(received.recv()).await else { panic!("edited record did not send") };
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].key, crate::cloud::record_key("notes", &id));
+            let repaired = within(changes.next()).await.unwrap();
+            assert!(repaired.issues.is_empty());
+            assert!(db.cloud_status().issues.is_empty());
+        }
+
+        port.release_unobserve.notify_one();
+        within(db.close_database()).await.unwrap();
+        let closed = within(changes.next()).await.unwrap();
+        assert_eq!(closed.phase, CloudPhase::Closed);
+        assert!(closed.issues.is_empty());
+        assert!(within(changes.next()).await.is_none());
+    }
+}

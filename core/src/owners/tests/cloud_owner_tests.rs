@@ -6,7 +6,8 @@ fn cloud_account_replacement_waits_for_erase_and_discards_the_old_read() {
     let mut state = CloudState::configured(3, None, &crate::ffi::CloudBackend::Drive, &crate::ffi::CloudApplication::Standalone { namespace: "notes".into() });
     let mut step = |input| {
         Cloud::step(&mut state, input, Time(0)).into_iter().filter_map(|effect| match effect {
-            Effect::Run(effect) => Some(effect),
+            Effect::Run(CloudEffect::Publish(_)) => None,
+        Effect::Run(effect) => Some(effect),
             Effect::Cancel(_) => None,
             _ => panic!("unexpected cloud control effect"),
         }).collect::<Vec<_>>()
@@ -48,7 +49,8 @@ fn cloud_relay_suspension_retires_its_timer_and_a_live_retry_renews_the_scope() 
     use std::time::Duration;
 
     let mut state = CloudState::configured(3, None, &CloudBackend::Drive, &CloudApplication::Standalone { namespace: "notes".into() });
-    let mut step = |input| Cloud::step(&mut state, input, Time(0));
+    let mut step = |input| Cloud::step(&mut state, input, Time(0)).into_iter()
+        .filter(|effect| !matches!(effect, Effect::Run(CloudEffect::Publish(_)))).collect::<Vec<_>>();
     assert!(step(CloudInput::Provider(CloudAccount::Available { key: "provider".into() })).is_empty());
     let starting = step(CloudInput::Online(true));
     let [Effect::Run(CloudEffect::Start(scope))] = starting.as_slice() else { panic!("expected cloud start") };
