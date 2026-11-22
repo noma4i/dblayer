@@ -210,7 +210,7 @@ pub enum SessionEffect {
     CommitPending { batch: BatchId, epoch: Epoch, pending: PendingCall, session: Option<Digest> },
     /// Store `Commit{Session{digest or the previous one, sequence}, RemovePending, Answer}`; no `sequence` for a call without a session.
     /// `erase_session`: the sign-in failed, `encrypted_session` of its new credential goes with the pending.
-    CommitLanding { batch: BatchId, request_id: RequestId, epoch: Epoch, digest: Option<Digest>, sequence: Option<u64>, answer: Option<(RequestId, SessionAnswer)>, resume_answer: Option<SessionAnswer>, erase_session: bool, end_journal: bool },
+    CommitLanding { batch: BatchId, request_id: RequestId, epoch: Epoch, digest: Option<Digest>, sequence: Option<u64>, answer: Option<(RequestId, SessionAnswer)>, resume_answer: Option<SessionAnswer>, login_body: Option<String>, erase_session: bool, end_journal: bool },
     CommitRevoked { batch: BatchId, epoch: Epoch },
     CommitResumeAnswer { batch: BatchId, epoch: Epoch, answer: Option<SessionAnswer> },
     HttpRequest { pending: PendingCall, attempt_id: AttemptId },

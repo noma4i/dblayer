@@ -336,6 +336,14 @@ impl Store {
         Ok(ddl::manifest_read(&self.lock().connection, "cloud_domain")?)
     }
 
+    pub(crate) fn cloud_application_key(&self, identity: u64) -> Result<Option<String>, StoreError> {
+        let inner = self.lock();
+        let session = session_state::session(&inner.connection)?;
+        let credential = ddl::manifest_read(&inner.connection, "cloud_application_credential")?;
+        let key = ddl::manifest_read(&inner.connection, "cloud_application_key")?;
+        Ok(session.filter(|session| identity_of(&session.credential_digest) == Some(identity) && credential.as_deref() == Some(session.credential_digest.as_str())).and(key))
+    }
+
     pub(crate) fn activate_cloud_scope(&self, scope: crate::owners::cloud::CloudScope) -> Result<(), StoreError> {
         let mut inner = self.lock();
         if let Some(current) = &inner.cloud_scope {

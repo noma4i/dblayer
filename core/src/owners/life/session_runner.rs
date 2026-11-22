@@ -46,6 +46,7 @@ pub(super) struct SessionRunner {
     exchange: Arc<Exchange>,
     secret: Arc<Secret>,
     store: Arc<Store>,
+    account_path: Option<String>,
     seal: Arc<crate::owners::session_seal::SealConfig>,
     executor: tokio::runtime::Handle,
     running: HashMap<AttemptId, AbortHandle>,
@@ -86,12 +87,12 @@ impl Restored {
 }
 
 impl SessionRunner {
-    pub fn new(wiring: Arc<Wiring>, (exchange, secret, store): (Arc<Exchange>, Arc<Secret>, Arc<Store>), seal: Arc<crate::owners::session_seal::SealConfig>, executor: tokio::runtime::Handle, restored: &Restored) -> Self {
+    pub fn new(wiring: Arc<Wiring>, (exchange, secret, store): (Arc<Exchange>, Arc<Secret>, Arc<Store>), seal: Arc<crate::owners::session_seal::SealConfig>, executor: tokio::runtime::Handle, restored: &Restored, account_path: Option<String>) -> Self {
         let wires = restored.wire.iter().map(|(request_id, wire)| (*request_id, Wire { id: wire.id.clone(), key: wire.key.clone(), cut: wiring.gate.cut() })).collect();
         let digests = restored.digest.iter().cloned().collect();
         let (mint, minted) = std::sync::mpsc::channel();
         let operations = restored.pending.iter().filter_map(|pending| match pending.owner { Some(crate::transport::RequestOwner::Operation { seq }) => Some((pending.request_id, seq)), _ => None }).collect();
-        Self { wiring, exchange, secret, store, seal, executor, running: HashMap::new(), digests, generated: HashMap::new(), minted, mint, wires, operations, sent: Default::default(), requested: Default::default() }
+        Self { wiring, exchange, secret, store, account_path, seal, executor, running: HashMap::new(), digests, generated: HashMap::new(), minted, mint, wires, operations, sent: Default::default(), requested: Default::default() }
     }
 
     /// What `Open` of the owner takes: the rows and what `CredentialStore.get` found.
@@ -295,7 +296,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 if let Some(crate::transport::RequestOwner::Operation { seq }) = pending.owner { self.operations.insert(pending.request_id, seq); }
                 self.commit(batch, epoch, ops);
             }
-            SessionEffect::CommitLanding { batch, request_id, epoch, digest, sequence, answer, resume_answer, erase_session, end_journal } => {
+            SessionEffect::CommitLanding { batch, request_id, epoch, digest, sequence, answer, resume_answer, login_body, erase_session, end_journal } => {
                 let identity = digest;
                 let digest = match digest.map(|identity| self.digests.get(&identity).cloned().ok_or(identity)).transpose() {
                     Ok(digest) => digest,
@@ -308,7 +309,19 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                     None if erase_session => self.digests.clear(),
                     None => {}
                 }
-                let mut ops = if erase_session { session_erasure_ops(true, end_journal) } else if digest.is_none() && sequence.is_none() { vec![StoreOp::RemovePending] } else { vec![StoreOp::Session { digest, sequence }, StoreOp::RemovePending] };
+                let mut ops = if erase_session { session_erasure_ops(true, end_journal) } else if digest.is_none() && sequence.is_none() { vec![StoreOp::RemovePending] } else { vec![StoreOp::Session { digest: digest.clone(), sequence }, StoreOp::RemovePending] };
+                if let (Some(path), Some(body)) = (&self.account_path, login_body) {
+                    use sha2::{Digest, Sha256};
+                    let scalar = serde_json::from_str::<Value>(&body).ok().and_then(|body| crate::owners::read::codec::root_value(&body, path).and_then(|value| match value {
+                        Value::String(text) if !text.is_empty() => Some(value.to_string()),
+                        Value::Number(number) if number.is_i64() || number.is_u64() => Some(value.to_string()),
+                        _ => None,
+                    }));
+                    if let (Some(scalar), Some(credential_digest)) = (scalar, digest) {
+                        let key = Sha256::digest(scalar.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect();
+                        ops.push(StoreOp::CloudApplication { key, credential_digest });
+                    } else { self.wiring.fault("cloud application account path is missing or invalid".into()); }
+                }
                 ops.extend(answer.and_then(|(request_id, answer)| Some(StoreOp::Answer { request_id, operation: self.operations.get(&request_id).copied(), result: stored_answer(&answer)? })));
                 ops.extend(resume_answer.map(|answer| StoreOp::ResumeAnswer { answer }));
                 self.commit(batch, epoch, ops);

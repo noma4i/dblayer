@@ -18,7 +18,7 @@ pub enum CloudBackend { CloudKit, Drive }
 pub enum CloudApplication { Standalone { namespace: String }, Session { account_path: String } }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct CloudWireScope { pub epoch: u64, pub generation: u64, pub domain: String }
+pub struct CloudWireScope { pub epoch: u64, pub generation: u64, pub domain: String, pub provider_fingerprint: String }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum CloudAccount { Available { key: String }, SignedOut, Unavailable }

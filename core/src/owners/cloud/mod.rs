@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use sha2::{Digest, Sha256};
 pub(crate) mod runner;
 
 use crate::runtime::{Cause, Effect, Effects, Epoch, RetryPolicy, ScheduleId, StateOwner, Time};
@@ -8,6 +9,7 @@ pub(crate) struct CloudScope {
     pub epoch: Epoch,
     pub generation: u64,
     pub domain: String,
+    pub provider_fingerprint: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -15,8 +17,8 @@ pub(crate) enum CloudInput {
     EpochStarted(Epoch),
     EpochEnded(Epoch),
     Online(bool),
-    Account { epoch: Epoch, domain: Option<String> },
-    AccountUnavailable { epoch: Epoch },
+    Provider(crate::ffi::CloudAccount),
+    Application { epoch: Epoch, key: Option<String> },
     InitialRead { generation: u64 },
     BootstrapDone { generation: u64 },
     Erased { token: u64 },
@@ -62,17 +64,48 @@ pub(crate) struct CloudState {
     wake: bool,
     backoff: bool,
     attempts: u32,
+    backend: Option<String>,
+    provider: Option<crate::ffi::CloudAccount>,
+    application: Option<String>,
+    standalone: bool,
+    provider_fingerprint: String,
 }
 
 impl CloudState {
     pub(crate) fn new(epoch: Epoch) -> Self {
-        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, bootstrapping: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, exhausted: false, closed: false, retry_held: false, sending: false, wake: false, backoff: false, attempts: 0 }
+        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, bootstrapping: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, exhausted: false, closed: false, retry_held: false, sending: false, wake: false, backoff: false, attempts: 0, backend: None, provider: None, application: None, standalone: false, provider_fingerprint: String::new() }
     }
 
     pub(crate) fn with_domain(epoch: Epoch, domain: Option<String>) -> Self {
         let mut state = Self::new(epoch);
         state.domain = domain;
         state
+    }
+
+    pub(crate) fn configured(epoch: Epoch, domain: Option<String>, backend: &crate::ffi::CloudBackend, application: &crate::ffi::CloudApplication) -> Self {
+        let mut state = Self::with_domain(epoch, domain);
+        state.backend = Some(match backend { crate::ffi::CloudBackend::CloudKit => "cloudkit", crate::ffi::CloudBackend::Drive => "drive" }.into());
+        if let crate::ffi::CloudApplication::Standalone { namespace } = application {
+            state.application = Some(namespace.clone());
+            state.standalone = true;
+        } else { state.attached = false; }
+        state
+    }
+
+    fn account_inputs(&mut self, fx: &mut Effects<Cloud>) {
+        self.retry_held = false;
+        match (&self.provider, &self.application, &self.backend) {
+            (Some(crate::ffi::CloudAccount::SignedOut), _, _) => { self.available = true; self.desired = None; }
+            (Some(crate::ffi::CloudAccount::Available { key }), Some(app), Some(backend)) => {
+                let mut hash = Sha256::new();
+                for part in [backend, key, app] { hash.update((part.len() as u64).to_be_bytes()); hash.update(part.as_bytes()); }
+                self.desired = Some(hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect());
+                self.provider_fingerprint = Sha256::digest(key.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect();
+                self.available = true;
+            }
+            _ => { self.available = false; self.stop(fx); return; }
+        }
+        self.reconcile(fx);
     }
 
     fn token(&mut self, fx: &mut Effects<Cloud>) -> Option<u64> {
@@ -126,7 +159,7 @@ impl CloudState {
         if self.online && self.active.is_none() && self.stopping.is_empty() && !self.retry_held {
             if let Some(domain) = self.domain.clone() {
                 let Some(generation) = self.token(fx) else { return; };
-                let scope = CloudScope { epoch: self.epoch, generation, domain };
+                let scope = CloudScope { epoch: self.epoch, generation, domain, provider_fingerprint: self.provider_fingerprint.clone() };
                 self.active = Some(scope.clone());
                 fx.push(Effect::Run(CloudEffect::Start(scope)));
             }
@@ -161,12 +194,15 @@ impl StateOwner for Cloud {
                 state.attached = true;
                 state.available = false;
                 state.desired = None;
+                if !state.standalone { state.application = None; }
+                state.account_inputs(&mut fx);
             }
             CloudInput::EpochEnded(epoch) if epoch == state.epoch && state.attached => {
                 state.stop(&mut fx);
                 state.attached = false;
                 state.available = false;
                 state.desired = None;
+                if !state.standalone { state.application = None; }
             }
             CloudInput::Online(online) => {
                 state.retry_held = false;
@@ -174,15 +210,10 @@ impl StateOwner for Cloud {
                 if !online { state.stop(&mut fx); }
                 state.reconcile(&mut fx);
             }
-            CloudInput::Account { epoch, domain } if epoch == state.epoch && state.attached => {
-                state.retry_held = false;
-                state.available = true;
-                state.desired = domain;
-                state.reconcile(&mut fx);
-            }
-            CloudInput::AccountUnavailable { epoch } if epoch == state.epoch && state.attached => {
-                state.available = false;
-                state.stop(&mut fx);
+            CloudInput::Provider(provider) => { state.provider = Some(provider); state.account_inputs(&mut fx); }
+            CloudInput::Application { epoch, key } if epoch == state.epoch && state.attached && !state.standalone => {
+                state.application = key;
+                state.account_inputs(&mut fx);
             }
             CloudInput::InitialRead { generation } => {
                 if let Some(scope) = &state.active {

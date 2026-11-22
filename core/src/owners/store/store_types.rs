@@ -172,6 +172,7 @@ pub enum StoreOp {
     DiscardRestoreFailed { table: String, key: String },
     /// `encrypted_session`: `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
     Session { digest: Option<String>, sequence: Option<u64> },
+    CloudApplication { key: String, credential_digest: String },
     /// The intent of an operation with its optimistic `effects`.
     /// `created_at` = the time the owner that writes the intent gives the operation (P-OUT-59): the Store keeps it and reads no clock for it.
     Intent { op_id: u64, model: String, row_id: String, action: String, payload: String, effects: IntentEffects, origin: IntentOrigin, attempts: u32, cycle_id: u64, created_at: u64 },

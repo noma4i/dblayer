@@ -39,6 +39,7 @@ pub(super) struct LifecycleRunner {
     pub wiring: Arc<Wiring>,
     pub absent: Vec<Peer>,
     pub db: std::sync::Arc<Store>,
+    pub session_cloud: bool,
     /// The published value and the answers of one step wait for `step_done`: a caller that sees a new epoch finds every owner already in it.
     pub held_published: Option<crate::owners::contract::Published>,
     pub held_replies: Vec<(u64, Result<(), crate::owners::lifecycle::LifecycleError>)>,
@@ -66,6 +67,13 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
             LifecycleEffect::EpochStarted { epoch, identity, generation } => {
                 wiring.gate.open(epoch);
                 wiring.handle.start_epoch(epoch);
+                if let Some(identity) = identity.filter(|_| self.session_cloud) {
+                    let key = self.db.cloud_application_key(identity);
+                    match key {
+                        Ok(key) => wiring.to_cloud(crate::owners::cloud::CloudInput::Application { epoch, key }),
+                        Err(error) => wiring.fault(format!("cloud application key: {error}")),
+                    }
+                }
                 let started = crate::owners::contract::EpochStarted { epoch, identity, generation };
                 wiring.to_windows(WindowsInput::EpochStarted(started.clone()));
                 wiring.to_deliveries(DeliveryInput::EpochStarted(started.clone()));

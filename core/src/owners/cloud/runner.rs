@@ -1,6 +1,5 @@
 use std::sync::{Arc, Weak};
-use sha2::{Digest, Sha256};
-use crate::ffi::{CloudAccount, CloudApplication, CloudBackend, CloudConfig, CloudOutbound, CloudSendStatus, CloudSignals, CloudWireScope, DbError};
+use crate::ffi::{CloudConfig, CloudOutbound, CloudSendStatus, CloudSignals, CloudWireScope, DbError};
 use crate::owners::contract::Drained;
 use crate::owners::life::Wiring;
 use crate::owners::lifecycle::LifecycleInput;
@@ -26,36 +25,17 @@ pub(crate) struct CloudRunner {
     pub standalone: bool,
 }
 
-pub(crate) fn signals(config: &CloudConfig, wiring: Weak<Wiring>, db: Arc<crate::store::Store>, executor: tokio::runtime::Handle) -> Arc<CloudSignals> {
-    let backend = match &config.backend { CloudBackend::CloudKit => "cloudkit", CloudBackend::Drive => "drive" };
-    let namespace = match &config.application { CloudApplication::Standalone { namespace } => Some(namespace.clone()), CloudApplication::Session { .. } => None };
+pub(crate) fn signals(_config: &CloudConfig, wiring: Weak<Wiring>, db: Arc<crate::store::Store>, executor: tokio::runtime::Handle) -> Arc<CloudSignals> {
     let fetch_wiring = wiring.clone();
     Arc::new(CloudSignals::new(move |account| {
         let Some(wiring) = wiring.upgrade() else { return; };
-        let epoch = wiring.current_epoch();
-        let input = match account {
-            CloudAccount::Available { key } => match &namespace {
-                Some(namespace) => {
-                    let mut hash = Sha256::new();
-                    for part in [backend, key.as_str(), namespace.as_str()] {
-                        hash.update((part.len() as u64).to_be_bytes());
-                        hash.update(part.as_bytes());
-                    }
-                    let domain = hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
-                    CloudInput::Account { epoch, domain: Some(domain) }
-                }
-                None => CloudInput::AccountUnavailable { epoch },
-            },
-            CloudAccount::SignedOut => CloudInput::Account { epoch, domain: None },
-            CloudAccount::Unavailable => CloudInput::AccountUnavailable { epoch },
-        };
-        wiring.to_cloud(input);
+        wiring.to_cloud(CloudInput::Provider(account));
     }, move |fetched| {
         let (weak, db, executor) = (fetch_wiring.clone(), db.clone(), executor.clone());
         Box::pin(async move {
             let wiring = weak.upgrade().ok_or_else(|| DbError::Closed { detail: "database closed".into() })?;
             let launch = wiring.handle.launch();
-            let scope = CloudScope { epoch: fetched.scope.epoch, generation: fetched.scope.generation, domain: fetched.scope.domain };
+            let scope = CloudScope { epoch: fetched.scope.epoch, generation: fetched.scope.generation, domain: fetched.scope.domain, provider_fingerprint: fetched.scope.provider_fingerprint };
             let generation = scope.generation;
             let initial_complete = fetched.initial_complete;
             let result = crate::task::spawn_blocking_on(&executor, Some(launch), move || {
@@ -86,7 +66,7 @@ impl EffectRunner<Cloud> for CloudRunner {
                 });
                 let launch = wiring.handle.launch();
                 let generation = scope.generation;
-                let wire = CloudWireScope { epoch: scope.epoch, generation, domain: scope.domain.clone() };
+                let wire = CloudWireScope { epoch: scope.epoch, generation, domain: scope.domain.clone(), provider_fingerprint: scope.provider_fingerprint.clone() };
                 let gate = wiring.gate.clone();
                 let epoch = (!self.standalone).then_some(scope.epoch);
                 let start = crate::task::spawn_on(&self.executor, crate::runtime::counted(Some(launch), async move {
@@ -225,7 +205,7 @@ async fn send_pass(
         Ok((valid, outgoing, full, blocked))
     }).await.map_err(|error| DbError::Runtime { detail: error.to_string() })??;
     if outgoing.is_empty() { return Ok((full && blocked, false)); }
-    let wire = CloudWireScope { epoch: scope.epoch, generation: scope.generation, domain: scope.domain.clone() };
+    let wire = CloudWireScope { epoch: scope.epoch, generation: scope.generation, domain: scope.domain.clone(), provider_fingerprint: scope.provider_fingerprint.clone() };
     let results = crate::runtime::send_in_epoch(&gate, epoch, || async move {
         crate::lock::effect(|| port.send(wire, outgoing)).await.map_err(|error| crate::transport::TransportError::Internal(error.to_string()))
     }).await.map_err(DbError::from)?;

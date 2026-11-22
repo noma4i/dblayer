@@ -119,7 +119,6 @@ pub(crate) struct Wiring {
 }
 
 impl Wiring {
-    pub(crate) fn current_epoch(&self) -> Epoch { self.published.get().unwrap_or_else(Published::initial).epoch }
 
     pub(crate) fn to_cloud(&self, input: super::cloud::CloudInput) {
         if let Some(Addresses { cloud: Some(cloud), .. }) = self.addresses() { self.handle.post(cloud, EpochStamp::Control, input); }
@@ -411,14 +410,15 @@ impl Life {
         })); }
         let open_wait = wiring.outcomes.register(Epoch::MAX);
         wiring.open_id.set(open_wait.id().raw()).map_err(|_| LifeError::Storage("the wait of open is set twice".into()))?;
-        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new(), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some(), ports.cloud.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new(), held_read: None });
+        let session_cloud = ports.cloud.as_ref().is_some_and(|config| matches!(&config.application, crate::ffi::CloudApplication::Session { .. }));
+        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new(), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some(), ports.cloud.is_some()), db: ports.db.clone(), session_cloud, held_published: None, held_replies: Vec::new(), held_read: None });
         builder.on_executor_failed(lifecycle);
         let store = builder.reserve::<StoreWriter>();
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), held_replies: Vec::new(), transport: ports.transport.clone() });
         let cloud_domain = if ports.cloud.is_some() { ports.db.cloud_domain().map_err(|error| LifeError::Storage(error.to_string()))? } else { None };
         let cloud = ports.cloud.as_ref().map(|config| {
             let signals = super::cloud::runner::signals(config, Arc::downgrade(&wiring), ports.db.clone(), ports.executor.clone());
-            let address = builder.add::<super::cloud::Cloud>("cloud", super::cloud::CloudState::with_domain(0, cloud_domain), super::cloud::runner::CloudRunner { port: config.port.clone(), signals: signals.clone(), executor: ports.executor.clone(), wiring: Arc::downgrade(&wiring), active: None, db: ports.db.clone(), standalone: matches!(&config.application, crate::ffi::CloudApplication::Standalone { .. }) });
+            let address = builder.add::<super::cloud::Cloud>("cloud", super::cloud::CloudState::configured(0, cloud_domain, &config.backend, &config.application), super::cloud::runner::CloudRunner { port: config.port.clone(), signals: signals.clone(), executor: ports.executor.clone(), wiring: Arc::downgrade(&wiring), active: None, db: ports.db.clone(), standalone: matches!(&config.application, crate::ffi::CloudApplication::Standalone { .. }) });
             let weak = Arc::downgrade(&wiring);
             wiring.on_network(Peer::Cloud, move |event| {
                 if let (NetworkEvent::Online { online, .. }, Some(wiring)) = (event, weak.upgrade()) { wiring.to_cloud(super::cloud::CloudInput::Online(online)); }
@@ -428,7 +428,8 @@ impl Life {
         let calls = builder.add::<Calls>("calls", CallsState::new(0, None, &[]), calls_runner::CallsRunner::new(wiring.clone(), &ports));
         let session_address = session.as_ref().zip(restored).map(|((exchange, secret, seal), restored)| {
             let state = SessionState::with_operations(exchange.session_operations(), None);
-            let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), (exchange.clone(), secret.clone(), ports.db.clone()), seal.clone(), ports.executor.clone(), &restored));
+            let account_path = ports.cloud.as_ref().and_then(|config| match &config.application { crate::ffi::CloudApplication::Session { account_path } => Some(account_path.clone()), _ => None });
+            let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), (exchange.clone(), secret.clone(), ports.db.clone()), seal.clone(), ports.executor.clone(), &restored, account_path));
             (address, restored)
         });
         let read_outcome: super::write::outbox_executor::ReadOutcome = {

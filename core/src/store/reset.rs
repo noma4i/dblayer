@@ -361,6 +361,7 @@ pub(crate) enum RowOp {
     ReleasePendingOwner { request_id: u64 },
     /// `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
     PutSession { digest: Option<String>, sequence: Option<i64> },
+    PutCloudApplication { key: String, credential_digest: String },
     DiscardRestoreFailed { table: String, key: String },
 }
 
@@ -388,6 +389,7 @@ pub(crate) fn row_op(op: &crate::owners::store::StoreOp) -> Option<RowOp> {
         StoreOp::ReleasePendingOwner { request_id } => RowOp::ReleasePendingOwner { request_id: *request_id },
         StoreOp::DiscardRestoreFailed { table, key } => RowOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() },
         StoreOp::Session { digest, sequence } => RowOp::PutSession { digest: digest.clone(), sequence: sequence.map(|sequence| i64::try_from(sequence).unwrap_or(i64::MAX)) },
+        StoreOp::CloudApplication { key, credential_digest } => RowOp::PutCloudApplication { key: key.clone(), credential_digest: credential_digest.clone() },
         _ => return None,
     })
 }
@@ -407,6 +409,10 @@ pub(super) fn apply_row_ops(transaction: &Connection, ops: Vec<RowOp>) -> Result
             RowOp::RemoveAnswer { request_id } => session_state::remove_answer(transaction, request_id)?,
             RowOp::ReleasePendingOwner { request_id } => session_state::release_pending_owner(transaction, request_id)?,
             RowOp::DiscardRestoreFailed { table, key } => { transaction.execute(include_str!("sql/reset/apply_row_ops_delete_restore_failed.sql"), params![table, key])?; }
+            RowOp::PutCloudApplication { key, credential_digest } => {
+                crate::store::ddl::manifest_write(transaction, "cloud_application_key", &key)?;
+                crate::store::ddl::manifest_write(transaction, "cloud_application_credential", &credential_digest)?;
+            }
             RowOp::PutSession { digest, sequence } => {
                 let stored = session_state::session(transaction)?;
                 let digest = digest.or_else(|| stored.as_ref().map(|session| session.credential_digest.clone())).ok_or(rusqlite::Error::QueryReturnedNoRows)?;

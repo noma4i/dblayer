@@ -273,7 +273,8 @@ impl SessionState {
         let erase_session = server_ended || login_failed(&pending, &answer, server_ended);
         self.resume_landing_saved = self.restored_active == Some(pending.request_id) && (self.resume_waiters.is_empty() || pending.class == OperationClass::Login) && !server_ended;
         let resume_answer = self.resume_landing_saved.then(|| answer.clone());
-        fx.push(SessionEffect::CommitLanding { batch, request_id: pending.request_id, epoch: pending.epoch, digest: identity, sequence, answer: record, resume_answer, erase_session, end_journal: server_ended && pending.class != OperationClass::Login });
+        let login_body = (pending.class == OperationClass::Login && identity.is_some() && sequence.is_some() && !erase_session).then(|| answer.as_ref().ok().cloned()).flatten();
+        fx.push(SessionEffect::CommitLanding { batch, request_id: pending.request_id, epoch: pending.epoch, digest: identity, sequence, answer: record, resume_answer, login_body, erase_session, end_journal: server_ended && pending.class != OperationClass::Login });
         self.phase = SessionPhase::Landing { pending, batch, writing: true, answer, identity, sequence, server_ended };
     }
 
