@@ -1,5 +1,5 @@
 use std::sync::{Arc, Weak};
-use crate::ffi::{CloudConfig, CloudIssueCause, CloudOutbound, CloudSendStatus, CloudSignals, CloudWireScope, DbError};
+use crate::ffi::{CloudIssueCause, CloudOutbound, CloudSendStatus, CloudSignals, CloudWireScope, DbError};
 use crate::owners::contract::Drained;
 use crate::owners::life::Wiring;
 use crate::owners::lifecycle::LifecycleInput;
@@ -17,7 +17,7 @@ pub(crate) struct Active {
 
 pub(crate) struct CloudRunner {
     pub port: Arc<dyn crate::ffi::CloudPort>,
-    pub signals: Arc<CloudSignals>,
+    pub signals: Option<Arc<CloudSignals>>,
     pub executor: tokio::runtime::Handle,
     pub wiring: Weak<Wiring>,
     pub active: Option<Active>,
@@ -26,12 +26,12 @@ pub(crate) struct CloudRunner {
     pub status: tokio::sync::watch::Sender<crate::ffi::CloudStatus>,
 }
 
-pub(crate) fn signals(_config: &CloudConfig, wiring: Weak<Wiring>, db: Arc<crate::store::Store>, executor: tokio::runtime::Handle) -> Arc<CloudSignals> {
+pub(crate) fn signals(observation: u64, wiring: Weak<Wiring>, db: Arc<crate::store::Store>, executor: tokio::runtime::Handle) -> Arc<CloudSignals> {
     let fetch_wiring = wiring.clone();
     let relay_wiring = wiring.clone();
     Arc::new(CloudSignals::new(move |account| {
         let Some(wiring) = wiring.upgrade() else { return; };
-        wiring.to_cloud(CloudInput::Provider(account));
+        wiring.to_cloud(CloudInput::Provider { observation, account });
     }, move |fetched| {
         let (weak, db, executor) = (fetch_wiring.clone(), db.clone(), executor.clone());
         Box::pin(async move {
@@ -60,8 +60,42 @@ pub(crate) fn signals(_config: &CloudConfig, wiring: Weak<Wiring>, db: Arc<crate
 impl EffectRunner<Cloud> for CloudRunner {
     fn run(&mut self, _stamp: EpochStamp, effect: CloudEffect, back: &Back<Cloud>) {
         match effect {
+            CloudEffect::WriteEnabled(enabled) => {
+                let Some(wiring) = self.wiring.upgrade() else { return; };
+                let (db, back) = (self.db.clone(), back.clone());
+                drop(crate::task::spawn_blocking_on(&self.executor, Some(wiring.handle.launch()), move || {
+                    let result = db.write_cloud_enabled(enabled).map_err(|error| error.to_string());
+                    back.reply(EpochStamp::Control, CloudInput::PreferenceWritten(result));
+                }));
+            }
+            CloudEffect::Observe { observation } => {
+                let Some(wiring) = self.wiring.upgrade() else { return; };
+                let signals = signals(observation, self.wiring.clone(), self.db.clone(), self.executor.clone());
+                self.signals = Some(signals.clone());
+                let (port, back) = (self.port.clone(), back.clone());
+                drop(crate::task::spawn_on(&self.executor, crate::runtime::counted(Some(wiring.handle.launch()), async move {
+                    crate::lock::effect(|| port.observe(signals)).await;
+                    back.reply(EpochStamp::Control, CloudInput::Observed { observation });
+                })));
+            }
+            CloudEffect::Unobserve { observation } => {
+                let Some(wiring) = self.wiring.upgrade() else { return; };
+                self.signals = None;
+                let (port, back) = (self.port.clone(), back.clone());
+                drop(crate::task::spawn_on(&self.executor, crate::runtime::counted(Some(wiring.handle.launch()), async move {
+                    crate::lock::effect(|| port.unobserve()).await;
+                    back.reply(EpochStamp::Control, CloudInput::Unobserved { observation });
+                })));
+            }
+            CloudEffect::Reply { id, answer } => {
+                if let Some(wiring) = self.wiring.upgrade() { wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(id), crate::owners::life::LifeReply::CloudEnabled(answer)); }
+            }
+            CloudEffect::ReplyClosed { id } => {
+                if let Some(wiring) = self.wiring.upgrade() { wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(id), crate::owners::life::LifeReply::Closed); }
+            }
             CloudEffect::Start(scope) => {
-                let (port, signals, back, weak) = (self.port.clone(), self.signals.clone(), back.clone(), self.wiring.clone());
+                let Some(signals) = self.signals.clone() else { return; };
+                let (port, back, weak) = (self.port.clone(), back.clone(), self.wiring.clone());
                 let Some(wiring) = self.wiring.upgrade() else { return; };
                 let db = self.db.clone();
                 let prepare_scope = scope.clone();
@@ -158,12 +192,7 @@ impl EffectRunner<Cloud> for CloudRunner {
             }
             CloudEffect::Drained => {
                 let Some(wiring) = self.wiring.upgrade() else { return; };
-                let port = self.port.clone();
-                let launch = wiring.handle.launch();
-                drop(crate::task::spawn_on(&self.executor, crate::runtime::counted(Some(launch), async move {
-                    crate::lock::effect(|| port.unobserve()).await;
-                    wiring.to_lifecycle(LifecycleInput::Drained(Drained { owner: "cloud" }));
-                })));
+                wiring.to_lifecycle(LifecycleInput::Drained(Drained { owner: "cloud" }));
             }
             CloudEffect::Erase { domain, token, epoch } => {
                 let Some(wiring) = self.wiring.upgrade() else { return; };

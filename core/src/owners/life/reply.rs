@@ -3,6 +3,7 @@ use super::*;
 /// The result of a platform call, the payload of `Outcomes`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LifeReply {
+    CloudEnabled(Result<bool, String>),
     Life(Result<(), LifecycleError>),
     Online { closed: bool },
     Call(CallAnswer),

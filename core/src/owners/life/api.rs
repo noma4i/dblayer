@@ -14,6 +14,15 @@ use crate::owners::write::outbox::{Fault, OutboxAnswer, OutboxInput};
 use crate::runtime::{Epoch, EpochStamp, OutcomeId, Waiter};
 
 impl Life {
+    pub(crate) fn set_cloud_enabled(&self, enabled: bool) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) || self.published().closed { return self.settled(LifeReply::Closed); }
+        if self.wiring.addresses().is_none_or(|addresses| addresses.cloud.is_none()) {
+            return self.settled(LifeReply::CloudEnabled(Err("cloud is not configured".into())));
+        }
+        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+        self.wiring.to_cloud(super::super::cloud::CloudInput::SetEnabled { enabled, reply: waiter.id().raw() });
+        waiter
+    }
     /// `set_online`: Network answers after its `step`.
     pub fn set_online(&self, online: bool, stamp: u64) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }

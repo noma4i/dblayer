@@ -349,7 +349,6 @@ type NetworkSink = Arc<dyn Fn(NetworkEvent) + Send + Sync>;
 pub struct Life {
     wiring: Arc<Wiring>,
     cloud_status: Option<tokio::sync::watch::Receiver<crate::ffi::CloudStatus>>,
-    cloud_observer: Option<(Arc<dyn crate::ffi::CloudPort>, Arc<crate::ffi::CloudSignals>)>,
     operations: OperationLookup,
     runtime: Runtime,
     shut: AtomicBool,
@@ -417,18 +416,20 @@ impl Life {
         let store = builder.reserve::<StoreWriter>();
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), held_replies: Vec::new(), transport: ports.transport.clone() });
         let cloud_domain = if ports.cloud.is_some() { ports.db.cloud_domain().map_err(|error| LifeError::Storage(error.to_string()))? } else { None };
+        let cloud_enabled = if ports.cloud.is_some() { ports.db.stored_cloud_enabled().map_err(|error| LifeError::Storage(error.to_string()))?.unwrap_or(true) } else { false };
         let (cloud_sender, cloud_status) = if ports.cloud.is_some() {
-            let (sender, receiver) = tokio::sync::watch::channel(crate::ffi::CloudStatus { phase: crate::ffi::CloudPhase::WaitingForAccount, issues: Vec::new() });
+            let (sender, receiver) = tokio::sync::watch::channel(crate::ffi::CloudStatus { phase: if cloud_enabled { crate::ffi::CloudPhase::WaitingForAccount } else { crate::ffi::CloudPhase::Disabled }, issues: Vec::new() });
             (Some(sender), Some(receiver))
         } else { (None, None) };
         let cloud = ports.cloud.as_ref().zip(cloud_sender).map(|(config, status)| {
-            let signals = super::cloud::runner::signals(config, Arc::downgrade(&wiring), ports.db.clone(), ports.executor.clone());
-            let address = builder.add::<super::cloud::Cloud>("cloud", super::cloud::CloudState::configured(0, cloud_domain, &config.backend, &config.application), super::cloud::runner::CloudRunner { port: config.port.clone(), signals: signals.clone(), executor: ports.executor.clone(), wiring: Arc::downgrade(&wiring), active: None, db: ports.db.clone(), standalone: matches!(&config.application, crate::ffi::CloudApplication::Standalone { .. }), status });
+            let mut state = super::cloud::CloudState::configured(0, cloud_domain, &config.backend, &config.application);
+            state.initial_enabled(cloud_enabled);
+            let address = builder.add::<super::cloud::Cloud>("cloud", state, super::cloud::runner::CloudRunner { port: config.port.clone(), signals: None, executor: ports.executor.clone(), wiring: Arc::downgrade(&wiring), active: None, db: ports.db.clone(), standalone: matches!(&config.application, crate::ffi::CloudApplication::Standalone { .. }), status });
             let weak = Arc::downgrade(&wiring);
             wiring.on_network(Peer::Cloud, move |event| {
                 if let (NetworkEvent::Online { online, .. }, Some(wiring)) = (event, weak.upgrade()) { wiring.to_cloud(super::cloud::CloudInput::Online(online)); }
             });
-            (address, signals)
+            address
         });
         let calls = builder.add::<Calls>("calls", CallsState::new(0, None, &[]), calls_runner::CallsRunner::new(wiring.clone(), &ports));
         let session_address = session.as_ref().zip(restored).map(|((exchange, secret, seal), restored)| {
@@ -556,7 +557,7 @@ impl Life {
             });
         }
         let read = read::add(&mut builder, &wiring, &ports, store);
-        wiring.addresses.set(Addresses { cloud: cloud.as_ref().map(|(address, _)| *address), lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, local_writes, transfer: transfer.map(|(address, _)| address), rounds: transfer.map(|(_, rounds)| rounds), windows: None, deliveries: None, feed: None }.with_read(&read)).map_err(|_| LifeError::Storage("the addresses are set twice".into()))?;
+        wiring.addresses.set(Addresses { cloud, lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, local_writes, transfer: transfer.map(|(address, _)| address), rounds: transfer.map(|(_, rounds)| rounds), windows: None, deliveries: None, feed: None }.with_read(&read)).map_err(|_| LifeError::Storage("the addresses are set twice".into()))?;
         let session_open = session_address.map(|(_, restored)| SessionInput::Open { credential: restored.credential, pending: restored.pending, dropped_pending: restored.dropped_pending, secret: restored.secret });
         builder.install(store, "store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), secret: ports.secret.clone(), exchange: ports.exchange.clone(), executor: ports.executor.clone(), restore_error, session_open, session_cloud });
         let runtime = builder.start().map_err(|error| LifeError::Storage(error.to_string()))?;
@@ -572,13 +573,15 @@ impl Life {
             Err((error, corrupt)) => return Err(if corrupt { LifeError::CorruptManifest(error) } else { LifeError::Storage(error) }),
         };
         answer.map_err(|error| LifeError::Storage(format!("the first publication was not saved: {error:?}")))?;
-        let cloud_observer = ports.cloud.as_ref().zip(cloud).map(|(config, (_, signals))| (config.port.clone(), signals));
         let alive = runtime.alive();
-        Ok(Self { wiring, cloud_status, cloud_observer, operations: ports.operations.clone(), runtime, shut: AtomicBool::new(false), with_session: session.is_some(), graphql_path: session.as_ref().map(|session| session.0.graphql_path().to_string()), alive, #[cfg(test)] rounds_needed })
+        Ok(Self { wiring, cloud_status, operations: ports.operations.clone(), runtime, shut: AtomicBool::new(false), with_session: session.is_some(), graphql_path: session.as_ref().map(|session| session.0.graphql_path().to_string()), alive, #[cfg(test)] rounds_needed })
     }
 
     pub(crate) async fn observe_cloud(&self) {
-        if let Some((port, signals)) = &self.cloud_observer { crate::lock::effect(|| port.observe(signals.clone())).await; }
+        if self.cloud_status.is_none() { return; }
+        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+        self.wiring.to_cloud(super::cloud::CloudInput::Initialize { reply: waiter.id().raw() });
+        let _ = waiter.wait().await;
     }
 
     pub(crate) fn cloud_status(&self) -> Option<tokio::sync::watch::Receiver<crate::ffi::CloudStatus>> { self.cloud_status.clone() }

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use sha2::{Digest, Sha256};
 pub(crate) mod runner;
 
@@ -17,7 +17,12 @@ pub(crate) enum CloudInput {
     EpochStarted(Epoch),
     EpochEnded(Epoch),
     Online(bool),
-    Provider(crate::ffi::CloudAccount),
+    Initialize { reply: u64 },
+    SetEnabled { enabled: bool, reply: u64 },
+    PreferenceWritten(Result<(), String>),
+    Observed { observation: u64 },
+    Unobserved { observation: u64 },
+    Provider { observation: u64, account: crate::ffi::CloudAccount },
     Application { epoch: Epoch, key: Option<String> },
     InitialRead { generation: u64 },
     BootstrapDone { generation: u64 },
@@ -36,6 +41,11 @@ pub(crate) enum CloudInput {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum CloudEffect {
+    WriteEnabled(bool),
+    Observe { observation: u64 },
+    Unobserve { observation: u64 },
+    Reply { id: u64, answer: Result<bool, String> },
+    ReplyClosed { id: u64 },
     Start(CloudScope),
     Stop { generation: u64 },
     Erase { domain: String, token: u64, epoch: Epoch },
@@ -77,16 +87,24 @@ pub(crate) struct CloudState {
     provider_fingerprint: String,
     issues: Vec<crate::ffi::CloudIssue>,
     issues_revision: u64,
+    enabled: bool,
+    initialized: bool,
+    observation: Option<u64>,
+    observing: bool,
+    unobserving: bool,
+    settings: VecDeque<(bool, u64, bool)>,
+    setting: Option<(bool, u64, bool)>,
+    writing: bool,
 }
 
 impl CloudState {
     pub(crate) fn new(epoch: Epoch) -> Self {
-        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, bootstrapping: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, exhausted: false, closed: false, retry_held: false, sending: false, wake: false, backoff: false, attempts: 0, relay_attempts: 0, relay_token: None, backend: None, provider: None, application: None, standalone: false, provider_fingerprint: String::new(), issues: Vec::new(), issues_revision: 0 }
+        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, bootstrapping: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, exhausted: false, closed: false, retry_held: false, sending: false, wake: false, backoff: false, attempts: 0, relay_attempts: 0, relay_token: None, backend: None, provider: None, application: None, standalone: false, provider_fingerprint: String::new(), issues: Vec::new(), issues_revision: 0, enabled: true, initialized: false, observation: None, observing: false, unobserving: false, settings: VecDeque::new(), setting: None, writing: false }
     }
 
     fn phase(&self) -> crate::ffi::CloudPhase {
         use crate::ffi::CloudPhase;
-        if self.closed { CloudPhase::Closed } else if self.exhausted || self.retry_held { CloudPhase::Failed } else if !self.attached || !self.available || self.desired.is_none() { CloudPhase::WaitingForAccount } else if !self.online { CloudPhase::Offline } else if self.ready { CloudPhase::Ready } else { CloudPhase::Reading }
+        if self.closed { CloudPhase::Closed } else if !self.enabled { CloudPhase::Disabled } else if self.exhausted || self.retry_held { CloudPhase::Failed } else if !self.attached || !self.available || self.desired.is_none() { CloudPhase::WaitingForAccount } else if !self.online { CloudPhase::Offline } else if self.ready { CloudPhase::Ready } else { CloudPhase::Reading }
     }
 
     pub(crate) fn with_domain(epoch: Epoch, domain: Option<String>) -> Self {
@@ -103,6 +121,53 @@ impl CloudState {
             state.standalone = true;
         } else { state.attached = false; }
         state
+    }
+
+    pub(crate) fn initial_enabled(&mut self, enabled: bool) { self.enabled = enabled; }
+
+    fn settings_next(&mut self, fx: &mut Effects<Cloud>) {
+        if self.closed || self.setting.is_some() { return; }
+        let Some((enabled, reply, initialize)) = self.settings.pop_front() else { return; };
+        self.setting = Some((enabled, reply, initialize));
+        if !initialize && enabled != self.enabled {
+            self.writing = true;
+            fx.push(Effect::Run(CloudEffect::WriteEnabled(enabled)));
+        } else { self.apply_setting(fx); }
+    }
+
+    fn apply_setting(&mut self, fx: &mut Effects<Cloud>) {
+        let Some((enabled, _, _)) = self.setting else { return; };
+        self.enabled = enabled;
+        self.initialized = true;
+        if enabled && self.observation.is_none() {
+            let Some(observation) = self.token(fx) else { return; };
+            self.observation = Some(observation);
+            self.observing = true;
+            fx.push(Effect::Run(CloudEffect::Observe { observation }));
+        } else if !enabled {
+            self.stop(fx);
+            self.provider = None;
+            self.available = false;
+            self.detach_observer(fx);
+        }
+        self.finish_setting(fx);
+    }
+
+    fn detach_observer(&mut self, fx: &mut Effects<Cloud>) {
+        if !self.stopping.is_empty() || self.observing || self.unobserving { return; }
+        if let Some(observation) = self.observation {
+            self.unobserving = true;
+            fx.push(Effect::Run(CloudEffect::Unobserve { observation }));
+        }
+    }
+
+    fn finish_setting(&mut self, fx: &mut Effects<Cloud>) {
+        if self.writing || self.observing || self.unobserving || !self.stopping.is_empty() || self.erasing.is_some() { return; }
+        if let Some((enabled, id, _)) = self.setting.take() {
+            fx.push(Effect::Run(CloudEffect::Reply { id, answer: Ok(enabled) }));
+        }
+        self.reconcile(fx);
+        self.settings_next(fx);
     }
 
     fn account_inputs(&mut self, fx: &mut Effects<Cloud>) {
@@ -160,7 +225,7 @@ impl CloudState {
     }
 
     fn reconcile(&mut self, fx: &mut Effects<Cloud>) {
-        if self.exhausted || self.erasing.is_some() || !self.attached || !self.available { return; }
+        if !self.enabled || !self.initialized || self.observing || self.unobserving || self.exhausted || self.erasing.is_some() || !self.attached || !self.available { return; }
         if self.domain != self.desired {
             self.stop(fx);
             if !self.stopping.is_empty() || self.retry_held { return; }
@@ -214,15 +279,51 @@ impl Cloud {
         let mut fx = Vec::new();
         if state.closed {
             match input {
-                CloudInput::Stopped { generation } if state.stopping.remove(&generation) => {}
+                CloudInput::Stopped { generation } if state.stopping.remove(&generation) => { state.detach_observer(&mut fx); }
                 CloudInput::Erased { token } | CloudInput::EraseFailed { token } if state.erasing == Some(token) => { state.erasing = None; }
+                CloudInput::PreferenceWritten(_) => { state.writing = false; }
+                CloudInput::Observed { observation } if state.observation == Some(observation) => {
+                    state.observing = false;
+                    state.detach_observer(&mut fx);
+                }
+                CloudInput::Unobserved { observation } if state.observation == Some(observation) => {
+                    state.unobserving = false;
+                    state.observation = None;
+                }
                 _ => return fx,
             }
-            if state.stopping.is_empty() && state.erasing.is_none() { fx.push(Effect::Run(CloudEffect::Drained)); }
+            if state.stopping.is_empty() && state.erasing.is_none() && !state.writing && state.observation.is_none() { fx.push(Effect::Run(CloudEffect::Drained)); }
             return fx;
         }
         if state.exhausted && !matches!(input, CloudInput::Close | CloudInput::Stopped { .. }) { return fx; }
         match input {
+            CloudInput::Initialize { reply } => {
+                state.settings.push_back((state.enabled, reply, true));
+                state.settings_next(&mut fx);
+            }
+            CloudInput::SetEnabled { enabled, reply } => {
+                state.settings.push_back((enabled, reply, false));
+                state.settings_next(&mut fx);
+            }
+            CloudInput::PreferenceWritten(result) if state.writing => {
+                state.writing = false;
+                match result {
+                    Ok(()) => state.apply_setting(&mut fx),
+                    Err(error) => {
+                        if let Some((_, id, _)) = state.setting.take() { fx.push(Effect::Run(CloudEffect::Reply { id, answer: Err(error) })); }
+                        state.settings_next(&mut fx);
+                    }
+                }
+            }
+            CloudInput::Observed { observation } if state.observation == Some(observation) && state.observing => {
+                state.observing = false;
+                state.finish_setting(&mut fx);
+            }
+            CloudInput::Unobserved { observation } if state.observation == Some(observation) && state.unobserving => {
+                state.unobserving = false;
+                state.observation = None;
+                state.finish_setting(&mut fx);
+            }
             CloudInput::EpochStarted(epoch) if epoch > state.epoch => {
                 state.stop(&mut fx);
                 state.epoch = epoch;
@@ -245,7 +346,7 @@ impl Cloud {
                 if !online { state.stop(&mut fx); }
                 state.reconcile(&mut fx);
             }
-            CloudInput::Provider(provider) => { state.provider = Some(provider); state.account_inputs(&mut fx); }
+            CloudInput::Provider { observation, account } if state.enabled && state.observation == Some(observation) && !state.unobserving => { state.provider = Some(account); state.account_inputs(&mut fx); }
             CloudInput::Application { epoch, key } if epoch == state.epoch && state.attached && !state.standalone => {
                 state.application = key;
                 state.account_inputs(&mut fx);
@@ -271,14 +372,18 @@ impl Cloud {
             CloudInput::Erased { token } if state.erasing == Some(token) => {
                 state.erasing = None;
                 state.domain = None;
-                state.reconcile(&mut fx);
+                state.finish_setting(&mut fx);
             }
             CloudInput::EraseFailed { token } if state.erasing == Some(token) => {
                 state.erasing = None;
                 state.retry_held = true;
+                state.finish_setting(&mut fx);
             }
             CloudInput::Stopped { generation } => {
-                if state.stopping.remove(&generation) { state.reconcile(&mut fx); }
+                if state.stopping.remove(&generation) {
+                    if !state.enabled { state.detach_observer(&mut fx); }
+                    state.finish_setting(&mut fx);
+                }
             }
             CloudInput::StartFailed { generation } if state.active.as_ref().is_some_and(|scope| scope.generation == generation) => {
                 state.retry_held = true;
@@ -325,7 +430,10 @@ impl Cloud {
             CloudInput::Close => {
                 state.closed = true;
                 state.stop(&mut fx);
-                if state.stopping.is_empty() && state.erasing.is_none() { fx.push(Effect::Run(CloudEffect::Drained)); }
+                if let Some((_, id, _)) = state.setting.take() { fx.push(Effect::Run(CloudEffect::ReplyClosed { id })); }
+                for (_, id, _) in state.settings.drain(..) { fx.push(Effect::Run(CloudEffect::ReplyClosed { id })); }
+                state.detach_observer(&mut fx);
+                if state.stopping.is_empty() && state.erasing.is_none() && !state.writing && state.observation.is_none() { fx.push(Effect::Run(CloudEffect::Drained)); }
             }
             _ => {}
         }
