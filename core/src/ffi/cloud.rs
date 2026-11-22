@@ -2,7 +2,44 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use async_trait::async_trait;
-use super::DbError;
+use super::{Database, DbError};
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum CloudPhase { Disabled, WaitingForAccount, Offline, Reading, Ready, Failed, Closed }
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum CloudIssueCause { TooLarge, Rejected }
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct CloudIssue { pub model: String, pub row_id: String, pub cause: CloudIssueCause }
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct CloudStatus { pub phase: CloudPhase, pub issues: Vec<CloudIssue> }
+
+#[derive(uniffi::Object)]
+pub struct CloudSubscription(super::reading::Reader<CloudStatus>, std::sync::atomic::AtomicBool);
+
+#[uniffi::export]
+impl CloudSubscription {
+    pub async fn next(&self) -> Option<CloudStatus> {
+        use std::sync::atomic::Ordering;
+        if self.1.load(Ordering::Acquire) { return None; }
+        let value = self.0.next().await?;
+        if value.phase == CloudPhase::Closed { self.1.store(true, Ordering::Release); }
+        Some(value)
+    }
+    pub fn cancel(&self) { self.0.cancel(); }
+}
+
+#[uniffi::export]
+impl Database {
+    pub fn cloud_status(&self) -> CloudStatus {
+        self.life.cloud_status().map(|value| value.borrow().clone()).unwrap_or(CloudStatus { phase: CloudPhase::Disabled, issues: Vec::new() })
+    }
+    pub fn cloud_changes(&self) -> Option<Arc<CloudSubscription>> {
+        self.life.cloud_status().map(|value| Arc::new(CloudSubscription(super::reading::Reader::of(value), std::sync::atomic::AtomicBool::new(false))))
+    }
+}
 
 #[derive(uniffi::Record)]
 pub struct CloudConfig {

@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{CommitResult, ModelInfo, Reader, RowChangeKind};
 pub(super) mod project;
+mod status;
 
 #[derive(Debug)]
 pub(crate) struct PendingCloudRecord {

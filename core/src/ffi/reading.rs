@@ -15,11 +15,12 @@ impl<T: Clone + Send + Sync + 'static> Reader<T> {
         poll_then_wait(|| {
             let mut reading = crate::lock::lock(&self.reading);
             if *self.stopped.borrow() { return std::task::Poll::Ready(None); }
-            match (std::mem::take(&mut reading.first), reading.changes.has_changed()) {
-                (_, Err(_)) => std::task::Poll::Ready(None),
-                (true, _) | (_, Ok(true)) => std::task::Poll::Ready(Some(reading.changes.borrow_and_update().clone())),
-                _ => std::task::Poll::Pending,
-            }
+            let closed = reading.changes.has_changed().is_err();
+            let first = std::mem::take(&mut reading.first);
+            let value = reading.changes.borrow_and_update();
+            if first || value.has_changed() { std::task::Poll::Ready(Some(value.clone())) }
+            else if closed { std::task::Poll::Ready(None) }
+            else { std::task::Poll::Pending }
         }, || {
             let (mut changes, mut stopped) = (crate::lock::lock(&self.reading).changes.clone(), self.stopped.subscribe());
             Box::pin(super::database::on_core(super::database::Scope::root(), async move {

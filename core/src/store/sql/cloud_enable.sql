@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS cloud_bootstrap (
     done INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS cloud_record_pending ON cloud_record(domain, version, model, row_id) WHERE pending = 1;
+CREATE INDEX IF NOT EXISTS cloud_record_issues ON cloud_record(domain, model, row_id) WHERE pending IN (2, 3);
 CREATE TABLE IF NOT EXISTS cloud_clock (
     domain TEXT PRIMARY KEY NOT NULL,
     millis BLOB NOT NULL CHECK(length(millis) = 8),

@@ -423,7 +423,7 @@ for path in generated_tool:
         if suppressed and f"z29:{path.relative_to(root)}:{suppressed.group(1)}" not in allowed:
             findings.append(f"Z29 a lint is fixed at its cause, not suppressed (gen): {path.relative_to(root)}:{number}: {suppressed.group(0)}")
 
-wait_inputs = {("ffi/network_status.rs", "next"), ("ffi/encrypted.rs", "next")}
+wait_inputs = {("ffi/network_status.rs", "next"), ("ffi/encrypted.rs", "next"), ("ffi/cloud.rs", "next")}
 if "on_core(" not in (source / "ffi" / "reading.rs").read_text():
     findings.append("Z60 Reader::next waits through on_core: core/src/ffi/reading.rs")
 for path in files:

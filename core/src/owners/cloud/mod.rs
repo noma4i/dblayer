@@ -27,6 +27,7 @@ pub(crate) enum CloudInput {
     StartFailed { generation: u64 },
     Wake,
     SendDone { generation: u64, more: bool, retry: bool },
+    Issues { generation: u64, issues: Vec<crate::ffi::CloudIssue> },
     Retry { generation: u64 },
     Relay { scope: CloudScope, event: crate::ffi::CloudRelayEvent },
     RelayDue { generation: u64, token: u64 },
@@ -43,6 +44,7 @@ pub(crate) enum CloudEffect {
     Send(CloudScope),
     TokenExhausted,
     Drained,
+    Publish(crate::ffi::CloudStatus),
 }
 
 #[derive(Debug)]
@@ -73,11 +75,18 @@ pub(crate) struct CloudState {
     application: Option<String>,
     standalone: bool,
     provider_fingerprint: String,
+    issues: Vec<crate::ffi::CloudIssue>,
+    issues_revision: u64,
 }
 
 impl CloudState {
     pub(crate) fn new(epoch: Epoch) -> Self {
-        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, bootstrapping: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, exhausted: false, closed: false, retry_held: false, sending: false, wake: false, backoff: false, attempts: 0, relay_attempts: 0, relay_token: None, backend: None, provider: None, application: None, standalone: false, provider_fingerprint: String::new() }
+        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, bootstrapping: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, exhausted: false, closed: false, retry_held: false, sending: false, wake: false, backoff: false, attempts: 0, relay_attempts: 0, relay_token: None, backend: None, provider: None, application: None, standalone: false, provider_fingerprint: String::new(), issues: Vec::new(), issues_revision: 0 }
+    }
+
+    fn phase(&self) -> crate::ffi::CloudPhase {
+        use crate::ffi::CloudPhase;
+        if self.closed { CloudPhase::Closed } else if self.exhausted || self.retry_held { CloudPhase::Failed } else if !self.attached || !self.available || self.desired.is_none() { CloudPhase::WaitingForAccount } else if !self.online { CloudPhase::Offline } else if self.ready { CloudPhase::Ready } else { CloudPhase::Reading }
     }
 
     pub(crate) fn with_domain(epoch: Epoch, domain: Option<String>) -> Self {
@@ -125,6 +134,7 @@ impl CloudState {
 
     fn stop(&mut self, fx: &mut Effects<Cloud>) {
         if let Some(scope) = self.active.take() {
+            if !self.issues.is_empty() { self.issues.clear(); self.issues_revision = self.issues_revision.wrapping_add(1); }
             self.ready = false;
             self.bootstrapping = false;
             self.sending = false;
@@ -182,6 +192,25 @@ impl StateOwner for Cloud {
     type Effect = CloudEffect;
 
     fn step(state: &mut CloudState, input: CloudInput, _now: Time) -> Effects<Self> {
+        let phase = state.phase();
+        let issues_revision = state.issues_revision;
+        let mut fx = Self::transition(state, input);
+        let next = state.phase();
+        if phase != next || issues_revision != state.issues_revision {
+            let closed = next == crate::ffi::CloudPhase::Closed;
+            let publish = Effect::Run(CloudEffect::Publish(crate::ffi::CloudStatus { phase: next, issues: state.issues.clone() }));
+            if closed { fx.insert(0, publish); } else { fx.push(publish); }
+        }
+        fx
+    }
+
+    fn epoch_started(epoch: Epoch) -> Option<Self::Input> { Some(CloudInput::EpochStarted(epoch)) }
+    fn epoch_ended(epoch: Epoch, _cause: Cause) -> Self::Input { CloudInput::EpochEnded(epoch) }
+    fn closing() -> Self::Input { CloudInput::Close }
+}
+
+impl Cloud {
+    fn transition(state: &mut CloudState, input: CloudInput) -> Effects<Self> {
         let mut fx = Vec::new();
         if state.closed {
             match input {
@@ -256,6 +285,9 @@ impl StateOwner for Cloud {
                 state.stop(&mut fx);
             }
             CloudInput::Wake => { state.wake = true; state.start_pass(&mut fx); }
+            CloudInput::Issues { generation, issues } if state.active.as_ref().is_some_and(|scope| scope.generation == generation) => {
+                if state.issues != issues { state.issues = issues; state.issues_revision = state.issues_revision.wrapping_add(1); }
+            }
             CloudInput::SendDone { generation, more, retry } if state.sending && state.active.as_ref().is_some_and(|scope| scope.generation == generation) => {
                 state.sending = false;
                 if retry {
@@ -299,8 +331,4 @@ impl StateOwner for Cloud {
         }
         fx
     }
-
-    fn epoch_started(epoch: Epoch) -> Option<Self::Input> { Some(CloudInput::EpochStarted(epoch)) }
-    fn epoch_ended(epoch: Epoch, _cause: Cause) -> Self::Input { CloudInput::EpochEnded(epoch) }
-    fn closing() -> Self::Input { CloudInput::Close }
 }

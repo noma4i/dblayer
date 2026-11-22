@@ -83,7 +83,7 @@ mod fixtures;
 #[cfg(test)]
 pub(crate) use fixtures::{EncryptedReply, FakeHttp, FakeTransport, TransportRequest, FAKE_ENDPOINT};
 pub use cable::{PlatformSocket, CableEvents, CableOutcome};
-pub use cloud::{CloudAccount, CloudApplication, CloudBackend, CloudConfig, CloudFetched, CloudInbound, CloudOutbound, CloudPort, CloudRelayEvent, CloudSendResult, CloudSendStatus, CloudSignals, CloudWireScope};
+pub use cloud::{CloudAccount, CloudApplication, CloudBackend, CloudConfig, CloudFetched, CloudInbound, CloudOutbound, CloudPort, CloudRelayEvent, CloudSendResult, CloudSendStatus, CloudSignals, CloudWireScope, CloudPhase, CloudIssueCause, CloudIssue, CloudStatus, CloudSubscription};
 pub use crate::transport::{HttpRequest, RawFailure, RawOutcome};
 pub use transport::{ByteProgress, OnlineSink, PlatformObserver, PutTarget, Transport};
 

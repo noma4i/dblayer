@@ -23,6 +23,7 @@ pub(crate) struct CloudRunner {
     pub active: Option<Active>,
     pub db: Arc<crate::store::Store>,
     pub standalone: bool,
+    pub status: tokio::sync::watch::Sender<crate::ffi::CloudStatus>,
 }
 
 pub(crate) fn signals(_config: &CloudConfig, wiring: Weak<Wiring>, db: Arc<crate::store::Store>, executor: tokio::runtime::Handle) -> Arc<CloudSignals> {
@@ -122,7 +123,7 @@ impl EffectRunner<Cloud> for CloudRunner {
                 let launch = counted.launch();
                 active.send = Some(crate::task::spawn_on(&self.executor, crate::runtime::counted(Some(launch), async move {
                     let generation = scope.generation;
-                    let result = send_pass(db, port, scope, gate, epoch, executor, counted).await;
+                    let result = send_pass(db, port, scope, gate, epoch, executor, counted, back.clone()).await;
                     let (more, retry) = match result {
                         Ok(result) => result,
                         Err(error) => {
@@ -182,17 +183,19 @@ impl EffectRunner<Cloud> for CloudRunner {
                 if let Some(wiring) = self.wiring.upgrade() { wiring.fault("cloud generation exhausted".into()); }
             }
             CloudEffect::Ready(_) => {}
+            CloudEffect::Publish(status) => { crate::lock::effect(|| self.status.send_replace(status)); }
         }
     }
 }
 
 async fn send_pass(
     db: Arc<crate::store::Store>, port: Arc<dyn crate::ffi::CloudPort>, scope: CloudScope,
-    gate: Arc<crate::runtime::EpochGate>, epoch: Option<u64>, executor: tokio::runtime::Handle, counted: crate::runtime::Handle,
+    gate: Arc<crate::runtime::EpochGate>, epoch: Option<u64>, executor: tokio::runtime::Handle, counted: crate::runtime::Handle, back: Back<Cloud>,
 ) -> Result<(bool, bool), DbError> {
+    let generation = scope.generation;
     let read_db = db.clone();
     let read_scope = scope.clone();
-    let (valid, outgoing, full, blocked) = crate::task::spawn_blocking_on(&executor, Some(counted.launch()), move || -> Result<_, DbError> {
+    let (valid, outgoing, full, blocked, issues) = crate::task::spawn_blocking_on(&executor, Some(counted.launch()), move || -> Result<_, DbError> {
         let records = read_db.pending_cloud_records(&read_scope, 16)?;
         let full = records.len() == 16;
         let mut outgoing = Vec::new();
@@ -206,9 +209,10 @@ async fn send_pass(
             }
             valid.push(record);
         }
-        read_db.cloud_resume(&read_scope)?;
-        Ok((valid, outgoing, full, blocked))
+        let issues = read_db.cloud_issues(&read_scope)?;
+        Ok((valid, outgoing, full, blocked, issues))
     }).await.map_err(|error| DbError::Runtime { detail: error.to_string() })??;
+    back.reply(EpochStamp::Control, CloudInput::Issues { generation: scope.generation, issues });
     if outgoing.is_empty() { return Ok((full && blocked, false)); }
     let wire = CloudWireScope { epoch: scope.epoch, generation: scope.generation, domain: scope.domain.clone(), provider_fingerprint: scope.provider_fingerprint.clone() };
     let results = crate::runtime::send_in_epoch(&gate, epoch, || async move {
@@ -223,7 +227,7 @@ async fn send_pass(
         if matching.next().is_some() { retry = true; continue; }
         match &result.status {
             CloudSendStatus::Saved { system_fields } => { db.confirm_cloud_send(&scope, &record, system_fields.as_deref())?; progress = true; }
-            CloudSendStatus::Failed { .. } => { db.block_cloud_send(&scope, &record)?; progress = true; }
+            CloudSendStatus::Failed { .. } => { db.reject_cloud_send(&scope, &record)?; progress = true; }
             CloudSendStatus::Retryable { .. } => retry = true,
             CloudSendStatus::Conflict { record: incoming } => {
                 if incoming.key != record.key { retry = true; continue; }
@@ -233,6 +237,10 @@ async fn send_pass(
             }
         }
       }
-      Ok((full && progress, retry))
-    }).await.map_err(|error| DbError::Runtime { detail: error.to_string() })?
+      let issues = db.cloud_issues(&scope)?;
+      Ok((full && progress, retry, issues))
+    }).await.map_err(|error| DbError::Runtime { detail: error.to_string() })?.map(|(more, retry, issues)| {
+        back.reply(EpochStamp::Control, CloudInput::Issues { generation, issues });
+        (more, retry)
+    })
 }
