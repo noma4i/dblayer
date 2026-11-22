@@ -53,6 +53,7 @@ fn inv_open_01_a_file_that_does_not_fit_this_build_is_recreated_once() {
             |path| {
                 let store = Store::open(path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
                 store.boot(&[messages_spec()]).unwrap();
+                store.write_cloud_enabled(false).unwrap();
                 exec(&store, "CREATE TABLE marker (value TEXT); UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
             },
             RecreateReason::CoreFormat,
@@ -66,6 +67,8 @@ fn inv_open_01_a_file_that_does_not_fit_this_build_is_recreated_once() {
         let report = store.boot(&[messages_spec()]).unwrap();
         assert_eq!(report.recreated, Some(reason), "{case}");
         assert!(!store.table_exists("marker").unwrap(), "{case}: old content");
+        let expected_preference = (reason == RecreateReason::CoreFormat).then_some(false);
+        assert_eq!(store.stored_cloud_enabled().unwrap(), expected_preference, "{case}: cloud preference");
         drop(store);
         assert_eq!(Store::open(&path, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap().boot(&[messages_spec()]).unwrap().recreated, None, "{case}: second open");
     }
