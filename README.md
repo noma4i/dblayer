@@ -47,6 +47,7 @@ iOS 17, macOS 14, or Android 13 (API 33) or newer.
 - [Writing data](docs/writing-data.md)
 - [Sync state of a record](docs/sync-state.md)
 - [Server sync](docs/server-sync.md)
+- [Drive notifications](docs/drive-notifications.md)
 - [Cable protocol](docs/cable-protocol.md)
 - [Files](docs/files.md)
 - [Threading and performance](docs/threading.md)
