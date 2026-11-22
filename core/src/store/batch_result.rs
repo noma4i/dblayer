@@ -48,7 +48,7 @@ pub(super) fn expiry(connection: &Connection, models: &BTreeMap<String, ModelInf
     Ok((expiring, removed))
 }
 
-pub(super) fn consolidate(connection: &Connection, models: &BTreeMap<String, ModelInfo>, originals: BTreeMap<RowRef, Option<Map<String, Value>>>, results: Vec<CommitResult>, revision: i64) -> Result<CommitResult, StoreError> {
+pub(super) fn consolidate(connection: &Connection, models: &BTreeMap<String, ModelInfo>, originals: &BTreeMap<RowRef, Option<Map<String, Value>>>, results: Vec<CommitResult>, revision: i64) -> Result<CommitResult, StoreError> {
     let mut combined = CommitResult::noop(uuid::Uuid::new_v4());
     combined.revision = Some(revision);
     let mut rows: BTreeMap<RowRef, Vec<RowChange>> = BTreeMap::new();

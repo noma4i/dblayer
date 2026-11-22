@@ -5,6 +5,38 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{CommitResult, ModelInfo, Reader, RowChangeKind};
+mod project;
+
+#[derive(Debug)]
+pub(crate) struct PendingCloudRecord {
+    pub key: String,
+    pub version: i64,
+    pub payload: Result<Vec<u8>, crate::cloud::RecordError>,
+}
+
+impl super::Store {
+    pub(crate) fn pending_cloud_records(&self, domain: &str, limit: u32) -> Result<Vec<PendingCloudRecord>, StoreError> {
+        self.read(&[], |reader| {
+            let mut records = Vec::new();
+            for pending in pending(reader.connection(), domain, limit)? {
+                let key = crate::cloud::record_key(&pending.model, &pending.row_id);
+                let mut record = crate::cloud::CloudRecord { model: pending.model, row_id: pending.row_id, server_revision: None, deleted: pending.deleted, fields: Vec::new() };
+                if !record.deleted {
+                    let info = reader.models().get(&record.model).ok_or_else(|| StoreError::UnknownModel(record.model.clone()))?;
+                    let row = reader.stored_row(&record.model, &record.row_id)?.ok_or_else(|| StoreError::Constraint("pending cloud row is missing".into()))?;
+                    record.server_revision = info.spec.server_revision.as_ref().and_then(|field| row.row.get(field)).and_then(serde_json::Value::as_i64);
+                    for (path, value) in project::project(&info.spec, &row.row) {
+                        if let Some(stamp) = field_stamp(reader.connection(), domain, &record.model, &record.row_id, &path)? {
+                            record.fields.push(crate::cloud::CloudField { path, data: crate::cloud::StampedValue { value, stamp } });
+                        }
+                    }
+                }
+                records.push(PendingCloudRecord { key, version: pending.version, payload: crate::cloud::encode(&record) });
+            }
+            Ok(records)
+        })
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PendingRecord {
@@ -19,7 +51,7 @@ pub(crate) fn enable(tx: &Transaction<'_>) -> Result<(), StoreError> {
     Ok(())
 }
 
-pub(crate) fn capture_local(tx: &Transaction<'_>, domain: Option<&str>, models: &BTreeMap<String, ModelInfo>, result: &CommitResult) -> Result<(), StoreError> {
+pub(crate) fn capture_local(tx: &Transaction<'_>, domain: Option<&str>, models: &BTreeMap<String, ModelInfo>, originals: &BTreeMap<crate::identity::RowRef, Option<serde_json::Map<String, serde_json::Value>>>, result: &CommitResult, now: i64) -> Result<(), StoreError> {
     let (Some(domain), Some(version)) = (domain, result.revision) else { return Ok(()) };
     let reader = Reader::new(tx, models);
     let mut captured = BTreeSet::new();
@@ -30,7 +62,14 @@ pub(crate) fn capture_local(tx: &Transaction<'_>, domain: Option<&str>, models: 
         let eligible = if deleted {
             reader.tombstone_seq(change.row.model.as_str(), change.row.id.as_str())? == Some(version)
         } else {
-            matches!(change.kind, RowChangeKind::Inserted | RowChangeKind::Updated) && info.spec.fields.iter().any(|field| change.fields.contains(&field.name) && !field.derived && !matches!(field.kind, crate::schema::FieldKind::File))
+            if !matches!(change.kind, RowChangeKind::Inserted | RowChangeKind::Updated) { continue; }
+            let before = originals.get(&change.row).and_then(Option::as_ref).map(|row| project::project(&info.spec, row)).unwrap_or_default();
+            let Some(after) = reader.stored_row(change.row.model.as_str(), change.row.id.as_str())? else { continue };
+            let changed: Vec<_> = project::project(&info.spec, &after.row).into_iter().filter(|(path, value)| before.get(path) != Some(value)).collect();
+            if changed.is_empty() { continue; }
+            let stamp = tick_stamp(tx, domain, u64::try_from(now).unwrap_or(0))?;
+            for (path, _) in changed { write_field_stamp(tx, domain, change.row.model.as_str(), change.row.id.as_str(), &path, stamp)?; }
+            true
         };
         if eligible {
             stage(tx, domain, &PendingRecord { model: change.row.model.to_string(), row_id: change.row.id.to_string(), version, deleted })?;

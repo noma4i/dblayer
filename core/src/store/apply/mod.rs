@@ -86,11 +86,12 @@ impl Store {
 fn attempt(store: &Store, inner: &Inner, envelope: &BatchPlan, now_ms: i64) -> Result<(CommitResult, u32), StoreError> {
     let transaction = inner.connection.unchecked_transaction()?;
     let revision = Reader::new(&transaction, &inner.models).revision_seq()? + 1;
-    let first = apply_envelope_at(&transaction, &inner.models, envelope, (now_ms, revision, inner.generation), None, None)?;
-    let apply = |plan: BatchPlan| apply_envelope_at(&transaction, &inner.models, &plan, (now_ms, revision, inner.generation), None, None);
+    let mut originals = BTreeMap::new();
+    let first = apply_envelope_at(&transaction, &inner.models, envelope, (now_ms, revision, inner.generation), inner.active_cloud_domain.as_ref().map(|_| &mut originals), None)?;
+    let apply = |plan: BatchPlan| apply_envelope_at(&transaction, &inner.models, &plan, (now_ms, revision, inner.generation), inner.active_cloud_domain.as_ref().map(|_| &mut originals), None);
     let (derived, _, _) = super::follow_pointer::settle_parents(&Reader::new(&transaction, &inner.models), &inner.models, std::slice::from_ref(&first), apply)?;
-    let outcome = match derived { Some(derived) => super::batch_result::consolidate(&transaction, &inner.models, BTreeMap::new(), vec![first, derived], revision)?, None => first };
-    super::cloud::capture_local(&transaction, inner.active_cloud_domain.as_deref(), &inner.models, &outcome)?;
+    let outcome = match derived { Some(derived) => super::batch_result::consolidate(&transaction, &inner.models, &BTreeMap::new(), vec![first, derived], revision)?, None => first };
+    super::cloud::capture_local(&transaction, inner.active_cloud_domain.as_deref(), &inner.models, &originals, &outcome, now_ms)?;
     let journal = store.context.changed.prepare_commit(&outcome);
     if outcome.is_noop() && envelope.window.is_none() && envelope.window_debts.is_empty() && envelope.pending_locals.is_empty() {
         transaction.rollback()?;

@@ -195,8 +195,8 @@ impl Store {
         }
         let swaps: Vec<(String, String, String)> = results.iter().flat_map(|result| result.replaced.iter()).map(|(from, real)| (from.model.to_string(), from.id.to_string(), real.to_string())).collect();
         let target_revision = if writes_database { revision } else { base_revision };
-        let mut combined = super::batch_result::consolidate(&transaction, &inner.models, originals, results, target_revision)?;
-        super::cloud::capture_local(&transaction, inner.active_cloud_domain.as_deref(), &inner.models, &combined)?;
+        let mut combined = super::batch_result::consolidate(&transaction, &inner.models, &originals, results, target_revision)?;
+        super::cloud::capture_local(&transaction, inner.active_cloud_domain.as_deref(), &inner.models, &originals, &combined, now)?;
         let mut shown = Vec::new();
         for op in &batch.ops {
             let (crate::owners::store::StoreOp::Intent { effects: crate::owners::store::IntentEffects { shown: Some((model, row_id)), .. }, .. } | crate::owners::store::StoreOp::Planned { effects: crate::owners::store::IntentEffects { shown: Some((model, row_id)), .. } } | crate::owners::store::StoreOp::Show { model, row_id }) = op else { continue };
