@@ -1,4 +1,5 @@
 use rusqlite::Connection;
+use crate::owners::cloud::CloudScope;
 
 use crate::store::cloud::{self, PendingRecord};
 use crate::owners::{contract::BatchAuthor, store::{RowValue, StoreBatch, StoreOp}};
@@ -83,7 +84,8 @@ fn opt_in_captures_local_commits_at_their_row_revision() {
     assert!(!store.table_exists("cloud_record").unwrap());
     assert!(!store.table_exists("cloud_progress").unwrap());
 
-    store.activate_cloud_domain("example".into()).unwrap();
+    let scope = CloudScope { epoch: 1, generation: 1, domain: "example".into() };
+    store.activate_cloud_scope(scope.clone()).unwrap();
     let version = write("n1", "save me", "initial");
     let connection = Connection::open(&path).unwrap();
     let created = PendingRecord { model: "notes".into(), row_id: "n1".into(), version, deleted: false };
@@ -92,7 +94,7 @@ fn opt_in_captures_local_commits_at_their_row_revision() {
     assert_eq!(cloud::pending(&connection, "example", 2).unwrap(), vec![created.clone()]);
 
     let materialized = |expected_version| {
-        let pending = store.pending_cloud_records("example", 2).unwrap();
+        let pending = store.pending_cloud_records(&scope, 2).unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].version, expected_version);
         crate::cloud::decode(&pending[0].key, pending[0].payload.as_ref().unwrap()).unwrap()
@@ -160,24 +162,25 @@ fn cloud_landing_moves_rows_and_progress_together_without_an_echo() {
     let open = |name| Store::open_models(Some(&directory.path().join(name)), vec![notes.clone()], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     let source = open("source.sqlite");
     let destination = open("destination.sqlite");
+    let scope = CloudScope { epoch: 1, generation: 1, domain: "example".into() };
     for store in [&source, &destination] {
-        store.activate_cloud_domain("example".into()).unwrap();
+        store.activate_cloud_scope(scope.clone()).unwrap();
     }
     source.write_queue_ops(&[StoreOp::LocalRows { model: "notes".into(), rows: vec![RowValue {
         row_id: "n1".into(), values: r#"{"id":"n1","text":"saved on the first replica"}"#.into(),
     }] }]).unwrap();
-    let sent = source.pending_cloud_records("example", 1).unwrap().pop().unwrap();
+    let sent = source.pending_cloud_records(&scope, 1).unwrap().pop().unwrap();
     let incoming = crate::cloud::decode(&sent.key, &sent.payload.unwrap()).unwrap();
 
-    destination.land_local_cloud("example", vec![incoming.clone()], b"first").unwrap();
+    destination.land_local_cloud(&scope, vec![incoming.clone()], b"first").unwrap();
     assert_eq!(destination.read(&["notes"], |reader| reader.point("notes", "n1")).unwrap().unwrap()["text"], "saved on the first replica");
-    assert!(destination.pending_cloud_records("example", 1).unwrap().is_empty());
+    assert!(destination.pending_cloud_records(&scope, 1).unwrap().is_empty());
 
     let mut cleared = incoming.clone();
     cleared.fields[0].data.value = serde_json::Value::Null;
     cleared.fields[0].data.stamp.counter += 1;
-    destination.land_local_cloud("example", vec![cleared], b"cleared").unwrap();
-    destination.land_local_cloud("example", vec![incoming.clone()], b"replay").unwrap();
+    destination.land_local_cloud(&scope, vec![cleared], b"cleared").unwrap();
+    destination.land_local_cloud(&scope, vec![incoming.clone()], b"replay").unwrap();
     let row = destination.read(&["notes"], |reader| reader.point("notes", "n1")).unwrap().unwrap();
     assert!(row.get("text").is_none_or(serde_json::Value::is_null));
 
@@ -185,17 +188,25 @@ fn cloud_landing_moves_rows_and_progress_together_without_an_echo() {
         row_id: "identity".into(), values: r#"{"id":"identity"}"#.into(),
     }] }]).unwrap();
     let identity_key = crate::cloud::record_key("notes", "identity");
-    let identity = source.pending_cloud_records("example", 2).unwrap().into_iter().find(|record| record.key == identity_key).unwrap();
+    let identity = source.pending_cloud_records(&scope, 2).unwrap().into_iter().find(|record| record.key == identity_key).unwrap();
     let identity = crate::cloud::decode(&identity.key, &identity.payload.unwrap()).unwrap();
     assert!(identity.fields.is_empty());
-    destination.land_local_cloud("example", vec![identity], b"identity").unwrap();
+    destination.land_local_cloud(&scope, vec![identity], b"identity").unwrap();
     assert!(destination.read(&["notes"], |reader| reader.point("notes", "identity")).unwrap().is_some());
-    assert!(destination.pending_cloud_records("example", 2).unwrap().is_empty());
+    assert!(destination.pending_cloud_records(&scope, 2).unwrap().is_empty());
+
+    destination.retire_cloud_scope(&scope);
+    let current = CloudScope { generation: 2, ..scope.clone() };
+    destination.activate_cloud_scope(current.clone()).unwrap();
+    let stale = crate::cloud::CloudRecord { row_id: "stale".into(), ..incoming.clone() };
+    assert!(destination.land_local_cloud(&scope, vec![stale], b"stale").is_err());
+    assert!(destination.pending_cloud_records(&scope, 1).is_err());
+    assert_eq!(destination.read(&["notes"], |reader| reader.point("notes", "stale")).unwrap(), None);
 
     let second = crate::cloud::CloudRecord { row_id: "n2".into(), ..incoming.clone() };
     let mut malformed = crate::cloud::CloudRecord { row_id: "n3".into(), ..incoming };
     malformed.fields[0].path = vec!["unknown".into()];
-    assert!(destination.land_local_cloud("example", vec![second, malformed], b"invalid").is_err());
+    assert!(destination.land_local_cloud(&current, vec![second, malformed], b"invalid").is_err());
     assert_eq!(destination.read(&["notes"], |reader| reader.point("notes", "n2")).unwrap(), None);
     drop(destination);
 
