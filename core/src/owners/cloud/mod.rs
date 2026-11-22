@@ -28,6 +28,8 @@ pub(crate) enum CloudInput {
     Wake,
     SendDone { generation: u64, more: bool, retry: bool },
     Retry { generation: u64 },
+    Relay { scope: CloudScope, event: crate::ffi::CloudRelayEvent },
+    RelayDue { generation: u64, token: u64 },
     Close,
 }
 
@@ -64,6 +66,8 @@ pub(crate) struct CloudState {
     wake: bool,
     backoff: bool,
     attempts: u32,
+    relay_attempts: u32,
+    relay_token: Option<u64>,
     backend: Option<String>,
     provider: Option<crate::ffi::CloudAccount>,
     application: Option<String>,
@@ -73,7 +77,7 @@ pub(crate) struct CloudState {
 
 impl CloudState {
     pub(crate) fn new(epoch: Epoch) -> Self {
-        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, bootstrapping: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, exhausted: false, closed: false, retry_held: false, sending: false, wake: false, backoff: false, attempts: 0, backend: None, provider: None, application: None, standalone: false, provider_fingerprint: String::new() }
+        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, bootstrapping: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, exhausted: false, closed: false, retry_held: false, sending: false, wake: false, backoff: false, attempts: 0, relay_attempts: 0, relay_token: None, backend: None, provider: None, application: None, standalone: false, provider_fingerprint: String::new() }
     }
 
     pub(crate) fn with_domain(epoch: Epoch, domain: Option<String>) -> Self {
@@ -128,6 +132,8 @@ impl CloudState {
             self.backoff = false;
             self.attempts = 0;
             fx.push(Effect::Cancel(ScheduleId(0)));
+            self.relay_token = None;
+            fx.push(Effect::Cancel(ScheduleId(1)));
             self.stopping.insert(scope.generation);
             fx.push(Effect::Run(CloudEffect::Stop { generation: scope.generation }));
         }
@@ -264,6 +270,25 @@ impl StateOwner for Cloud {
             CloudInput::Retry { generation } if state.backoff && state.active.as_ref().is_some_and(|scope| scope.generation == generation) => {
                 state.backoff = false;
                 state.start_pass(&mut fx);
+            }
+            CloudInput::Relay { scope, event } if state.active.as_ref() == Some(&scope) => {
+                state.relay_token = None;
+                let lease = match event {
+                    crate::ffi::CloudRelayEvent::Suspended => { fx.push(Effect::Cancel(ScheduleId(1))); return fx; }
+                    crate::ffi::CloudRelayEvent::Lease { milliseconds } => { state.relay_attempts = 0; Some(milliseconds) }
+                    crate::ffi::CloudRelayEvent::Ended => { state.relay_attempts = state.relay_attempts.saturating_add(1); None }
+                };
+                let Some(token) = state.token(&mut fx) else { return fx; };
+                state.relay_token = Some(token);
+                let input = CloudInput::RelayDue { generation: scope.generation, token };
+                if let Some(milliseconds) = lease {
+                    fx.push(Effect::Schedule { id: ScheduleId(1), after: std::time::Duration::from_millis(milliseconds), input });
+                } else {
+                    fx.push(Effect::Backoff { id: ScheduleId(1), policy: RetryPolicy::Bootstrap, attempt: state.relay_attempts, floor: std::time::Duration::ZERO, input });
+                }
+            }
+            CloudInput::RelayDue { generation, token } if state.relay_token == Some(token) && state.active.as_ref().is_some_and(|scope| scope.generation == generation) => {
+                state.stop(&mut fx);
             }
             CloudInput::Close => {
                 state.closed = true;

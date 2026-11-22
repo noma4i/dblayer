@@ -27,6 +27,7 @@ pub(crate) struct CloudRunner {
 
 pub(crate) fn signals(_config: &CloudConfig, wiring: Weak<Wiring>, db: Arc<crate::store::Store>, executor: tokio::runtime::Handle) -> Arc<CloudSignals> {
     let fetch_wiring = wiring.clone();
+    let relay_wiring = wiring.clone();
     Arc::new(CloudSignals::new(move |account| {
         let Some(wiring) = wiring.upgrade() else { return; };
         wiring.to_cloud(CloudInput::Provider(account));
@@ -48,6 +49,10 @@ pub(crate) fn signals(_config: &CloudConfig, wiring: Weak<Wiring>, db: Arc<crate
             if initial_complete { wiring.to_cloud(CloudInput::InitialRead { generation }); }
             Ok(())
         })
+    }, move |scope, event| {
+        let Some(wiring) = relay_wiring.upgrade() else { return; };
+        let scope = CloudScope { epoch: scope.epoch, generation: scope.generation, domain: scope.domain, provider_fingerprint: scope.provider_fingerprint };
+        wiring.to_cloud(CloudInput::Relay { scope, event });
     }))
 }
 

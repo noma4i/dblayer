@@ -23,6 +23,9 @@ pub struct CloudWireScope { pub epoch: u64, pub generation: u64, pub domain: Str
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum CloudAccount { Available { key: String }, SignedOut, Unavailable }
 
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum CloudRelayEvent { Lease { milliseconds: u64 }, Ended, Suspended }
+
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct CloudOutbound { pub key: String, pub version: i64, pub payload: Vec<u8>, pub system_fields: Option<Vec<u8>> }
 
@@ -59,20 +62,23 @@ type FetchFuture = Pin<Box<dyn Future<Output = Result<(), DbError>> + Send>>;
 pub struct CloudSignals {
     account: Box<dyn Fn(CloudAccount) + Send + Sync>,
     fetched: Box<dyn Fn(CloudFetched) -> FetchFuture + Send + Sync>,
+    relay: Box<dyn Fn(CloudWireScope, CloudRelayEvent) + Send + Sync>,
 }
 
 impl CloudSignals {
     pub(crate) fn new(
         account: impl Fn(CloudAccount) + Send + Sync + 'static,
         fetched: impl Fn(CloudFetched) -> FetchFuture + Send + Sync + 'static,
+        relay: impl Fn(CloudWireScope, CloudRelayEvent) + Send + Sync + 'static,
     ) -> Self {
-        Self { account: Box::new(account), fetched: Box::new(fetched) }
+        Self { account: Box::new(account), fetched: Box::new(fetched), relay: Box::new(relay) }
     }
 }
 
 #[uniffi::export]
 impl CloudSignals {
     pub fn account(&self, account: CloudAccount) { (self.account)(account); }
+    pub fn relay(&self, scope: CloudWireScope, event: CloudRelayEvent) { (self.relay)(scope, event); }
     pub async fn fetched(&self, fetched: CloudFetched) -> Result<(), DbError> {
         super::database::on_core(super::database::Scope::root(), (self.fetched)(fetched)).await?
     }
