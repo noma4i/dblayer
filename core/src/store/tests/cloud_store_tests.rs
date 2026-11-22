@@ -435,3 +435,50 @@ fn disk_cloud_sends_only_settled_changes_and_confirmed_removals() {
     }).collect::<Vec<_>>();
     assert_eq!(saved, vec![("missing".into(), true), ("ready".into(), true)]);
 }
+
+#[test]
+fn cloud_cursor_keeps_a_held_disk_record_durable_across_reopen() {
+    use crate::cloud::{CloudField, CloudRecord, CloudStamp, StampedValue};
+    use crate::owners::write::operation_status::OperationStatus;
+    use crate::store::{cloud_waiting, OperationRecord, OperationTransition};
+    use serde_json::json;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("waiting.sqlite");
+    let spec = ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
+    let open = || Store::open_models(Some(&path), vec![spec.clone()], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let store = open();
+    let scope = CloudScope { epoch: 1, generation: 1, domain: "example".into(), provider_fingerprint: "provider".into() };
+    store.activate_cloud_scope(scope.clone()).unwrap();
+    let mut plan = BatchPlan::from_source(RowSource::Local);
+    plan.operation_transitions.push(OperationTransition::Begin(Box::new(OperationRecord {
+        seq: None, action_key: "notes:update".into(), status: OperationStatus::Pending,
+        row_ids: vec![crate::identity::RowId::new("held").unwrap()], temp_id: None, input: json!({"id":"held"}),
+        base_revision: None, created_at: 0, dedupe_key: None, rollback: None,
+    })));
+    store.commit(plan).unwrap();
+    let incoming = CloudRecord { model: "notes".into(), row_id: "held".into(), server_revision: None, deleted: false, fields: vec![
+        CloudField { path: vec!["text".into()], data: StampedValue { value: json!("remote"), stamp: CloudStamp { millis: u64::MAX - 1, counter: 4, replica: [4; 16] } } },
+    ] };
+    let provider_fields = b"system".to_vec();
+    for cursor in [b"first".as_slice(), b"latest"] {
+        store.land_local_cloud(&scope, vec![(incoming.clone(), Some(provider_fields.clone()))], Some(cursor)).unwrap();
+    }
+    assert!(store.read(&["notes"], |reader| reader.point("notes", "held")).unwrap().is_none());
+    drop(store);
+
+    let store = open();
+    store.activate_cloud_scope(scope.clone()).unwrap();
+    assert_eq!(store.cloud_resume(&scope).unwrap().as_deref(), Some(b"latest".as_slice()));
+    let read = || {
+        let connection = Connection::open(&path).unwrap();
+        cloud_waiting::entries(&connection, &scope.domain, "notes", "held").unwrap()
+    };
+    let entries = read();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].record, incoming);
+    assert_eq!(entries[0].system_fields.as_ref(), Some(&provider_fields));
+    store.retire_cloud_scope(&scope);
+    store.erase_cloud_domain(&scope.domain).unwrap();
+    assert!(read().is_empty());
+}
