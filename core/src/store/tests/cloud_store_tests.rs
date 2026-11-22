@@ -610,7 +610,8 @@ fn cloud_capture_clears_a_typed_object_as_one_path() {
         FieldSpec::scalar("id", ScalarKind::Id),
         FieldSpec { app_type: Some("NoteDetail".into()), fields: vec![FieldSpec::scalar("title", ScalarKind::Str)], ..FieldSpec::object("detail").nullable().optional() },
     ]) };
-    let store = Store::open_models(None, vec![spec], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let store = Store::open_models(None, vec![spec.clone()], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let replica = Store::open_models(None, vec![spec], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
     let scope = CloudScope { epoch: 1, generation: 1, domain: "example".into(), provider_fingerprint: "provider".into() };
     store.activate_cloud_scope(scope.clone()).unwrap();
     let write = |detail| {
@@ -633,4 +634,17 @@ fn cloud_capture_clears_a_typed_object_as_one_path() {
     assert_eq!(restored.fields.len(), 1);
     assert_eq!(restored.fields[0].path, ["detail", "title"]);
     assert_eq!(restored.fields[0].data.value, "new");
+
+    replica.activate_cloud_scope(scope.clone()).unwrap();
+    let fetch = |record| replica.land_local_cloud(&scope, vec![(record, None)], None).unwrap();
+    let detail = || replica.read(&["notes"], |reader| reader.point("notes", "note")).unwrap().unwrap().get("detail").cloned();
+    fetch(original.clone());
+    assert_eq!(detail(), Some(json!({"title":"before"})));
+    fetch(cleared.clone());
+    fetch(original);
+    assert!(detail().is_none());
+    fetch(restored);
+    fetch(cleared);
+    assert_eq!(detail(), Some(json!({"title":"new"})));
+    assert!(replica.pending_cloud_records(&scope, 1).unwrap().is_empty());
 }
