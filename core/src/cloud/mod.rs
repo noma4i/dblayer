@@ -7,7 +7,7 @@ pub(crate) use field::{choose_field, Choice, StampConflict, StampedValue};
 pub(crate) use record::{decode, encode, record_key, CloudField, CloudRecord, RecordError};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Stamp {
+pub struct CloudStamp {
     pub millis: u64,
     pub counter: u32,
     pub replica: [u8; 16],
@@ -19,18 +19,18 @@ pub struct HybridClock {
 }
 
 impl HybridClock {
-    pub fn new(replica: [u8; 16], last: Option<Stamp>) -> Self {
+    pub fn new(replica: [u8; 16], last: Option<CloudStamp>) -> Self {
         Self { replica, last: last.map(|stamp| (stamp.millis, stamp.counter)) }
     }
 
-    pub fn observe(&mut self, remote: Stamp) -> Stamp {
+    pub fn observe(&mut self, remote: CloudStamp) -> CloudStamp {
         let observed = (remote.millis, remote.counter);
         let (millis, counter) = self.last.map_or(observed, |last| last.max(observed));
         self.last = Some((millis, counter));
-        Stamp { millis, counter, replica: self.replica }
+        CloudStamp { millis, counter, replica: self.replica }
     }
 
-    pub fn tick(&mut self, wall_millis: u64) -> Option<Stamp> {
+    pub fn tick(&mut self, wall_millis: u64) -> Option<CloudStamp> {
         let (millis, counter) = match self.last {
             None => (wall_millis, 0),
             Some((millis, _)) if wall_millis > millis => (wall_millis, 0),
@@ -40,6 +40,6 @@ impl HybridClock {
             },
         };
         self.last = Some((millis, counter));
-        Some(Stamp { millis, counter, replica: self.replica })
+        Some(CloudStamp { millis, counter, replica: self.replica })
     }
 }

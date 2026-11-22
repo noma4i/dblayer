@@ -1,5 +1,5 @@
 use super::StoreError;
-use crate::cloud::{HybridClock, Stamp};
+use crate::cloud::{CloudStamp, HybridClock};
 use crate::identity::ListKey;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use std::collections::{BTreeMap, BTreeSet};
@@ -114,22 +114,22 @@ pub(crate) fn reset(tx: &Transaction<'_>, domain: &str) -> Result<(), StoreError
     Ok(())
 }
 
-fn read_stamp(row: &rusqlite::Row<'_>) -> rusqlite::Result<Stamp> {
+fn read_stamp(row: &rusqlite::Row<'_>) -> rusqlite::Result<CloudStamp> {
     let millis: Vec<u8> = row.get(0)?;
     let replica: Vec<u8> = row.get(2)?;
     let invalid = |index| rusqlite::Error::InvalidColumnType(index, "stamp".into(), rusqlite::types::Type::Blob);
-    Ok(Stamp {
+    Ok(CloudStamp {
         millis: u64::from_be_bytes(millis.try_into().map_err(|_| invalid(0))?),
         counter: row.get(1)?,
         replica: replica.try_into().map_err(|_| invalid(2))?,
     })
 }
 
-fn clock_stamp(connection: &Connection, domain: &str) -> Result<Option<Stamp>, StoreError> {
+fn clock_stamp(connection: &Connection, domain: &str) -> Result<Option<CloudStamp>, StoreError> {
     Ok(connection.query_row(include_str!("../sql/cloud_read_clock.sql"), [domain], read_stamp).optional()?)
 }
 
-fn write_clock(tx: &Transaction<'_>, domain: &str, stamp: Stamp) -> Result<(), StoreError> {
+fn write_clock(tx: &Transaction<'_>, domain: &str, stamp: CloudStamp) -> Result<(), StoreError> {
     tx.execute(include_str!("../sql/cloud_write_clock.sql"), params![domain, stamp.millis.to_be_bytes().as_slice(), stamp.counter, stamp.replica.as_slice()])?;
     Ok(())
 }
@@ -140,24 +140,24 @@ fn load_clock(connection: &Connection, domain: &str) -> Result<HybridClock, Stor
     Ok(HybridClock::new(replica, last))
 }
 
-pub(crate) fn tick_stamp(tx: &Transaction<'_>, domain: &str, wall_millis: u64) -> Result<Stamp, StoreError> {
+pub(crate) fn tick_stamp(tx: &Transaction<'_>, domain: &str, wall_millis: u64) -> Result<CloudStamp, StoreError> {
     let stamp = load_clock(tx, domain)?.tick(wall_millis).ok_or_else(|| StoreError::Invalid("cloud clock overflow".into()))?;
     write_clock(tx, domain, stamp)?;
     Ok(stamp)
 }
 
-pub(crate) fn observe_stamp(tx: &Transaction<'_>, domain: &str, stamp: Stamp) -> Result<(), StoreError> {
+pub(crate) fn observe_stamp(tx: &Transaction<'_>, domain: &str, stamp: CloudStamp) -> Result<(), StoreError> {
     let observed = load_clock(tx, domain)?.observe(stamp);
     write_clock(tx, domain, observed)
 }
 
-pub(crate) fn write_field_stamp(tx: &Transaction<'_>, domain: &str, model: &str, row_id: &str, path: &[String], stamp: Stamp) -> Result<(), StoreError> {
+pub(crate) fn write_field_stamp(tx: &Transaction<'_>, domain: &str, model: &str, row_id: &str, path: &[String], stamp: CloudStamp) -> Result<(), StoreError> {
     let path = ListKey::compose(path);
     tx.execute(include_str!("../sql/cloud_write_field.sql"), params![domain, model, row_id, path.as_str(), stamp.millis.to_be_bytes().as_slice(), stamp.counter, stamp.replica.as_slice()])?;
     Ok(())
 }
 
-pub(crate) fn field_stamp(connection: &Connection, domain: &str, model: &str, row_id: &str, path: &[String]) -> Result<Option<Stamp>, StoreError> {
+pub(crate) fn field_stamp(connection: &Connection, domain: &str, model: &str, row_id: &str, path: &[String]) -> Result<Option<CloudStamp>, StoreError> {
     let path = ListKey::compose(path);
     Ok(connection.query_row(include_str!("../sql/cloud_read_field.sql"), params![domain, model, row_id, path.as_str()], read_stamp).optional()?)
 }

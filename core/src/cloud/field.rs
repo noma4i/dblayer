@@ -3,13 +3,13 @@ use std::cmp::Ordering;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::Stamp;
+use super::CloudStamp;
 use crate::schema::MergeRule;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct StampedValue {
     pub(crate) value: Value,
-    pub(crate) stamp: Stamp,
+    pub(crate) stamp: CloudStamp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
