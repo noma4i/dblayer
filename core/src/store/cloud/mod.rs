@@ -18,6 +18,57 @@ pub(crate) struct PendingCloudRecord {
 }
 
 impl super::Store {
+    pub(crate) fn bootstrap_cloud_chunk(&self, scope: &crate::owners::cloud::CloudScope) -> Result<bool, StoreError> {
+        let inner = self.lock();
+        inner.require_cloud_scope(scope)?;
+        let tx = inner.connection.unchecked_transaction()?;
+        let domain = &scope.domain;
+        let checkpoint: Option<(String, String, bool)> = tx.query_row(
+            "SELECT model, row_id, done FROM cloud_bootstrap WHERE domain = ?1", [domain],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).optional()?;
+        if checkpoint.as_ref().is_some_and(|(_, _, done)| *done) { return Ok(true); }
+        let mut cursor = checkpoint.map(|(model, id, _)| (model, id)).unwrap_or_default();
+        let reader = Reader::new(&tx, &inner.models);
+        let mut count = 0;
+        for (model, info) in inner.models.iter().filter(|(_, info)| info.spec.is_local()) {
+            if model < &cursor.0 { continue; }
+            let after = if model == &cursor.0 { cursor.1.as_str() } else { "" };
+            let sql = format!("SELECT id FROM {} WHERE id > ?1 ORDER BY id LIMIT ?2", info.table);
+            let ids = tx.prepare(&sql)?.query_map(params![after, 128 - count], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+            for id in ids {
+                cursor = (model.clone(), id.clone());
+                count += 1;
+                if crate::identity::RowId::new(&id).map_err(|error| StoreError::Invalid(error.to_string()))?.is_temp() { continue; }
+                let Some(row) = reader.stored_row(model, &id)? else { continue };
+                let tracked: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM cloud_record WHERE domain = ?1 AND model = ?2 AND row_id = ?3)", params![domain, model, id], |row| row.get(0))?;
+                let mut missing = Vec::new();
+                for (path, _) in project::project(&info.spec, &row.row) {
+                    if field_stamp(&tx, domain, model, &id, &path)?.is_none() { missing.push(path); }
+                }
+                if !missing.is_empty() {
+                    let stamp = match clock_stamp(&tx, domain)? {
+                        Some(stamp) => CloudStamp { millis: 0, counter: 0, replica: stamp.replica },
+                        None => {
+                            let stamp = CloudStamp { millis: 0, counter: 0, replica: *uuid::Uuid::new_v4().as_bytes() };
+                            write_clock(&tx, domain, stamp)?;
+                            stamp
+                        }
+                    };
+                    for path in &missing { write_field_stamp(&tx, domain, model, &id, path, stamp)?; }
+                }
+                if !missing.is_empty() || !tracked {
+                    stage(&tx, domain, &PendingRecord { model: model.clone(), row_id: id, version: row.revision, deleted: false })?;
+                }
+            }
+            if count == 128 { break; }
+        }
+        let done = count < 128;
+        tx.execute("INSERT INTO cloud_bootstrap (domain, model, row_id, done) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(domain) DO UPDATE SET model = excluded.model, row_id = excluded.row_id, done = excluded.done", params![domain, cursor.0, cursor.1, done])?;
+        tx.commit()?;
+        Ok(done)
+    }
+
     pub(crate) fn pending_cloud_records(&self, scope: &crate::owners::cloud::CloudScope, limit: u32) -> Result<Vec<PendingCloudRecord>, StoreError> {
         self.lock().require_cloud_scope(scope)?;
         let domain = scope.domain.as_str();
@@ -147,6 +198,7 @@ pub(crate) fn progress(connection: &Connection, domain: &str) -> Result<Option<V
 }
 
 pub(crate) fn reset(tx: &Transaction<'_>, domain: &str) -> Result<(), StoreError> {
+    tx.execute("DELETE FROM cloud_bootstrap WHERE domain = ?1", [domain])?;
     tx.execute(include_str!("../sql/cloud_reset_records.sql"), [domain])?;
     tx.execute(include_str!("../sql/cloud_reset_progress.sql"), [domain])?;
     tx.execute(include_str!("../sql/cloud_reset_clock.sql"), [domain])?;

@@ -12,6 +12,8 @@ pub(crate) struct Active {
     prepare: tokio::task::JoinHandle<()>,
     start: tokio::task::JoinHandle<()>,
     send: Option<tokio::task::JoinHandle<()>>,
+    bootstrap: Option<tokio::task::JoinHandle<()>>,
+    cancel: crate::transport::CancelToken,
 }
 
 pub(crate) struct CloudRunner {
@@ -100,7 +102,31 @@ impl EffectRunner<Cloud> for CloudRunner {
                         back.reply(EpochStamp::Control, CloudInput::StartFailed { generation });
                     }
                 }));
-                self.active = Some(Active { scope, prepare, start, send: None });
+                self.active = Some(Active { scope, prepare, start, send: None, bootstrap: None, cancel: crate::transport::CancelToken::new() });
+            }
+            CloudEffect::Bootstrap(scope) => {
+                let Some(wiring) = self.wiring.upgrade() else { return; };
+                let Some(active) = self.active.as_mut().filter(|active| active.scope == scope) else { return; };
+                let (db, back, executor, counted, weak) = (self.db.clone(), back.clone(), self.executor.clone(), wiring.handle.clone(), self.wiring.clone());
+                let cancel = active.cancel.clone();
+                let launch = counted.launch();
+                active.bootstrap = Some(crate::task::spawn_on(&self.executor, crate::runtime::counted(Some(launch), async move {
+                    let generation = scope.generation;
+                    loop {
+                        let (db, scope) = (db.clone(), scope.clone());
+                        let result = crate::task::spawn_blocking_on(&executor, Some(counted.launch()), move || db.bootstrap_cloud_chunk(&scope)).await;
+                        if cancel.is_cancelled() { break; }
+                        match result {
+                            Ok(Ok(false)) => continue,
+                            Ok(Ok(true)) => { back.reply(EpochStamp::Control, CloudInput::BootstrapDone { generation }); break; }
+                            error => {
+                                if let Some(wiring) = weak.upgrade() { wiring.fault(format!("cloud bootstrap: {error:?}")); }
+                                back.reply(EpochStamp::Control, CloudInput::StartFailed { generation });
+                                break;
+                            }
+                        }
+                    }
+                })));
             }
             CloudEffect::Send(scope) => {
                 let Some(wiring) = self.wiring.upgrade() else { return; };
@@ -127,13 +153,16 @@ impl EffectRunner<Cloud> for CloudRunner {
                 let Some(wiring) = self.wiring.upgrade() else { return; };
                 let launch = wiring.handle.launch();
                 let active = self.active.take().filter(|active| active.scope.generation == generation);
+                if let Some(active) = &active { active.cancel.cancel(); }
                 if let Some(active) = &active { crate::lock::effect(|| active.start.abort()); }
                 if let Some(send) = active.as_ref().and_then(|active| active.send.as_ref()) { crate::lock::effect(|| send.abort()); }
                 let db = self.db.clone();
                 drop(crate::task::spawn_on(&self.executor, crate::runtime::counted(Some(launch), async move {
                     if let Some(active) = active {
+                        db.retire_cloud_scope(&active.scope);
                         let _ = active.start.await;
                         if let Some(send) = active.send { let _ = send.await; }
+                        if let Some(bootstrap) = active.bootstrap { let _ = bootstrap.await; }
                         let _ = active.prepare.await;
                         db.retire_cloud_scope(&active.scope);
                     }

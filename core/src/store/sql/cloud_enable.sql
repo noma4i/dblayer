@@ -12,6 +12,12 @@ CREATE TABLE IF NOT EXISTS cloud_progress (
     domain TEXT PRIMARY KEY NOT NULL,
     bytes BLOB NOT NULL
 );
+CREATE TABLE IF NOT EXISTS cloud_bootstrap (
+    domain TEXT PRIMARY KEY NOT NULL,
+    model TEXT NOT NULL,
+    row_id TEXT NOT NULL,
+    done INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS cloud_record_pending ON cloud_record(domain, version, model, row_id) WHERE pending = 1;
 CREATE TABLE IF NOT EXISTS cloud_clock (
     domain TEXT PRIMARY KEY NOT NULL,

@@ -18,6 +18,7 @@ pub(crate) enum CloudInput {
     Account { epoch: Epoch, domain: Option<String> },
     AccountUnavailable { epoch: Epoch },
     InitialRead { generation: u64 },
+    BootstrapDone { generation: u64 },
     Erased { token: u64 },
     EraseFailed { token: u64 },
     Stopped { generation: u64 },
@@ -34,6 +35,7 @@ pub(crate) enum CloudEffect {
     Stop { generation: u64 },
     Erase { domain: String, token: u64 },
     Ready(CloudScope),
+    Bootstrap(CloudScope),
     Send(CloudScope),
     TokenExhausted,
     Drained,
@@ -49,6 +51,7 @@ pub(crate) struct CloudState {
     domain: Option<String>,
     active: Option<CloudScope>,
     ready: bool,
+    bootstrapping: bool,
     erasing: Option<u64>,
     stopping: BTreeSet<u64>,
     next_token: u64,
@@ -63,7 +66,7 @@ pub(crate) struct CloudState {
 
 impl CloudState {
     pub(crate) fn new(epoch: Epoch) -> Self {
-        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, exhausted: false, closed: false, retry_held: false, sending: false, wake: false, backoff: false, attempts: 0 }
+        Self { epoch, attached: true, online: false, available: false, desired: None, domain: None, active: None, ready: false, bootstrapping: false, erasing: None, stopping: BTreeSet::new(), next_token: 0, exhausted: false, closed: false, retry_held: false, sending: false, wake: false, backoff: false, attempts: 0 }
     }
 
     pub(crate) fn with_domain(epoch: Epoch, domain: Option<String>) -> Self {
@@ -86,6 +89,7 @@ impl CloudState {
     fn stop(&mut self, fx: &mut Effects<Cloud>) {
         if let Some(scope) = self.active.take() {
             self.ready = false;
+            self.bootstrapping = false;
             self.sending = false;
             self.wake = false;
             self.backoff = false;
@@ -182,7 +186,16 @@ impl StateOwner for Cloud {
             }
             CloudInput::InitialRead { generation } => {
                 if let Some(scope) = &state.active {
-                    if scope.generation == generation && !state.ready {
+                    if scope.generation == generation && !state.ready && !state.bootstrapping {
+                        state.bootstrapping = true;
+                        fx.push(Effect::Run(CloudEffect::Bootstrap(scope.clone())));
+                    }
+                }
+            }
+            CloudInput::BootstrapDone { generation } => {
+                if let Some(scope) = &state.active {
+                    if scope.generation == generation && state.bootstrapping {
+                        state.bootstrapping = false;
                         state.ready = true;
                         fx.push(Effect::Run(CloudEffect::Ready(scope.clone())));
                         state.start_pass(&mut fx);
