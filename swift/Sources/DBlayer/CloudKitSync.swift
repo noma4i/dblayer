@@ -1,4 +1,5 @@
 import CloudKit
+import CryptoKit
 import Foundation
 
 extension CloudConfig {
@@ -125,6 +126,7 @@ private actor CloudKitGeneration: CKSyncEngineDelegate {
 
   func start() async throws {
     guard !stopped else { throw DbError.NoSession(detail: "cloud generation ended") }
+    try await verifyAccount()
     if savedState == nil {
       _ = try await container.privateCloudDatabase.save(CKRecordZone(zoneID: zone))
       guard !stopped else { throw DbError.NoSession(detail: "cloud generation ended") }
@@ -147,6 +149,7 @@ private actor CloudKitGeneration: CKSyncEngineDelegate {
 
   func send(_ records: [CloudOutbound]) async throws -> [CloudSendResult] {
     guard !stopped, !landingFailed, let engine else { throw DbError.NoSession(detail: "cloud generation ended") }
+    try await verifyAccount()
     var immediate: [CloudSendResult] = []
     for item in records {
       do {
@@ -183,6 +186,16 @@ private actor CloudKitGeneration: CKSyncEngineDelegate {
   }
 
   func handleEvent(_ event: CKSyncEngine.Event, syncEngine: CKSyncEngine) async {
+    if case .accountChange(let change) = event, engine === syncEngine {
+      switch change.changeType {
+      case .signOut:
+        revoke(syncEngine)
+      case .signIn(let currentUser), .switchAccounts(_, let currentUser):
+        if Self.fingerprint(currentUser.recordName) != scope.providerFingerprint { revoke(syncEngine) }
+      @unknown default:
+        revoke(syncEngine)
+      }
+    }
     let previous = eventTail
     let next = Task {
       await previous?.value
@@ -190,6 +203,25 @@ private actor CloudKitGeneration: CKSyncEngineDelegate {
     }
     eventTail = next
     await next.value
+  }
+
+  private static func fingerprint(_ key: String) -> String {
+    SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+  }
+
+  private func verifyAccount() async throws {
+    let recordName = try await container.userRecordID().recordName
+    guard !stopped else { throw DbError.NoSession(detail: "cloud generation ended") }
+    guard Self.fingerprint(recordName) == scope.providerFingerprint else {
+      if let engine { revoke(engine) }
+      throw DbError.NoSession(detail: "cloud account changed")
+    }
+  }
+
+  private func revoke(_ syncEngine: CKSyncEngine) {
+    stopped = true
+    pendingState = nil
+    Task { await syncEngine.cancelOperations() }
   }
 
   private func apply(_ event: CKSyncEngine.Event, syncEngine: CKSyncEngine) async {
