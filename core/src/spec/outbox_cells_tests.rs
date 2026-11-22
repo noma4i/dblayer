@@ -736,3 +736,23 @@ fn outbox_path_bounce_sends_now() {
     let effects = plain.post(OutboxInput::Answered { req_id, outcome: crate::owners::session::AuthorOutcome::Dropped });
     assert_eq!((timers(&effects), plain.stage(id), plain.state().ops[&id].waiting_retry), (1, Some(St::Sending), true), "a drop of the online phone keeps its Backoff");
 }
+
+#[test]
+fn cloud_account_erasure_fails_only_the_linked_pending_mutation() {
+    let mut twin = Twin::new();
+    twin.post(OutboxInput::Online(Online(false)));
+    let affected = twin.submit("erased", Policy::Keep, false);
+    twin.committed(affected);
+    let unrelated = twin.submit("other", Policy::Keep, false);
+    twin.committed(unrelated);
+    twin.waiter(affected);
+
+    let rows = [("Moment".to_string(), "erased".to_string())].into_iter().collect();
+    twin.post(OutboxInput::CloudRowsErased { rows });
+    let effects = twin.committed(affected);
+    assert_eq!(twin.stage(affected), Some(St::Failed));
+    assert_eq!(twin.stage(unrelated), Some(St::Queued));
+    let answers = answers(&effects, WAITER);
+    let [OutboxAnswer::Outcome(OutboxOutcome::Failed { error })] = answers.as_slice() else { panic!("affected receipt did not fail") };
+    assert_eq!(crate::owners::write::failure::parse(error).message, "cloud account changed");
+}

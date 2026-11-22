@@ -422,3 +422,29 @@ fn exec_xfer_abort_result_carries_the_status_class() {
         assert_eq!(abort_result(&result), expected, "{result:?}");
     }
 }
+
+#[test]
+fn cloud_account_erasure_fails_only_the_linked_transfer() {
+    let mut w = world();
+    let other_key = "Moment:r2:upload";
+    let affected = w.source(KEY, b"first");
+    let unrelated = w.source(other_key, b"second");
+    w.stub.script([Act::Hang, Act::Hang]);
+
+    for (key, row, path) in [(KEY, "r1", affected), (other_key, "r2", unrelated)] {
+        let mut input = w.accept_input(key, path, 1);
+        let TransferInput::Accept { item, .. } = &mut input else { panic!("expected accept request") };
+        item.on_row = true;
+        item.mutation.row_id = row.into();
+        w.post(input);
+        let id = w.det.state(w.transfers).unwrap().open_id(key).unwrap();
+        w.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(id) });
+    }
+    let rows = [("Moment".to_string(), "r1".to_string())].into_iter().collect();
+    w.post(TransferInput::CloudRowsErased { rows });
+    assert_eq!(w.stage(KEY), Some(TransferStage::Failed));
+    assert_eq!(w.stage(other_key), Some(TransferStage::Uploading));
+    let shown = lock(&w.shown);
+    let Some(Shown::Failed { error }) = shown.last() else { panic!("transfer failure was not published") };
+    assert_eq!(crate::owners::write::failure::parse(error).message, "cloud account changed");
+}

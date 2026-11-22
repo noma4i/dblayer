@@ -168,9 +168,13 @@ impl OutboxState {
     pub fn stage_of(&self, op_id: OpId) -> Option<Stage> { self.ops.get(&op_id).map(|operation| operation.stage) }
 
     pub(super) fn addresses_row(operation: &QueuedOperation, model: &str, row: &str) -> bool {
-        operation.op.model == model && match &operation.op.origin {
-            OpSource::TransferGroup { members, .. } => members.iter().any(|member| member.row_id == row),
-            _ => operation.op.row_id == row,
+        operation.op.model == model && Self::addresses_matching_row(operation, |candidate| candidate == row)
+    }
+
+    fn addresses_matching_row(operation: &QueuedOperation, mut matches: impl FnMut(&str) -> bool) -> bool {
+        match &operation.op.origin {
+            OpSource::TransferGroup { members, .. } => members.iter().any(|member| matches(&member.row_id)),
+            _ => matches(&operation.op.row_id),
         }
     }
 
@@ -937,7 +941,10 @@ impl OutboxState {
         }
         match input {
             OutboxInput::CloudRowsErased { rows } => {
-                let ids: Vec<_> = self.ops.values().filter(|operation| !matches!(operation.stage, Stage::Landing | Stage::RollingBack(_) | Stage::MarkingFailed | Stage::Failed | Stage::Done) && rows.iter().any(|(model, row)| Self::addresses_row(operation, model, row))).map(|operation| operation.op_id).collect();
+                let ids: Vec<_> = self.ops.values().filter(|operation| {
+                    !matches!(operation.stage, Stage::Landing | Stage::RollingBack(_) | Stage::MarkingFailed | Stage::Failed | Stage::Done)
+                        && Self::addresses_matching_row(operation, |row| rows.contains(&(operation.op.model.clone(), row.into())))
+                }).map(|operation| operation.op_id).collect();
                 for id in ids {
                     let operation = &self.ops[&id];
                     if operation.stage == Stage::Sending {
