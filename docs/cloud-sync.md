@@ -41,6 +41,31 @@ An optional HTTPS `relay` enables foreground Drive change notifications.
 See [Drive notifications](drive-notifications.md) for the server and its deployment.
 Without a relay, cloud sync reads Drive when it starts or reconnects.
 
+## Status
+
+Read the current snapshot or observe changes while the database is open.
+
+```swift
+let status = try DB.cloudStatus()
+for await snapshot in try DB.cloudChanges() {
+  print(snapshot)
+}
+```
+
+```kotlin
+val status = DBlayer.cloudStatus()
+DBlayer.cloudChanges().collect { snapshot ->
+    println(snapshot)
+}
+```
+
+The first change is the current snapshot. A slow reader receives the latest snapshot.
+Without cloud configuration, the snapshot is Disabled and the changes stream ends after it.
+Closing the database ends the stream. Cancelling a reader leaves other readers active.
+The snapshot reports the cloud phase and record issues for the current domain.
+TooLarge affects only the record whose serialized payload exceeds the cloud limit.
+Other records continue syncing. A newer version clears the issue and can be sent.
+
 ## Application accounts
 
 For an encrypted app session, select a stable account scalar from the confirmed sign-in answer.

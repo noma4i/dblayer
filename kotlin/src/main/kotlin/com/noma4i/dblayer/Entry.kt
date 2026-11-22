@@ -36,6 +36,10 @@ object DBlayer {
 
     fun openReport(): OpenReport = database.openReport()
 
+    fun cloudStatus(): CloudStatus = database.cloudStatus()
+
+    fun cloudChanges(): kotlinx.coroutines.flow.Flow<CloudStatus> = cloudChanges(database)
+
     suspend fun <Answer> call(operation: String, variables: JsonObject, serializer: KSerializer<Answer>, account: AccountScope? = null): Answer =
         onAccountOf(account) { _, database, epoch -> dbJson.decodeFromString(serializer, database.call(epoch, operation, variables.jsonText())) }
 

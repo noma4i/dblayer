@@ -36,6 +36,10 @@ public enum DB {
 
   public static func openReport() throws -> OpenReport { try database.openReport() }
 
+  public static func cloudStatus() throws -> CloudStatus { try database.cloudStatus() }
+
+  public static func cloudChanges() throws -> CloudChanges { CloudChanges(database: try database) }
+
   nonisolated(nonsending) public static func call<Answer: Decodable & Sendable>(_ operation: String, variables: [String: JSONValue], as _: Answer.Type, in scope: AccountScope? = nil) async throws -> Answer {
     try await DB.ordered(scope) { root, database, epoch in
       return try JSONDecoder().decode(Answer.self, from: Data(try await database.call(epoch: epoch, operation: operation, variablesJson: JSONValue.object(variables).text).utf8))
