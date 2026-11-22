@@ -72,4 +72,55 @@ class DriveChangesTest {
             }
         }
     }
+
+    @Test
+    fun reservesAndUploadsOnlyTheSelectedJournal() = bounded(timeoutMillis = 5_000) {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("""{"ids":["reserved"]}"""))
+            server.enqueue(MockResponse().addHeader("Location", server.url("/upload/session")))
+            server.enqueue(MockResponse().setBody("""{"id":"reserved"}"""))
+            server.enqueue(MockResponse().addHeader("Location", server.url("/upload/replacement")))
+            server.enqueue(MockResponse().setBody("""{"id":"unexpected"}"""))
+            val drive = DriveChanges(baseUrl = server.url("/drive/v3/"))
+            val token = "test-bearer"
+            val domain = "a".repeat(64)
+            val journal = Files.createTempFile("drive-journal", ".tmp").toFile()
+            try {
+                journal.writeText("journal bytes")
+                val id = drive.reserveId(token)
+                assertEquals("reserved", id)
+                val reservation = requireNotNull(server.takeRequest(1, TimeUnit.SECONDS)).requestUrl
+                assertEquals("/drive/v3/files/generateIds", reservation?.encodedPath)
+                assertEquals("appDataFolder", reservation?.queryParameter("space"))
+
+                drive.upload(token, domain, "replica", id, true, journal)
+                val create = requireNotNull(server.takeRequest(1, TimeUnit.SECONDS))
+                assertEquals("POST", create.method)
+                assertEquals("/upload/drive/v3/files", create.requestUrl?.encodedPath)
+                assertEquals("resumable", create.requestUrl?.queryParameter("uploadType"))
+                val metadata = create.body.readUtf8()
+                assertTrue(metadata.contains("appDataFolder"))
+                assertTrue(metadata.contains(domain))
+                assertTrue(metadata.contains(id))
+                val transferred = requireNotNull(server.takeRequest(1, TimeUnit.SECONDS))
+                assertEquals("PUT", transferred.method)
+                assertEquals("journal bytes", transferred.body.readUtf8())
+
+                assertTrue(runCatching { drive.upload(token, domain, "replica", id, false, journal) }.isFailure)
+                val replacement = requireNotNull(server.takeRequest(1, TimeUnit.SECONDS))
+                assertEquals("PATCH", replacement.method)
+                assertEquals("/upload/drive/v3/files/reserved", replacement.requestUrl?.encodedPath)
+                assertEquals("{}", replacement.body.readUtf8())
+                assertEquals("journal bytes", journal.readText())
+
+                MockWebServer().use { other ->
+                    server.enqueue(MockResponse().addHeader("Location", other.url("/upload/session")))
+                    assertTrue(runCatching { drive.upload(token, domain, "replica", id, false, journal) }.isFailure)
+                    assertEquals(0, other.requestCount)
+                }
+            } finally {
+                journal.delete()
+            }
+        }
+    }
 }
