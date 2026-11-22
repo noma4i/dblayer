@@ -1,6 +1,7 @@
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 uniffi::setup_scaffolding!();
 
+pub(crate) mod cloud;
 pub mod identity;
 pub mod transport;
 pub mod value;
