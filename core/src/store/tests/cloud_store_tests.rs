@@ -146,3 +146,61 @@ fn durable_cloud_field_stamps_reopen_with_the_original_replica() {
     transaction.commit().unwrap();
     assert_eq!(cloud::field_stamp(&connection, "account", "notes", "one", &field).unwrap(), None);
 }
+
+#[test]
+fn cloud_landing_moves_rows_and_progress_together_without_an_echo() {
+    let directory = tempfile::tempdir().unwrap();
+    let notes = ModelSpec {
+        storage: Storage::Local,
+        ..ModelSpec::new("notes", vec![
+            FieldSpec::scalar("id", ScalarKind::Id),
+            FieldSpec::scalar("text", ScalarKind::Str).nullable().optional(),
+        ])
+    };
+    let open = |name| Store::open_models(Some(&directory.path().join(name)), vec![notes.clone()], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let source = open("source.sqlite");
+    let destination = open("destination.sqlite");
+    for store in [&source, &destination] {
+        store.activate_cloud_domain("example".into()).unwrap();
+    }
+    source.write_queue_ops(&[StoreOp::LocalRows { model: "notes".into(), rows: vec![RowValue {
+        row_id: "n1".into(), values: r#"{"id":"n1","text":"saved on the first replica"}"#.into(),
+    }] }]).unwrap();
+    let sent = source.pending_cloud_records("example", 1).unwrap().pop().unwrap();
+    let incoming = crate::cloud::decode(&sent.key, &sent.payload.unwrap()).unwrap();
+
+    destination.land_local_cloud("example", vec![incoming.clone()], b"first").unwrap();
+    assert_eq!(destination.read(&["notes"], |reader| reader.point("notes", "n1")).unwrap().unwrap()["text"], "saved on the first replica");
+    assert!(destination.pending_cloud_records("example", 1).unwrap().is_empty());
+
+    let mut cleared = incoming.clone();
+    cleared.fields[0].data.value = serde_json::Value::Null;
+    cleared.fields[0].data.stamp.counter += 1;
+    destination.land_local_cloud("example", vec![cleared], b"cleared").unwrap();
+    destination.land_local_cloud("example", vec![incoming.clone()], b"replay").unwrap();
+    let row = destination.read(&["notes"], |reader| reader.point("notes", "n1")).unwrap().unwrap();
+    assert!(row.get("text").is_none_or(serde_json::Value::is_null));
+
+    source.write_queue_ops(&[StoreOp::LocalRows { model: "notes".into(), rows: vec![RowValue {
+        row_id: "identity".into(), values: r#"{"id":"identity"}"#.into(),
+    }] }]).unwrap();
+    let identity_key = crate::cloud::record_key("notes", "identity");
+    let identity = source.pending_cloud_records("example", 2).unwrap().into_iter().find(|record| record.key == identity_key).unwrap();
+    let identity = crate::cloud::decode(&identity.key, &identity.payload.unwrap()).unwrap();
+    assert!(identity.fields.is_empty());
+    destination.land_local_cloud("example", vec![identity], b"identity").unwrap();
+    assert!(destination.read(&["notes"], |reader| reader.point("notes", "identity")).unwrap().is_some());
+    assert!(destination.pending_cloud_records("example", 2).unwrap().is_empty());
+
+    let second = crate::cloud::CloudRecord { row_id: "n2".into(), ..incoming.clone() };
+    let mut malformed = crate::cloud::CloudRecord { row_id: "n3".into(), ..incoming };
+    malformed.fields[0].path = vec!["unknown".into()];
+    assert!(destination.land_local_cloud("example", vec![second, malformed], b"invalid").is_err());
+    assert_eq!(destination.read(&["notes"], |reader| reader.point("notes", "n2")).unwrap(), None);
+    drop(destination);
+
+    let reopened = open("destination.sqlite");
+    let connection = Connection::open(directory.path().join("destination.sqlite")).unwrap();
+    assert_eq!(cloud::progress(&connection, "example").unwrap().as_deref(), Some(b"identity".as_slice()));
+    assert!(reopened.read(&["notes"], |reader| reader.point("notes", "n1")).unwrap().is_some());
+}
