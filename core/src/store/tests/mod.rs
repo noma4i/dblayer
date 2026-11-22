@@ -41,6 +41,7 @@ mod value_tests;
 mod union_tests;
 mod outbox_storage_tests;
 mod cache_storage_tests;
+mod cloud_store_tests;
 mod tombstones_tests;
 mod tombstones_pin_tests;
 mod windows_tests;
