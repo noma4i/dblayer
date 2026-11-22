@@ -72,3 +72,17 @@ fn visit(field: &FieldSpec, value: &Value, path: Vec<String>, result: &mut BTree
     }
     result.insert(path, value.clone());
 }
+
+pub(super) fn changed(before: &BTreeMap<Vec<String>, Value>, after: &BTreeMap<Vec<String>, Value>) -> Vec<Vec<String>> {
+    let mut paths: Vec<Vec<String>> = after.iter().filter_map(|(path, value)| (before.get(path) != Some(value)).then_some(path.clone())).collect();
+    for old in before.keys() {
+        if after.keys().any(|path| old.starts_with(path)) { continue; }
+        for length in 1..=old.len() {
+            let path = &old[..length];
+            if after.keys().any(|next| next.starts_with(path)) { continue; }
+            if !paths.iter().any(|next| next.starts_with(path) || path.starts_with(next)) { paths.push(path.to_vec()); }
+            break;
+        }
+    }
+    paths
+}

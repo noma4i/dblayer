@@ -84,10 +84,10 @@ impl super::Store {
                     let info = reader.models().get(&record.model).ok_or_else(|| StoreError::UnknownModel(record.model.clone()))?;
                     let row = reader.stored_row(&record.model, &record.row_id)?.ok_or_else(|| StoreError::Constraint("pending cloud row is missing".into()))?;
                     record.server_revision = info.spec.server_revision.as_ref().and_then(|field| row.row.get(field)).and_then(serde_json::Value::as_i64);
-                    for (path, value) in project::project(&info.spec, &row.row) {
-                        if let Some(stamp) = field_stamp(reader.connection(), domain, &record.model, &record.row_id, &path)? {
-                            record.fields.push(crate::cloud::CloudField { path, data: crate::cloud::StampedValue { value, stamp } });
-                        }
+                    let projection = project::project(&info.spec, &row.row);
+                    for (path, stamp) in field_stamps(reader.connection(), domain, &record.model, &record.row_id)? {
+                        let value = projection.get(&path).cloned().unwrap_or(serde_json::Value::Null);
+                        record.fields.push(crate::cloud::CloudField { path, data: crate::cloud::StampedValue { value, stamp } });
                     }
                 }
                 records.push(PendingCloudRecord { key, model: record.model.clone(), row_id: record.row_id.clone(), version: pending.version, system_fields, payload: crate::cloud::encode(&record) });
@@ -154,10 +154,14 @@ pub(crate) fn capture_local(tx: &Transaction<'_>, domain: Option<&str>, models: 
             let Some(after) = reader.stored_row(model, id)? else { continue };
             let projection = project::project(&info.spec, &after.row);
             let changed: Vec<_> = if confirmed {
-                projection.into_keys().filter(|path| after.field_rev.get(&path[0]) == Some(&version)).collect()
+                let prior: BTreeMap<_, _> = field_stamps(tx, domain, model, id)?.into_iter().filter(|(path, _)| after.field_rev.get(&path[0]) == Some(&version)).map(|(path, _)| (path, serde_json::Value::Null)).collect();
+                let current: BTreeMap<_, _> = projection.into_iter().filter(|(path, _)| after.field_rev.get(&path[0]) == Some(&version)).collect();
+                let mut changed = project::changed(&prior, &current);
+                for path in current.into_keys() { if !changed.contains(&path) { changed.push(path); } }
+                changed
             } else {
                 let before = originals.get(&change.row).and_then(Option::as_ref).map(|row| project::project(&info.spec, row)).unwrap_or_default();
-                projection.into_iter().filter_map(|(path, value)| (before.get(&path) != Some(&value)).then_some(path)).collect()
+                project::changed(&before, &projection)
             };
             if changed.is_empty() && change.kind != RowChangeKind::Inserted { continue; }
             if !changed.is_empty() {
@@ -264,6 +268,7 @@ pub(crate) fn observe_stamp(tx: &Transaction<'_>, domain: &str, stamp: CloudStam
 
 pub(crate) fn write_field_stamp(tx: &Transaction<'_>, domain: &str, model: &str, row_id: &str, path: &[String], stamp: CloudStamp) -> Result<(), StoreError> {
     let path = ListKey::compose(path);
+    tx.execute(include_str!("../sql/cloud_remove_overlapping_fields.sql"), params![domain, model, row_id, path.as_str()])?;
     tx.execute(include_str!("../sql/cloud_write_field.sql"), params![domain, model, row_id, path.as_str(), stamp.millis.to_be_bytes().as_slice(), stamp.counter, stamp.replica.as_slice()])?;
     Ok(())
 }
@@ -271,4 +276,14 @@ pub(crate) fn write_field_stamp(tx: &Transaction<'_>, domain: &str, model: &str,
 pub(crate) fn field_stamp(connection: &Connection, domain: &str, model: &str, row_id: &str, path: &[String]) -> Result<Option<CloudStamp>, StoreError> {
     let path = ListKey::compose(path);
     Ok(connection.query_row(include_str!("../sql/cloud_read_field.sql"), params![domain, model, row_id, path.as_str()], read_stamp).optional()?)
+}
+
+fn field_stamps(connection: &Connection, domain: &str, model: &str, row_id: &str) -> Result<Vec<(Vec<String>, CloudStamp)>, StoreError> {
+    let mut statement = connection.prepare_cached(include_str!("../sql/cloud_read_fields.sql"))?;
+    let rows = statement.query_map(params![domain, model, row_id], |row| Ok((row.get::<_, String>(3)?, read_stamp(row)?)))?;
+    rows.map(|row| {
+        let (path, stamp) = row?;
+        let path = ListKey::from_raw(&path).decompose().ok_or_else(|| StoreError::Invalid("invalid cloud field path".into()))?;
+        Ok((path, stamp))
+    }).collect()
 }
