@@ -553,7 +553,7 @@ impl Life {
         let read = read::add(&mut builder, &wiring, &ports, store);
         wiring.addresses.set(Addresses { cloud: cloud.as_ref().map(|(address, _)| *address), lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, local_writes, transfer: transfer.map(|(address, _)| address), rounds: transfer.map(|(_, rounds)| rounds), windows: None, deliveries: None, feed: None }.with_read(&read)).map_err(|_| LifeError::Storage("the addresses are set twice".into()))?;
         let session_open = session_address.map(|(_, restored)| SessionInput::Open { credential: restored.credential, pending: restored.pending, dropped_pending: restored.dropped_pending, secret: restored.secret });
-        builder.install(store, "store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), secret: ports.secret.clone(), exchange: ports.exchange.clone(), executor: ports.executor.clone(), restore_error, session_open });
+        builder.install(store, "store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), secret: ports.secret.clone(), exchange: ports.exchange.clone(), executor: ports.executor.clone(), restore_error, session_open, session_cloud });
         let runtime = builder.start().map_err(|error| LifeError::Storage(error.to_string()))?;
         wiring.to_store(StoreInput::Boot(found));
         let settled = wiring.published.wait_until(|| {

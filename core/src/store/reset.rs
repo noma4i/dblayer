@@ -73,7 +73,7 @@ fn bump_revision(connection: &Connection) -> Result<i64, StoreError> {
 }
 
 /// The values of `reset_intent.mode` the writer writes: any other record is dropped by `Boot` with the cache (D-452).
-pub(crate) const END_MODES: [&str; 2] = ["account", "session_end"];
+pub(crate) const END_MODES: [&str; 3] = ["account", "session_end", "cloud_session_end"];
 
 pub(crate) fn pending_intent(connection: &Connection) -> Result<Option<String>, StoreError> {
     Ok(connection.query_row(include_str!("sql/reset/pending_intent.sql"), [], |row| row.get(0)).optional()?)
@@ -262,12 +262,20 @@ pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreE
     wipe_all_cache(&transaction, true)?;
     transaction.execute_batch(include_str!("sql/reset/clear_row_alias.sql"))?;
     retire_operations(&transaction, None, None)?;
-    if mode == "session_end" { transaction.execute_batch(include_str!("sql/reset/erase_account.sql"))?; }
+    if mode == "session_end" || mode == "cloud_session_end" { transaction.execute_batch(include_str!("sql/reset/erase_account.sql"))?; }
+    if mode == "cloud_session_end" { reset_session_cloud(&transaction)?; }
     session_state::remove_resume_answer(&transaction)?;
     manifest_stamp(&transaction, &current_fingerprints(inner)?)?;
     clear_intent(&transaction)?;
     transaction.commit()?;
     Ok(true)
+}
+
+fn reset_session_cloud(transaction: &rusqlite::Transaction<'_>) -> Result<(), StoreError> {
+    if let Some(domain) = crate::store::ddl::manifest_read(transaction, "cloud_domain")? {
+        super::cloud::reset(transaction, &domain)?;
+    }
+    Ok(())
 }
 
 impl Store {
@@ -311,13 +319,17 @@ impl Store {
     }
 
     /// The effect `EraseAccount`: the data of the account goes in one transaction. Returns the new revision.
-    pub(crate) fn erase_account(&self, generation: crate::identity::Generation, erase_encrypted: bool) -> Result<i64, StoreError> {
+    pub(crate) fn erase_account(&self, generation: crate::identity::Generation, erase_encrypted: bool, session_cloud: bool) -> Result<i64, StoreError> {
         let readers = self.models.write().unwrap_or_else(|error| error.into_inner());
         let mut inner = self.lock();
+        let reset_cloud = erase_encrypted && session_cloud;
+        if reset_cloud {
+            if let Some(attachment) = &mut inner.cloud_scope { attachment.mode = super::CloudAttachmentMode::Erased; }
+        }
         inner.generation = generation;
         self.generation_now.store(generation.value(), std::sync::atomic::Ordering::SeqCst);
         let now = inner.now_ms();
-        write_intent(&inner.connection, if erase_encrypted { "session_end" } else { "account" }, now)?;
+        write_intent(&inner.connection, if reset_cloud { "cloud_session_end" } else if erase_encrypted { "session_end" } else { "account" }, now)?;
         let transaction = inner.connection.unchecked_transaction()?;
         wipe_all_cache(&transaction, false)?;
         transaction.execute_batch(include_str!("sql/reset/clear_row_alias.sql"))?;
@@ -326,6 +338,7 @@ impl Store {
         if erase_encrypted {
             transaction.execute_batch(include_str!("sql/reset/erase_account.sql"))?;
         }
+        if reset_cloud { reset_session_cloud(&transaction)?; }
         manifest_stamp(&transaction, &current_fingerprints(&inner)?)?;
         let revision = bump_revision(&transaction)?;
         clear_intent(&transaction)?;
