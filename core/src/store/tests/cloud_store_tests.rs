@@ -700,3 +700,34 @@ fn cloud_settings_show_record_disposition_and_fence_replaced_scopes() {
     store.activate_cloud_scope(CloudScope { generation: 2, ..scope.clone() }).unwrap();
     assert!(store.cloud_record_disposition(&scope, "notes", &row).is_err());
 }
+
+#[test]
+fn cloud_capture_binding_restores_only_the_matching_offline_domain() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("paused.sqlite");
+    let notes = ModelSpec { storage: Storage::Local, ..ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]) };
+    let open = || Store::open_models(Some(&path), vec![notes.clone()], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let store = open();
+    let first = CloudScope { epoch: 1, generation: 1, domain: "previous-domain".into(), provider_fingerprint: "provider".into() };
+    store.activate_cloud_scope_with_binding(first, Some("application-binding")).unwrap();
+    drop(store);
+
+    let store = open();
+    assert!(store.restore_cloud_capture(2, "different-binding", None).unwrap().is_none());
+    assert!(store.restore_cloud_capture(2, "application-binding", Some("signed-out")).unwrap().is_none());
+    let paused = store.restore_cloud_capture(2, "application-binding", None).unwrap().unwrap();
+    assert_eq!(paused.epoch, 2);
+    assert_eq!(paused.domain, "previous-domain");
+    assert_eq!(store.cloud_status_scope(), Some(paused.clone()));
+    assert!(store.pending_cloud_records(&paused, 1).is_err());
+
+    store.write_queue_ops(&[StoreOp::LocalRows { model: "notes".into(), rows: vec![RowValue {
+        row_id: "offline".into(), values: r#"{"id":"offline","text":"saved while paused"}"#.into(),
+    }] }]).unwrap();
+    let live = CloudScope { generation: 1, provider_fingerprint: "provider".into(), ..paused };
+    store.activate_cloud_scope_with_binding(live.clone(), Some("application-binding")).unwrap();
+    let work = store.pending_cloud_records(&live, 1).unwrap().pop().unwrap();
+    assert_eq!(work.row_id, "offline");
+    let record = crate::cloud::decode(&work.key, work.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(record.fields[0].data.value, "saved while paused");
+}
