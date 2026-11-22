@@ -19,6 +19,7 @@ pub(crate) fn enqueue(tx: &Transaction<'_>, domain: &str, record: &CloudRecord, 
     let seq: i64 = tx.query_row("SELECT seq FROM cloud_waiting WHERE domain = ?1 AND digest = ?2", params![domain, digest.as_slice()], |row| row.get(0))?;
     if inserted == 0 {
         tx.execute("UPDATE cloud_waiting SET system_fields = ?1 WHERE seq = ?2", params![system_fields, seq])?;
+        tx.execute("DELETE FROM cloud_waiting_dependency WHERE domain = ?1 AND seq = ?2", params![domain, seq])?;
     }
     if inserted != 0 {
         for (field, value) in record.fields.iter().enumerate() {
@@ -42,7 +43,12 @@ pub(crate) fn entries(connection: &Connection, domain: &str, model: &str, row_id
         seq: row.get(0)?, record: CloudRecord { model: row.get(1)?, row_id: row.get(2)?, server_revision: row.get(3)?, deleted: row.get(4)?, fields: Vec::new() }, system_fields: row.get(5)?,
     }))?;
     let mut entries = rows.collect::<Result<Vec<_>, _>>()?;
-    for entry in &mut entries {
+    read_fields(connection, &mut entries)?;
+    Ok(entries)
+}
+
+fn read_fields(connection: &Connection, entries: &mut [WaitingEntry]) -> Result<(), StoreError> {
+    for entry in entries {
         let mut fields = connection.prepare_cached("SELECT field, millis, counter, replica FROM cloud_waiting_field WHERE seq = ?1 ORDER BY field")?;
         let stamps = fields.query_map([entry.seq], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, u32>(2)?, row.get::<_, Vec<u8>>(3)?)))?;
         for stamp in stamps {
@@ -56,13 +62,36 @@ pub(crate) fn entries(connection: &Connection, domain: &str, model: &str, row_id
             entry.record.fields.push(CloudField { path, data: StampedValue { value, stamp } });
         }
     }
-    Ok(entries)
+    Ok(())
+}
+
+pub(crate) fn next_ready(tx: &Transaction<'_>, domain: &str) -> Result<Option<WaitingEntry>, StoreError> {
+    use rusqlite::OptionalExtension;
+    let entry = tx.query_row("SELECT w.seq, w.model, w.row_id, w.server_revision, w.deleted, w.system_fields FROM cloud_waiting_ready r JOIN cloud_waiting w ON w.domain = r.domain AND w.seq = r.seq WHERE r.domain = ?1 ORDER BY r.seq LIMIT 1", [domain], |row| Ok(WaitingEntry {
+        seq: row.get(0)?, record: CloudRecord { model: row.get(1)?, row_id: row.get(2)?, server_revision: row.get(3)?, deleted: row.get(4)?, fields: Vec::new() }, system_fields: row.get(5)?,
+    })).optional()?;
+    let Some(mut entry) = entry else { return Ok(None) };
+    read_fields(tx, std::slice::from_mut(&mut entry))?;
+    Ok(Some(entry))
+}
+
+pub(crate) fn mark_all(tx: &Transaction<'_>, domain: &str) -> Result<(), StoreError> {
+    tx.execute("INSERT OR IGNORE INTO cloud_waiting_ready SELECT domain, seq FROM cloud_waiting WHERE domain = ?1", [domain])?;
+    Ok(())
+}
+
+pub(crate) fn mark_changed(tx: &Transaction<'_>, domain: Option<&str>, result: &super::CommitResult) -> Result<(), StoreError> {
+    let Some(domain) = domain else { return Ok(()) };
+    for change in &result.rows {
+        tx.prepare_cached("INSERT OR IGNORE INTO cloud_waiting_ready SELECT domain, seq FROM cloud_waiting_dependency WHERE domain = ?1 AND model = ?2 AND row_id = ?3")?.execute(params![domain, change.row.model.as_str(), change.row.id.as_str()])?;
+    }
+    Ok(())
 }
 
 pub(crate) fn remove(tx: &Transaction<'_>, domain: &str, seq: i64) -> Result<(), StoreError> {
     let filter = "seq IN (SELECT seq FROM cloud_waiting WHERE domain = ?1 AND seq = ?2)";
     let args = params![domain, seq];
-    for table in ["cloud_waiting_value", "cloud_waiting_path", "cloud_waiting_field", "cloud_waiting_dependency"] {
+    for table in ["cloud_waiting_value", "cloud_waiting_path", "cloud_waiting_field", "cloud_waiting_dependency", "cloud_waiting_ready"] {
         tx.prepare_cached(&format!("DELETE FROM {table} WHERE {filter}"))?.execute(args)?;
     }
     tx.execute("DELETE FROM cloud_waiting WHERE domain = ?1 AND seq = ?2", args)?;

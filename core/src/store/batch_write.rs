@@ -195,6 +195,9 @@ impl Store {
         }
         let swaps: Vec<(String, String, String)> = results.iter().flat_map(|result| result.replaced.iter()).map(|(from, real)| (from.model.to_string(), from.id.to_string(), real.to_string())).collect();
         let target_revision = if writes_database { revision } else { base_revision };
+        for result in &results {
+            super::cloud_waiting::mark_changed(&transaction, inner.cloud_scope.as_ref().and_then(|attachment| attachment.capture_domain()), result)?;
+        }
         let mut combined = super::batch_result::consolidate(&transaction, &inner.models, &originals, results, target_revision)?;
         super::cloud::capture_local(&transaction, inner.cloud_scope.as_ref().and_then(|attachment| attachment.capture_domain()), &inner.models, &originals, &combined, now)?;
         let mut shown = Vec::new();

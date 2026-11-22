@@ -65,11 +65,30 @@ impl Store {
         let now_ms = inner.now_ms();
         let transaction = inner.connection.unchecked_transaction()?;
         let revision = Reader::new(&transaction, &inner.models).revision_seq()? + 1;
-        let plan = cloud_plan(&transaction, &inner.models, domain, records, revision)?;
+        let (plan, _) = cloud_plan(&transaction, &inner.models, domain, records, revision)?;
         if let Some(progress) = progress { super::cloud::write_progress(&transaction, domain, progress)?; }
         let result = apply_transaction(self, &inner, transaction, &plan, now_ms, revision, false)?;
         self.finish(inner, result).publish();
         Ok(())
+    }
+
+    pub(crate) fn replay_cloud_waiting(&self, scope: &crate::owners::cloud::CloudScope, limit: usize) -> Result<usize, StoreError> {
+        let mut count = 0;
+        while count < limit {
+            let inner = self.lock();
+            inner.ensure_healthy()?;
+            inner.require_cloud_scope(scope)?;
+            let transaction = inner.connection.unchecked_transaction()?;
+            let Some(entry) = super::cloud_waiting::next_ready(&transaction, &scope.domain)? else { break };
+            transaction.execute("DELETE FROM cloud_waiting_ready WHERE domain = ?1 AND seq = ?2", params![scope.domain, entry.seq])?;
+            let revision = Reader::new(&transaction, &inner.models).revision_seq()? + 1;
+            let (plan, deferred) = cloud_plan(&transaction, &inner.models, &scope.domain, vec![(entry.record, entry.system_fields)], revision)?;
+            if !deferred { super::cloud_waiting::remove(&transaction, &scope.domain, entry.seq)?; }
+            let result = apply_transaction(self, &inner, transaction, &plan, inner.now_ms(), revision, false)?;
+            self.finish(inner, result).publish();
+            count += 1;
+        }
+        Ok(count)
     }
 
     #[cfg(test)]
@@ -140,6 +159,7 @@ fn apply_transaction(store: &Store, inner: &Inner, transaction: rusqlite::Transa
     let apply = |plan: BatchPlan| apply_envelope_at(&transaction, &inner.models, &plan, (now_ms, revision, inner.generation), capture_rows.then_some(&mut originals), None);
     let (derived, _, _) = super::follow_pointer::settle_parents(&Reader::new(&transaction, &inner.models), &inner.models, std::slice::from_ref(&first), apply)?;
     let outcome = match derived { Some(derived) => super::batch_result::consolidate(&transaction, &inner.models, &BTreeMap::new(), vec![first, derived], revision)?, None => first };
+    super::cloud_waiting::mark_changed(&transaction, inner.cloud_scope.as_ref().and_then(|attachment| attachment.capture_domain()), &outcome)?;
     if capture { super::cloud::capture_local(&transaction, inner.cloud_scope.as_ref().and_then(|attachment| attachment.capture_domain()), &inner.models, &originals, &outcome, now_ms)?; }
     let journal = store.context.changed.prepare_commit(&outcome);
     if capture && outcome.is_noop() && envelope.window.is_none() && envelope.window_debts.is_empty() && envelope.pending_locals.is_empty() {
@@ -155,12 +175,13 @@ fn apply_transaction(store: &Store, inner: &Inner, transaction: rusqlite::Transa
     Ok((outcome, acks))
 }
 
-fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInfo>, domain: &str, records: Vec<(crate::cloud::CloudRecord, Option<Vec<u8>>)>, revision: i64) -> Result<BatchPlan, StoreError> {
+fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInfo>, domain: &str, records: Vec<(crate::cloud::CloudRecord, Option<Vec<u8>>)>, revision: i64) -> Result<(BatchPlan, bool), StoreError> {
     use super::cloud::{self, project};
     use crate::cloud::{Choice, StampedValue};
     let mut plan = BatchPlan::from_source(crate::schema::RowSource::Local);
     let reader = Reader::new(tx, models);
     let mut seen = BTreeSet::new();
+    let mut deferred = false;
     for (record, system_fields) in records {
         if !seen.insert((record.model.clone(), record.row_id.clone())) { return Err(StoreError::Invalid("duplicate cloud record".into())); }
         let info = models.get(&record.model).filter(|info| !info.spec.is_memory()).ok_or_else(|| StoreError::Invalid("invalid cloud model".into()))?;
@@ -181,6 +202,7 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
         }
         if !info.spec.is_local() && super::operation::has_open_row_operation(tx, &record.model, &record.row_id)? {
             super::cloud_waiting::enqueue(tx, domain, &record, system_fields.as_deref(), &[(record.model.as_str(), record.row_id.as_str())])?;
+            deferred = true;
             continue;
         }
         let deleted: bool = tx.query_row(include_str!("../sql/cloud_deleted.sql"), params![domain, record.model, record.row_id], |row| row.get(0)).optional()?.unwrap_or(false);
@@ -246,6 +268,7 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
         if !missing.is_empty() {
             let dependencies: Vec<_> = missing.iter().map(|(model, id)| (*model, id.as_str())).collect();
             super::cloud_waiting::enqueue(tx, domain, &record, system_fields.as_deref(), &dependencies)?;
+            deferred = true;
             continue;
         }
         for (path, stamp) in &marks {
@@ -259,7 +282,7 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
         }
         cloud::write_system_fields(tx, domain, &record.model, &record.row_id, system_fields.as_deref())?;
     }
-    Ok(plan)
+    Ok((plan, deferred))
 }
 
 mod apply_rows;

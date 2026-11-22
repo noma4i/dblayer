@@ -195,7 +195,8 @@ async fn send_pass(
     let generation = scope.generation;
     let read_db = db.clone();
     let read_scope = scope.clone();
-    let (valid, outgoing, full, blocked, issues) = crate::task::spawn_blocking_on(&executor, Some(counted.launch()), move || -> Result<_, DbError> {
+    let (valid, outgoing, full, blocked, replay_full, issues) = crate::task::spawn_blocking_on(&executor, Some(counted.launch()), move || -> Result<_, DbError> {
+        let replay_full = read_db.replay_cloud_waiting(&read_scope, 16)? == 16;
         let records = read_db.pending_cloud_records(&read_scope, 16)?;
         let full = records.len() == 16;
         let mut outgoing = Vec::new();
@@ -214,10 +215,10 @@ async fn send_pass(
             valid.push(record);
         }
         let issues = read_db.cloud_issues(&read_scope)?;
-        Ok((valid, outgoing, full, blocked, issues))
+        Ok((valid, outgoing, full, blocked, replay_full, issues))
     }).await.map_err(|error| DbError::Runtime { detail: error.to_string() })??;
     back.reply(EpochStamp::Control, CloudInput::Issues { generation: scope.generation, issues });
-    if outgoing.is_empty() { return Ok((full && blocked, false)); }
+    if outgoing.is_empty() { return Ok((replay_full || (full && blocked), false)); }
     let wire = CloudWireScope { epoch: scope.epoch, generation: scope.generation, domain: scope.domain.clone(), provider_fingerprint: scope.provider_fingerprint.clone() };
     let results = crate::runtime::send_in_epoch(&gate, epoch, || async move {
         crate::lock::effect(|| port.send(wire, outgoing)).await.map_err(|error| crate::transport::TransportError::Internal(error.to_string()))
@@ -245,7 +246,7 @@ async fn send_pass(
         }
       }
       let issues = db.cloud_issues(&scope)?;
-      Ok((full && progress, retry, issues))
+      Ok((replay_full || (full && progress), retry, issues))
     }).await.map_err(|error| DbError::Runtime { detail: error.to_string() })?.map(|(more, retry, issues)| {
         back.reply(EpochStamp::Control, CloudInput::Issues { generation, issues });
         (more, retry)

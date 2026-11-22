@@ -356,6 +356,7 @@ impl Store {
             return Err(StoreError::Invalid("cloud domain requires erase".into()));
         }
         cloud::enable(&transaction)?;
+        if inner.cloud_scope.is_none() { cloud_waiting::mark_all(&transaction, &scope.domain)?; }
         ddl::manifest_write(&transaction, "cloud_domain", &scope.domain)?;
         transaction.commit()?;
         inner.cloud_scope = Some(CloudAttachment { scope, mode: CloudAttachmentMode::Live });

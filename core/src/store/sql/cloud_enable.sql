@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS cloud_waiting_dependency (
     seq INTEGER NOT NULL,
     PRIMARY KEY (domain, model, row_id, seq)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS cloud_waiting_ready (
+    domain TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    PRIMARY KEY (domain, seq)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS cloud_waiting_field (
     seq INTEGER NOT NULL,
     field INTEGER NOT NULL,
