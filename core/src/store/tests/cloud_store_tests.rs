@@ -330,3 +330,56 @@ fn cloud_bootstrap_resumes_its_checkpoint_after_reopen() {
     assert!(second.bootstrap_cloud_chunk(&scope).unwrap());
     assert_eq!(second.pending_cloud_records(&scope, 130).unwrap().len(), 128);
 }
+
+#[test]
+fn disk_cloud_landing_keeps_newer_server_values_and_applies_local_fields() {
+    use crate::cloud::{CloudField, CloudRecord, CloudStamp, StampedValue};
+    use crate::schema::MergeRule;
+    use serde_json::json;
+
+    let mut score = FieldSpec::scalar("score", ScalarKind::Int);
+    score.merge = Some(MergeRule::Monotonic);
+    let mut memo = FieldSpec::scalar("memo", ScalarKind::Str).optional();
+    memo.merge = Some(MergeRule::Local);
+    let notes = ModelSpec {
+        server_revision: Some("rev".into()),
+        ..ModelSpec::new("notes", vec![
+            FieldSpec::scalar("id", ScalarKind::Id),
+            FieldSpec::scalar("rev", ScalarKind::Int),
+            FieldSpec::scalar("title", ScalarKind::Str),
+            score, memo,
+        ])
+    };
+    let store = Store::open_models(None, vec![notes], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let scope = CloudScope { epoch: 1, generation: 1, domain: "example".into(), provider_fingerprint: "provider".into() };
+    let row = || store.read(&["notes"], |reader| reader.point("notes", "n1")).unwrap().unwrap();
+    let mut plan = BatchPlan::from_source(RowSource::Local);
+    plan.entity_ops.push(EntityOp::Upsert {
+        model: crate::identity::ModelKey::new("notes"),
+        id: crate::identity::RowId::new("n1").unwrap(),
+        row: json!({"id":"n1", "rev":4, "title":"server", "score":10, "memo":"device"}).as_object().unwrap().clone(),
+    });
+    store.commit(plan).unwrap();
+    store.activate_cloud_scope(scope.clone()).unwrap();
+    let record = |revision, millis, values: serde_json::Value| CloudRecord {
+        model: "notes".into(), row_id: "n1".into(), server_revision: Some(revision), deleted: false,
+        fields: values.as_object().unwrap().iter().map(|(name, value)| CloudField {
+            path: vec![name.clone()],
+            data: StampedValue { value: value.clone(), stamp: CloudStamp { millis, counter: 0, replica: [1; 16] } },
+        }).collect(),
+    };
+    let older = record(3, 200, json!({"rev":3, "title":"old", "score":20, "memo":"cloud"}));
+    store.land_local_cloud(&scope, vec![(older, None)], Some(b"old")).unwrap();
+    assert_eq!((row()["rev"].clone(), row()["title"].clone(), row()["score"].clone(), row()["memo"].clone()), (json!(4), json!("server"), json!(10), json!("cloud")));
+
+    let newer = record(5, 100, json!({"rev":5, "title":"fresh", "score":7}));
+    store.land_local_cloud(&scope, vec![(newer, None)], Some(b"new")).unwrap();
+    let current = row();
+    assert_eq!((&current["rev"], &current["title"], &current["score"], &current["memo"]), (&json!(5), &json!("fresh"), &json!(10), &json!("cloud")));
+
+    let malformed = record(6, 300, json!({"rev":7}));
+    assert!(store.land_local_cloud(&scope, vec![(malformed, None)], Some(b"malformed")).is_err());
+    assert_eq!(row(), current);
+    assert_eq!(store.cloud_resume(&scope).unwrap().as_deref(), Some(b"new".as_slice()));
+    assert!(store.pending_cloud_records(&scope, 1).unwrap().is_empty());
+}
