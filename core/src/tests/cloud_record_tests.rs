@@ -1,9 +1,9 @@
-use crate::cloud::{CloudField, CloudRecord, RecordError, Stamp, StampedValue, decode, encode, record_key};
+use crate::cloud::{CloudField, CloudRecord, RecordError, CloudStamp, StampedValue, decode, encode, record_key};
 use serde_json::json;
 
 #[test]
 fn cloud_record_has_canonical_bytes_and_rejects_mismatched_identity() {
-    let stamp = Stamp { millis: 1000, counter: 0, replica: [1; 16] };
+    let stamp = CloudStamp { millis: 1000, counter: 0, replica: [1; 16] };
     let make = |name: &str, value| CloudField {
         path: vec!["body".into(), name.into()],
         data: StampedValue { value, stamp },

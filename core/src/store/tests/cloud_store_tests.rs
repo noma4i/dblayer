@@ -131,7 +131,7 @@ fn durable_cloud_field_stamps_reopen_with_the_original_replica() {
     let transaction = connection.transaction().unwrap();
     cloud::enable(&transaction).unwrap();
     let original = cloud::tick_stamp(&transaction, "account", 1000).unwrap();
-    let remote = crate::cloud::Stamp { millis: u64::MAX - 1, counter: u32::MAX, replica: [9; 16] };
+    let remote = crate::cloud::CloudStamp { millis: u64::MAX - 1, counter: u32::MAX, replica: [9; 16] };
     cloud::observe_stamp(&transaction, "account", remote).unwrap();
     cloud::write_field_stamp(&transaction, "account", "notes", "one", &field, remote).unwrap();
     transaction.commit().unwrap();
