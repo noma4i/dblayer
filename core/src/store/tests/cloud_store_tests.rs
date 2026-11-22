@@ -95,3 +95,28 @@ fn opt_in_captures_local_commits_at_their_row_revision() {
         version, deleted: true, ..created
     }]);
 }
+
+#[test]
+fn durable_cloud_field_stamps_reopen_with_the_original_replica() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("stamps.sqlite");
+    let field = ["body".to_string(), "title".to_string()];
+    let mut connection = Connection::open(&path).unwrap();
+    let transaction = connection.transaction().unwrap();
+    cloud::enable(&transaction).unwrap();
+    let original = cloud::tick_stamp(&transaction, "account", 1000).unwrap();
+    let remote = crate::cloud::Stamp { millis: u64::MAX - 1, counter: u32::MAX, replica: [9; 16] };
+    cloud::observe_stamp(&transaction, "account", remote).unwrap();
+    cloud::write_field_stamp(&transaction, "account", "notes", "one", &field, remote).unwrap();
+    transaction.commit().unwrap();
+    drop(connection);
+
+    let mut connection = Connection::open(path).unwrap();
+    assert_eq!(cloud::field_stamp(&connection, "account", "notes", "one", &field).unwrap(), Some(remote));
+    let transaction = connection.transaction().unwrap();
+    let next = cloud::tick_stamp(&transaction, "account", 1).unwrap();
+    assert_eq!((next.millis, next.counter, next.replica), (u64::MAX, 0, original.replica));
+    cloud::reset(&transaction, "account").unwrap();
+    transaction.commit().unwrap();
+    assert_eq!(cloud::field_stamp(&connection, "account", "notes", "one", &field).unwrap(), None);
+}
