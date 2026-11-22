@@ -141,7 +141,7 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
             if !record.fields.is_empty() { return Err(StoreError::Invalid("cloud tombstone has fields".into())); }
             let pending = cloud::PendingRecord { model: record.model.clone(), row_id: record.row_id.clone(), version: revision, deleted: true };
             cloud::stage(tx, domain, &pending)?;
-            cloud::acknowledge(tx, domain, &pending)?;
+            cloud::acknowledge(tx, domain, &pending, None)?;
             plan.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(&record.model), id, reason: DestroyReason::Local });
             continue;
         }

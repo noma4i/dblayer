@@ -10,7 +10,10 @@ pub(super) mod project;
 #[derive(Debug)]
 pub(crate) struct PendingCloudRecord {
     pub key: String,
+    pub model: String,
+    pub row_id: String,
     pub version: i64,
+    pub system_fields: Option<Vec<u8>>,
     pub payload: Result<Vec<u8>, crate::cloud::RecordError>,
 }
 
@@ -20,7 +23,7 @@ impl super::Store {
         let domain = scope.domain.as_str();
         self.read(&[], |reader| {
             let mut records = Vec::new();
-            for pending in pending(reader.connection(), domain, limit)? {
+            for (pending, system_fields) in pending_with_fields(reader.connection(), domain, limit)? {
                 let key = crate::cloud::record_key(&pending.model, &pending.row_id);
                 let mut record = crate::cloud::CloudRecord { model: pending.model, row_id: pending.row_id, server_revision: None, deleted: pending.deleted, fields: Vec::new() };
                 if !record.deleted {
@@ -33,10 +36,33 @@ impl super::Store {
                         }
                     }
                 }
-                records.push(PendingCloudRecord { key, version: pending.version, payload: crate::cloud::encode(&record) });
+                records.push(PendingCloudRecord { key, model: record.model.clone(), row_id: record.row_id.clone(), version: pending.version, system_fields, payload: crate::cloud::encode(&record) });
             }
             Ok(records)
         })
+    }
+
+    pub(crate) fn cloud_resume(&self, scope: &crate::owners::cloud::CloudScope) -> Result<Option<Vec<u8>>, StoreError> {
+        let inner = self.lock();
+        inner.require_cloud_scope(scope)?;
+        progress(&inner.connection, &scope.domain)
+    }
+
+    pub(crate) fn confirm_cloud_send(&self, scope: &crate::owners::cloud::CloudScope, record: &PendingCloudRecord, system_fields: Option<&[u8]>) -> Result<(), StoreError> {
+        let inner = self.lock();
+        inner.require_cloud_scope(scope)?;
+        let tx = inner.connection.unchecked_transaction()?;
+        let pending = PendingRecord { model: record.model.clone(), row_id: record.row_id.clone(), version: record.version, deleted: false };
+        acknowledge(&tx, &scope.domain, &pending, system_fields)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn block_cloud_send(&self, scope: &crate::owners::cloud::CloudScope, record: &PendingCloudRecord) -> Result<(), StoreError> {
+        let inner = self.lock();
+        inner.require_cloud_scope(scope)?;
+        inner.connection.execute(include_str!("../sql/cloud_block_send.sql"), params![scope.domain, record.model, record.row_id, record.version])?;
+        Ok(())
     }
 }
 
@@ -89,15 +115,19 @@ pub(crate) fn stage(tx: &Transaction<'_>, domain: &str, record: &PendingRecord) 
 }
 
 pub(crate) fn pending(connection: &Connection, domain: &str, limit: u32) -> Result<Vec<PendingRecord>, StoreError> {
+    Ok(pending_with_fields(connection, domain, limit)?.into_iter().map(|(record, _)| record).collect())
+}
+
+fn pending_with_fields(connection: &Connection, domain: &str, limit: u32) -> Result<Vec<(PendingRecord, Option<Vec<u8>>)>, StoreError> {
     let mut statement = connection.prepare(include_str!("../sql/cloud_pending.sql"))?;
     let rows = statement.query_map(params![domain, limit], |row| {
-        Ok(PendingRecord { model: row.get(0)?, row_id: row.get(1)?, version: row.get(2)?, deleted: row.get(3)? })
+        Ok((PendingRecord { model: row.get(0)?, row_id: row.get(1)?, version: row.get(2)?, deleted: row.get(3)? }, row.get(4)?))
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
-pub(crate) fn acknowledge(tx: &Transaction<'_>, domain: &str, record: &PendingRecord) -> Result<(), StoreError> {
-    tx.execute(include_str!("../sql/cloud_acknowledge.sql"), params![domain, record.model, record.row_id, record.version])?;
+pub(crate) fn acknowledge(tx: &Transaction<'_>, domain: &str, record: &PendingRecord, system_fields: Option<&[u8]>) -> Result<(), StoreError> {
+    tx.execute(include_str!("../sql/cloud_acknowledge.sql"), params![domain, record.model, record.row_id, record.version, system_fields])?;
     Ok(())
 }
 

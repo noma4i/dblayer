@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS cloud_record (
     version INTEGER NOT NULL,
     deleted INTEGER NOT NULL,
     pending INTEGER NOT NULL,
+    system_fields BLOB,
     PRIMARY KEY (domain, model, row_id)
 );
 CREATE TABLE IF NOT EXISTS cloud_progress (
