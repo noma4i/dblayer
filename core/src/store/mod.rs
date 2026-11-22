@@ -9,6 +9,7 @@ use crate::identity::Generation;
 use crate::runtime::{Clock, Counters};
 use crate::schema::{ModelSpec, SearchPath};
 
+pub(crate) mod cloud;
 pub mod ddl;
 pub mod files;
 pub mod nodes;
