@@ -28,7 +28,7 @@ use super::tombstones::write_tombstone;
 use super::{Committed, Inner, ModelInfo, Store, StoreError};
 
 impl Store {
-    pub(crate) fn land_local_cloud(&self, scope: &crate::owners::cloud::CloudScope, records: Vec<crate::cloud::CloudRecord>, progress: &[u8]) -> Result<(), StoreError> {
+    pub(crate) fn land_local_cloud(&self, scope: &crate::owners::cloud::CloudScope, records: Vec<(crate::cloud::CloudRecord, Option<Vec<u8>>)>, progress: Option<&[u8]>) -> Result<(), StoreError> {
         let inner = self.lock();
         inner.ensure_healthy()?;
         inner.require_cloud_scope(scope)?;
@@ -37,7 +37,7 @@ impl Store {
         let transaction = inner.connection.unchecked_transaction()?;
         let revision = Reader::new(&transaction, &inner.models).revision_seq()? + 1;
         let plan = cloud_plan(&transaction, &inner.models, domain, records, revision)?;
-        super::cloud::write_progress(&transaction, domain, progress)?;
+        if let Some(progress) = progress { super::cloud::write_progress(&transaction, domain, progress)?; }
         let result = apply_transaction(self, &inner, transaction, &plan, now_ms, revision, false)?;
         self.finish(inner, result).publish();
         Ok(())
@@ -126,12 +126,12 @@ fn apply_transaction(store: &Store, inner: &Inner, transaction: rusqlite::Transa
     Ok((outcome, acks))
 }
 
-fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInfo>, domain: &str, records: Vec<crate::cloud::CloudRecord>, revision: i64) -> Result<BatchPlan, StoreError> {
+fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInfo>, domain: &str, records: Vec<(crate::cloud::CloudRecord, Option<Vec<u8>>)>, revision: i64) -> Result<BatchPlan, StoreError> {
     use super::cloud::{self, project};
     use crate::cloud::{Choice, StampedValue};
     let mut plan = BatchPlan::from_source(crate::schema::RowSource::Local);
     let mut seen = BTreeSet::new();
-    for record in records {
+    for (record, system_fields) in records {
         if !seen.insert((record.model.clone(), record.row_id.clone())) { return Err(StoreError::Invalid("duplicate cloud record".into())); }
         let info = models.get(&record.model).filter(|info| info.spec.is_local()).ok_or_else(|| StoreError::Invalid("invalid cloud model".into()))?;
         let id = crate::identity::RowId::new(&record.row_id).map_err(|error| StoreError::Invalid(error.to_string()))?;
@@ -142,6 +142,7 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
             let pending = cloud::PendingRecord { model: record.model.clone(), row_id: record.row_id.clone(), version: revision, deleted: true };
             cloud::stage(tx, domain, &pending)?;
             cloud::acknowledge(tx, domain, &pending, None)?;
+            cloud::write_system_fields(tx, domain, &record.model, &record.row_id, system_fields.as_deref())?;
             plan.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(&record.model), id, reason: DestroyReason::Local });
             continue;
         }
@@ -179,6 +180,7 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
             apply_rows::canonicalize(info, &mut normalized)?;
             plan.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(&record.model), id, row });
         }
+        cloud::write_system_fields(tx, domain, &record.model, &record.row_id, system_fields.as_deref())?;
     }
     Ok(plan)
 }

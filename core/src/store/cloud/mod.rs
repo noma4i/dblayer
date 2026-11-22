@@ -131,6 +131,11 @@ pub(crate) fn acknowledge(tx: &Transaction<'_>, domain: &str, record: &PendingRe
     Ok(())
 }
 
+pub(super) fn write_system_fields(tx: &Transaction<'_>, domain: &str, model: &str, row_id: &str, bytes: Option<&[u8]>) -> Result<(), StoreError> {
+    tx.execute(include_str!("../sql/cloud_write_system_fields.sql"), params![domain, model, row_id, bytes])?;
+    Ok(())
+}
+
 pub(crate) fn write_progress(tx: &Transaction<'_>, domain: &str, bytes: &[u8]) -> Result<(), StoreError> {
     tx.execute(include_str!("../sql/cloud_write_progress.sql"), params![domain, bytes])?;
     Ok(())
