@@ -8,6 +8,25 @@ use crate::store::{BatchPlan, DestroyReason, EntityOp, Store};
 use crate::value::ScalarKind;
 
 #[test]
+fn cloud_enablement_preference_survives_reopen_without_cloud_tables() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("settings.sqlite");
+    let open = || Store::open_models(Some(&path), Vec::new(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let store = open();
+    assert_eq!(store.stored_cloud_enabled().unwrap(), None);
+    store.write_cloud_enabled(false).unwrap();
+    drop(store);
+    let store = open();
+    assert_eq!(store.stored_cloud_enabled().unwrap(), Some(false));
+    assert!(!store.table_exists("cloud_record").unwrap());
+    store.write_cloud_enabled(true).unwrap();
+    drop(store);
+    let store = open();
+    assert_eq!(store.stored_cloud_enabled().unwrap(), Some(true));
+    assert!(!store.table_exists("cloud_record").unwrap());
+}
+
+#[test]
 fn delayed_cloud_acknowledgement_keeps_the_newer_change_across_reopen() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cloud.sqlite");
