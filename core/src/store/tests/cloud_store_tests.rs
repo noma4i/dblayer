@@ -59,30 +59,53 @@ fn opt_in_captures_local_commits_at_their_row_revision() {
     let mut notes = ModelSpec::new("notes", vec![
         FieldSpec::scalar("id", ScalarKind::Id),
         FieldSpec::scalar("text", ScalarKind::Str).optional(),
+        FieldSpec {
+            app_type: Some("NoteMetadata".into()),
+            fields: vec![FieldSpec::scalar("first", ScalarKind::Str), FieldSpec::scalar("second", ScalarKind::Str)],
+            ..FieldSpec::object("metadata").optional()
+        },
     ]);
     notes.storage = Storage::Local;
     let store = Store::open_models(Some(&path), vec![notes], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
-    let write = |id: &str, text: &str| {
+    let write = |id: &str, text: &str, first: &str| {
         let batch = StoreBatch {
             author: BatchAuthor::LocalWrites, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1),
             rows: Vec::new(), intents: 0, credential: None,
             ops: vec![StoreOp::LocalRows { model: "notes".into(), rows: vec![RowValue {
-                row_id: id.into(), values: serde_json::json!({"id": id, "text": text}).to_string(),
+                row_id: id.into(), values: serde_json::json!({
+                    "id": id, "text": text, "metadata": {"first": first, "second": "unchanged"}
+                }).to_string(),
             }] }],
         };
         store.write_batch(&batch, store.files(), None).unwrap().revision as i64
     };
-    write("offline", "ordinary write");
+    write("offline", "ordinary write", "initial");
     assert!(!store.table_exists("cloud_record").unwrap());
     assert!(!store.table_exists("cloud_progress").unwrap());
 
     store.activate_cloud_domain("example".into()).unwrap();
-    let version = write("n1", "save me");
+    let version = write("n1", "save me", "initial");
     let connection = Connection::open(&path).unwrap();
     let created = PendingRecord { model: "notes".into(), row_id: "n1".into(), version, deleted: false };
     assert_eq!(cloud::pending(&connection, "example", 2).unwrap(), vec![created.clone()]);
-    write("n1", "save me");
+    write("n1", "save me", "initial");
     assert_eq!(cloud::pending(&connection, "example", 2).unwrap(), vec![created.clone()]);
+
+    let materialized = |expected_version| {
+        let pending = store.pending_cloud_records("example", 2).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].version, expected_version);
+        crate::cloud::decode(&pending[0].key, pending[0].payload.as_ref().unwrap()).unwrap()
+    };
+    let before = materialized(version);
+    let updated_version = write("n1", "save me", "edited");
+    let after = materialized(updated_version);
+    assert_eq!(before.fields.len(), 3);
+    assert_eq!(after.fields.len(), 3);
+    assert_eq!(after.fields[0].path, ["metadata", "first"]);
+    assert_eq!(after.fields[0].data.value, serde_json::json!("edited"));
+    assert!(after.fields[0].data.stamp > before.fields[0].data.stamp);
+    assert_eq!(after.fields[1..], before.fields[1..]);
 
     let mut deletion = BatchPlan::from_source(RowSource::Local);
     deletion.entity_ops.push(EntityOp::Destroy {
@@ -94,6 +117,9 @@ fn opt_in_captures_local_commits_at_their_row_revision() {
     assert_eq!(cloud::pending(&connection, "example", 2).unwrap(), vec![PendingRecord {
         version, deleted: true, ..created
     }]);
+    let tombstone = materialized(version);
+    assert!(tombstone.deleted);
+    assert!(tombstone.fields.is_empty());
 }
 
 #[test]
