@@ -11,6 +11,7 @@ use crate::value::ScalarKind;
 fn delayed_cloud_acknowledgement_keeps_the_newer_change_across_reopen() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cloud.sqlite");
+    drop(Store::open_models(Some(&path), Vec::new(), std::sync::Arc::new(crate::runtime::SystemClock)).unwrap());
     let mut connection = Connection::open(&path).unwrap();
     let original = PendingRecord { model: "notes".into(), row_id: "n1".into(), version: 1, deleted: false };
     let deletion = PendingRecord { version: 2, deleted: true, ..original.clone() };
@@ -382,4 +383,55 @@ fn disk_cloud_landing_keeps_newer_server_values_and_applies_local_fields() {
     assert_eq!(row(), current);
     assert_eq!(store.cloud_resume(&scope).unwrap().as_deref(), Some(b"new".as_slice()));
     assert!(store.pending_cloud_records(&scope, 1).unwrap().is_empty());
+}
+
+#[test]
+fn disk_cloud_sends_only_settled_changes_and_confirmed_removals() {
+    use crate::owners::write::operation_status::OperationStatus;
+    use crate::store::{OperationRecord, OperationTransition};
+    use serde_json::json;
+
+    let model = ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
+    let store = Store::open_models(None, vec![model], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let scope = CloudScope { epoch: 1, generation: 1, domain: "example".into(), provider_fingerprint: "provider".into() };
+    let id = |value: &str| crate::identity::RowId::new(value).unwrap();
+    let upsert = |row: &str, text: &str| EntityOp::Upsert {
+        model: crate::identity::ModelKey::new("notes"),
+        id: id(row),
+        row: json!({"id":row, "text":text}).as_object().unwrap().clone(),
+    };
+    let write = |source, ops| {
+        let mut plan = BatchPlan::from_source(source);
+        plan.entity_ops = ops;
+        store.commit(plan).unwrap()
+    };
+    write(RowSource::Page, vec![upsert("held", "first confirmed")]);
+    store.activate_cloud_scope(scope.clone()).unwrap();
+    assert!(store.bootstrap_cloud_chunk(&scope).unwrap());
+
+    let mut optimistic = BatchPlan::from_source(RowSource::Local);
+    optimistic.entity_ops.push(upsert("held", "unconfirmed"));
+    optimistic.operation_transitions.push(OperationTransition::Begin(Box::new(OperationRecord {
+        seq: None, action_key: "notes:update".into(), status: OperationStatus::Pending, row_ids: vec![id("held")], temp_id: None,
+        input: json!({"id":"held","text":"unconfirmed"}), base_revision: None, created_at: 0, dedupe_key: None,
+        rollback: Some(json!({"rows":[{"kind":"edited","model":"notes","id":"held","before":{"text":"first confirmed"},"owned":{"text":1}}]})),
+    })));
+    store.commit(optimistic).unwrap();
+
+    write(RowSource::Page, vec![upsert("ready", "confirmed")]);
+    let pending = store.pending_cloud_records(&scope, 1).unwrap();
+    let [ready] = pending.as_slice() else { panic!("expected the settled row") };
+    assert_eq!(ready.row_id, "ready");
+    store.confirm_cloud_send(&scope, ready, None).unwrap();
+    write(RowSource::Page, vec![upsert("ready", "confirmed")]);
+    assert!(store.pending_cloud_records(&scope, 1).unwrap().is_empty());
+
+    let removed = |row: &str| EntityOp::Destroy { model: crate::identity::ModelKey::new("notes"), id: id(row), reason: DestroyReason::Server };
+    write(RowSource::Event, vec![removed("ready"), removed("missing")]);
+    let records = store.pending_cloud_records(&scope, 3).unwrap();
+    let saved = records.iter().map(|record| {
+        let body = crate::cloud::decode(&record.key, record.payload.as_deref().unwrap()).unwrap();
+        (body.row_id, body.deleted)
+    }).collect::<Vec<_>>();
+    assert_eq!(saved, vec![("missing".into(), true), ("ready".into(), true)]);
 }
