@@ -84,7 +84,7 @@ fn xfer_held_orphan_answer_gone() {
     }
 }
 
-/// transfer.md «идентичность шага», R4: a second answer of the same pair before Committed and a late one after it change nothing.
+/// transfer.md (step identity), R4: a second answer of the same pair before Committed and a late one after it change nothing.
 #[test]
 fn xfer_held_orphan_answer_repeated() {
     let mut twin = Twin::bare(1);

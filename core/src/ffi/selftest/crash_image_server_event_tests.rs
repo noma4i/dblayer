@@ -20,7 +20,7 @@ struct Cut {
     pairs: BTreeSet<String>,
 }
 
-/// A held update of a row, then the server event that deletes the row through the feed, then the refusal of the update, killed at any commit: the row is present before the delete commit and absent after it, an image after the delete commit sends no new request of the row, only the replay of the pair sent before it (P-OUT-19, BY DESIGN `Мутация без ответа`), and an earlier image sends the operation with one pair.
+/// A held update of a row, then the server event that deletes the row through the feed, then the refusal of the update, killed at any commit: the row is present before the delete commit and absent after it, an image after the delete commit sends no new request of the row, only the replay of the pair sent before it (P-OUT-19, mutation without an answer), and an earlier image sends the operation with one pair.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_file_cut_at_any_commit_of_a_server_delete_of_a_row_with_an_open_operation_reopens_consistent() {
     let directory = tempfile::tempdir().unwrap();
