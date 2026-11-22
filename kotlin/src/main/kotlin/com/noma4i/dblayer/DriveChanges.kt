@@ -8,6 +8,9 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import okio.buffer
 import okio.sink
 
@@ -48,6 +51,14 @@ private data class ListedFile(val id: String, val appProperties: Map<String, Str
 
 @Serializable
 private data class ListedPage(val nextPageToken: String? = null, val files: List<ListedFile> = emptyList())
+
+@Serializable
+private data class GeneratedIds(val ids: List<String>)
+
+@Serializable
+private data class UploadFile(val id: String, val parents: List<String>? = null, val appProperties: Map<String, String>? = null)
+
+internal class DriveHttpException(val status: Int) : IOException("HTTP $status")
 
 internal class DriveChanges(private val baseUrl: HttpUrl = "https://www.googleapis.com/drive/v3/".toHttpUrl()) {
     private val client = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).build()
@@ -107,12 +118,49 @@ internal class DriveChanges(private val baseUrl: HttpUrl = "https://www.googleap
         }
     }
 
+    suspend fun reserveId(token: String): String {
+        val url = baseUrl.newBuilder().addPathSegments("files/generateIds")
+            .addQueryParameter("count", "1").addQueryParameter("space", "appDataFolder").build()
+        return json.decodeFromString<GeneratedIds>(get(token, url)).ids.single().also { require(it.isNotEmpty()) }
+    }
+
+    suspend fun upload(token: String, domain: String, replica: String, fileId: String, create: Boolean, candidate: File) {
+        require(domain.length == 64 && domain.all { it in '0'..'9' || it in 'a'..'f' })
+        require(replica.isNotEmpty() && fileId.isNotEmpty())
+        val url = baseUrl.newBuilder().encodedPath("/upload/drive/v3/files")
+            .apply { if (!create) addPathSegment(fileId) }
+            .addQueryParameter("uploadType", "resumable").build()
+        val metadata = if (create) {
+            json.encodeToString(UploadFile.serializer(), UploadFile(fileId, listOf("appDataFolder"), mapOf("domain" to domain, "replica" to replica)))
+        } else {
+            "{}"
+        }
+        val body = metadata.toRequestBody("application/json; charset=utf-8".toMediaType())
+        val start = Request.Builder().url(url).header("Authorization", "Bearer $token")
+            .header("X-Upload-Content-Type", "application/octet-stream")
+            .header("X-Upload-Content-Length", candidate.length().toString())
+            .method(if (create) "POST" else "PATCH", body).build()
+        val location = client.newCall(start).exchange { response ->
+            if (!response.isSuccessful) throw DriveHttpException(response.code)
+            requireNotNull(response.header("Location"))
+        }
+        val target = requireNotNull(baseUrl.resolve(location))
+        require(target.scheme == baseUrl.scheme && target.host == baseUrl.host && target.port == baseUrl.port)
+        require(target.username.isEmpty() && target.password.isEmpty())
+        val put = Request.Builder().url(target).header("Authorization", "Bearer $token")
+            .put(candidate.asRequestBody("application/octet-stream".toMediaType())).build()
+        client.newCall(put).exchange { response ->
+            if (!response.isSuccessful) throw DriveHttpException(response.code)
+            require(json.decodeFromString<UploadFile>(response.text(1_048_576uL)).id == fileId)
+        }
+    }
+
     private suspend fun get(token: String, url: HttpUrl): String = request(token, url) { it.text(1_048_576uL) }
 
     private suspend fun <T> request(token: String, url: HttpUrl, read: (okhttp3.Response) -> T): T {
         val request = Request.Builder().url(url).header("Authorization", "Bearer $token").get().build()
         return client.newCall(request).exchange { response ->
-            if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+            if (!response.isSuccessful) throw DriveHttpException(response.code)
             read(response)
         }
     }
