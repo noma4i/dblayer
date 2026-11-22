@@ -487,14 +487,13 @@ fn cloud_cursor_keeps_a_held_disk_record_durable_across_reopen() {
         row_ids: vec![crate::identity::RowId::new("held").unwrap()], temp_id: None, input: json!({"id":"held"}),
         base_revision: None, created_at: 0, dedupe_key: None, rollback: None,
     })));
-    store.commit(plan).unwrap();
+    let operation = *store.commit(plan).unwrap().operations.iter().next().unwrap();
     let incoming = CloudRecord { model: "notes".into(), row_id: "held".into(), server_revision: None, deleted: false, fields: vec![
         CloudField { path: vec!["text".into()], data: StampedValue { value: json!("remote"), stamp: CloudStamp { millis: u64::MAX - 1, counter: 4, replica: [4; 16] } } },
     ] };
     let provider_fields = b"system".to_vec();
-    for cursor in [b"first".as_slice(), b"latest"] {
-        store.land_local_cloud(&scope, vec![(incoming.clone(), Some(provider_fields.clone()))], Some(cursor)).unwrap();
-    }
+    store.land_local_cloud(&scope, vec![(incoming.clone(), Some(provider_fields.clone()))], Some(b"first")).unwrap();
+    store.land_local_cloud(&scope, vec![(incoming.clone(), None)], Some(b"latest")).unwrap();
     assert!(store.read(&["notes"], |reader| reader.point("notes", "held")).unwrap().is_none());
     drop(store);
 
@@ -509,6 +508,19 @@ fn cloud_cursor_keeps_a_held_disk_record_durable_across_reopen() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].record, incoming);
     assert_eq!(entries[0].system_fields.as_ref(), Some(&provider_fields));
+
+    let close = StoreBatch {
+        author: BatchAuthor::Outbox, id: 1, stamp: crate::runtime::EpochStamp::Epoch(1),
+        rows: Vec::new(), intents: 0, credential: None,
+        ops: vec![StoreOp::RemoveIntent { op_id: operation as u64 }],
+    };
+    store.write_batch(&close, store.files(), None).unwrap();
+    assert_eq!(store.replay_cloud_waiting(&scope, 16).unwrap(), 1);
+    assert_eq!(store.read(&["notes"], |reader| reader.point("notes", "held")).unwrap().unwrap()["text"], "remote");
+    assert!(read().is_empty());
+    assert_eq!(store.cloud_resume(&scope).unwrap().as_deref(), Some(b"latest".as_slice()));
+    assert!(store.pending_cloud_records(&scope, 2).unwrap().is_empty());
+
     store.retire_cloud_scope(&scope);
     store.erase_cloud_domain(&scope.domain).unwrap();
     assert!(read().is_empty());
@@ -551,4 +563,37 @@ fn cloud_child_and_cursor_wait_for_the_declared_parent_across_reopen() {
     assert_eq!(queued.len(), 1);
     assert_eq!(queued[0].record, incoming);
     assert_eq!(queued[0].system_fields.as_deref(), Some(b"provider-fields".as_slice()));
+
+    reopened.replay_cloud_waiting(&scope, 16).unwrap();
+    assert!(reopened.read(&["children"], |reader| reader.point("children", "child")).unwrap().is_none());
+
+    let mut parent_write = BatchPlan::from_source(RowSource::Local);
+    parent_write.entity_ops.push(EntityOp::Upsert {
+        model: crate::identity::ModelKey::new("parents"), id: crate::identity::RowId::new("parent").unwrap(),
+        row: json!({"id":"parent"}).as_object().unwrap().clone(),
+    });
+    reopened.commit(parent_write).unwrap();
+    assert_eq!(reopened.replay_cloud_waiting(&scope, 16).unwrap(), 1);
+    assert_eq!(reopened.read(&["children"], |reader| reader.point("children", "child")).unwrap().unwrap()["parent_id"], "parent");
+    assert_eq!(cloud::field_stamp(&connection, &scope.domain, "children", "child", &["parent_id".into()]).unwrap(), Some(stamp));
+    assert!(cloud_waiting::entries(&connection, &scope.domain, "parents", "parent").unwrap().is_empty());
+    let pending = reopened.pending_cloud_records(&scope, 2).unwrap();
+    assert_eq!(pending.iter().map(|record| record.model.as_str()).collect::<Vec<_>>(), ["parents"]);
+
+    for (suffix, parent_first) in [("a", true), ("b", false)] {
+        let parent_id = format!("parent-{suffix}");
+        let child_id = format!("child-{suffix}");
+        let parent_record = CloudRecord { model: "parents".into(), row_id: parent_id.clone(), server_revision: None, deleted: false, fields: Vec::new() };
+        let mut child_record = incoming.clone();
+        child_record.row_id = child_id.clone();
+        child_record.fields[0].data.value = json!(parent_id);
+        let mut records = vec![(parent_record, None), (child_record, None)];
+        if !parent_first { records.reverse(); }
+        reopened.land_local_cloud(&scope, records, Some(suffix.as_bytes())).unwrap();
+        reopened.replay_cloud_waiting(&scope, 16).unwrap();
+        let row = reopened.read(&["children"], |reader| reader.point("children", &child_id)).unwrap().unwrap();
+        assert_eq!(row["parent_id"], parent_id);
+        assert_eq!(reopened.cloud_resume(&scope).unwrap().as_deref(), Some(suffix.as_bytes()));
+    }
+
 }

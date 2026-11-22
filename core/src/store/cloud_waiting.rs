@@ -18,7 +18,7 @@ pub(crate) fn enqueue(tx: &Transaction<'_>, domain: &str, record: &CloudRecord, 
     let inserted = tx.execute("INSERT OR IGNORE INTO cloud_waiting(domain, digest, model, row_id, server_revision, deleted, system_fields) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![domain, digest.as_slice(), record.model, record.row_id, record.server_revision, record.deleted, system_fields])?;
     let seq: i64 = tx.query_row("SELECT seq FROM cloud_waiting WHERE domain = ?1 AND digest = ?2", params![domain, digest.as_slice()], |row| row.get(0))?;
     if inserted == 0 {
-        tx.execute("UPDATE cloud_waiting SET system_fields = ?1 WHERE seq = ?2", params![system_fields, seq])?;
+        tx.execute("UPDATE cloud_waiting SET system_fields = COALESCE(?1, system_fields) WHERE seq = ?2", params![system_fields, seq])?;
         tx.execute("DELETE FROM cloud_waiting_dependency WHERE domain = ?1 AND seq = ?2", params![domain, seq])?;
     }
     if inserted != 0 {
@@ -37,11 +37,18 @@ pub(crate) fn enqueue(tx: &Transaction<'_>, domain: &str, record: &CloudRecord, 
     Ok(())
 }
 
+fn read_header(row: &rusqlite::Row<'_>) -> rusqlite::Result<WaitingEntry> {
+    Ok(WaitingEntry {
+        seq: row.get(0)?,
+        record: CloudRecord { model: row.get(1)?, row_id: row.get(2)?, server_revision: row.get(3)?, deleted: row.get(4)?, fields: Vec::new() },
+        system_fields: row.get(5)?,
+    })
+}
+
+#[cfg(test)]
 pub(crate) fn entries(connection: &Connection, domain: &str, model: &str, row_id: &str) -> Result<Vec<WaitingEntry>, StoreError> {
     let mut query = connection.prepare("SELECT w.seq, w.model, w.row_id, w.server_revision, w.deleted, w.system_fields FROM cloud_waiting w JOIN cloud_waiting_dependency d ON d.seq = w.seq AND d.domain = w.domain WHERE d.domain = ?1 AND d.model = ?2 AND d.row_id = ?3 ORDER BY w.seq")?;
-    let rows = query.query_map(params![domain, model, row_id], |row| Ok(WaitingEntry {
-        seq: row.get(0)?, record: CloudRecord { model: row.get(1)?, row_id: row.get(2)?, server_revision: row.get(3)?, deleted: row.get(4)?, fields: Vec::new() }, system_fields: row.get(5)?,
-    }))?;
+    let rows = query.query_map(params![domain, model, row_id], read_header)?;
     let mut entries = rows.collect::<Result<Vec<_>, _>>()?;
     read_fields(connection, &mut entries)?;
     Ok(entries)
@@ -67,9 +74,7 @@ fn read_fields(connection: &Connection, entries: &mut [WaitingEntry]) -> Result<
 
 pub(crate) fn next_ready(tx: &Transaction<'_>, domain: &str) -> Result<Option<WaitingEntry>, StoreError> {
     use rusqlite::OptionalExtension;
-    let entry = tx.query_row("SELECT w.seq, w.model, w.row_id, w.server_revision, w.deleted, w.system_fields FROM cloud_waiting_ready r JOIN cloud_waiting w ON w.domain = r.domain AND w.seq = r.seq WHERE r.domain = ?1 ORDER BY r.seq LIMIT 1", [domain], |row| Ok(WaitingEntry {
-        seq: row.get(0)?, record: CloudRecord { model: row.get(1)?, row_id: row.get(2)?, server_revision: row.get(3)?, deleted: row.get(4)?, fields: Vec::new() }, system_fields: row.get(5)?,
-    })).optional()?;
+    let entry = tx.query_row("SELECT w.seq, w.model, w.row_id, w.server_revision, w.deleted, w.system_fields FROM cloud_waiting_ready r JOIN cloud_waiting w ON w.domain = r.domain AND w.seq = r.seq WHERE r.domain = ?1 ORDER BY r.seq LIMIT 1", [domain], read_header).optional()?;
     let Some(mut entry) = entry else { return Ok(None) };
     read_fields(tx, std::slice::from_mut(&mut entry))?;
     Ok(Some(entry))
@@ -91,9 +96,11 @@ pub(crate) fn mark_changed(tx: &Transaction<'_>, domain: Option<&str>, result: &
 pub(crate) fn remove(tx: &Transaction<'_>, domain: &str, seq: i64) -> Result<(), StoreError> {
     let filter = "seq IN (SELECT seq FROM cloud_waiting WHERE domain = ?1 AND seq = ?2)";
     let args = params![domain, seq];
-    for table in ["cloud_waiting_value", "cloud_waiting_path", "cloud_waiting_field", "cloud_waiting_dependency", "cloud_waiting_ready"] {
+    for table in ["cloud_waiting_value", "cloud_waiting_path", "cloud_waiting_field"] {
         tx.prepare_cached(&format!("DELETE FROM {table} WHERE {filter}"))?.execute(args)?;
     }
+    tx.execute("DELETE FROM cloud_waiting_dependency WHERE domain = ?1 AND seq = ?2", args)?;
+    tx.execute("DELETE FROM cloud_waiting_ready WHERE domain = ?1 AND seq = ?2", args)?;
     tx.execute("DELETE FROM cloud_waiting WHERE domain = ?1 AND seq = ?2", args)?;
     Ok(())
 }
