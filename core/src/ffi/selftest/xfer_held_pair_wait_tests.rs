@@ -28,11 +28,10 @@ async fn xfer_step_behind_a_held_pair_keeps_attempts() {
     clock.advance(3 * 120_000);
     let waiting = upload().unwrap();
     assert_eq!((stand.script.count("CreateBlob"), waiting.attempts, waiting.status != WireUploadStatus::Failed, waiting.error.is_none()), (0, 1, true, true), "the step behind the held pair neither failed nor burned an attempt: {waiting:?}");
-    held.release();
-    advancing(&clock, async {
-        crate::test_wait::settled(&database, "the upload landed", || database.peek_row_now(epoch, "Moment".into(), "m78".into()).unwrap().is_some()).await;
-        drained(&database).await;
-    }).await;
+    held.dropped().await;
+    let confirmed = advancing(&clock, bound(database.confirmed(sent, false))).await.unwrap();
+    assert_eq!(confirmed.value.unwrap().id, "m78");
+    drained(&database).await;
     assert_eq!(stand.script.count("CreateBlob"), 1, "the step went out once after the slot was free");
     // D-493: the exchange of the held pair ends every 30 s of the core clock and Session sends the same pair again; the server runs it once.
     let pairs = stand.script.operation_pairs("CreateMoment");
