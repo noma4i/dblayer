@@ -92,7 +92,17 @@ pub(crate) fn row_tables(connection: &Connection) -> Result<Vec<String>, StoreEr
     Ok(names.collect::<Result<_, _>>()?)
 }
 
-pub(crate) fn wipe_model_cache(connection: &Connection, model: &str, table: &str, drop_table: bool) -> Result<(), StoreError> {
+fn clear_cloud_cache(connection: &Connection, model: Option<&str>) -> Result<(), StoreError> {
+    let present: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cloud_record')", [], |row| row.get(0))?;
+    if !present { return Ok(()); }
+    connection.execute(include_str!("sql/reset/clear_cloud_progress.sql"), params![model])?;
+    connection.execute(include_str!("sql/reset/clear_cloud_records.sql"), params![model])?;
+    connection.execute(include_str!("sql/reset/clear_cloud_fields.sql"), params![model])?;
+    Ok(())
+}
+
+pub(crate) fn wipe_model_cache(connection: &Connection, model: &str, table: &str, drop_table: bool, persisted: bool) -> Result<(), StoreError> {
+    if persisted { clear_cloud_cache(connection, Some(model))?; }
     let children: Vec<String> = row_tables(connection)?.into_iter().filter(|name| name.starts_with(&format!("{table}__"))).collect();
     for name in fts_tables(connection)?.iter().filter(|name| **name == format!("fts_{table}")) {
         connection.execute_batch(&format!("{} {name}", if drop_table { include_str!("sql/reset/wipe_model_cache_drop_table_if.sql") } else { include_str!("sql/reset/wipe_model_cache_delete_from.sql") }))?;
@@ -143,6 +153,7 @@ pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String
 }
 
 pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool) -> Result<(), StoreError> {
+    clear_cloud_cache(connection, None)?;
     for name in fts_tables(connection)? {
         connection.execute_batch(&format!("{} {name}", if drop_tables { include_str!("sql/reset/wipe_model_cache_drop_table_if.sql") } else { include_str!("sql/reset/wipe_model_cache_delete_from.sql") }))?;
     }

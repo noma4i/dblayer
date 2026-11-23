@@ -85,7 +85,7 @@ impl Store {
                 let transaction = inner.connection.unchecked_transaction()?;
                 let stash = stash_local_values(&transaction, &inner.models, &reset, changed)?;
                 for model in &reset {
-                    wipe_model_cache(&transaction, model, &table_name(model), true)?;
+                    wipe_model_cache(&transaction, model, &table_name(model), true, true)?;
                     if !fingerprints.contains_key(model) {
                         transaction.execute(include_str!("sql/boot/boot_delete_manifest.sql"), params![fingerprint_key(model)])?;
                     }
@@ -105,7 +105,7 @@ impl Store {
         if !memory.is_empty() {
             let transaction = inner.connection.unchecked_transaction()?;
             for (model, table) in &memory {
-                wipe_model_cache(&transaction, model, table, false)?;
+                wipe_model_cache(&transaction, model, table, false, false)?;
             }
             transaction.commit()?;
         }
