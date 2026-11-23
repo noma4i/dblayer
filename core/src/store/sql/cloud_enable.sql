@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS cloud_record (
     deleted INTEGER NOT NULL,
     pending INTEGER NOT NULL,
     system_fields BLOB,
+    confirmed INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (domain, model, row_id)
 );
 CREATE TABLE IF NOT EXISTS cloud_waiting (
@@ -57,6 +58,7 @@ CREATE TABLE IF NOT EXISTS cloud_bootstrap (
     row_id TEXT NOT NULL,
     done INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS cloud_record_identity ON cloud_record(model, row_id, domain);
 CREATE INDEX IF NOT EXISTS cloud_record_pending ON cloud_record(domain, version, model, row_id) WHERE pending = 1;
 CREATE INDEX IF NOT EXISTS cloud_record_issues ON cloud_record(domain, model, row_id) WHERE pending IN (2, 3);
 CREATE TABLE IF NOT EXISTS cloud_clock (

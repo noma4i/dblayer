@@ -31,7 +31,7 @@ pub(crate) fn release_files(
     let changed = match reason {
         DestroyReason::Replaced { by } => move_row(connection, model.as_str(), id.as_str(), by.as_str())?,
         DestroyReason::Local => 0,
-        DestroyReason::Server | DestroyReason::Expired => remove_row(connection, model.as_str(), id.as_str())?,
+        DestroyReason::Server | DestroyReason::Expired | DestroyReason::CloudEviction => remove_row(connection, model.as_str(), id.as_str())?,
     };
     Ok(changed > 0)
 }

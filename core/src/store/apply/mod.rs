@@ -37,21 +37,33 @@ impl Store {
         }
         let now_ms = inner.now_ms();
         let transaction = inner.connection.unchecked_transaction()?;
+        super::cloud::enable(&transaction)?;
         let revision = Reader::new(&transaction, &inner.models).revision_seq()? + 1;
         let mut plan = BatchPlan::from_source(crate::schema::RowSource::Local);
         let mut rows = BTreeSet::new();
         {
-            let mut statement = transaction.prepare(include_str!("../sql/cloud_identities.sql"))?;
-            let identities = statement.query_map([domain], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
-            for identity in identities {
-                let (model, row_id) = identity?;
-                if !inner.models.contains_key(&model) { continue; }
+            let identities = {
+                let mut statement = transaction.prepare(include_str!("../sql/cloud_identities.sql"))?;
+                let rows = statement.query_map([domain], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, bool>(2)?, row.get::<_, bool>(3)?)))?;
+                rows.collect::<Result<Vec<_>, _>>()?
+            };
+            for (model, row_id, confirmed, deleted) in identities {
+                let present = match inner.models.get(&model) {
+                    Some(info) => transaction.query_row(&format!("SELECT EXISTS(SELECT 1 FROM {} WHERE id = ?1)", info.table), [&row_id], |row| row.get(0))?,
+                    None => false,
+                };
+                if !confirmed && !deleted && present { continue; }
+                transaction.execute("DELETE FROM cloud_record WHERE domain = ?1 AND model = ?2 AND row_id = ?3", params![domain, model, row_id])?;
+                if !confirmed || !present { continue; }
                 let id = crate::identity::RowId::new(&row_id).map_err(|error| StoreError::Invalid(error.to_string()))?;
                 rows.insert((model.clone(), row_id));
-                plan.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(&model), id, reason: DestroyReason::Expired });
+                plan.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(&model), id, reason: DestroyReason::CloudEviction });
             }
         }
-        super::cloud::reset(&transaction, domain)?;
+        super::cloud_waiting::reset(&transaction, domain)?;
+        transaction.execute("DELETE FROM cloud_bootstrap WHERE domain = ?1", [domain])?;
+        transaction.execute("DELETE FROM cloud_progress WHERE domain = ?1", [domain])?;
+        transaction.execute("DELETE FROM cloud_field WHERE domain = ?1 AND NOT EXISTS (SELECT 1 FROM cloud_record r WHERE r.domain = cloud_field.domain AND r.model = cloud_field.model AND r.row_id = cloud_field.row_id)", [domain])?;
         transaction.execute(include_str!("../sql/boot/boot_delete_manifest.sql"), ["cloud_domain"])?;
         let result = apply_transaction(self, &inner, transaction, &plan, now_ms, revision, false)?;
         if let Some(attachment) = &mut inner.cloud_scope { attachment.mode = super::CloudAttachmentMode::Erased; }
@@ -202,6 +214,7 @@ fn cloud_plan(tx: &rusqlite::Transaction<'_>, models: &BTreeMap<String, ModelInf
         if fields.windows(2).any(|pair| pair[1].0.path.starts_with(&pair[0].0.path)) {
             return Err(StoreError::Invalid("overlapping cloud fields".into()));
         }
+        if cloud::admission(tx, domain, &record.model, &record.row_id)? != domain { continue; }
         if !info.spec.is_local() && super::operation::has_open_row_operation(tx, &record.model, &record.row_id)? {
             super::cloud_waiting::enqueue(tx, domain, &record, system_fields.as_deref(), &[(record.model.as_str(), record.row_id.as_str())])?;
             deferred = true;

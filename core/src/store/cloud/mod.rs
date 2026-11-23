@@ -43,6 +43,7 @@ impl super::Store {
                 count += 1;
                 if crate::identity::RowId::new(&id).map_err(|error| StoreError::Invalid(error.to_string()))?.is_temp() { continue; }
                 if !info.spec.is_local() && has_open_row_operation(&tx, model, &id)? { continue; }
+                if admission(&tx, domain, model, &id)? != *domain { continue; }
                 let Some(row) = reader.stored_row(model, &id)? else { continue };
                 let tracked: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM cloud_record WHERE domain = ?1 AND model = ?2 AND row_id = ?3)", params![domain, model, id], |row| row.get(0))?;
                 let mut missing = Vec::new();
@@ -123,6 +124,10 @@ pub(crate) struct PendingRecord {
 
 pub(crate) fn enable(tx: &Transaction<'_>) -> Result<(), StoreError> {
     tx.execute_batch(include_str!("../sql/cloud_enable.sql"))?;
+    let has_confirmed = tx.prepare("PRAGMA table_info(cloud_record)")?.query_map([], |row| row.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>()?.iter().any(|name| name == "confirmed");
+    if !has_confirmed {
+        tx.execute_batch("ALTER TABLE cloud_record ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 0; UPDATE cloud_record SET confirmed = 1 WHERE pending = 0 OR system_fields IS NOT NULL;")?;
+    }
     tx.execute_batch(&super::nodes::node_table_statement("", "cloud_waiting_value", &[("seq", "INTEGER"), ("field", "INTEGER")]))?;
     Ok(())
 }
@@ -137,6 +142,8 @@ pub(crate) fn capture_local(tx: &Transaction<'_>, domain: Option<&str>, models: 
         if change.row.id.is_temp() || captured.contains(&change.row) { continue; }
         let model = change.row.model.as_str();
         let id = change.row.id.as_str();
+        let bound = admission(tx, domain, model, id)?;
+        let domain = bound.as_str();
         let local = info.spec.is_local();
         if !local && (server_removed.contains(&change.row) || has_open_row_operation(tx, model, id)?) { continue; }
 
@@ -175,10 +182,15 @@ pub(crate) fn capture_local(tx: &Transaction<'_>, domain: Option<&str>, models: 
     for row in &result.server_removed {
         if !models.get(row.model.as_str()).is_some_and(|info| !info.spec.is_memory() && !info.spec.is_local()) { continue; }
         if row.id.is_temp() || captured.contains(row) || has_open_row_operation(tx, row.model.as_str(), row.id.as_str())? { continue; }
-        stage(tx, domain, &PendingRecord { model: row.model.to_string(), row_id: row.id.to_string(), version, deleted: true })?;
+        let bound = admission(tx, domain, row.model.as_str(), row.id.as_str())?;
+        stage(tx, &bound, &PendingRecord { model: row.model.to_string(), row_id: row.id.to_string(), version, deleted: true })?;
         captured.insert(row.clone());
     }
     Ok(())
+}
+
+pub(crate) fn admission(connection: &Connection, domain: &str, model: &str, row_id: &str) -> Result<String, StoreError> {
+    Ok(connection.query_row("SELECT domain FROM cloud_record WHERE model = ?1 AND row_id = ?2 AND confirmed = 0 AND deleted = 0 ORDER BY domain LIMIT 1", params![model, row_id], |row| row.get(0)).optional()?.unwrap_or_else(|| domain.to_owned()))
 }
 
 pub(crate) fn stage(tx: &Transaction<'_>, domain: &str, record: &PendingRecord) -> Result<(), StoreError> {

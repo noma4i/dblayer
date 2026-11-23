@@ -14,6 +14,7 @@ pub enum DestroyReason {
     Server,
     Local,
     Expired,
+    CloudEviction,
     Replaced { by: RowId },
 }
 

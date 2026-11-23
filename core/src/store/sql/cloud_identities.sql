@@ -1,1 +1,1 @@
-SELECT model, row_id FROM cloud_record WHERE domain = ?1
+SELECT model, row_id, confirmed, deleted FROM cloud_record WHERE domain = ?1

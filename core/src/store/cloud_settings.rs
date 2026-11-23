@@ -28,6 +28,9 @@ impl Store {
                 return Ok(None);
             }
         }
+        let transaction = inner.connection.unchecked_transaction()?;
+        super::cloud::enable(&transaction)?;
+        transaction.commit()?;
         let scope = CloudScope { epoch, generation: 0, domain, provider_fingerprint: String::new() };
         inner.cloud_scope = Some(CloudAttachment { scope: scope.clone(), mode: CloudAttachmentMode::Offline });
         Ok(Some(scope))
