@@ -910,8 +910,32 @@ impl TransferState {
             }
             return;
         }
-        if pending.kind == StoreKind::MixedOutcomes && storage.is_some() {
-            self.storage_retry_batch(pending.kind, &pending.ids, fx);
+        if pending.kind == StoreKind::MixedOutcomes {
+            match &rejected.reason {
+                RejectReason::Storage(_) => self.storage_retry_batch(pending.kind, &pending.ids, fx),
+                RejectReason::Invalid(detail) => {
+                    for &id in &pending.ids {
+                        match self.stage_of(id) {
+                            Some(TransferStage::PersistingFailure) => {
+                                if let Some(transfer) = self.transfers.get_mut(&id) { transfer.error = Some(format!("Internal(Invalid): {detail}")); }
+                                self.failure_committed(now, id, fx);
+                            }
+                            Some(TransferStage::Removing) => {
+                                self.removing_rejected(now, pending.kind, &[id], rejected.reason.clone(), fx);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                RejectReason::Closed | RejectReason::NoSession => {
+                    for &id in &pending.ids {
+                        if matches!(self.stage_of(id), Some(TransferStage::Removing | TransferStage::PersistingFailure)) {
+                            self.interrupt(id, super::outbox_types::end_cause(&rejected.reason), fx);
+                        }
+                    }
+                }
+            }
+            self.maybe_drained(fx);
             return;
         }
         let stage = pending.ids.first().and_then(|id| self.stage_of(*id));
