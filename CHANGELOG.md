@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 6.48.0 - 2026-11-23
 
 ### Added
 
