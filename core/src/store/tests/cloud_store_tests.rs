@@ -287,10 +287,18 @@ fn cloud_landing_moves_rows_and_progress_together_without_an_echo() {
 
 #[test]
 fn cloud_account_erase_fences_reopen_and_only_evicts_tracked_rows() {
+    use crate::schema::{AssociationKind, AssociationSpec, Dependent};
+
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cloud.sqlite");
-    let notes = ModelSpec { storage: Storage::Local, ..ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id)]) };
-    let open = |models| Store::open_models(Some(&path), models, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let mut children = AssociationSpec::new("children", AssociationKind::HasMany, "children", "parent_id");
+    children.dependent = Some(Dependent::Destroy);
+    let notes = ModelSpec { storage: Storage::Local, associations: vec![children], ..ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id)]) };
+    let child = ModelSpec { storage: Storage::Local, ..ModelSpec::new("children", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("parent_id", ScalarKind::Id).indexed()]) };
+    let open = |mut models: Vec<ModelSpec>| {
+        models.push(child.clone());
+        Store::open_models(Some(&path), models, std::sync::Arc::new(crate::runtime::SystemClock)).unwrap()
+    };
     let has = |store: &Store, id: &str| store.read(&["notes"], |reader| reader.point("notes", id)).unwrap().is_some();
     let removed = ModelSpec { storage: Storage::Local, ..ModelSpec::new("removed", vec![FieldSpec::scalar("id", ScalarKind::Id)]) };
     let store = open(vec![notes.clone(), removed]);
@@ -299,31 +307,108 @@ fn cloud_account_erase_fences_reopen_and_only_evicts_tracked_rows() {
     }] }]).unwrap();
     let first = CloudScope { epoch: 1, generation: 1, domain: "first-owner".into(), provider_fingerprint: "first".into() };
     store.activate_cloud_scope(first.clone()).unwrap();
+    store.bootstrap_cloud_chunk(&first).unwrap();
+    let pending = store.pending_cloud_records(&first, 10).unwrap();
+    assert_eq!(pending.iter().map(|record| record.row_id.as_str()).collect::<Vec<_>>(), vec!["untracked"]);
     let row = crate::cloud::CloudRecord { model: "notes".into(), row_id: "tracked".into(), server_revision: None, deleted: false, fields: Vec::new() };
     let removed_row = crate::cloud::CloudRecord { model: "removed".into(), ..row.clone() };
     store.land_local_cloud(&first, vec![(row.clone(), None), (removed_row, None)], Some(b"first-cursor")).unwrap();
+    store.write_queue_ops(&[StoreOp::LocalRows { model: "children".into(), rows: vec![RowValue {
+        row_id: "child".into(), values: r#"{"id":"child","parent_id":"tracked"}"#.into(),
+    }] }]).unwrap();
     drop(store);
 
-    let reopened = open(vec![notes]);
+    let reopened = open(vec![notes.clone()]);
     let second = CloudScope { epoch: 1, generation: 2, domain: "next-owner".into(), provider_fingerprint: "second".into() };
     assert_eq!(reopened.cloud_domain().unwrap().as_deref(), Some("first-owner"));
     assert!(reopened.activate_cloud_scope(second.clone()).is_err());
     assert!(has(&reopened, "tracked"));
     reopened.activate_cloud_scope(first.clone()).unwrap();
     assert!(reopened.erase_cloud_domain(&first.domain).is_err());
-    assert_eq!(reopened.cloud_resume(&first).unwrap().as_deref(), Some(b"first-cursor".as_slice()));
     reopened.retire_cloud_scope(&first);
     reopened.erase_cloud_domain(&first.domain).unwrap();
     assert!(!has(&reopened, "tracked"));
     assert!(has(&reopened, "untracked"));
+    assert!(reopened.read(&["children"], |reader| reader.point("children", "child")).unwrap().is_some());
     assert_eq!(reopened.cloud_domain().unwrap(), None);
-    assert!(reopened.activate_cloud_scope(first).is_err());
+    assert!(reopened.activate_cloud_scope(first.clone()).is_err());
+    drop(reopened);
 
+    let reopened = open(vec![notes]);
     reopened.activate_cloud_scope(second.clone()).unwrap();
     assert_eq!(reopened.cloud_resume(&second).unwrap(), None);
+    reopened.bootstrap_cloud_chunk(&second).unwrap();
+    let collision = crate::cloud::CloudRecord { row_id: "untracked".into(), deleted: true, ..row.clone() };
+    reopened.land_local_cloud(&second, vec![(collision, None)], None).unwrap();
+    assert!(has(&reopened, "untracked"));
+    assert!(reopened.pending_cloud_records(&second, 10).unwrap().is_empty());
     reopened.land_local_cloud(&second, vec![(row, None)], None).unwrap();
     reopened.erase_cloud_domain("first-owner").unwrap();
     assert!(has(&reopened, "tracked"));
+    reopened.retire_cloud_scope(&second);
+    reopened.erase_cloud_domain(&second.domain).unwrap();
+    let returned = CloudScope { generation: 3, ..first };
+    reopened.activate_cloud_scope(returned.clone()).unwrap();
+    let pending = reopened.pending_cloud_records(&returned, 10).unwrap();
+    assert_eq!(pending.iter().map(|record| record.row_id.as_str()).collect::<Vec<_>>(), vec!["untracked", "child"]);
+}
+
+#[test]
+fn cloud_standalone_reset_releases_the_send_queue_after_reopen() {
+    for interrupted in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cloud.sqlite");
+        let notes = ModelSpec { storage: Storage::Local, ..ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id)]) };
+        let open = || Store::open_models(Some(&path), vec![notes.clone()], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+        let put = |store: &Store, id: &str| store.write_queue_ops(&[StoreOp::LocalRows { model: "notes".into(), rows: vec![RowValue {
+            row_id: id.into(), values: serde_json::json!({"id": id}).to_string(),
+        }] }]).unwrap();
+        let store = open();
+        let scope = CloudScope { epoch: 1, generation: 1, domain: "standalone".into(), provider_fingerprint: "provider".into() };
+        store.activate_cloud_scope(scope.clone()).unwrap();
+        put(&store, "before-reset");
+        assert_eq!(store.pending_cloud_records(&scope, 10).unwrap()[0].row_id, "before-reset");
+        if interrupted {
+            Connection::open(&path).unwrap().execute_batch("CREATE TRIGGER refuse_cloud_reset BEFORE DELETE ON row_notes BEGIN SELECT RAISE(ABORT, 'interrupted reset'); END").unwrap();
+        }
+        assert_eq!(store.erase_account(store.generation().next(), true, false).is_err(), interrupted);
+        drop(store);
+
+        let reopened = open();
+        let scope = CloudScope { epoch: 2, generation: 2, ..scope };
+        reopened.activate_cloud_scope(scope.clone()).unwrap();
+        assert!(reopened.read(&["notes"], |reader| reader.point("notes", "before-reset")).unwrap().is_none());
+        put(&reopened, "after-reset");
+        let pending = reopened.pending_cloud_records(&scope, 10).unwrap();
+        assert_eq!(pending.iter().map(|record| record.row_id.as_str()).collect::<Vec<_>>(), vec!["after-reset"]);
+    }
+}
+
+#[test]
+fn cloud_cache_reset_preserves_pending_rows_of_unchanged_local_models() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cloud.sqlite");
+    let make_model = |name| ModelSpec { storage: Storage::Local, ..ModelSpec::new(name, vec![FieldSpec::scalar("id", ScalarKind::Id)]) };
+    let kept = make_model("kept");
+    let mut changed = make_model("changed");
+    let open = |changed| Store::open_models(Some(&path), vec![kept.clone(), changed], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let scope = CloudScope { epoch: 1, generation: 1, domain: "standalone".into(), provider_fingerprint: "provider".into() };
+    let store = open(changed.clone());
+    store.activate_cloud_scope(scope.clone()).unwrap();
+    for model in ["kept", "changed"] {
+        store.write_queue_ops(&[StoreOp::LocalRows { model: model.into(), rows: vec![RowValue {
+            row_id: model.into(), values: serde_json::json!({"id": model}).to_string(),
+        }] }]).unwrap();
+    }
+    assert_eq!(store.pending_cloud_records(&scope, 10).unwrap().len(), 2);
+    drop(store);
+
+    changed.fields.push(FieldSpec::scalar("title", ScalarKind::Str));
+    let reopened = open(changed);
+    reopened.activate_cloud_scope(scope.clone()).unwrap();
+    assert!(reopened.read(&["changed"], |reader| reader.point("changed", "changed")).unwrap().is_none());
+    let pending = reopened.pending_cloud_records(&scope, 10).unwrap();
+    assert_eq!(pending.iter().map(|record| record.row_id.as_str()).collect::<Vec<_>>(), vec!["kept"]);
 }
 
 #[test]

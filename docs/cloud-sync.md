@@ -161,7 +161,9 @@ Cloud sync does not populate GraphQL windows. GraphQL requests maintain those wi
 
 Ending an app session stops cloud I/O and clears local sync progress. It does not delete cloud data.
 Signing in again with the same accounts reads the domain again.
-A confirmed cloud account change or sign-out clears rows tracked by the old cloud domain and its metadata.
-This happens before another account attaches.
+An app reset or schema change removes pending sends for the local rows it clears.
+A confirmed cloud account change or sign-out clears rows that the previous cloud domain confirmed.
+This happens before another account attaches. Local rows waiting for their first confirmation stay on the device.
+Their pending changes resume only when the previous cloud domain reconnects.
 Pending mutations and transfers linked to those rows report an account change failure.
 The GraphQL credential is retained. Temporary account unavailability or an offline connection preserves the domain.

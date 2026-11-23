@@ -113,24 +113,38 @@ fn xfer_batch_mixed_outcomes() {
 
 #[test]
 fn xfer_invalid_batch_is_not_retried() {
-    let mixed = |reason: RejectReason| {
+    for failed_index in 0..2 {
+        for reason in [RejectReason::Invalid("bad row".into()), RejectReason::Closed, RejectReason::NoSession] {
+            let (mut twin, ids) = persisting_joint();
+            twin.commit();
+            let replies = waiting_outcomes(&mut twin, &ids);
+            let confirmed = OutboxOutcome::Confirmed { revision: 5, result: None, row_id: None };
+            let members = ids.iter().enumerate().map(|(index, &id)| {
+                let outcome = if index == failed_index { OutboxOutcome::Failed { error: "boom".into() } } else { confirmed.clone() };
+                (id, 1, outcome)
+            }).collect();
+            twin.post(TransferInput::MutationOutcomes { batch_id: 1, members, intent_removed: false });
+            let failed = match &reason {
+                RejectReason::Invalid(_) => OutboxOutcome::Failed { error: "Internal(Invalid): bad row".into() },
+                RejectReason::Closed => OutboxOutcome::Ended(crate::ffi::EndCause::Closed),
+                RejectReason::NoSession => OutboxOutcome::Ended(crate::ffi::EndCause::SessionEnded),
+                RejectReason::Storage(_) => unreachable!(),
+            };
+            let out = twin.reject(reason);
+            assert_eq!(out.timers, 0);
+            assert_eq!(out.replies(replies[failed_index]), vec![TransferAnswer::Outcome(failed, None)]);
+            assert_eq!(out.replies(replies[1 - failed_index]), vec![TransferAnswer::Outcome(confirmed, None)]);
+        }
+    }
+
+    let storage = {
         let (mut twin, ids) = persisting_joint();
         twin.commit();
         let members = vec![(ids[0], 1, OutboxOutcome::Confirmed { revision: 5, result: None, row_id: None }), (ids[1], 1, OutboxOutcome::Failed { error: "boom".into() })];
         twin.post(TransferInput::MutationOutcomes { batch_id: 1, members, intent_removed: false });
-        let out = twin.reject(reason);
-        (twin, ids, out)
+        twin.reject(RejectReason::Storage("disk".into()))
     };
-    let (_, _, storage) = mixed(RejectReason::Storage("disk".into()));
     assert_eq!(storage.timers, 1, "a storage refusal of the mixed outcomes is retried by the Backoff");
-    let (mut twin, ids, invalid) = mixed(RejectReason::Invalid("bad row".into()));
-    assert_eq!(invalid.timers, 0, "a data error of the mixed outcomes has no Backoff: {invalid:?}");
-    while twin.stage(ids[1]) != TransferStage::Failed {
-        assert!(twin.state().transfers.contains_key(&ids[1]) && twin.stage(ids[1]) != TransferStage::Done, "the member waits for a write");
-        let out = twin.commit();
-        assert_eq!(out.timers, 0, "{out:?}");
-    }
-    assert_eq!(twin.state().transfers[&ids[1]].error.as_deref(), Some("Internal(Invalid): bad row"), "the transfer failed with the invalid kind");
 
     let restore = |reason: RejectReason| {
         let mut twin = Twin::new();

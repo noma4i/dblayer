@@ -13,13 +13,6 @@ public struct ICloudDocument: Sendable, Equatable {
   public let downloadStatus: DownloadStatus
   public let uploadStatus: UploadStatus
 
-  static let keys = [
-    NSMetadataItemURLKey, NSMetadataItemContentTypeTreeKey, "kMDItemFSInvisible",
-    NSMetadataUbiquitousItemDownloadingStatusKey, NSMetadataUbiquitousItemIsDownloadingKey,
-    NSMetadataUbiquitousItemDownloadingErrorKey, NSMetadataUbiquitousItemIsUploadedKey,
-    NSMetadataUbiquitousItemIsUploadingKey, NSMetadataUbiquitousItemUploadingErrorKey,
-  ]
-
   static func snapshot(items: [[String: Any]], folder: URL) -> [ICloudDocument] {
     items.compactMap { item in
       guard let url = item[NSMetadataItemURLKey] as? URL,
@@ -80,6 +73,12 @@ private final class ICloudDocumentObservation {
   private let folder: ICloudDocuments.ResolvedFolder
   private let continuation: AsyncThrowingStream<[ICloudDocument], Swift.Error>.Continuation
   private let query = NSMetadataQuery()
+  private let keys = [
+    NSMetadataItemURLKey, NSMetadataItemContentTypeTreeKey, "kMDItemFSInvisible",
+    NSMetadataUbiquitousItemDownloadingStatusKey, NSMetadataUbiquitousItemIsDownloadingKey,
+    NSMetadataUbiquitousItemDownloadingErrorKey, NSMetadataUbiquitousItemIsUploadedKey,
+    NSMetadataUbiquitousItemIsUploadingKey, NSMetadataUbiquitousItemUploadingErrorKey,
+  ]
   private var observers: [NSObjectProtocol] = []
   private var previous: [ICloudDocument]?
   private var stopped = false
@@ -123,7 +122,7 @@ private final class ICloudDocumentObservation {
     let items = (0..<query.resultCount).compactMap { index -> [String: Any]? in
       guard let item = query.result(at: index) as? NSMetadataItem else { return nil }
       var values: [String: Any] = [:]
-      for key in ICloudDocument.keys { values[key] = item.value(forAttribute: key) }
+      for key in keys { values[key] = item.value(forAttribute: key) }
       return values
     }
     let snapshot = ICloudDocument.snapshot(items: items, folder: folder.url)

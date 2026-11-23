@@ -8,6 +8,12 @@
 - Add cloud enablement settings and report sync status for models and records.
 - Add opt-in iCloud Drive folders and document sync for Apple platforms.
 
+### Fixed
+
+- Preserve local rows awaiting their first cloud confirmation when a cloud account changes.
+- Remove pending cloud sends for rows cleared by a local reset.
+- Settle each batch upload when the database rejects its final outcome write.
+
 ## 6.47.0 - 2026-11-21
 
 ### Added
