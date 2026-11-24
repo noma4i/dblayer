@@ -281,6 +281,8 @@ end
 
 Declare `marker` and `tail` together in a remote scope with cursor pagination. Fields and `sequence` have the non-null type `Int` or `Int64` (a decimal string is accepted). The core passes `upToSequence` to the marker query and the `after` variable to the tail query, which returns the same connection in ascending order. The core confirms a loaded window when the marker counts other than `revision` add up to the rows of the scope in that prefix. A scope that filters the library declares only its own counts.
 
+If a media query returns `NOT_FOUND` for its parent node, the load reports the GraphQL error with its extensions. An app can use that error to handle a parent that was removed or is no longer visible.
+
 ### Node reads
 
 A scope with `node: :one` reads one entity with GraphQL `node(id:)`, and `node: :many` reads several with `nodes(ids:)`.

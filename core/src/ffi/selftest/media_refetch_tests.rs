@@ -35,6 +35,25 @@ async fn driven(rig: &Rig, epoch: u64, params: &str) {
 fn requests(rig: &Rig, operation: &str) -> usize { rig.world.log().iter().filter(|entry| entry.operation == operation).count() }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn media_marker_not_found_preserves_graphql_refusal() {
+    let rig = Rig::signed_as(World::new("server", "A", true), false, media_models).await;
+    rig.database.register_operations(DEFINITIONS.into()).await.unwrap();
+    rig.world.answer_with("MediaMarker", json!({"data":{}}));
+    let response = json!({"data":{"node":null},"errors":[{
+        "message":"Chat not found","path":["node"],"extensions":{"code":"NOT_FOUND","reasonCode":"CHAT_NOT_FOUND"}
+    }]});
+    rig.world.fail_next("MediaMarker", Fault::Answer(response.clone()));
+    let load = rig.database.begin_load(rig.database.session_epoch(), "MediaMessage".into(), Some("visual_media".into()), json!({"chatId":"c1"}).to_string()).unwrap();
+    let error = bound(load.result()).await.unwrap_err();
+    let crate::ffi::DbError::Graphql { messages, extensions } = error else { panic!("expected missing-chat GraphQL refusal: {error:?}") };
+    assert_eq!(messages, ["Chat not found"]);
+    assert_eq!(extensions, crate::transport::graphql_extensions(response.to_string()).unwrap());
+    assert_eq!(requests(&rig, "MediaMarker"), 1);
+    assert_eq!(requests(&rig, "ChatMedia"), 0);
+    rig.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_media_refetch_after_mutation_reads_the_whole_stale_window() {
     let rig = Rig::signed_as(World::new("server", "A", true), false, media_models).await;
     rig.database.register_operations(DEFINITIONS.into()).await.unwrap();

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Preserve GraphQL errors when a media window's parent is missing.
+
 ## 6.48.0 - 2026-11-23
 
 ### Added
