@@ -1,0 +1,224 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "com.noma4i",
+    "module": "dblayer",
+    "version": "6.49.0",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.8.1"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "androidx.compose.runtime",
+          "module": "runtime-annotation",
+          "version": {
+            "requires": "1.11.4"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlinx",
+          "module": "kotlinx-coroutines-core",
+          "version": {
+            "requires": "1.10.2"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlinx",
+          "module": "kotlinx-serialization-json",
+          "version": {
+            "requires": "1.7.3"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.4.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "dblayer-6.49.0.aar",
+          "url": "dblayer-6.49.0.aar",
+          "size": 26463453,
+          "sha512": "abcb058e1fa541d45c7374eec550d4cdf4cee20c9adcf536841db847accedefd1d37546f79d3bdecc499d6bc598bec2f1750bdb9e7fe12bbbbbe9fb72fe6592d",
+          "sha256": "05b824f6d6ee5f1f8cc82b3a17d9a837fdd962c94bf92d43e9cc46d442828b4d",
+          "sha1": "16014ed83082e459016d9f46d6f1917651004fc5",
+          "md5": "5ca0b78e473b5d6cba91976a6f190934"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "com.squareup.okhttp3",
+          "module": "okhttp",
+          "version": {
+            "requires": "5.5.0"
+          }
+        },
+        {
+          "group": "androidx.lifecycle",
+          "module": "lifecycle-process",
+          "version": {
+            "requires": "2.11.0"
+          }
+        },
+        {
+          "group": "net.java.dev.jna",
+          "module": "jna",
+          "version": {
+            "requires": "5.19.1"
+          },
+          "excludes": [
+            {
+              "group": "*",
+              "module": "*"
+            }
+          ],
+          "thirdPartyCompatibility": {
+            "artifactSelector": {
+              "name": "jna",
+              "type": "aar",
+              "extension": "aar"
+            }
+          }
+        },
+        {
+          "group": "androidx.compose.runtime",
+          "module": "runtime-annotation",
+          "version": {
+            "requires": "1.11.4"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlinx",
+          "module": "kotlinx-coroutines-core",
+          "version": {
+            "requires": "1.10.2"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlinx",
+          "module": "kotlinx-serialization-json",
+          "version": {
+            "requires": "1.7.3"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.4.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "dblayer-6.49.0.aar",
+          "url": "dblayer-6.49.0.aar",
+          "size": 26463453,
+          "sha512": "abcb058e1fa541d45c7374eec550d4cdf4cee20c9adcf536841db847accedefd1d37546f79d3bdecc499d6bc598bec2f1750bdb9e7fe12bbbbbe9fb72fe6592d",
+          "sha256": "05b824f6d6ee5f1f8cc82b3a17d9a837fdd962c94bf92d43e9cc46d442828b4d",
+          "sha1": "16014ed83082e459016d9f46d6f1917651004fc5",
+          "md5": "5ca0b78e473b5d6cba91976a6f190934"
+        }
+      ]
+    },
+    {
+      "name": "releaseTestFixturesVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "com.noma4i",
+          "module": "dblayer",
+          "version": {
+            "requires": "6.49.0"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "dblayer-6.49.0-test-fixtures.aar",
+          "url": "dblayer-6.49.0-test-fixtures.aar",
+          "size": 129228,
+          "sha512": "4736f36a2c32b75bdd5b16546581fd2213633997ecc319b22cdddae9938fe674b682723b9086bac4323adb47c6dd6d91381c659ee453313d935ab0594293b592",
+          "sha256": "1983b03f96e71038f918ae71080de1696f0f713b6c95a5e49beff99caf7b1a13",
+          "sha1": "be8c15e8620425c0d78b0d60ca1d6e79f565914b",
+          "md5": "74af4aedc34550b910d669f8752967b2"
+        }
+      ],
+      "capabilities": [
+        {
+          "group": "com.noma4i",
+          "name": "dblayer-test-fixtures",
+          "version": "6.49.0"
+        }
+      ]
+    },
+    {
+      "name": "releaseTestFixturesVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "com.noma4i",
+          "module": "dblayer",
+          "version": {
+            "requires": "6.49.0"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "dblayer-6.49.0-test-fixtures.aar",
+          "url": "dblayer-6.49.0-test-fixtures.aar",
+          "size": 129228,
+          "sha512": "4736f36a2c32b75bdd5b16546581fd2213633997ecc319b22cdddae9938fe674b682723b9086bac4323adb47c6dd6d91381c659ee453313d935ab0594293b592",
+          "sha256": "1983b03f96e71038f918ae71080de1696f0f713b6c95a5e49beff99caf7b1a13",
+          "sha1": "be8c15e8620425c0d78b0d60ca1d6e79f565914b",
+          "md5": "74af4aedc34550b910d669f8752967b2"
+        }
+      ],
+      "capabilities": [
+        {
+          "group": "com.noma4i",
+          "name": "dblayer-test-fixtures",
+          "version": "6.49.0"
+        }
+      ]
+    }
+  ]
+}
