@@ -74,14 +74,29 @@ fn source_of(site: &Site<'_>, source: &SourceDecl, pos: Pos, report: Report<'_>)
 
 /// The closed set of effects of an operation (`removes_receiver`, `copies_receiver_to`, `joins_scope`, `leaves_scope`): one effect per operation, and every name it uses exists.
 pub(super) fn check_closed_effects(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDecl, report: Report<'_>) {
-    let kinds = usize::from(operation.removes_receiver.is_some()) + usize::from(operation.copies_receiver_to.is_some()) + operation.scope_effects.len();
+    let existing = usize::from(operation.removes_receiver.is_some()) + usize::from(operation.copies_receiver_to.is_some()) + operation.scope_effects.len();
+    let kinds = existing + usize::from(operation.removes_row.is_some());
     if kinds > 1 {
         report(operation.pos, format!("operation `{}` declares more than one effect: `removes_receiver`, `copies_receiver_to`, `joins_scope` and `leaves_scope` do not combine", operation.name));
     }
-    if kinds > 0 && matches!(&operation.optimistic, Some((OptimisticDecl::Fields(_), _))) {
+    if existing > 0 && matches!(&operation.optimistic, Some((OptimisticDecl::Fields(_), _))) {
         report(operation.pos, format!("operation `{}` declares an effect and `optimistic` fields: the effect is the optimistic change, write `optimistic false`", operation.name));
     }
     let site = Site { node, all, operation };
+    if let Some(removal) = &operation.removes_row {
+        if node.storage != dblayer::schema::Storage::Disk || !site.model(&removal.model).is_some_and(|target| target.name != node.name && target.storage == dblayer::schema::Storage::Disk) {
+            report(removal.pos, "`removes_row` requires a different persisted server model".into());
+        }
+        if !node.attributes.iter().any(|attribute| attribute.name == removal.id_field && attribute.ty == TypeRef::Scalar(ScalarKind::Id)) {
+            report(removal.pos, format!("`removes_row` id `:{}` must name a scalar ID receiver field", removal.id_field));
+        }
+        if !site.parameter(&removal.parameter).is_some_and(|parameter| !parameter.ty.list && matches!(parameter.ty.base, ParamBase::Named(_))) {
+            report(removal.pos, format!("`removes_row` condition `:{}` must name a scalar enum parameter", removal.parameter));
+        }
+        if operation.upload.is_some() || operation.on_failure.as_ref().is_some_and(|policy| policy.item == dblayer::schema::OnFailure::Keep) {
+            report(removal.pos, "`removes_row` cannot use upload or `on_failure :keep`".into());
+        }
+    }
     if let Some(copy) = &operation.copies_receiver_to {
         if !site.id_parameter(&copy.arg) {
             report(copy.pos, format!("`copies_receiver_to` names `:{}`, which must be an id parameter", copy.arg));

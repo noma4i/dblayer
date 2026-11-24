@@ -388,6 +388,9 @@ fn build_operation(operation: &OperationDecl, node: &ModelDecl) -> ActionDeclara
     action.expires_after = operation.expires_after;
     action.dimensions = operation.dimensions.as_ref().map(|dimensions| dblayer::schema::DimensionsDeclaration { width: dimensions.width.clone(), height: dimensions.height.clone() });
     action.removes_receiver = operation.removes_receiver.is_some();
+    action.removes_row = operation.removes_row.as_ref().map(|removal| dblayer::schema::RelatedRowRemoval {
+        model: removal.model.clone(), id_field: removal.id_field.clone(), parameter: removal.parameter.clone(), equals: removal.equals.clone(),
+    });
     action.copies_receiver_to = operation.copies_receiver_to.as_ref().map(|copy| ReceiverCopy {
         arg: copy.arg.clone(),
         field: copy.field.clone(),

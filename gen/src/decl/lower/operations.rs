@@ -283,7 +283,7 @@ pub(super) fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
     let mut decl = OperationDecl {
         pos: line.pos, name: name.clone(), kind, upload, expires_after, dimensions: None, mutation: None, parameters: Vec::new(), variables: None, local: None, local_from: Vec::new(), local_sites: Vec::new(), wrap: None, response: None, match_by: None,
         on_failure: None, optimistic: None, upserts: Vec::new(), refetch: Vec::new(), returns: None, answer: None, batch: None, length: None,
-        removes_receiver: None, copies_receiver_to: None, scope_effects: Vec::new(),
+        removes_receiver: None, removes_row: None, copies_receiver_to: None, scope_effects: Vec::new(),
     };
     let mut seen: Vec<&str> = Vec::new();
     for item in lines {
@@ -294,7 +294,7 @@ pub(super) fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
                 | (OperationKind::Create | OperationKind::Update | OperationKind::Custom, "parameter")
                 | (OperationKind::Create | OperationKind::Update, "local" | "refetch" | "match_by" | "on_failure")
                 | (OperationKind::Custom, "match_by" | "on_failure" | "optimistic" | "upsert" | "refetch" | "returns" | "batch" | "validates")
-                | (OperationKind::Custom, "dimensions" | "removes_receiver" | "copies_receiver_to" | "joins_scope" | "leaves_scope")
+                | (OperationKind::Custom, "dimensions" | "removes_receiver" | "removes_row" | "copies_receiver_to" | "joins_scope" | "leaves_scope")
         );
         if !allowed && !OPERATION_WORDS.contains(&word) {
             cx.fail(Pos::of(item), format!("unknown word `{word}` in an operation"));
@@ -319,9 +319,9 @@ pub(super) fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
     Some(decl)
 }
 
-const OPERATION_WORDS: [&str; 18] = [
+const OPERATION_WORDS: [&str; 19] = [
     "mutation", "variables", "response", "parameter", "local", "refetch", "match_by", "on_failure", "optimistic", "upsert", "returns", "batch", "validates",
-    "dimensions", "removes_receiver", "copies_receiver_to", "joins_scope", "leaves_scope",
+    "dimensions", "removes_receiver", "removes_row", "copies_receiver_to", "joins_scope", "leaves_scope",
 ];
 
 pub(super) fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl) {
@@ -421,6 +421,25 @@ pub(super) fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl)
             line.no_args(cx);
             line.no_options(cx);
             decl.removes_receiver = Some(line.pos);
+        }
+        "removes_row" => {
+            no_block(cx, call);
+            let model = exactly_one_arg(cx, &line, "a target model").and_then(|arg| konst(cx, arg, "target model"));
+            let id_field = line.opt(cx, "id").and_then(|pair| symbol(cx, &pair.value, "`id`"));
+            let condition = line.opt(cx, "when").and_then(|pair| {
+                let pairs = hash_pairs(cx, &pair.value, "`when`")?;
+                let [entry] = pairs else {
+                    cx.fail(at(&pair.value), "`when` needs exactly one enum condition");
+                    return None;
+                };
+                string(cx, &entry.value, "`when` value").map(|value| (entry.key.clone(), value))
+            });
+            line.finish(cx);
+            let id_field = require(cx, &line, "id", id_field);
+            let condition = require(cx, &line, "when", condition);
+            if let (Some(model), Some(id_field), Some((parameter, equals))) = (model, id_field, condition) {
+                decl.removes_row = Some(RelatedRowRemovalDecl { pos: line.pos, model, id_field, parameter, equals });
+            }
         }
         "copies_receiver_to" => {
             no_block(cx, call);

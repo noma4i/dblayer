@@ -3,6 +3,17 @@ use super::*;
 impl<'a> Run<'a> {
     pub(super) fn check_mutation_args(&mut self, node: &'a ModelDecl) {
         for operation in &node.operations {
+            if let Some(removal) = &operation.removes_row {
+                let kind = operation.parameters.iter().find(|parameter| parameter.name == removal.parameter).and_then(|parameter| match &parameter.ty.base {
+                    ParamBase::Named(kind) if !parameter.ty.list => Some(kind),
+                    _ => None,
+                });
+                match kind.and_then(|kind| self.schema.types.get(kind).map(|ty| (kind, ty))) {
+                    Some((kind, TypeKind::Enum(values))) if !values.contains(&removal.equals) => self.fail(node.file, removal.pos, format!("`{}` is not a value of enum `{kind}`", removal.equals)),
+                    Some((_, TypeKind::Enum(_))) => {},
+                    _ => self.fail(node.file, removal.pos, format!("`removes_row` parameter `{}` must be a schema enum", removal.parameter)),
+                }
+            }
             let Some(name) = operation.mutation.as_ref().map(|found| found.item.as_str()) else { continue };
             let input: Vec<(String, String)> = match (&operation.variables, operation.upload.is_some()) {
                 (Some(variables), _) => variables.iter().flat_map(|binding| match &binding.value {

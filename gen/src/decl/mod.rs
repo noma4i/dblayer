@@ -466,8 +466,18 @@ pub struct OperationDecl {
     pub batch: Option<BatchDecl>,
     pub length: Option<LengthDecl>,
     pub removes_receiver: Option<Pos>,
+    pub removes_row: Option<RelatedRowRemovalDecl>,
     pub copies_receiver_to: Option<ReceiverCopyDecl>,
     pub scope_effects: Vec<ScopeEffectDecl>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RelatedRowRemovalDecl {
+    pub pos: Pos,
+    pub model: String,
+    pub id_field: String,
+    pub parameter: String,
+    pub equals: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
