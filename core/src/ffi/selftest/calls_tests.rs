@@ -297,15 +297,21 @@ async fn call_prop_mutation_against_end_any_order_public() {
             let db = rig.database.clone();
             let call = rig.spawn(async move { db.run(epoch, "UnregisterDevice".into(), "{}".into()).await });
             gate.entered().await;
+            let requests = || rig.world.log().into_iter().filter(|entry| entry.operation == "UnregisterDevice").collect::<Vec<_>>();
+            let original = requests().pop().unwrap();
+            assert!(original.request_id.is_some() && original.sequence.is_some());
             match action {
                 "cancel" => { call.abort(); assert!(bound(call).await.unwrap_err().is_cancelled()); }
                 "deadline" => { rig.clock.advance(30_000); assert!(matches!(bound(call).await.unwrap(), Err(DbError::Dropped { .. })), "D-335 (1): the pair exists, the outcome is unknown"); }
                 _ => { rig.database.set_online(false).await.unwrap(); bound(rig.database.session_reset()).await.unwrap(); assert!(matches!(bound(call).await.unwrap(), Err(DbError::NoSession { .. }))); }
             }
             if action != "offline" { bound(rig.database.session_reset()).await.unwrap(); }
+            let at_reset = requests();
             gate.release();
             rig.settle().await;
-            assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "UnregisterDevice").count(), 1, "request after {action}");
+            assert_eq!(requests(), at_reset, "request after session reset during {action}");
+            assert!(at_reset.iter().all(|request| request == &original), "changed request during {action}");
+            assert!(rig.world.count("UnregisterDevice") <= 1, "duplicate mutation during {action}");
             rig.database.close_now();
         }));
     }
