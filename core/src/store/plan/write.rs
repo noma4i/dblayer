@@ -151,6 +151,7 @@ impl Store {
         let mut shown = None;
         let mut read_models = vec![model];
         if let Some(copy) = declared.as_ref().and_then(|declared| declared.copies_receiver_to.as_ref()) { read_models.extend(Self::copy_source_models(copy)); }
+        if let Some(removal) = declared.as_ref().and_then(|declared| declared.removes_row.as_ref()) { read_models.push(&removal.model); }
         let on_type = asked.as_str() == crate::schema::SINGLETON && spec.singleton_relation().is_some();
         let (id, effects) = self.read_models(&read_models, |reader| {
             let resolved = if on_type {
@@ -166,8 +167,18 @@ impl Store {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| CoreError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let view = super::view::ReaderView { reader, specs: &|name| self.spec(name).ok(), db: Some(self) };
             let merged = crate::owners::write::outbox_plan::optimistic_row(spec, &view, (&current, &patch), crate::owners::write::outbox_plan::Fields { keyed: &keyed, flagged: &flagged }, &args, (model, id.as_str())).map_err(|error| CoreError::Internal(error.0))?;
-            let edits = Edits::of_owner(model, id, current, merged);
             let mut effects = IntentEffects::default();
+            if let Some(removal) = declared.as_ref().and_then(|declared| declared.removes_row.as_ref()) {
+                if args.get(&removal.parameter).and_then(Value::as_str) == Some(removal.equals.as_str()) {
+                    if let Some(target) = current.get(&removal.id_field).and_then(crate::value::read_id) {
+                        let target = crate::store::readers::resolve_in(reader, &removal.model, &target)?;
+                        if reader.point(&removal.model, target.as_str())?.is_some() {
+                            effects.related_removal = Some(EffectTombstone { model: removal.model.clone(), row_id: target.to_string() });
+                        }
+                    }
+                }
+            }
+            let edits = Edits::of_owner(model, id, current, merged);
             let removes = declared.as_ref().is_some_and(|declared| declared.removes_receiver);
             for ((edited_model, edited_id), (before, after)) in edits.into_rows() {
                 let is_receiver = edited_model == model && edited_id == id.as_str();

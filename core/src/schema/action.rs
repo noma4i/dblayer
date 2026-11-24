@@ -71,12 +71,22 @@ pub struct ActionDeclaration {
     /// Closed effect: the receiver row leaves every list before the answer and returns when the server refuses.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub removes_receiver: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removes_row: Option<RelatedRowRemoval>,
     /// Closed effect: a copy of the receiver row appears with `field` set to the argument `arg` before the answer, and the answer row replaces it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub copies_receiver_to: Option<ReceiverCopy>,
     /// Closed effect: rows join or leave the member lists of a scope before the answer.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scope_effects: Vec<ScopeEffect>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelatedRowRemoval {
+    pub model: String,
+    pub id_field: String,
+    pub parameter: String,
+    pub equals: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -174,6 +184,7 @@ impl ActionDeclaration {
             returns: None,
             dimensions: None,
             removes_receiver: false,
+            removes_row: None,
             copies_receiver_to: None,
             scope_effects: Vec::new(),
         }
@@ -200,6 +211,16 @@ impl ActionDeclaration {
             }
         }
         let name = || self.name.clone();
+        if let Some(removal) = &self.removes_row {
+            if !model.field(&removal.id_field).is_some_and(|field| matches!(field.kind, FieldKind::Scalar { kind: ScalarKind::Id }))
+                || !self.args.contains_key(&removal.parameter) || removal.equals.is_empty()
+                || self.mutation.is_none() || self.upload || self.on_failure != OnFailure::Rollback
+                || self.root_shape != RootShape::Upsert || self.removes_receiver || self.copies_receiver_to.is_some() || !self.scope_effects.is_empty()
+                || matches!(self.name.as_str(), "create" | "update" | "destroy") || model.is_local() || model.is_memory()
+            {
+                return Err(DeclarationError::InvalidRelatedRowRemoval(name()));
+            }
+        }
         let unknown = self.correlate.iter().any(|path| !model.fields.iter().any(|field| field.name == path.split('.').next().unwrap_or_default()));
         if unknown {
             return Err(DeclarationError::CorrelateUnknownField(name()));

@@ -9,6 +9,26 @@ pub(in super::super) fn apply_envelope_at(
     mut feed_cache: Option<(&mut Prefetched, &HiddenRows, &mut EventUndo)>,
 ) -> Result<CommitResult, StoreError> {
     let mut followed = planned.clone();
+    for transition in &planned.operation_transitions {
+        let OperationTransition::Close { seq, status: OperationStatus::Committed } = transition else { continue };
+        let guard = operation_guard(OperationEvent::Close(OperationStatus::Committed))?;
+        let admitted: Option<i64> = connection.query_row(&format!(include_str!("../sql/apply_transitions/apply_transitions_select_op_2.sql"), guard = guard), params![seq], |row| row.get(0)).optional()?;
+        if admitted.is_none() { continue; }
+        let Some(prior) = crate::store::plan::op_effect::read_prior(connection, *seq)? else { continue };
+        for row in crate::store::plan::Prior::decode(prior)?.rows {
+            if let crate::store::plan::PriorRow::Destroyed { model, id, deferred_cascade: Some(owned), .. } = row {
+                if Reader::new(connection, models).tombstone_seq(&model, &id)? != Some(owned) { continue; }
+                let id = crate::identity::RowId::new(&id).map_err(|error| StoreError::Constraint(error.to_string()))?;
+                let key = RowRef::new(ModelKey::new(&model), id.clone());
+                followed.entity_ops.retain(|op| op.row_ref() != key);
+                followed.scope_ops.retain(|op| match op {
+                    ScopeOp::Append { scope, row, .. } | ScopeOp::Move { scope, row, .. } => scope.model != key.model || row != &id,
+                    ScopeOp::Detach { .. } => true,
+                });
+                followed.entity_ops.push(EntityOp::Destroy { model: key.model, id, reason: DestroyReason::Server });
+            }
+        }
+    }
     super::super::follow_removed::follow_removed_by(connection, models, &mut followed)?;
     super::super::follow_cascade::follow_destroys(connection, models, &mut followed)?;
     followed.reduce_repeats();
@@ -104,7 +124,9 @@ fn write_followed(
                 let removed = remove_row(connection, info, id.as_str())?;
                 wrote |= super::super::reread_owed::release(connection, model.as_str(), id.as_str(), super::super::reread_owed::Release::Deleted)?;
                 prefetched.insert((model.to_string(), id.to_string()), None);
-                if reason.writes_tombstone() && (removed > 0 || Reader::new(connection, models).tombstone_seq(model.as_str(), id.as_str())?.is_none()) {
+                let absent = removed == 0 && Reader::new(connection, models).tombstone_seq(model.as_str(), id.as_str())?.is_some();
+                let deferred = absent && *reason == DestroyReason::Server && has_deferred_removal(connection, model.as_str(), id.as_str())?;
+                if reason.writes_tombstone() && (!absent || deferred) {
                     write_tombstone(connection, model.as_str(), id.as_str(), revision, now_ms)?;
                     tombstoned = true;
                 }
@@ -256,6 +278,19 @@ fn write_followed(
         result.members.clear();
     }
     Ok(result)
+}
+
+fn has_deferred_removal(connection: &Connection, model: &str, id: &str) -> Result<bool, StoreError> {
+    let mut statement = connection.prepare_cached(include_str!("../sql/plan/related_operations.sql"))?;
+    let sequences = statement.query_map(params![model, id], |row| row.get::<_, i64>(0))?.collect::<Result<Vec<_>, _>>()?;
+    let guard = operation_guard(OperationEvent::Close(OperationStatus::Committed))?;
+    for seq in sequences {
+        let open: Option<i64> = connection.query_row(&format!(include_str!("../sql/apply_transitions/apply_transitions_select_op_2.sql"), guard = guard), params![seq], |row| row.get(0)).optional()?;
+        if open.is_none() { continue; }
+        let Some(prior) = crate::store::plan::op_effect::read_prior(connection, seq)? else { continue };
+        if crate::store::plan::Prior::decode(prior)?.rows.iter().any(|row| matches!(row, crate::store::plan::PriorRow::Destroyed { model: owner, id: row_id, deferred_cascade: Some(_), .. } if owner == model && row_id == id)) { return Ok(true); }
+    }
+    Ok(false)
 }
 
 pub(super) fn save_window(connection: &Connection, window: &WindowSave, generation: Generation, now_ms: i64) -> Result<(), StoreError> {

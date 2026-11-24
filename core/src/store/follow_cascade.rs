@@ -35,7 +35,7 @@ pub(super) fn follow_destroys(connection: &Connection, models: &BTreeMap<String,
     let reader = Reader::new(connection, models);
     let mut seen: HashSet<RowRef> = envelope.entity_ops.iter().filter(|&op| matches!(op, EntityOp::Destroy { .. })).map(|op| op.row_ref()).collect();
     let parents: Vec<(RowRef, DestroyReason)> = envelope.entity_ops.iter().filter_map(|op| match op {
-        EntityOp::Destroy { model, id, reason } if !matches!(reason, DestroyReason::Replaced { .. } | DestroyReason::CloudEviction) => Some((RowRef::new(model.clone(), id.clone()), reason.clone())),
+        EntityOp::Destroy { model, id, reason } if !matches!(reason, DestroyReason::Replaced { .. } | DestroyReason::CloudEviction | DestroyReason::RelatedRemoval) => Some((RowRef::new(model.clone(), id.clone()), reason.clone())),
         _ => None,
     }).collect();
     for (parent, reason) in parents {

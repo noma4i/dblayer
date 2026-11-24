@@ -236,6 +236,7 @@ impl OutboxState {
         for row in &mut op.effects.rows { resolve(&row.model, &mut row.row_id); }
         for member in &mut op.effects.members { resolve(&member.model, &mut member.row_id); }
         for row in &mut op.effects.tombstones { resolve(&row.model, &mut row.row_id); }
+        if let Some(row) = &mut op.effects.related_removal { resolve(&row.model, &mut row.row_id); }
         if let Some((model, row)) = &mut op.effects.shown { resolve(model, row); }
         if let OpSource::TransferGroup { members, .. } = &mut op.origin {
             for member in members { resolve(&op.model, &mut member.row_id); }
@@ -369,7 +370,7 @@ impl OutboxState {
         let mut families = operation.stale.clone();
         if !operation.answer_rows_dropped { return families; }
         let effects = &operation.op.effects;
-        let models = std::iter::once(&operation.op.model).chain(effects.rows.iter().map(|row| &row.model)).chain(effects.members.iter().map(|row| &row.model)).chain(effects.tombstones.iter().map(|row| &row.model));
+        let models = std::iter::once(&operation.op.model).chain(effects.rows.iter().map(|row| &row.model)).chain(effects.members.iter().map(|row| &row.model)).chain(effects.tombstones.iter().map(|row| &row.model)).chain(effects.related_removal.iter().map(|row| &row.model));
         for model in models {
             let family = (model.clone(), String::new());
             if !families.contains(&family) { families.push(family); }

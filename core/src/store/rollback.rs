@@ -137,6 +137,7 @@ fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperat
                 plan.discarded_files.extend(references_of_row(reader.connection(), model, row_id.as_str())?.into_iter().map(|file| file.id));
             }
             PriorRow::Destroyed { .. } if entry.operation.status == OperationStatus::Failed => {}
+            PriorRow::Destroyed { model, id, deferred_cascade: Some(owned), .. } if reader.tombstone_seq(model, id)? != Some(*owned) => {}
             PriorRow::Destroyed { .. } => {
                 let (entity_ops, scope_ops) = row.reappearing();
                 plan.entity_ops.extend(entity_ops);

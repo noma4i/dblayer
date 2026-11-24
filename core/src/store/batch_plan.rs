@@ -13,6 +13,7 @@ use crate::value::duplicates;
 pub enum DestroyReason {
     Server,
     Local,
+    RelatedRemoval,
     Expired,
     CloudEviction,
     Replaced { by: RowId },
@@ -20,7 +21,7 @@ pub enum DestroyReason {
 
 impl DestroyReason {
     pub fn writes_tombstone(&self) -> bool {
-        matches!(self, DestroyReason::Server | DestroyReason::Local)
+        matches!(self, DestroyReason::Server | DestroyReason::Local | DestroyReason::RelatedRemoval)
     }
 }
 

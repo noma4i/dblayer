@@ -428,6 +428,12 @@ pub fn validate_models(models: &[ModelSpec], reserved_members: &[&str]) -> Vec<M
                     unknown.map_or(Ok(()), |(removal, own, theirs)| Err(DeclarationError::UnknownRemovedBy { model: removal.model.clone(), field: if model.fields.iter().any(|field| &field.name == own) { theirs.clone() } else { own.clone() } }))
                 })
                 .and_then(|()| {
+                    let invalid = model.actions.iter().find(|action| action.removes_row.as_ref().is_some_and(|removal| {
+                        removal.model == model.key.as_str() || !by_key.get(removal.model.as_str()).is_some_and(|target| !target.is_local() && !target.is_memory())
+                    }));
+                    invalid.map_or(Ok(()), |action| Err(DeclarationError::InvalidRelatedRowRemoval(action.name.clone())))
+                })
+                .and_then(|()| {
                     let unknown = model.actions.iter().flat_map(|action| action.lands.iter().map(move |landing| (action, landing))).find(|(_, landing)| !by_key.contains_key(landing.model.as_str()));
                     unknown.map_or(Ok(()), |(action, landing)| Err(DeclarationError::UnknownLanding { action: action.name.clone(), model: landing.model.clone() }))
                 })

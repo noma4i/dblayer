@@ -46,12 +46,13 @@ pub struct IntentEffects {
     pub rows: Vec<EffectRow>,
     pub members: Vec<EffectMember>,
     pub tombstones: Vec<EffectTombstone>,
+    pub related_removal: Option<EffectTombstone>,
     /// The `(model, row_id)` the receipt of the call shows: the Store reads it in the transaction of the intent and replies with it.
     pub shown: Option<(String, String)>,
 }
 
 impl IntentEffects {
-    pub fn is_empty(&self) -> bool { self.rows.is_empty() && self.members.is_empty() && self.tombstones.is_empty() }
+    pub fn is_empty(&self) -> bool { self.rows.is_empty() && self.members.is_empty() && self.tombstones.is_empty() && self.related_removal.is_none() }
 }
 
 /// A row of the server answer or of a local write.

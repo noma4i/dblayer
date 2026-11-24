@@ -10,6 +10,8 @@ pub enum SchemaError {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DeclarationError {
+    #[error("invalid related row removal: {0}")]
+    InvalidRelatedRowRemoval(String),
     #[error("invalid upload batch declaration: {0}")]
     InvalidUploadBatch(String),
     #[error("model key is empty")]

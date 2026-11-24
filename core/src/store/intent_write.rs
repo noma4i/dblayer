@@ -23,6 +23,7 @@ fn effects(reader: &Reader<'_>, writes: &IntentEffects, writer: &mut RowWrite<'_
     let mut wanted = std::collections::BTreeMap::<String, Vec<String>>::new();
     for row in &writes.rows { wanted.entry(row.model.clone()).or_default().push(row.row_id.clone()); }
     for row in &writes.tombstones { wanted.entry(row.model.clone()).or_default().push(row.row_id.clone()); }
+    if let Some(row) = &writes.related_removal { wanted.entry(row.model.clone()).or_default().push(row.row_id.clone()); }
     for row in &writes.members { wanted.entry(row.model.clone()).or_default().push(row.row_id.clone()); }
     for (model, ids) in wanted { writer.prefetch(&model, &ids, &writer.closing.clone())?; }
     for EffectRow { model, row_id, values: text } in &writes.rows {
@@ -47,6 +48,13 @@ fn effects(reader: &Reader<'_>, writes: &IntentEffects, writer: &mut RowWrite<'_
     for tombstone in &writes.tombstones {
         if let Some(row) = PriorRow::destroyed(reader, &tombstone.model, &tombstone.row_id, writer.stored(&tombstone.model, &tombstone.row_id)?.map(|stored| stored.row))? { prior.rows.push(row); }
         envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(&tombstone.model), id: id(&tombstone.row_id)?, reason: DestroyReason::Local });
+    }
+    if let Some(tombstone) = &writes.related_removal {
+        if let Some(mut row) = PriorRow::destroyed(reader, &tombstone.model, &tombstone.row_id, writer.stored(&tombstone.model, &tombstone.row_id)?.map(|stored| stored.row))? {
+            if let PriorRow::Destroyed { deferred_cascade, .. } = &mut row { *deferred_cascade = Some(writer.revision); }
+            prior.rows.push(row);
+            envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(&tombstone.model), id: id(&tombstone.row_id)?, reason: DestroyReason::RelatedRemoval });
+        }
     }
     for member in &writes.members {
         let scope = ScopeRef::new(ModelKey::new(&member.model), ListKey::from_raw(&member.list));

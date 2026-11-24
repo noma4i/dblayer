@@ -23,7 +23,7 @@ pub(crate) struct Prior {
 pub(crate) enum PriorRow {
     Created { model: String, id: String },
     Edited { model: String, id: String, before: Map<String, Value>, owned: BTreeMap<String, i64> },
-    Destroyed { model: String, id: String, before: Map<String, Value>, members: Vec<PriorMember>, files: Vec<PriorFile> },
+    Destroyed { model: String, id: String, before: Map<String, Value>, members: Vec<PriorMember>, files: Vec<PriorFile>, #[serde(default)] deferred_cascade: Option<i64> },
     Join { model: String, id: String, scope_key: String, before: Option<String>, owned: i64 },
     Leave { model: String, id: String, scope_key: String, before: Option<String>, owned: i64 },
 }
@@ -67,7 +67,7 @@ impl PriorRow {
             .query_map(params![model, id], |row| Ok(PriorMember { scope_key: row.get(0)?, order_key: row.get(1)? }))?
             .collect::<Result<Vec<_>, _>>()?;
         let files = references_of_row(reader.connection(), model, id)?.into_iter().map(|file| PriorFile { field: file.field, id: file.id }).collect();
-        Ok(Some(PriorRow::Destroyed { model: model.to_string(), id: id.to_string(), before, members, files }))
+        Ok(Some(PriorRow::Destroyed { model: model.to_string(), id: id.to_string(), before, members, files, deferred_cascade: None }))
     }
 
     pub fn edited(reader: &Reader<'_>, model: &str, id: &str, current: &Map<String, Value>, next: &Map<String, Value>) -> Result<PriorRow, StoreError> {
