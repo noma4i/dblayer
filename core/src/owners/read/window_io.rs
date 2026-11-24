@@ -18,8 +18,10 @@ pub trait WindowCodec: Send + Sync + 'static {
     fn request(&self, key: &WindowKey, page: u32, cursor: Option<&str>, kind: RequestKind) -> Result<GraphQLRequest, String>;
     fn answer(&self, key: &WindowKey, page: u32, kind: RequestKind, response: Response) -> Result<AnswerPage, String>;
 
-    fn refusal(&self, response: &Response) -> Option<RequestError> {
-        if response.errors.is_empty() || response.absent_node() { return None; }
+    fn consumes_absent_node(&self, _key: &WindowKey, _kind: RequestKind) -> bool { false }
+
+    fn refusal(&self, key: &WindowKey, kind: RequestKind, response: &Response) -> Option<RequestError> {
+        if response.errors.is_empty() || (self.consumes_absent_node(key, kind) && response.absent_node()) { return None; }
         let kind = match response.answer_kind() {
             Ok(kind) => kind,
             Err(error) => return Some(RequestError { class: ErrorClass::Permanent, failure: crate::ffi::DbError::Internal { detail: error.to_string() } }),
@@ -156,7 +158,7 @@ async fn ask((gate, epoch): (&crate::runtime::EpochGate, Epoch), codec: &dyn Win
         Err(detail) => return TransportOutcome::Error(RequestError { class: ErrorClass::Permanent, failure: crate::ffi::DbError::Invalid { detail } }),
     };
     match gate.query(Some(epoch), request).await {
-        Ok(response) => match codec.refusal(&response) {
+        Ok(response) => match codec.refusal(key, kind, &response) {
             Some(error) => TransportOutcome::Error(error),
             None => match codec.answer(key, page, kind, response) {
                 Ok(answer) => TransportOutcome::Response(answer),

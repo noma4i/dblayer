@@ -107,6 +107,12 @@ fn page_rows(normalized: Normalized, total: Option<i64>, absent: Vec<String>) ->
 }
 
 impl WindowCodec for SchemaWindowCodec {
+    fn consumes_absent_node(&self, key: &WindowKey, kind: RequestKind) -> bool {
+        if !matches!(kind, RequestKind::Page) { return false; }
+        let Ok(WindowKind::Relation { relation, .. }) = key.kind() else { return false };
+        self.db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).is_some_and(|declared| declared.node == Some(NodeRead::One))
+    }
+
     fn request(&self, key: &WindowKey, _page: u32, cursor: Option<&str>, kind: RequestKind) -> Result<GraphQLRequest, String> {
         match key.kind()? {
             WindowKind::Relation { relation, params } => {
