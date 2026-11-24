@@ -51,3 +51,23 @@ fn a_model_operation_names_the_schema_type_it_needs_and_checks_its_kind() {
     let missing = compile(&MODEL.replace("parameter :decision, ConnectionAction", "parameter :decision, Ghost"), Some(SCHEMA)).unwrap_err();
     assert!(missing.iter().any(|message| message.contains("`Ghost`")), "{missing:?}");
 }
+
+#[test]
+fn a_related_row_removal_accepts_only_a_declared_id_and_enum_value() {
+    let schema = SCHEMA.replace("ACCEPT DECLINE", "ACCEPT DECLINE REMOVE");
+    let model = format!("model Conversation do\n  attribute :title, :string\nend\n{}", MODEL
+        .replace("  attribute :name, :string", "  attribute :name, :string\n  attribute :conversationId, :id, null: true")
+        .replace("    optimistic connectionStatus: :status", "    optimistic connectionStatus: :status\n    removes_row Conversation, id: :conversationId, when: { decision: \"REMOVE\" }"));
+    let declared = compile(&model, Some(&schema)).unwrap();
+    let sample = declared.models.iter().find(|model| model.key.as_str() == "Sample").unwrap();
+    let action = serde_json::to_value(&sample.actions[0]).unwrap();
+    assert_eq!(action["removes_row"], serde_json::json!({"model":"Conversation","id_field":"conversationId","parameter":"decision","equals":"REMOVE"}));
+    for (source, expected) in [
+        (model.replace("id: :conversationId", "id: :name"), "scalar ID"),
+        (model.replace("\"REMOVE\"", "\"UNKNOWN\""), "UNKNOWN"),
+        (model.replace("removes_row Conversation", "removes_row Missing"), "different persisted server model"),
+    ] {
+        let errors = compile(&source, Some(&schema)).unwrap_err();
+        assert!(errors.iter().any(|message| message.contains(expected)), "{expected}: {errors:?}");
+    }
+}

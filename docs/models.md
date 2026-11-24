@@ -392,7 +392,7 @@ end
 
 ### Effects of an operation before the answer
 
-Four effects change other rows and lists before the answer, one per operation: `removes_receiver`, `copies_receiver_to`, `joins_scope` and `leaves_scope`. Write `optimistic false` beside them.
+An operation can declare one effect that changes rows or lists before the answer. Use `optimistic false` with `removes_receiver`, `copies_receiver_to`, `joins_scope`, or `leaves_scope`.
 
 ```ruby
 operation :leave do
@@ -423,6 +423,22 @@ end
 - `removes_receiver` takes the row out of every list. A refusal puts it back in place.
 - `copies_receiver_to :target, field: :chatId, set: {...}` adds a copy with `chatId` set to the argument. `set:` puts a literal, a field of the copied row (`owner: :field`) or a field of a singleton row (`of:`, `field:`) on the copy. The answer replaces the copy, a refusal removes it.
 - `joins_scope` adds the rows named by `rows:` to the end of the list, `leaves_scope` removes them. A row that is not cached is skipped. `orders:` lists every value of the order parameter. A refusal restores every list.
+
+Use `removes_row` for a related row identified by an ID field on the receiver. The condition names an enum parameter and one of its values. The operation can also update receiver fields with `optimistic`.
+
+```ruby
+operation :leave do
+  mutation "MembershipChange"
+  parameter :decision, MembershipAction
+  parameter :state, MembershipState
+  variables memberId: :id, action: :decision
+  optimistic membershipState: :state
+  removes_row Conversation, id: :conversationId, when: { decision: "LEAVE" }
+  response from: "membershipChange.member"
+end
+```
+
+When the argument matches, the related row disappears from its lists and entity readers. A missing ID or an uncached row has no local effect. A refusal restores the cached row at its former list positions. Confirmation removes dependent rows and files. The operation sends one mutation.
 
 ### Queue and failure
 

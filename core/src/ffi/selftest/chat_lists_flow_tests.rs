@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::rig_events::events;
-use super::rig_tests::{bound, Rig};
+use super::rig_tests::{bound, Fault, Rig};
 use super::flow_fixtures::{one_revision, add_chat, add_lists, add_profile, cell, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
@@ -27,6 +27,55 @@ async fn watch(rig: &Rig, query: &str) -> Arc<Rows> {
 }
 
 fn names(rig: &Rig, rows: &Rows) -> Vec<(String, Cell)> { rows.0.lock().unwrap().iter().map(|row| (row.id.clone(), cell(rig, "Chat", row, "name"))).collect() }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn connection_removal_hides_chat_before_the_reply_and_defers_its_cascade() {
+    for (decision, refused, deleted_by_feed) in [("REMOVE", true, false), ("REMOVE", false, false), ("REMOVE", true, true), ("ACCEPT", false, false)] {
+        let rig = Rig::encrypted_edited(false, false, false, events(|models| {
+            add_chat(models);
+            add_profile(models);
+            add_lists(models);
+            let models = models.as_array_mut().unwrap();
+            let user = models.iter_mut().find(|model| model["key"] == "User").unwrap();
+            user["fields"].as_array_mut().unwrap().push(serde_json::to_value(crate::schema::FieldSpec::scalar("connectionChatId", crate::value::ScalarKind::Id).optional()).unwrap());
+            let action = user["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "answer_connection").unwrap();
+            action["args"]["decision"] = json!("string");
+            action["removes_row"] = json!({"model":"Chat","id_field":"connectionChatId","parameter":"decision","equals":"REMOVE"});
+            let chat = models.iter_mut().find(|model| model["key"] == "Chat").unwrap();
+            let mut messages = crate::schema::AssociationSpec::new("messages", crate::schema::AssociationKind::HasMany, "Message", "chatId");
+            messages.dependent = Some(crate::schema::Dependent::Destroy);
+            chat["associations"].as_array_mut().unwrap().push(serde_json::to_value(messages).unwrap());
+        })).await;
+        rig.world.answer_with("ChatList", json!({"data":{"chats":[]}}));
+        rig.login_ios("A").await;
+        let list = watch(&rig, PRIMARY).await;
+        let entity = Arc::new(Rows::default());
+        let _stream = rig.database.watch(crate::ffi::ReadRequest::Entity { model: "Chat".into(), id: "c1".into(), fetch: crate::ffi::ReadFetch::Never }, entity.clone());
+        rig.land("User", json!({"id":"u5","name":"Eve","connectionStatus":"CONNECTED","connectionChatId":"c1"})).await;
+        rig.land("Chat", json!({"id":"c1","name":"chat","lists":["PRIMARY"]})).await;
+        rig.land("Message", json!({"id":"m1","chatId":"c1","text":"history","at":1})).await;
+        settled(&rig, "list and entity show the chat", || list.len() == 1 && entity.len() == 1).await;
+        let answer = if refused { Fault::Business } else { Fault::Answer(json!({"data":{"answerConnection":{"user":{"__typename":"User","id":"u5","connectionStatus":"NONE"},"chat":null}}})) };
+        let hold = rig.world.hold_then("AnswerConnection", answer);
+        let epoch = rig.database.session_epoch();
+        let receipt = bound(rig.database.act(epoch, "User".into(), "u5".into(), "answer_connection".into(), json!({"connectionStatus":"NONE"}).to_string(), json!({"chatId":"c1","decision":decision}).to_string())).await.unwrap();
+        hold.entered().await;
+        let removing = decision == "REMOVE";
+        settled(&rig, "only REMOVE hides the chat before the server reply", || list.emptied() == removing && entity.emptied() == removing).await;
+        let history = || rig.database.peek_row_now(epoch, "Message".into(), "m1".into()).unwrap().is_some();
+        assert!(history(), "the pending removal must preserve message history");
+        if deleted_by_feed {
+            rig.land_unsettled("Chat", json!({"id":"c1","deleted":true})).await;
+            assert!(!history(), "the server event deletes the history while the answer waits");
+        }
+        hold.release();
+        assert_eq!(bound(rig.database.confirmed(receipt, false)).await.is_err(), refused);
+        let deleted = deleted_by_feed || (removing && !refused);
+        settled(&rig, "the outcome preserves the newest chat and history state", || list.emptied() == deleted && entity.emptied() == deleted && history() != deleted).await;
+        assert_eq!(rig.world.log().iter().filter(|request| request.operation == "AnswerConnection").count(), 1);
+        rig.database.close_now();
+    }
+}
 
 /// P-APP-03: a chat that is not in the cache appears in its list by an event with the chat and by the answer of a request that lands it, without a reread of the list.
 #[tokio::test(flavor = "multi_thread")]

@@ -104,6 +104,8 @@ The generator turns these files into typed Swift and Kotlin models and a model s
 
 A scope declared with `node: :one` reads one entity with GraphQL `node(id:)`, and `Group.node(id)` returns the typed row or nil. See [node reads](docs/models.md#node-reads).
 
+A model mutation can hide a related row immediately when an enum argument matches. See [optimistic operation effects](docs/models.md#effects-of-an-operation-before-the-answer).
+
 Use `dblayer-gen explain models/*.dbl` to inspect generated tables, indexes and SQLite query plans before building the app.
 
 ## What using it looks like

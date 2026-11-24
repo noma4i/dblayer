@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Add conditional optimistic removal of a related row in model operations.
+
 ### Fixed
 
 - Preserve GraphQL errors when a media window's parent is missing.
