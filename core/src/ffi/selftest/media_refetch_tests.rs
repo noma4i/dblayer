@@ -35,6 +35,42 @@ async fn driven(rig: &Rig, epoch: u64, params: &str) {
 fn requests(rig: &Rig, operation: &str) -> usize { rig.world.log().iter().filter(|entry| entry.operation == operation).count() }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn media_marker_distinguishes_a_null_parent_from_a_malformed_response() {
+    let params = json!({"chatId":"c1"}).to_string();
+    for (data, after_page, missing_parent) in [
+        (json!({"node":null}), false, true),
+        (json!({"node":null}), true, true),
+        (json!({}), false, false),
+        (json!({"node":[]}), false, false),
+        (json!({"node":{}}), false, false),
+        (json!({"node":{"mediaLibrary":null}}), false, false),
+    ] {
+        let rig = Rig::signed_as(World::new("server", "A", true), false, media_models).await;
+        rig.database.register_operations(DEFINITIONS.into()).await.unwrap();
+        rig.world.answer_with("MediaMarker", json!({"data":{}}));
+        rig.world.answer_with("ChatMedia", json!({"data":{}}));
+        if after_page {
+            rig.world.fail_next("MediaMarker", marker(1));
+            rig.world.fail_next("ChatMedia", page("v1"));
+        }
+        rig.world.fail_next("MediaMarker", Fault::Answer(json!({"data":data})));
+        let epoch = rig.database.session_epoch();
+        let load = rig.database.begin_load(epoch, "MediaMessage".into(), Some("visual_media".into()), params.clone()).unwrap();
+        let error = bound(load.result()).await.unwrap_err();
+        if missing_parent {
+            assert!(matches!(error, crate::ffi::DbError::NotFound { .. }), "{data}, after page {after_page}: {error:?}");
+        } else {
+            assert!(matches!(error, crate::ffi::DbError::Invalid { .. }), "{data}: {error:?}");
+        }
+        assert_eq!(requests(&rig, "MediaMarker"), 1 + usize::from(after_page));
+        assert_eq!(requests(&rig, "ChatMedia"), usize::from(after_page));
+        let query = json!({"model":"MediaMessage","relation":"visual_media","params":{"chatId":"c1"}}).to_string();
+        assert!(bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap().is_empty());
+        rig.database.close_now();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn media_marker_not_found_preserves_graphql_refusal() {
     let rig = Rig::signed_as(World::new("server", "A", true), false, media_models).await;
     rig.database.register_operations(DEFINITIONS.into()).await.unwrap();

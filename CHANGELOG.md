@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Return `NotFound` for a null parent in a media marker response.
+
 ## 6.49.0 - 2026-11-24
 
 ### Added

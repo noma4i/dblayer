@@ -98,6 +98,7 @@ A fresh scope sends no requests. A stale scope first reads the marker with `upTo
 Matching revision and prefix counts preserve coverage. If the sequence has grown, the core reads the entire tail by cursor.
 A mismatch or a missing stored marker starts the full chain. `hasNextPage == false` ends the chain. A missing or repeated cursor rejects the load.
 Rows and the confirmed marker enter one SQLite transaction. An error or cancellation keeps the previous rows and marker, and the stream state shows the error.
+If the marker response explicitly sets a parent on its declared path to `null`, the load returns `NotFound`. A missing field or invalid marker returns `Invalid`. GraphQL errors keep their original codes and extensions.
 Markers are separate for each model, scope, parameter set, direction and database generation. Idle scopes have no periodic requests or wakeups.
 
 Server lists and connections store each model id once, combining selected fields from repeated rows before notifying readers.

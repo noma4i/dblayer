@@ -106,6 +106,8 @@ A scope declared with `node: :one` reads one entity with GraphQL `node(id:)`, an
 
 A model mutation can hide a related row immediately when an enum argument matches. See [optimistic operation effects](docs/models.md#effects-of-an-operation-before-the-answer).
 
+Media queries distinguish an absent parent from an invalid marker response. See [media library loading](docs/live-data.md#media-library-with-marker-and-tail).
+
 Use `dblayer-gen explain models/*.dbl` to inspect generated tables, indexes and SQLite query plans before building the app.
 
 ## What using it looks like
