@@ -113,6 +113,21 @@ impl WindowCodec for SchemaWindowCodec {
         self.db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).is_some_and(|declared| declared.node == Some(NodeRead::One))
     }
 
+    fn null_marker_parent(&self, key: &WindowKey, kind: RequestKind, response: &Response) -> bool {
+        if !matches!(kind, RequestKind::Marker { .. }) { return false; }
+        let Some(mut value) = response.data.as_ref() else { return false };
+        let Ok(WindowKind::Relation { relation, .. }) = key.kind() else { return false };
+        let Some(media) = self.db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).and_then(|declared| declared.media.as_ref()) else { return false };
+        let mut segments = media.from.split('.').peekable();
+        while let Some(segment) = segments.next() {
+            let Some(object) = value.as_object() else { return false };
+            let Some(next) = object.get(segment) else { return false };
+            if next.is_null() { return segments.peek().is_some(); }
+            value = next;
+        }
+        false
+    }
+
     fn request(&self, key: &WindowKey, _page: u32, cursor: Option<&str>, kind: RequestKind) -> Result<GraphQLRequest, String> {
         match key.kind()? {
             WindowKind::Relation { relation, params } => {

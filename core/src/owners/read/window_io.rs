@@ -20,7 +20,12 @@ pub trait WindowCodec: Send + Sync + 'static {
 
     fn consumes_absent_node(&self, _key: &WindowKey, _kind: RequestKind) -> bool { false }
 
+    fn null_marker_parent(&self, _key: &WindowKey, _kind: RequestKind, _response: &Response) -> bool { false }
+
     fn refusal(&self, key: &WindowKey, kind: RequestKind, response: &Response) -> Option<RequestError> {
+        if response.errors.is_empty() && self.null_marker_parent(key, kind, response) {
+            return Some(RequestError { class: ErrorClass::Permanent, failure: crate::ffi::DbError::NotFound { detail: "the parent of the media marker is null".into() } });
+        }
         if response.errors.is_empty() || (self.consumes_absent_node(key, kind) && response.absent_node()) { return None; }
         let kind = match response.answer_kind() {
             Ok(kind) => kind,
