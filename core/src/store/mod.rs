@@ -60,6 +60,7 @@ pub(crate) mod merge;
 mod overlay;
 mod overlay_write;
 mod open;
+mod paged_order;
 mod restore;
 mod rollback;
 pub(crate) use open::{is_unreadable, remove_database};

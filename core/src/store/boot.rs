@@ -100,6 +100,8 @@ impl Store {
             }
         } }
 
+        super::paged_order::rank_cached_scopes(&inner.connection, &inner.models)?;
+
         let memory: Vec<(String, String)> =
             inner.models.iter().filter(|(_, info)| info.spec.is_memory()).map(|(key, info)| (key.clone(), info.table.clone())).collect();
         if !memory.is_empty() {

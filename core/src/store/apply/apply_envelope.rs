@@ -378,7 +378,7 @@ pub(super) fn refresh_places<'a>(connection: &Connection, models: &BTreeMap<Stri
     Ok(())
 }
 
-pub(super) fn apply_scope_ops(
+pub(in crate::store) fn apply_scope_ops(
     connection: &Connection,
     models: &BTreeMap<String, ModelInfo>,
     operations: &[ScopeOp],
