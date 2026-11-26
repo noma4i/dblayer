@@ -302,6 +302,14 @@ pub struct PreloadSource {
 }
 
 impl RelationSpec {
+    /// The declared sort of a paginated relation whose members persist that order: the read follows the membership keys.
+    pub fn ranked_order(&self) -> Option<&[SortField]> {
+        match (&self.sort, self.remote.as_ref().map(|remote| &remote.shape)) {
+            (Sort::Fields(fields), Some(RemoteShape::Connection { .. })) if !self.order_stable && !self.members_complete => Some(fields),
+            _ => None,
+        }
+    }
+
     pub fn new(name: &str, by_columns: &[&str]) -> Self {
         Self {
             name: name.to_string(),

@@ -423,7 +423,7 @@ pub(super) fn join_heads(
         first.insert(scope.clone(), Some(order_key.clone()));
         ops.push(ScopeOp::Append { scope: scope.clone(), row: row.clone(), order_key });
     }
-    let wrote = apply_scope_ops(connection, models, &ops, scopes, members)?;
+    let wrote = apply_scope_ops(connection, models, &ops, None, scopes, members)?;
     Ok(wrote)
 }
 

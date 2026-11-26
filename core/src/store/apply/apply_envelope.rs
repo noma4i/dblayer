@@ -227,9 +227,13 @@ fn write_followed(
         visible = visible_scope_ops(&envelope.scope_ops, &hidden);
         &visible
     };
-    wrote |= apply_scope_ops(connection, models, &moves, &mut result.scopes, &mut result.members)?;
+    wrote |= apply_scope_ops(connection, models, &moves, None, &mut result.scopes, &mut result.members)?;
     wrote |= join_heads(connection, models, &heads, &mut result.scopes, &mut result.members)?;
-    wrote |= apply_scope_ops(connection, models, scope_ops, &mut result.scopes, &mut result.members)?;
+    wrote |= apply_scope_ops(connection, models, scope_ops, envelope.tail_scope.as_ref(), &mut result.scopes, &mut result.members)?;
+    if let Some((scope, fields)) = &envelope.rank_scope {
+        let ranked = super::super::replace::rank_ops(&Reader::new(connection, models), scope, fields).map_err(|error| StoreError::Constraint(error.to_string()))?;
+        wrote |= apply_scope_ops(connection, models, &ranked, None, &mut result.scopes, &mut result.members)?;
+    }
     let renamed: Vec<RowChange> = replaced
         .iter()
         .map(|(from, by)| RowChange { row: RowRef::new(from.model.clone(), by.clone()), kind: RowChangeKind::Inserted, fields: BTreeSet::new() })
@@ -378,6 +382,7 @@ pub(super) fn apply_scope_ops(
     connection: &Connection,
     models: &BTreeMap<String, ModelInfo>,
     operations: &[ScopeOp],
+    tail: Option<&ScopeRef>,
     scopes: &mut BTreeSet<ScopeRef>,
     members: &mut BTreeSet<RowRef>,
 ) -> Result<bool, StoreError> {
@@ -406,7 +411,7 @@ pub(super) fn apply_scope_ops(
         let changed = match (operation, stable_fields(operation.scope())) {
             (ScopeOp::Move { .. }, Some(_)) => 0,
             (ScopeOp::Append { scope, row, .. }, Some((info, fields))) => {
-                let joined = stable::join(connection, info, fields, scope, row)?;
+                let joined = stable::join(connection, info, fields, scope, row, tail == Some(scope))?;
                 for moved in &joined.moved {
                     members.insert(RowRef::new(scope.model.clone(), stored_row_id(moved)?));
                 }

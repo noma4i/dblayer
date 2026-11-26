@@ -206,6 +206,8 @@ pub struct BatchPlan {
     pub parents: BTreeSet<RowRef>,
     pub request_base: Option<i64>,
     pub landed_read: Option<String>,
+    pub tail_scope: Option<ScopeRef>,
+    pub rank_scope: Option<(ScopeRef, Vec<crate::schema::SortField>)>,
 }
 
 /// A local value for a row that is not stored yet. It waits in `local_pending` and joins the row when it arrives.
@@ -248,6 +250,8 @@ impl BatchPlan {
             parents: BTreeSet::new(),
             request_base: None,
             landed_read: None,
+            tail_scope: None,
+            rank_scope: None,
         }
     }
 

@@ -138,6 +138,7 @@ impl Store {
         let order = match &relation.sort {
             Sort::ServerOrder if relation.members_complete => vec![Order::new("id", crate::value::SortDirection::Asc)],
             Sort::ServerOrder => Vec::new(),
+            Sort::Fields(_) if relation.ranked_order().is_some() => Vec::new(),
             Sort::Fields(fields) => fields.iter().map(|field| Order::new(&field.column, field.direction)).collect(),
         };
         Ok(Some(Query { stable: relation.order_stable || relation.members_complete, ..Query::new(model).in_scope(scope).ordered(order) }))

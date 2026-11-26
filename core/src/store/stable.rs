@@ -109,7 +109,7 @@ pub(super) struct Joined {
     pub moved: BTreeSet<String>,
 }
 
-pub(super) fn join(connection: &Connection, info: &ModelInfo, fields: &[SortField], scope: &ScopeRef, row: &RowId) -> Result<Joined, StoreError> {
+pub(super) fn join(connection: &Connection, info: &ModelInfo, fields: &[SortField], scope: &ScopeRef, row: &RowId, tail: bool) -> Result<Joined, StoreError> {
     let member: Option<i64> = connection
         .prepare_cached(include_str!("sql/stable/join_select_scope_member.sql"))?
         .query_row(params![scope.model.as_str(), scope.key.as_str(), row.as_str()], |found| found.get(0))
@@ -119,7 +119,7 @@ pub(super) fn join(connection: &Connection, info: &ModelInfo, fields: &[SortFiel
         return Ok(Joined { joined: false, moved });
     }
     let place = places_of(connection, info, fields, &[row.to_string()])?.pop().map(|(_, place)| place);
-    let (lower, upper) = neighbours(connection, scope, row, place.as_deref())?;
+    let (lower, upper) = if tail { (key_text(connection, include_str!("sql/stable/neighbours_select_scope_member.sql"), scope, None)?, None) } else { neighbours(connection, scope, row, place.as_deref())? };
     let mut key = fractional_between(lower.as_deref(), upper.as_deref()).map_err(invalid)?;
     if key.len() > ORDER_KEY_LIMIT {
         key = rebalanced(connection, scope, lower.as_deref(), upper.as_deref(), &mut moved)?;

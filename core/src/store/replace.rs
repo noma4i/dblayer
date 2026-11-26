@@ -140,6 +140,18 @@ fn ordered_plan(reader: &Reader<'_>, request: &ReplaceRequest, fields: &[SortFie
     Ok(LandingPlan { entity_ops, scope_ops })
 }
 
+/// The moves that persist the declared order of the members of a scope after their rows are written: the canonical ranked read decides, `order_ops` keeps every member that is already in place.
+pub(crate) fn rank_ops(reader: &Reader<'_>, scope: &ScopeRef, fields: &[SortField]) -> Result<Vec<ScopeOp>, CoreError> {
+    let model = scope.model.as_str();
+    let info = reader.models().get(model).ok_or_else(|| CoreError::UnknownModel(model.to_string()))?;
+    let orders = fields.iter().map(|field| crate::store::query::Order::new(&field.column, field.direction)).collect();
+    let query = crate::store::query::Query::new(model).ordered(orders).in_scope(scope.key.clone());
+    let ranked = crate::store::query::compile_ranked(&query, &info.spec, None)?;
+    let result: Vec<String> = crate::store::query::fetch_ranked(reader.connection(), &ranked.statement)?.into_iter().map(|row| row.id).collect();
+    let whole: Vec<Member> = reader.scope_members(model, scope.key.as_str())?.into_iter().map(|(id, order_key)| Member { id, order_key }).collect();
+    order_ops(scope, &whole, &result)
+}
+
 fn order_ops(scope: &ScopeRef, current: &[Member], result: &[String]) -> Result<Vec<ScopeOp>, CoreError> {
     let rank: HashMap<&str, usize> = current.iter().enumerate().map(|(index, member)| (member.id.as_str(), index)).collect();
     let existing: Vec<(usize, usize)> = result.iter().enumerate().filter_map(|(position, id)| rank.get(id.as_str()).map(|rank| (position, *rank))).collect();

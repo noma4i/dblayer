@@ -85,7 +85,8 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
     let applied = if first { issued } else { stored.as_ref().map_or(issued, |window| window.applied) };
     let reader = Reader::new(writer.connection, writer.models);
     let to_end = page.replace_all || page.cursor.is_none();
-    let covers_next = !first && matches!(remote.shape, RemoteShape::Connection { .. }) && remote.coverage() == Coverage::Page && !(accepted.is_empty() && page.cursor.is_some());
+    let continuation = !first && !page.replace_all && matches!(remote.shape, RemoteShape::Connection { .. });
+    let covers_next = !first && page.replace_all && matches!(remote.shape, RemoteShape::Connection { .. }) && remote.coverage() == Coverage::Page && !(accepted.is_empty() && page.cursor.is_some());
     let start_after = match stored.as_ref().and_then(|window| window.anchor.clone()) {
         Some(anchor) if covers_next && reader.scope_members_among(model, scope.key.as_str(), &[anchor.as_str()])?.iter().any(|id| id == &anchor) => Some(anchor),
         _ => None,
@@ -95,13 +96,14 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
     let covers_nothing = accepted.is_empty() && page.cursor.is_some() && !page.replace_all;
     let plan = if covers_nothing {
         crate::owners::read::codec::LandingPlan { entity_ops: Vec::new(), scope_ops: Vec::new() }
-    } else if plans_first || start_after.is_some() || local_order.is_some() {
+    } else if plans_first || start_after.is_some() || (local_order.is_some() && !continuation) {
         let mut request = ReplaceRequest::new(scope.clone(), remote.coverage());
         request.replace_all = to_end;
         request.ordered_complete = first && page.cursor.is_none();
         request.first_page = first && !page.replace_all;
         request.start_after = start_after;
         request.local_order = if page.replace_all { None } else { local_order.clone() };
+        envelope.rank_scope = declared.ranked_order().map(|fields| (scope.clone(), fields.to_vec()));
         replace_plan(&reader, &request, &accepted, page.base_revision).map_err(fault)?
     } else {
         let ids: Vec<String> = incoming_ids(&accepted).iter().map(ToString::to_string).collect();
@@ -120,6 +122,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
     envelope.entity_ops = related_rows(writer, &related, &planned, page.base_revision)?;
     envelope.entity_ops.extend(plan.entity_ops);
     envelope.scope_ops = plan.scope_ops;
+    if continuation { envelope.tail_scope = Some(scope.clone()); }
     envelope.edge_writes = edge_writes(&scope, &declared.edge_fields, &accepted, &edges);
     let (pages, keep_tail) = crate::owners::read::windows::landed_tail(stored.as_ref().and_then(|window| u32::try_from(window.pages).ok()).unwrap_or_default(), page.page, page.replace_all, local_order.is_some() || declared.media.is_some());
     let cursor = if keep_tail { stored.as_ref().and_then(|window| window.cursor.clone()) } else { page.cursor.map(str::to_string) };
