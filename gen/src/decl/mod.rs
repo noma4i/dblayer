@@ -208,8 +208,13 @@ pub struct PaginateDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FreshnessDecl {
     pub pos: Pos,
-    pub expires_in: Spanned<String>,
-    pub empty_in: Option<Spanned<String>>,
+    pub mode: FreshnessMode,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FreshnessMode {
+    Time { expires_in: Spanned<String>, empty_in: Option<Spanned<String>> },
+    Sequence { head: Spanned<String>, parent: Spanned<String>, member: Spanned<String> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

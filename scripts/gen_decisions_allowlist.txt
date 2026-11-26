@@ -2,7 +2,7 @@ gen/src/build/mod.rs	action.on_failure = operation.on_failure.as_ref().map(|foun
 gen/src/build/mod.rs	association.class_name.clone().unwrap_or_else(|| {	M47
 gen/src/build/mod.rs	association.foreign_key.clone().unwrap_or_else(|| match association.kind {	M46
 gen/src/build/mod.rs	decl::AssociationKind::HasMany | decl::AssociationKind::References => association.name.strip_suffix('s').unwrap_or(&association.name),	M47
-gen/src/build/mod.rs	stale_time: scope.freshness.as_ref().map_or(DEFAULT_FRESHNESS.to_string(), |fresh| fresh.expires_in.item.clone()),	M21
+gen/src/build/mod.rs	stale_time: timed.map_or(DEFAULT_FRESHNESS.to_string(), |(expires_in, _)| expires_in.item.clone()),	M21
 gen/src/check/enums.rs	errors.push(at(node.file, site_pos(node, site).unwrap_or(node.pos), message));	M55
 gen/src/check/scope.rs	report(scope.paginate.as_ref().map_or(scope.pos, |paginate| paginate.pos), format!("scope `{name}`: `paginate` and `response shape: :list` cannot be used together"));	M55
 gen/src/decl/lower/fields.rs	decl.block = AttributeBlock::Fields(children.iter().filter_map(|child| attribute(cx, child, Site::Nested, owner)).collect());	M55

@@ -311,9 +311,22 @@ pub(super) fn scope_line(cx: &mut Cx, call: &Call, decl: &mut ScopeDecl) {
             line.no_args(cx);
             let expires = line.opt(cx, "expires_in").and_then(|pair| duration(cx, &pair.value, "`expires_in`").map(|text| Spanned::new(text, at(&pair.value))));
             let empty = line.opt(cx, "empty_in").and_then(|pair| duration(cx, &pair.value, "`empty_in`").map(|text| Spanned::new(text, at(&pair.value))));
+            let mut field = |key: &str| line.opt(cx, key).map(|pair| symbol(cx, &pair.value, &format!("`{key}`")).map(|value| Spanned::new(value, at(&pair.value))));
+            let (head, parent, member) = (field("head"), field("parent"), field("member"));
             line.finish(cx);
-            if let Some(expires_in) = require(cx, &line, "expires_in", expires) {
-                decl.freshness = Some(FreshnessDecl { pos: line.pos, expires_in, empty_in: empty });
+            if head.is_none() && parent.is_none() && member.is_none() {
+                if let Some(expires_in) = require(cx, &line, "expires_in", expires) {
+                    decl.freshness = Some(FreshnessDecl { pos: line.pos, mode: FreshnessMode::Time { expires_in, empty_in: empty } });
+                }
+            } else if expires.is_some() || empty.is_some() {
+                cx.fail(line.pos, "`freshness` selects one mode: `expires_in:`/`empty_in:` or `head:`, `parent:`, `member:`");
+            } else {
+                let head = require(cx, &line, "head", head).flatten();
+                let parent = require(cx, &line, "parent", parent).flatten();
+                let member = require(cx, &line, "member", member).flatten();
+                if let (Some(head), Some(parent), Some(member)) = (head, parent, member) {
+                    decl.freshness = Some(FreshnessDecl { pos: line.pos, mode: FreshnessMode::Sequence { head, parent, member } });
+                }
             }
         }
         "marker" => {

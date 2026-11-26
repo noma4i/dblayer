@@ -12,6 +12,9 @@ pub(super) fn check_scope(node: &ModelDecl, all: &[ModelDecl], scope: &ScopeDecl
             if names.len() != marker.fields.len() || !names.iter().any(|name| name.as_str() == "revision") { report(marker.pos, "marker fields must be unique and include revision".into()); }
         }
     }
+    if let Some((fresh, crate::decl::FreshnessMode::Sequence { head, parent, member })) = scope.freshness.as_ref().map(|fresh| (fresh, &fresh.mode)) {
+        check_sequence_freshness(node, all, scope, fresh.pos, (head, parent, member), report);
+    }
     let mut names = HashSet::new();
     for parameter in &scope.parameters {
         if !names.insert(parameter.name.as_str()) {
@@ -114,6 +117,29 @@ pub(super) fn check_scope(node: &ModelDecl, all: &[ModelDecl], scope: &ScopeDecl
         report(scope.pos, "`members_complete` needs pagination without `max_pages`".into());
     }
     check_remote_scope(scope, report);
+}
+
+fn check_sequence_freshness(node: &ModelDecl, all: &[ModelDecl], scope: &ScopeDecl, pos: Pos, (head, parent, member): (&Spanned<String>, &Spanned<String>, &Spanned<String>), report: &mut impl FnMut(Pos, String)) {
+    let name = &scope.name;
+    if !scope.is_remote() || scope.paginate.is_none() || scope.node.is_some() || scope.marker.is_some() || scope.tail.is_some() {
+        report(pos, format!("scope `{name}`: sequence `freshness` needs a paginated `query` scope without `node`, `marker` and `tail`"));
+    }
+    let is_int = |attributes: &[crate::decl::AttributeDecl], field: &str| attributes.iter().any(|attribute| attribute.name == field && attribute.ty == TypeRef::Scalar(ScalarKind::Int));
+    if !is_int(&node.attributes, &member.item) {
+        report(member.pos, format!("scope `{name}`: freshness `member: :{}` must be an Int attribute of `{}`", member.item, node.name));
+    }
+    let Some(association) = node.associations.iter().find(|association| association.name == head.item && association.kind == crate::decl::AssociationKind::BelongsTo) else {
+        report(head.pos, format!("scope `{name}`: freshness `head: :{}` must name a `belongs_to` of `{}`", head.item, node.name));
+        return;
+    };
+    let key = crate::build::association_key(association, &node.name);
+    if !scope.where_.iter().flat_map(|clause| &clause.pairs).any(|(column, _)| column.item == key) {
+        report(head.pos, format!("scope `{name}`: freshness `head: :{}` needs `where` to bind `{key}`", head.item));
+    }
+    let target = crate::build::association_target(association);
+    if !all.iter().find(|model| model.name == target).is_some_and(|model| is_int(&model.attributes, &parent.item)) {
+        report(parent.pos, format!("scope `{name}`: freshness `parent: :{}` must be an Int attribute of `{target}`", parent.item));
+    }
 }
 
 pub(super) fn check_preload(scope: &ScopeDecl, preload: &PreloadDecl, all: &[ModelDecl], report: &mut impl FnMut(Pos, String)) {

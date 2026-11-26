@@ -8,7 +8,7 @@ use crate::naming::{camel, lower_first};
 use serde_json::{json, Map, Value as Json};
 
 use crate::decl::{
-    self, AssociationDecl, AttributeBlock, AttributeDecl, CursorType, Effect, InsertOn, ListElement, ModelDecl, OperationDecl, OperationKind, OptimisticDecl, OptimisticElement,
+    self, AssociationDecl, AttributeBlock, AttributeDecl, CursorType, Effect, FreshnessMode, InsertOn, ListElement, ModelDecl, OperationDecl, OperationKind, OptimisticDecl, OptimisticElement,
     OptimisticValue, PageDirectionDecl, ParamBase, ResponseDecl, ResponseShape, ScopeDecl, SourceDecl, SubscribeDecl, TypeRef, VariableValue,
 };
 
@@ -263,6 +263,9 @@ fn build_scope(scope: &ScopeDecl, reads_node: bool) -> RelationSpec {
         };
         (column, choice)
     }).collect());
+    if let Some(FreshnessMode::Sequence { head, parent, member }) = scope.freshness.as_ref().map(|fresh| &fresh.mode) {
+        relation.sequence_freshness = Some(dblayer::schema::SequenceFreshnessSpec { association: head.item.clone(), parent_field: parent.item.clone(), member_field: member.item.clone() });
+    }
     if scope.is_remote() {
         relation.remote = Some(build_remote(scope));
         relation.edge_fields = scope.edges.iter().map(|edge| build_field(edge, "")).collect();
@@ -292,12 +295,16 @@ fn build_remote(scope: &ScopeDecl) -> RemoteSpec {
         };
         (binding.name.clone(), source)
     }).collect();
+    let timed = match scope.freshness.as_ref().map(|fresh| &fresh.mode) {
+        Some(FreshnessMode::Time { expires_in, empty_in }) => Some((expires_in, empty_in)),
+        _ => None,
+    };
     RemoteSpec {
         operation: query.operation.clone(),
         selects_page_info: matches!(shape, RemoteShape::Connection { .. }),
         shape,
-        stale_time: scope.freshness.as_ref().map_or(DEFAULT_FRESHNESS.to_string(), |fresh| fresh.expires_in.item.clone()),
-        empty_stale_time: scope.freshness.as_ref().and_then(|fresh| fresh.empty_in.as_ref()).map(|found| found.item.clone()),
+        stale_time: timed.map_or(DEFAULT_FRESHNESS.to_string(), |(expires_in, _)| expires_in.item.clone()),
+        empty_stale_time: timed.and_then(|(_, empty_in)| empty_in.as_ref()).map(|found| found.item.clone()),
         page_size: scope.paginate.as_ref().map(|paginate| paginate.size),
         variables,
         root: scope.response.as_ref().and_then(|read| read.from.as_ref()).map(|found| found.item.clone()),

@@ -268,6 +268,15 @@ pub struct RelationSpec {
     pub members_complete: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<MediaSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sequence_freshness: Option<SequenceFreshnessSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SequenceFreshnessSpec {
+    pub association: String,
+    pub parent_field: String,
+    pub member_field: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -338,6 +347,7 @@ impl RelationSpec {
             preload_order: Vec::new(),
             members_complete: false,
             media: None,
+            sequence_freshness: None,
         }
     }
 
