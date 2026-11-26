@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::json;
 use tokio::task::JoinHandle;
 
-use super::rig_tests::{bound, Fault, Rig, BOUND};
+use super::rig_tests::{bound, Fault, Gate, Rig, BOUND};
 use super::rig_held::Held;
 use crate::ffi::tests::lifecycle_tests::Rows;
 use crate::ffi::{Database, DbError};
@@ -293,7 +293,8 @@ async fn call_prop_mutation_against_end_any_order_public() {
             let rig = Rig::encrypted().await;
             rig.login_ios("A").await;
             let epoch = rig.database.session_epoch();
-            let gate = rig.world.hold_next("UnregisterDevice");
+            let gate = Gate::new();
+            rig.world.fail_next("UnregisterDevice", Fault::HoldCommitted(gate.clone()));
             let db = rig.database.clone();
             let call = rig.spawn(async move { db.run(epoch, "UnregisterDevice".into(), "{}".into()).await });
             gate.entered().await;
@@ -311,7 +312,7 @@ async fn call_prop_mutation_against_end_any_order_public() {
             rig.settle().await;
             assert_eq!(requests(), at_reset, "request after session reset during {action}");
             assert!(at_reset.iter().all(|request| request == &original), "changed request during {action}");
-            assert!(rig.world.count("UnregisterDevice") <= 1, "duplicate mutation during {action}");
+            assert_eq!(rig.world.count("UnregisterDevice"), 1, "mutation executions during {action}");
             rig.database.close_now();
         }));
     }

@@ -30,7 +30,7 @@ fn win_store_landed_at_uses_response_time() {
 }
 
 #[test]
-fn win_page_cover_to_end_server_order_only() {
+fn a_continuation_after_refresh_keeps_existing_members_at_the_end_of_the_chain() {
     use crate::owners::read::windows::WindowKey;
     use crate::owners::store::{RowValue, StoreOp};
     use crate::schema::Sort;
@@ -51,8 +51,48 @@ fn win_page_cover_to_end_server_order_only() {
         db.write_queue_ops(&[page(1, &[("a", 1)], Some("a"))]).unwrap();
         db.write_queue_ops(&[page(2, &[("b", 2)], None)]).unwrap();
         let members: Vec<_> = db.read(&["messages"], |reader| reader.scope_members("messages", scope.as_str())).unwrap().into_iter().map(|(id, _)| id).collect();
-        assert_eq!(members, if local_order { vec!["a", "b", "c"] } else { vec!["a", "b"] }, "local_order={local_order}");
+        assert_eq!(members, ["a", "b", "c"], "local_order={local_order}");
     }
+}
+
+#[test]
+fn reopening_an_ordered_window_preserves_the_order_visible_before_upgrade() {
+    use crate::owners::read::windows::WindowKey;
+    use crate::owners::store::{RowValue, StoreOp};
+    use serde_json::json;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("window.sqlite");
+    let spec = crate::schema_fixtures::messages_spec(false);
+    let params = json!({"chatId":"c1"}).as_object().unwrap().clone();
+    let key = WindowKey::relation("messages", "thread", &params);
+    let (scope, window_key) = crate::store::windows::window_identity(&spec, &key.model, "thread", spec.relations[0].remote.as_ref().unwrap(), &params).unwrap();
+    let open = || Store::open_models(Some(&path), vec![spec.clone()], std::sync::Arc::new(crate::runtime::SystemClock)).unwrap();
+    let store = open();
+    let page_rows = |rows: &[(&str, i64)]| rows.iter().map(|(id, sequence)| json!({"id":id,"chatId":"c1","sequenceNumber":sequence})).collect::<Vec<_>>();
+    let prior = page_rows(&[("older", 10), ("newer", 20)]);
+    let keys = crate::value::fractional_keys_between(None, None, 2).unwrap();
+    let mut saved = envelope(prior.into_iter().map(|row| upsert("messages", row)).collect(),
+        vec![append(&scope, "newer", &keys[0]), append(&scope, "older", &keys[1])]);
+    saved.window = Some(crate::store::WindowSave { marker: None, stale_since: None, key: window_key.clone(), scope,
+        cursor: Some("next".into()), has_next: true, total: None, pages: 1, anchor: Some("older".into()),
+        issued: 1, applied: 1, cleared_at: None });
+    store.commit(saved).unwrap();
+    exec(&store, "DELETE FROM manifest WHERE key = 'paged_scope_order'");
+    drop(store);
+
+    let ids = |store: &Store| {
+        let query = store.remote_relation_query("messages", "thread", &params).unwrap().unwrap();
+        store.query(&query).unwrap().iter().map(|row| row.id.to_string()).collect::<Vec<_>>()
+    };
+    let store = open();
+    assert_eq!(ids(&store), ["older", "newer"]);
+    assert_eq!(store.window(&window_key).unwrap().unwrap().cursor.as_deref(), Some("next"));
+    let roots = page_rows(&[("older", 30), ("tail", 5)]).into_iter().map(|row| RowValue { row_id: row["id"].as_str().unwrap().into(), values: row.to_string() }).collect();
+    store.write_queue_ops(&[StoreOp::Window { source: crate::schema::RowSource::Page, landed_at: 0, model: key.model, key: key.name,
+        page: 2, replace_all: false, cursor: None, roots, related: Vec::new(), total: None, base_revision: store.revision_seq().unwrap() }]).unwrap();
+    drop(store);
+    assert_eq!(ids(&open()), ["older", "newer", "tail"]);
 }
 
 #[test]

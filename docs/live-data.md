@@ -142,6 +142,12 @@ val secondary = Projected(scope.stream(Chat.list("SECONDARY")), Chat, screenScop
 - The query owns the where, order, limit, load, refresh and load-more. `refresh()` and `loadMore()` of the stream act on it.
 - `total` is the server count of the relation when the server sends one.
 
+## Loading more rows
+
+Each additional page preserves the current list and appends only new IDs. Repeated IDs can update row and edge values in place. The new rows and updates appear together. A page made entirely of repeats still advances the cursor.
+
+The first page and refresh can reconcile membership and apply the declared sort. Use refresh when the list needs the latest server order or sort values.
+
 ## State of a stream
 
 | Field | Meaning |

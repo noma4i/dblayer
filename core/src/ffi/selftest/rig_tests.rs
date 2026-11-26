@@ -53,6 +53,7 @@ impl Gate {
 #[derive(Clone)]
 pub(super) enum Fault {
     Hold(Arc<Gate>),
+    HoldCommitted(Arc<Gate>),
     /// The request is held, then ends in the inner fault.
     HoldThen(Arc<Gate>, Box<Fault>),
     Refuse { code: &'static str, confirmed: bool },
@@ -98,7 +99,7 @@ struct State {
 /// A held request first waits at its gate, then ends in the inner fault, if any.
 async fn pass_gate(fault: Option<Fault>) -> Option<Fault> {
     match fault {
-        Some(Fault::Hold(gate)) => { gate.pass().await; None }
+        Some(Fault::Hold(gate) | Fault::HoldCommitted(gate)) => { gate.pass().await; None }
         Some(Fault::HoldThen(gate, inner)) => { gate.pass().await; Some(*inner) }
         other => other,
     }
@@ -172,9 +173,9 @@ impl World {
         state.log.push(Entry { operation: operation.into(), account: account.clone(), label: self.label.clone(), sequence, request_id, body: body.to_string() });
         let position = state.script.iter().position(|(wanted, _)| wanted == operation || wanted == "*");
         let fault = position.map(|index| state.script.remove(index).1);
-        let commits = matches!(fault, None | Some(Fault::Hold(_)));
+        let commits = matches!(fault, None | Some(Fault::Hold(_) | Fault::HoldCommitted(_)));
         let held_account = match &fault {
-            Some(Fault::Hold(gate) | Fault::HoldThen(gate, _)) => gate.account(),
+            Some(Fault::Hold(gate) | Fault::HoldCommitted(gate) | Fault::HoldThen(gate, _)) => gate.account(),
             _ => None,
         };
         let account = held_account.unwrap_or(account);
@@ -306,7 +307,7 @@ impl World {
             Some(Fault::Unreadable) => return Ok("not json".into()),
             Some(Fault::Refuse { code, .. }) => return Ok(json!({"errors": [{"message": code, "extensions": {"code": code}}]}).to_string()),
             Some(Fault::Down) => return Err(DbError::Network { detail: "the network is away".into() }),
-            Some(Fault::Hold(_) | Fault::HoldThen(..)) | None => {}
+            Some(Fault::Hold(_) | Fault::HoldCommitted(_) | Fault::HoldThen(..)) | None => {}
         }
         Ok(answer.to_string())
     }
@@ -344,6 +345,11 @@ impl FakeHttp for World {
         let Some((mut answer, fault)) = self.enter(&operation, sequence, Some(contract_request.request_id.clone()), &request["body"]) else {
             return Ok(EncryptedReply { status: 400, body: String::new() });
         };
+        if let Some(Fault::HoldCommitted(gate)) = &fault {
+            self.state.lock().unwrap().contract.settle(&contract_request, answer.clone());
+            gate.pass().await;
+            return Ok(EncryptedReply { status: 200, body: seal_response(&request, sequence, answer) });
+        }
         let mut sealed_sequence = sequence;
         match pass_gate(fault).await {
             Some(Fault::Http(status)) => return Ok(EncryptedReply { status, body: String::new() }),
@@ -362,7 +368,7 @@ impl FakeHttp for World {
                 answer = json!({"error": code});
                 if !confirmed { sealed_sequence = None; }
             }
-            Some(Fault::Hold(_) | Fault::HoldThen(..)) | None => {}
+            Some(Fault::Hold(_) | Fault::HoldCommitted(_) | Fault::HoldThen(..)) | None => {}
         }
         if operation != "logout" && sealed_sequence == sequence { self.state.lock().unwrap().contract.settle(&contract_request, answer.clone()); }
         Ok(EncryptedReply { status: 200, body: seal_response(&request, sealed_sequence, answer) })

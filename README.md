@@ -108,6 +108,8 @@ A model mutation can hide a related row immediately when an enum argument matche
 
 Media queries distinguish an absent parent from an invalid marker response. See [media library loading](docs/live-data.md#media-library-with-marker-and-tail).
 
+Paginated scopes append new rows and update repeated rows at their existing positions. See [loading more rows](docs/live-data.md#loading-more-rows).
+
 Use `dblayer-gen explain models/*.dbl` to inspect generated tables, indexes and SQLite query plans before building the app.
 
 ## What using it looks like

@@ -158,3 +158,4 @@ D328	temp-prefix-value-sent	core	write_sends_a_value_that_only_starts_with_the_t
 D329	rollback-retry-dependents	core	out_rollback_retry_keeps_the_dependents	red-by-reading	-	coordinator D-329
 D392-RETRY	failed-commit-retry	core	a_refused_upload_mutation_retries_without_uploading_the_file_again	regression	first Failed frame while the old receipt waits	public API
 C64901	media-marker-null-parent	core	media_marker_distinguishes_a_null_parent_from_a_malformed_response	regression	-	public API
+C65001	page-continuation-order	core	overlapping_pages_append_new_rows_without_moving_existing_rows	regression	-	public API

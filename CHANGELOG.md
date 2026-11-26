@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Append new rows and update repeated rows in place when loading subsequent pages.
+
 ## 6.49.1 - 2026-11-26
 
 ### Fixed

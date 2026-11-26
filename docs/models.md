@@ -211,6 +211,8 @@ Parameters and windows:
 
 Remote scopes and node reads default to `5.minutes`, so write `freshness` only for another value. Durations are written `300.milliseconds`, `30.seconds`, `5.minutes`, `2.hours`, `1.day`. Expiry alone starts no request: a later reconnect or read checks freshness again. `loadAll()` reads the remaining pages, `loadAll(force: true)` reloads the first page too.
 
+For a paginated scope, the first page and refresh apply the declared order. Each following page appends new IDs in server order. A repeated ID updates its fields and keeps its position. See [loading more rows](live-data.md#loading-more-rows).
+
 ### Flags
 
 Flags sit on the `scope` line and take only `true`: omit one for the default.
@@ -224,7 +226,7 @@ Flags sit on the `scope` line and take only `true`: omit one for the default.
 | `insert_on: :server` or `:create`          | the list takes rows from subscription events and answers, or the rows this device creates, see below                              |
 | `preload`                                  | the library loads the scope by itself, see below                                                                                  |
 
-`stable_order` keeps places in the cache across restarts, a session reset drops them, and finding a place costs work independent of the list size. A row from the server lands where its `order` values put it among the listed rows, a row created on this device goes last.
+`stable_order` keeps places in the cache across restarts. A session reset drops them. New rows from continuation pages append in response order. Other server rows join where their `order` values place them. Rows created on this device go last.
 
 ### Insertion into windows
 

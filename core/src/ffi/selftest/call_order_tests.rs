@@ -79,6 +79,113 @@ async fn load_more_waits_for_the_page_that_an_earlier_cancelled_load_more_starte
     rig.database.close_now();
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn overlapping_pages_append_new_rows_without_moving_existing_rows() {
+    use crate::ffi::{ReadValue, RowEdit};
+
+    #[derive(Default)]
+    struct Frames(std::sync::Mutex<Vec<ReadValue>>);
+    impl crate::ffi::tape::Reader for Frames {
+        fn delivered(&self, frame: crate::ffi::tape::StreamDelivery) { self.0.lock().unwrap().push(frame.value); }
+    }
+
+    let page = |ids: Vec<u32>, cursor: Option<&str>, updated: Option<u32>| {
+        let nodes: Vec<_> = ids.into_iter().map(|id| {
+            let changed = updated == Some(id);
+            let created = if changed { "2026-10-08T01:00:00.000Z".into() } else { format!("2026-10-08T00:00:{:02}.000Z", 59 - id) };
+            json!({"__typename":"Moment","id":id.to_string(),"uuid":if changed {"updated"} else {"original"},"likedByMe":false,"media":{},"createdAt":created})
+        }).collect();
+        json!({"data":{"feed":{"nodes":nodes,"pageInfo":{"hasNextPage":cursor.is_some(),"endCursor":cursor}}}})
+    };
+    let mut results = Vec::new();
+    for (ordered, chained) in [(false, false), (false, true), (true, false)] {
+        let rig = Rig::signed_as(World::new("server", "A", true), false, |models| {
+            wrapper_models(models);
+            let moment = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Moment").unwrap();
+            let feed = moment["relations"].as_array_mut().unwrap().iter_mut().find(|scope| scope["name"] == "feed").unwrap();
+            feed["keep_on_gap"] = json!(true);
+            feed["sort"] = if ordered { json!({"fields":[{"column":"createdAt","direction":"desc"}]}) } else { json!("server_order") };
+        }).await;
+        rig.database.register_operations(json!([{"name":"MomentsFeed","document":FEED}]).to_string()).await.unwrap();
+        rig.world.answer_with("MomentsFeed", page((1..=20).collect(), Some("next"), None));
+        let query = r#"{"model":"Moment","relation":"feed","params":{}}"#;
+        let frames = Arc::new(Frames::default());
+        let live = rig.database.watch_query(query, frames.clone());
+        bound(live.wait_for_initial_load()).await.unwrap();
+        let epoch = rig.database.session_epoch();
+        let initial = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap();
+        let prefix: Vec<_> = (1..=20).map(|id| id.to_string()).collect();
+        assert_eq!(initial.iter().map(|row| row.id.clone()).collect::<Vec<_>>(), prefix);
+        let repeated = if ordered { 5 } else if chained { 8 } else { 18 };
+        let continuations: Vec<Vec<u32>> = match (ordered, chained) {
+            (true, _) => vec![std::iter::once(5).chain(19..=37).collect()],
+            (false, true) => (0..7).flat_map(|step| {
+                let start = 21 + 2 * step;
+                let end = if step == 6 { 37 } else { start + 1 };
+                let added = (start..=end).chain(8..=12).collect();
+                [Some(added), (step == 0).then(|| (8..=12).collect())].into_iter().flatten()
+            }).collect(),
+            (false, false) => vec![(18..=37).collect()],
+        };
+        let page_count = continuations.len();
+        for (step, ids) in continuations.into_iter().enumerate() {
+            let last = ids.iter().copied().filter(|id| *id > 20).max().map(|id| id.to_string());
+            let cursor = (step + 1 < page_count).then(|| format!("next-{step}"));
+            rig.world.answer_with("MomentsFeed", page(ids, cursor.as_deref(), Some(repeated)));
+            rig.clock.advance(1_000);
+            bound(rig.database.load_more(epoch, "Moment".into(), Some("feed".into()), "{}".into())).await.unwrap();
+            if let Some(last) = last {
+                crate::test_wait::settled(&rig, "the page delivery carries the final new row", || frames.0.lock().unwrap().iter().any(|frame| match frame {
+                    ReadValue::Snapshot { rows, .. } => rows.iter().any(|row| row.id == last),
+                    ReadValue::Delta { edits, .. } => edits.iter().any(|edit| matches!(edit, RowEdit::Insert { row, .. } if row.id == last)),
+                    _ => false,
+                })).await;
+            }
+        }
+        if chained {
+            let cursors: Vec<Value> = rig.world.log().iter().filter(|entry| entry.operation == "MomentsFeed")
+                .map(|entry| serde_json::from_str::<Value>(&entry.body).unwrap()["variables"]["after"].clone()).collect();
+            let expected = [Value::Null, json!("next")].into_iter().chain((0..page_count - 1).map(|step| json!(format!("next-{step}")))).collect::<Vec<_>>();
+            assert_eq!(cursors, expected);
+        }
+        let final_rows = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap();
+        let ids: Vec<_> = final_rows.iter().map(|row| row.id.clone()).collect();
+        assert!(final_rows.iter().any(|row| row.id == repeated.to_string() && row.cells.contains(&crate::ffi::Cell::Text { value: "updated".into() })));
+        let mut shown = Vec::new();
+        let mut page_deliveries = 0;
+        let mut moved = false;
+        let mut initial_delivered = false;
+        let mut kept_prefix = true;
+        for frame in frames.0.lock().unwrap().iter() {
+            match frame {
+                ReadValue::Snapshot { rows, .. } => shown.clone_from(rows),
+                ReadValue::Delta { edits, .. } => {
+                    if initial_delivered && !edits.is_empty() { page_deliveries += 1; moved |= edits.iter().any(|edit| matches!(edit, RowEdit::Move { .. })); }
+                    RowEdit::replay(&mut shown, edits);
+                }
+                _ => {}
+            }
+            assert_eq!(shown.iter().map(|row| &row.id).collect::<std::collections::HashSet<_>>().len(), shown.len());
+            if initial_delivered { kept_prefix &= shown.iter().take(20).map(|row| &row.id).eq(&prefix); }
+            initial_delivered |= shown.len() == 20;
+        }
+        results.push((ordered, chained, ids, page_deliveries, moved, kept_prefix));
+        live.cancel();
+        if ordered {
+            let mut response = page(vec![37, 10, 5, 2, 1], None, Some(5));
+            response["data"]["feed"]["nodes"][1]["createdAt"] = json!("2026-10-08T00:00:57.000Z");
+            rig.world.answer_with("MomentsFeed", response);
+            rig.clock.advance(1_000);
+            bound(rig.database.refresh(epoch, "Moment".into(), Some("feed".into()), "{}".into())).await.unwrap();
+            let refreshed = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap();
+            assert_eq!(refreshed.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["5", "1", "2", "10", "37"]);
+        }
+        rig.database.close_now();
+    }
+    let expected: Vec<_> = (1..=37).map(|id| id.to_string()).collect();
+    assert_eq!(results, [(false, false, expected.clone(), 1, false, true), (false, true, expected.clone(), 7, false, true), (true, false, expected, 1, false, true)]);
+}
+
 /// boundary_node_read_epoch: a node whose request is held while the session ends gets the end of its epoch.
 #[tokio::test(flavor = "multi_thread")]
 async fn boundary_node_read_epoch() {
