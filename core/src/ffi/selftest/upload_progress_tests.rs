@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
 use super::crash_image_support::{advancing, copy_tree, drained, files_of, over_images, reopen_timed, timed_stand, wal_length, Capture};
@@ -93,10 +94,12 @@ async fn xfer_progress_is_true_and_never_goes_back() {
         let (secret, id) = (secret.clone(), id.clone());
         async move {
             if index != target { return None }
+            let mut finishing = None;
             let (fresh, reopened, clock) = reopen_timed(&image, &secret, &[CREATE_MOMENT], |fresh| {
                 answers(fresh);
+                fresh.puts.fail_once_at(5 * MEBIBYTE);
                 fresh.script.data("CompleteMultipart", COMPLETE);
-                fresh.script.data("CreateMoment", LANDED);
+                finishing = Some(fresh.script.hold("CreateMoment", LANDED));
             }, false).await;
             let watch = reopened.subscribe_values(reopened.session_epoch(), ReadRequest::Blob { model: "Moment".into(), id, action: "upload_clip".into() });
             let Some(ReadValue::Status { upload, .. }) = bound(watch.pull_next()).await else { panic!("the status ended") };
@@ -107,10 +110,13 @@ async fn xfer_progress_is_true_and_never_goes_back() {
                     if let ReadValue::Status { upload, .. } = value { sink.lock().unwrap().push(upload.progress); }
                 }
             });
+            let finishing = finishing.unwrap();
+            advancing(&clock, finishing.entered()).await;
+            finishing.release();
             advancing(&clock, async { crate::test_wait::settled(&reopened, "the upload landed", || reopened.peek_row_now(reopened.session_epoch(), "Moment".into(), "m77".into()).unwrap().is_some()).await; drained(&reopened).await }).await;
             task.abort();
             let seen = frames.lock().unwrap().clone();
-            let parts = fresh.puts.seen.lock().unwrap().len();
+            let parts = fresh.puts.seen.lock().unwrap().iter().map(|put| put.offset).collect::<Vec<_>>();
             bound(reopened.close_database()).await.unwrap();
             Some((seen, parts))
         }
@@ -118,7 +124,8 @@ async fn xfer_progress_is_true_and_never_goes_back() {
     let (after, parts) = restarted.into_iter().flatten().next().expect("the image cut after the share of part two was shown");
     assert!(after[0] >= before_death, "the first frame after the restart ({}) is not less than the last shown before it ({before_death})", after[0]);
     assert!(never_goes_back(&after) && after.iter().all(|frame| *frame <= 1.0), "after the restart the share never goes back: {after:?}");
-    assert!(parts <= 2, "the part confirmed before the cut is not sent again");
+    assert!(parts.iter().filter(|&&offset| offset == 5 * MEBIBYTE).count() >= 2, "the interrupted second part is retried: {parts:?}");
+    assert_eq!(parts.iter().copied().collect::<BTreeSet<_>>(), BTreeSet::from([5 * MEBIBYTE, 10 * MEBIBYTE]), "only parts not confirmed at the cut are sent: {parts:?}");
     database.close_now();
 
     let stand = Stand::new().reporting_bytes();
