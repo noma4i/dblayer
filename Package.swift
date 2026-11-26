@@ -12,8 +12,8 @@ let package = Package(
   targets: [
     .binaryTarget(
       name: "dblayerFFI",
-      url: "https://github.com/noma4i/dblayer/releases/download/6.50.0/DBlayerFFI.xcframework.zip",
-      checksum: "8ade2b2042a125b8634b422033c78da6e77df0c8df2c468450b25ffb4303cafa"
+      url: "https://github.com/noma4i/dblayer/releases/download/6.51.0/DBlayerFFI.xcframework.zip",
+      checksum: "e03ee3c44745128936526c4f19f61a80d98dd21f3ae0ee14aa3e93231d87d358"
     ),
     .target(
       name: "DBlayer",
