@@ -1,0 +1,1 @@
+SELECT EXISTS (SELECT 1 FROM {child} WHERE {foreign_key} = ?3 AND ({permanent}) = 1 AND {member_sequence} >= (SELECT {parent_sequence} FROM {parent} WHERE {id} = ?3) AND EXISTS (SELECT 1 FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND row_id = {child}.{id}))

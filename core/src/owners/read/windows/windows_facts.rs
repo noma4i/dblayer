@@ -57,6 +57,8 @@ pub(super) struct Facts {
     pub(super) media: bool,
     pub(super) marker: Option<Marker>,
     pub(super) members: i64,
+    /// The sequence verdict of the saved window for active interests while the machine lives, `None` after a first page landed.
+    pub(super) sequence_fresh: Option<bool>,
     /// The marker and the member count that the landing in flight makes the saved ones.
     pub(super) landing_marker: Option<(Marker, i64, bool)>,
     /// The window reads a `node`: only such a window takes the mark of a `changed_by` event (P-WIN-34).
@@ -102,6 +104,7 @@ impl Facts {
                 self.has_rows = saved.has_rows;
                 self.marker.clone_from(&saved.marker);
                 self.members = saved.members;
+                self.sequence_fresh = saved.sequence_fresh;
             }
             Ev::Stale { cause } => {
                 if let StaleCause::Change { revision: Some(revision) } = cause { self.change_due = self.change_due.max(*revision); }
@@ -434,6 +437,7 @@ impl Facts {
         }
         self.landed_revision = revision;
         if page == 1 {
+            self.sequence_fresh = None;
             self.landed_at = self.answered_at;
             self.fresh_until = self.answered_at + if rows { self.lifetime.0 } else { self.lifetime.1 };
         }

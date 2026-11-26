@@ -144,7 +144,7 @@ fn win_marked_load_keeps_its_mark_until_it_lands() {
         fn interest(&mut self) {
             self.reads += 1;
             self.step(WindowsInput::InterestPassive { key: self.key.clone(), id: 8 + self.reads });
-            let saved = self.owed.then(|| crate::owners::read::windows::SavedWindow { landed_at: 0, fresh_until: 0, stale: true, owed: true, cursor: None, pages: 0, has_rows: false, generation: 0, marker: None, members: 0 });
+            let saved = self.owed.then(|| crate::owners::read::windows::SavedWindow { landed_at: 0, fresh_until: 0, stale: true, owed: true, cursor: None, pages: 0, has_rows: false, generation: 0, marker: None, members: 0, sequence_fresh: None });
             self.step(WindowsInput::WindowRead { key: self.key.clone(), read_id: self.reads, result: Ok(saved) });
         }
         fn load(&mut self) {

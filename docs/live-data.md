@@ -146,6 +146,8 @@ val secondary = Projected(scope.stream(Chat.list("SECONDARY")), Chat, screenScop
 
 Each additional page preserves the current list and appends only new IDs. Repeated IDs can update row and edge values in place. The new rows and updates appear together. A page made entirely of repeats still advances the cursor.
 
+With sequence-based freshness, a stream opens from SQLite when a confirmed member of the saved window covers the stored parent sequence. An empty window, an unknown sequence, or a newer parent starts a first-page request. Existing reconnect and explicit refresh rules still apply.
+
 The first page and refresh can reconcile membership and apply the declared sort. Use refresh when the list needs the latest server order or sort values.
 
 ## State of a stream

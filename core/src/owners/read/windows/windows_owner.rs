@@ -72,6 +72,7 @@ impl Window {
             media,
             marker: None,
             members: 0,
+            sequence_fresh: None,
             landing_marker: None,
             reads_node,
             reread_by_event: std::cell::Cell::new(false),
@@ -396,7 +397,7 @@ impl WindowsState {
             rested(key, None);
             return;
         }
-        let saved = SavedWindow { landed_at: facts.landed_at, fresh_until: facts.fresh_until, stale: !facts.fresh, owed: false, cursor: facts.cursor.clone(), pages: facts.page_count, has_rows: facts.has_rows, generation: self.generation, marker: facts.marker.clone(), members: facts.members };
+        let saved = SavedWindow { landed_at: facts.landed_at, fresh_until: facts.fresh_until, stale: !facts.fresh, owed: false, cursor: facts.cursor.clone(), pages: facts.page_count, has_rows: facts.has_rows, generation: self.generation, marker: facts.marker.clone(), members: facts.members, sequence_fresh: None };
         rested(key, Some((saved, window.load_state())));
     }
 

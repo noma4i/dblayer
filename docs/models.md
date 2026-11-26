@@ -209,7 +209,9 @@ Parameters and windows:
 | `freshness expires_in: 5.minutes`                                            | how long a response counts fresh, counted from its arrival. A saved window stays fresh after a restart               | `5.minutes`                |
 | `freshness expires_in: 5.minutes, empty_in: 30.seconds`                      | a shorter time for an empty response                                                                                 | same                       |
 
-Remote scopes and node reads default to `5.minutes`, so write `freshness` only for another value. Durations are written `300.milliseconds`, `30.seconds`, `5.minutes`, `2.hours`, `1.day`. Expiry alone starts no request: a later reconnect or read checks freshness again. `loadAll()` reads the remaining pages, `loadAll(force: true)` reloads the first page too.
+Time-based freshness defaults to `5.minutes` for remote scopes and node reads. Durations are written `300.milliseconds`, `30.seconds`, `5.minutes`, `2.hours`, `1.day`. Expiry alone starts no request: a later reconnect or read checks freshness again. `loadAll()` reads the remaining pages, `loadAll(force: true)` reloads the first page too.
+
+A paginated scope can compare saved sequences when its first stream opens. For example, `freshness head: :parent, parent: :latestSequence, member: :sequence` names a belongs-to association, an integer parent field, and an integer member field. Bind the association's foreign key in the scope's `where`. Use this declaration in place of `expires_in` and `empty_in`.
 
 For a paginated scope, the first page and refresh apply the declared order. Each following page appends new IDs in server order. A repeated ID updates its fields and keeps its position. See [loading more rows](live-data.md#loading-more-rows).
 

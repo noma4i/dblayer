@@ -97,6 +97,57 @@ fn ids(rows: &Rows) -> Vec<String> {
     ids
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn sequence_freshness_opens_only_when_the_saved_members_cover_the_parent() {
+    use super::flow_fixtures::{add_chat, chat_row};
+    use super::rig_events::events;
+    use super::rig_tests::World;
+    use serde_json::json;
+
+    const QUERY: &str = r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#;
+    const DOCUMENT: &str = "query SequencedThread($chatId: ID!, $first: Int, $after: String) { thread(chatId: $chatId, first: $first, after: $after) { nodes { id chatId text at seq } pageInfo { hasNextPage endCursor } } }";
+    let message = |id: &str, seq: Option<i64>| json!({"id":id,"chatId":"c1","text":id,"at":0,"seq":seq});
+    let page = |nodes| json!({"data":{"thread":{"nodes":nodes,"pageInfo":{"hasNextPage":false,"endCursor":null}}}});
+    for (case, seed, outside, elapsed_ms, expected) in [
+        ("equal after expiry", vec![message("m1", Some(1))], None, 301_000, 1),
+        ("higher sequence outside membership", vec![message("m1", Some(1))], Some(message("m2", Some(2))), 1_000, 2),
+        ("unknown sequence", vec![message("m1", None)], None, 1_000, 2),
+        ("empty membership", vec![], None, 1_000, 2),
+    ] {
+        let rig = Rig::signed_as(World::new("server", "A", true), false, events(|models| {
+            add_chat(models);
+            let model = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Message").unwrap();
+            let thread = model["relations"].as_array_mut().unwrap().iter_mut().find(|relation| relation["name"] == "thread").unwrap();
+            thread["remote"]["operation"] = json!("SequencedThread");
+            thread["remote"]["shape"] = serde_json::to_value(RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: None }).unwrap();
+            thread["remote"]["selects_page_info"] = json!(true);
+            thread["sequence_freshness"] = json!({"association":"chat","parent_field":"lastSequenceNumber","member_field":"seq"});
+        })).await;
+        rig.database.register_operations(json!([{"name":"SequencedThread","document":DOCUMENT}]).to_string()).await.unwrap();
+        rig.land("Chat", chat_row("c1", 0)).await;
+        rig.world.answer_with("SequencedThread", page(seed));
+        let first = rig.database.watch_query(QUERY, Arc::new(Rows::default()));
+        bound(first.wait_for_initial_load()).await.unwrap();
+        first.cancel();
+        if let Some(row) = outside { rig.land("Message", row).await; }
+        rig.clock.advance(elapsed_ms);
+
+        rig.world.answer_with("SequencedThread", page(vec![message("next", Some(2))]));
+        let rows = Arc::new(Rows::default());
+        let one = rig.database.watch_query(QUERY, rows.clone());
+        let two = rig.database.watch_query(QUERY, Arc::new(Rows::default()));
+        bound(one.wait_for_initial_load()).await.unwrap();
+        bound(two.wait_for_initial_load()).await.unwrap();
+        rig.settle().await;
+        let requests = rig.world.log().iter().filter(|entry| entry.operation == "SequencedThread").count();
+        assert_eq!(requests, expected, "{case}");
+        assert_eq!(ids(&rows), [if expected == 1 { "m1" } else { "next" }], "{case}");
+        one.cancel();
+        two.cancel();
+        rig.database.close_now();
+    }
+}
+
 /// C13, I08, I10: page 1 loads, then a load-more and a refresh overlap and their answers arrive in both orders. Afterwards the rows hold no duplicate, a reset follows, and a new window of the same key reads one fresh page with no error.
 #[tokio::test(flavor = "multi_thread")]
 async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consistent_chain_and_a_clean_reset() {

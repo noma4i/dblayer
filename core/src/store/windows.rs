@@ -34,6 +34,8 @@ pub struct SavedWindow {
     /// The marker of a media window and the number of its members: what `MarkerCheck` compares the answer with.
     pub marker: Option<crate::store::WindowMarker>,
     pub members: i64,
+    /// The sequence verdict of a connection with sequence freshness: `Some(true)` the parent is at or behind a confirmed member, `Some(false)` it is ahead or unknown, `None` the connection keeps time freshness.
+    pub sequence_fresh: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

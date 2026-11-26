@@ -42,7 +42,11 @@ impl Facts {
             }
             Ev::InterestPlus { id } => {
                 self.add_interest(*id);
-                if self.is_fresh(context.now) {
+                let fresh = match self.sequence_fresh {
+                    Some(open) => open && self.fresh,
+                    None => self.is_fresh(context.now),
+                };
+                if fresh {
                     self.enter_fresh();
                     self.announce();
                     Handled

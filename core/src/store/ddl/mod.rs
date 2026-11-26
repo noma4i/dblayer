@@ -139,6 +139,10 @@ pub fn create_index_statements(model: &ModelSpec) -> Vec<String> {
     for association in model.associations.iter().filter(|association| association.kind == crate::schema::AssociationKind::BelongsTo && !association.sets.is_empty()) {
         indexes.push(std::iter::once((sql_ident(&column_name(&association.foreign_key)), false)).chain(newer_order(association)).collect());
     }
+    for sequence in model.relations.iter().filter_map(|relation| relation.sequence_freshness.as_ref()) {
+        let Some(association) = model.associations.iter().find(|association| association.name == sequence.association) else { continue };
+        indexes.push(vec![(sql_ident(&column_name(&association.foreign_key)), false), (format!("({})", crate::identity::permanent_row_flag(&sql_ident("id"))), false), (sql_ident(&column_name(&sequence.member_field)), true)]);
+    }
     for relation in &model.relations {
         let mut fields: Vec<_> = relation.by_columns.iter().map(|name| (sql_ident(&column_name(name)), false)).collect();
         fields.sort();

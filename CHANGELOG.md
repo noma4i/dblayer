@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Allow paginated scopes to use stored sequences to decide whether to load on open.
+
 ## 6.50.0 - 2026-11-26
 
 ### Changed

@@ -35,13 +35,36 @@ impl Store {
             _ => false,
         };
         let (Some(record), Some(freshness)) = (self.window(&key)?, self.window_freshness(&key)?) else {
-            return Ok(owed.then(|| crate::store::SavedWindow { landed_at: 0, fresh_until: 0, stale: true, owed, cursor: None, pages: 0, has_rows: false, generation: self.generation().value(), marker: None, members: 0 }));
+            return Ok(owed.then(|| crate::store::SavedWindow { landed_at: 0, fresh_until: 0, stale: true, owed, cursor: None, pages: 0, has_rows: false, generation: self.generation().value(), marker: None, members: 0, sequence_fresh: None }));
         };
         let has_rows = self.read(&[model], |reader| reader.scope_last_id(model, scope.key.as_str()))?.is_some();
         let policy = crate::runtime::selected_policy(!has_rows, &remote.stale_time, remote.empty_stale_time.as_deref());
         let lifetime = crate::runtime::parse_duration(policy).map_or(i64::MAX / 4, |window| i64::try_from(window.as_millis()).unwrap_or(i64::MAX / 4));
         let marker = super::windows::read_marker(&self.lock().connection, &key)?;
-        Ok(Some(crate::store::SavedWindow { landed_at: freshness.landed_at, fresh_until: freshness.landed_at.saturating_add(lifetime), stale: freshness.stale_since.is_some() || owed, owed, cursor: record.cursor, pages: u32::try_from(record.pages).unwrap_or(u32::MAX), has_rows, generation: u64::try_from(record.generation).unwrap_or(0), marker, members: self.read(&[model], |reader| reader.scope_member_count(model, scope.key.as_str()))? }))
+        let sequence_fresh = declared.sequence_freshness.as_ref().map(|sequence| self.sequence_fresh(spec, params, scope.key.as_str(), sequence)).transpose()?;
+        Ok(Some(crate::store::SavedWindow { landed_at: freshness.landed_at, fresh_until: freshness.landed_at.saturating_add(lifetime), stale: freshness.stale_since.is_some() || owed, owed, cursor: record.cursor, pages: u32::try_from(record.pages).unwrap_or(u32::MAX), has_rows, generation: u64::try_from(record.generation).unwrap_or(0), marker, members: self.read(&[model], |reader| reader.scope_member_count(model, scope.key.as_str()))?, sequence_fresh }))
+    }
+
+    /// Whether the parent the scope binds is at or behind the sequence of a confirmed member of the scope, read from one snapshot.
+    fn sequence_fresh(&self, spec: &crate::schema::ModelSpec, params: &Map<String, Value>, scope_key: &str, sequence: &crate::schema::SequenceFreshnessSpec) -> Result<bool, CoreError> {
+        let model = spec.key.as_str();
+        let association = spec.associations.iter().find(|association| association.name == sequence.association).ok_or_else(|| CoreError::UnknownAssociation { model: model.to_string(), name: sequence.association.clone() })?;
+        let parent_model = association.target.as_str();
+        let Some(parent_id) = params.get(&association.foreign_key).and_then(crate::value::read_id) else { return Ok(false) };
+        let column = |field: &str| super::ddl::sql_ident(&super::ddl::column_name(field));
+        let sql = format!(
+            include_str!("sql/rows/sequence_fresh.sql"),
+            parent = super::ddl::sql_ident(&super::ddl::table_name(parent_model)),
+            child = super::ddl::sql_ident(&super::ddl::table_name(model)),
+            id = super::ddl::sql_ident("id"),
+            parent_sequence = column(&sequence.parent_field),
+            member_sequence = column(&sequence.member_field),
+            foreign_key = column(&association.foreign_key),
+            permanent = crate::identity::permanent_row_flag(&super::ddl::sql_ident("id")),
+        );
+        Ok(self.read(&[model, parent_model], |reader| {
+            Ok(reader.connection().prepare_cached(&sql)?.query_row(rusqlite::params![model, scope_key, parent_id.as_str()], |row| row.get::<_, bool>(0))?)
+        })?)
     }
 
     /// The edge values of the rows of a relation window, by row id.

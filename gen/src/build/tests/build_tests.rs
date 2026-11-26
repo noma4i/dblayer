@@ -170,6 +170,43 @@ fn paginate_is_a_forward_page_connection_with_its_cap_and_freshness() {
 }
 
 #[test]
+fn sequence_freshness_lowers_only_for_a_connection_bound_to_its_parent() {
+    let source = |scope: &str| format!(r#"
+model Parent do
+  attribute :sequence, :int
+end
+model Entry do
+  attribute :parentId, :id
+  attribute :sequence, :int
+  belongs_to :parent
+  scope :entries do
+    parameter :parentId, :id
+    where parentId: :parentId
+    query "Entries"
+    {scope}
+  end
+end
+"#);
+    let sequence = "freshness head: :parent, parent: :sequence, member: :sequence";
+    let paged = |freshness: &str| format!("paginate size: 20\n    {freshness}");
+    let built = check_source(&source(&paged(sequence))).unwrap();
+    let relation = &built.iter().find(|spec| spec.key.as_str() == "Entry").unwrap().relations[0];
+    assert_eq!(relation.sequence_freshness, Some(dblayer::schema::SequenceFreshnessSpec {
+        association: "parent".into(), parent_field: "sequence".into(), member_field: "sequence".into(),
+    }));
+    for (declaration, expected) in [
+        (sequence.to_string(), "needs a paginated"),
+        (paged("freshness head: :parent, member: :sequence"), "needs `parent:`"),
+        (paged(&format!("{sequence}, expires_in: 5.minutes")), "selects one mode"),
+        (paged("freshness head: :parent, parent: :sequence, member: :parentId"), "must be an Int attribute"),
+        (paged("freshness head: :parent, parent: :missing, member: :sequence"), "must be an Int attribute"),
+    ] {
+        let errors = check_source(&source(&declaration)).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains(expected)), "{errors:?}");
+    }
+}
+
+#[test]
 fn paginate_backward_without_a_cap() {
     let model = build_one("  scope :feed do\n    query \"Feed\"\n    paginate size: 20, direction: :backward\n  end");
     let remote = model.relations[0].remote.as_ref().unwrap();
