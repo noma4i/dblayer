@@ -71,6 +71,10 @@ struct UrlSessionCableTests {
     var incoming: [Result<URLSessionWebSocketTask.Message, Error>] = [.success(.string("server frame"))]
     var openError: Error?
     var sendError: Error?
+    private let remoteClose = AsyncStream<Void>.makeStream()
+    var waitsForRemoteClose = false
+    var delaysSendCompletion = false
+    private var sendCompletion: (@Sendable (Error?) -> Void)?
     private(set) var sent: [String] = []
     private(set) var resumed = false
     private(set) var cancelled: URLSessionWebSocketTask.CloseCode?
@@ -81,21 +85,66 @@ struct UrlSessionCableTests {
       if let openError { throw openError }
     }
     func send(_ message: URLSessionWebSocketTask.Message, completion: @escaping @Sendable (Error?) -> Void) {
-      lock.withLock { if case let .string(text) = message { sent.append(text) } }
-      completion(sendError)
+      lock.withLock {
+        if case let .string(text) = message { sent.append(text) }
+        if delaysSendCompletion { sendCompletion = completion }
+      }
+      if !delaysSendCompletion { completion(sendError) }
     }
     func receive() async throws -> URLSessionWebSocketTask.Message {
       let next = lock.withLock { incoming.isEmpty ? nil : incoming.removeFirst() }
       guard let next else {
+        if waitsForRemoteClose {
+          _ = await Cursor(remoteClose.stream).next("the remote close")
+          throw URLError(.networkConnectionLost)
+        }
         _ = await AsyncStream<Void> { _ in }.first { _ in true }
         throw CancellationError()
       }
       return try next.get()
     }
+    func finishReceive(code: UInt16? = nil, reason: String? = nil) {
+      closeCode = code.flatMap { URLSessionWebSocketTask.CloseCode(rawValue: Int($0)) } ?? .invalid
+      closeReason = reason.map { Data($0.utf8) }
+      remoteClose.continuation.yield(())
+      remoteClose.continuation.finish()
+    }
+    func finishSend() {
+      let completion = lock.withLock {
+        defer { sendCompletion = nil }
+        return sendCompletion
+      }
+      completion?(sendError)
+    }
     func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
       lock.withLock { cancelled = closeCode }
     }
     func cancel() { lock.withLock { hardCancelled = true } }
+  }
+
+  @Test(arguments: [false, true])
+  func aSendFailureDoesNotHideTheRemoteClose(closeFirst: Bool) async throws {
+    let socket = Socket()
+    socket.incoming = []
+    socket.waitsForRemoteClose = true
+    socket.delaysSendCompletion = closeFirst
+    socket.sendError = URLError(.networkConnectionLost)
+    let events = RecordingEvents()
+    let cable = UrlSessionCable { _ in socket }
+    guard case let .open(connection) = await cable.open(url: "wss://example.com/api/cable", headers: [:], connectMs: 10_000, events: events) else {
+      Issue.record("the cable did not open")
+      return
+    }
+    defer { connection.cancel() }
+    try #require(connection.send(text: "encrypted hello"))
+    socket.finishReceive(code: 4401, reason: "session_unknown")
+    guard case let .ended(code, reason, _)? = await events.next() else {
+      Issue.record("the cable did not report its end")
+      return
+    }
+    #expect(code == 4401)
+    #expect(reason == "session_unknown")
+    if closeFirst { socket.finishSend() }
   }
 
   @Test func frameGoesToTheCoreAndTextToTheSocket() async throws {
@@ -130,6 +179,7 @@ struct UrlSessionCableTests {
   @Test func aFailedSendReachesTheCoreWithTheNativeFailure() async throws {
     let socket = Socket()
     socket.incoming = []
+    socket.waitsForRemoteClose = true
     socket.sendError = URLError(.networkConnectionLost)
     let events = RecordingEvents()
     let cable = UrlSessionCable { _ in socket }
@@ -138,6 +188,7 @@ struct UrlSessionCableTests {
       return
     }
     _ = connection.send(text: "client frame")
+    socket.finishReceive()
     guard case let .ended(closeCode, _, failure)? = await events.next() else { Issue.record("the failed send did not reach the core"); return }
     #expect(closeCode == nil)
     #expect((failure?.domain, failure?.code) == (NSURLErrorDomain, Int64(URLError.networkConnectionLost.rawValue)))

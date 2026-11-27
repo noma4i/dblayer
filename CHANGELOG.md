@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Preserve server WebSocket close codes when an iOS send fails first.
+
 ## 6.52.0 - 2026-11-27
 
 ### Added
