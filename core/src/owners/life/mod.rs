@@ -587,6 +587,8 @@ impl Life {
 
     pub(crate) fn cloud_status(&self) -> Option<tokio::sync::watch::Receiver<crate::ffi::CloudStatus>> { self.cloud_status.clone() }
 
+    pub(crate) fn gate(&self) -> &Arc<crate::runtime::EpochGate> { &self.wiring.gate }
+
     #[cfg(test)]
     pub(crate) fn rounds_needed_count(&self) -> u64 { self.rounds_needed.load(std::sync::atomic::Ordering::Relaxed) }
 

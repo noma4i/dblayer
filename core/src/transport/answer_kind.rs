@@ -39,6 +39,34 @@ pub enum Refusal {
     Graphql(String),
 }
 
+pub(crate) enum SessionRefusalInput<'a> {
+    Answer(&'a Value),
+    Error(&'a super::TransportError),
+    Close(Option<u16>, Option<&'a str>),
+}
+
+pub(crate) fn session_refusal(input: SessionRefusalInput<'_>) -> Option<crate::ffi::SessionRefusalReason> {
+    use crate::ffi::SessionRefusalReason as Reason;
+    let code = match input {
+        SessionRefusalInput::Answer(body) => {
+            if body.get("revoked") == Some(&Value::Bool(true)) { return Some(Reason::SessionEnded); }
+            refusal_name(body)
+        }
+        SessionRefusalInput::Error(super::TransportError::Http { status: 401, .. }) => return Some(Reason::Http401),
+        SessionRefusalInput::Error(super::TransportError::Http { status: 403, .. }) => return Some(Reason::Http403),
+        SessionRefusalInput::Error(super::TransportError::Session { code, .. }) => Some(code.name().to_string()),
+        SessionRefusalInput::Close(Some(4401), _) => return Some(Reason::SessionEnded),
+        SessionRefusalInput::Close(_, reason) => reason.map(str::to_string),
+        _ => None,
+    };
+    match code.as_deref() {
+        Some("UNAUTHENTICATED") => Some(Reason::Unauthenticated),
+        Some("ACCOUNT_UNAVAILABLE") => Some(Reason::AccountUnavailable),
+        Some("SESSION_ENDED" | "LOGGED_OUT") => Some(Reason::SessionEnded),
+        _ => None,
+    }
+}
+
 /// The name of the refusal code of a body: `error` first, then `errors[].extensions.code`, the first wins.
 pub fn refusal_name(body: &Value) -> Option<String> {
     body.get("error").and_then(Value::as_str).into_iter()

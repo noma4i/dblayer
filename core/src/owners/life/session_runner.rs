@@ -364,6 +364,10 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                         Err(failure) => return back.reply(EpochStamp::Control, SessionInput::SecretMissing { request_id, attempt_id, lost: matches!(failure, SecretFailure::Lost) }),
                     };
                     let sent = crate::runtime::send_in_cut(&gate, cut, || { gate.note(|| crate::transport::RequestRecord { operation: body["operationName"].as_str().unwrap_or_default().to_string(), variables_json: body["variables"].to_string(), reason }); exchange.send_once(crate::transport::encrypted::SendOnce { credential: credential.as_deref(), request_id: &wire, response_key: &key, sequence, path: &pending.path, body: &body, purpose, wire: crate::transport::WireIds::new(author_kind(&pending), request_id, attempt_id) }) }).await;
+                    if credential.is_some() {
+                        let refusal = match &sent { Ok(Ok(answer)) if !logout || crate::transport::refusal_name(&answer.body).is_some() => Some(crate::transport::answer_kind::SessionRefusalInput::Answer(&answer.body)), Ok(Err(error)) => Some(crate::transport::answer_kind::SessionRefusalInput::Error(error)), _ => None };
+                        if let Some(reason) = refusal.and_then(crate::transport::answer_kind::session_refusal) { gate.report_refusal(pending.epoch, reason); }
+                    }
                     match &sent {
                         Ok(Ok(answer)) => gate.note_rate_limit(&answer.body.to_string()),
                         Ok(Err(TransportError::Session { detail, .. })) => gate.note_rate_limit(detail),

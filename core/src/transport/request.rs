@@ -47,11 +47,12 @@ pub struct GraphQLRequest {
     pub purpose: NetworkPurpose,
     pub wire: Option<super::WireIds>,
     pub reason: RequestReason,
+    pub(crate) epoch: Option<crate::runtime::Epoch>,
 }
 
 impl GraphQLRequest {
     pub fn new(document: impl Into<String>, operation_name: impl Into<String>, variables: Value) -> Self {
-        Self { document: document.into(), operation_name: operation_name.into(), variables, owner: None, purpose: NetworkPurpose::Standard, wire: None, reason: RequestReason::Send }
+        Self { document: document.into(), operation_name: operation_name.into(), variables, owner: None, purpose: NetworkPurpose::Standard, wire: None, reason: RequestReason::Send, epoch: None }
     }
 
     pub fn why(self, reason: RequestReason) -> Self { Self { reason, ..self } }

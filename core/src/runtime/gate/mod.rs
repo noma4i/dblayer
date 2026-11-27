@@ -13,6 +13,13 @@ const EPOCH_SHIFT: u32 = 32;
 
 type RequestSink = Arc<dyn Fn(RequestRecord) + Send + Sync>;
 
+#[derive(Default)]
+struct RefusalReaders {
+    closed: bool,
+    next: u64,
+    senders: std::collections::HashMap<u64, (tokio::sync::mpsc::UnboundedSender<crate::ffi::SessionRefusal>, tokio::sync::watch::Sender<bool>)>,
+}
+
 type Revoked = Arc<dyn Fn(Epoch, String) -> std::pin::Pin<Box<dyn Future<Output = TransportError> + Send>> + Send + Sync>;
 
 /// The gate of the epochs of one database: one atomic value, the epoch above, the `cut` counter in the middle and the closed bit below. The gate owns the transport of the database: the only way to it is a request through the gate, which lends it in the step that checks the epoch.
@@ -24,6 +31,7 @@ pub struct EpochGate {
     requests: OnceLock<RequestSink>,
     /// The open streams of `requests`: with 0 the gate records nothing.
     watching: AtomicU64,
+    refusals: Mutex<RefusalReaders>,
     /// The time before which no request leaves: the `retryAfter` of the last sealed `RATE_LIMITED` answer.
     pause: Mutex<Option<Duration>>,
     /// Test builds record every request that reaches the network after `shutdown`; the gate fails the test that sent it when it is dropped.
@@ -65,7 +73,7 @@ enum Admit {
 }
 
 impl Default for EpochGate {
-    fn default() -> Self { Self { state: AtomicU64::new(CLOSED), transport: OnceLock::new(), revoked: OnceLock::new(), clock: OnceLock::new(), requests: OnceLock::new(), watching: AtomicU64::new(0), pause: Mutex::new(None), #[cfg(test)] recorder: recorder::Recorder::default() } }
+    fn default() -> Self { Self { state: AtomicU64::new(CLOSED), transport: OnceLock::new(), revoked: OnceLock::new(), clock: OnceLock::new(), requests: OnceLock::new(), watching: AtomicU64::new(0), refusals: Mutex::new(RefusalReaders::default()), pause: Mutex::new(None), #[cfg(test)] recorder: recorder::Recorder::default() } }
 }
 
 fn epoch_of(state: u64) -> u64 { state >> EPOCH_SHIFT }
@@ -76,6 +84,7 @@ fn pack(epoch: u64, cut: u64, closed: bool) -> u64 { (epoch.min(u64::from(u32::M
 
 impl EpochGate {
     fn update(&self, change: impl Fn(u64) -> u64) {
+        let _readers = crate::lock::lock(&self.refusals);
         let mut seen = self.state.load(Ordering::SeqCst);
         while let Err(now) = self.state.compare_exchange(seen, change(seen), Ordering::SeqCst, Ordering::SeqCst) { seen = now; }
     }
@@ -85,6 +94,32 @@ impl EpochGate {
     pub(crate) fn attach_revoked(&self, revoked: Revoked) { let _ = self.revoked.set(revoked); }
 
     pub(crate) fn attach_requests(&self, sink: RequestSink) { let _ = self.requests.set(sink); }
+
+    pub(crate) fn refusal_reader(self: &Arc<Self>) -> Result<Arc<crate::ffi::SessionRefusalSubscription>, crate::ffi::DbError> {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let stopped = tokio::sync::watch::channel(false).0;
+        let mut readers = crate::lock::lock(&self.refusals);
+        if readers.closed { return Err(crate::ffi::DbError::Closed { detail: "the database is closed".into() }); }
+        readers.next += 1;
+        let id = readers.next;
+        readers.senders.insert(id, (sender, stopped.clone()));
+        Ok(crate::ffi::SessionRefusalSubscription::new(self, id, receiver, stopped))
+    }
+
+    pub(crate) fn remove_refusal_reader(&self, id: u64) {
+        let removed = crate::lock::lock(&self.refusals).senders.remove(&id);
+        drop(removed);
+    }
+
+    pub(crate) fn report_refusal(&self, epoch: Epoch, reason: crate::ffi::SessionRefusalReason) {
+        let senders = {
+            let readers = crate::lock::lock(&self.refusals);
+            if readers.closed || !self.admits(epoch) { return; }
+            readers.senders.values().map(|(sender, _)| sender.clone()).collect::<Vec<_>>()
+        };
+        let event = crate::ffi::SessionRefusal { epoch, reason };
+        for sender in senders { let _ = crate::lock::effect(|| sender.send(event)); }
+    }
 
     pub(crate) fn watch_requests(&self, plus: bool) {
         if plus { self.watching.fetch_add(1, Ordering::SeqCst); } else { let _ = self.watching.try_update(Ordering::SeqCst, Ordering::SeqCst, |open| open.checked_sub(1)); }
@@ -143,6 +178,7 @@ impl EpochGate {
     pub async fn query(&self, epoch: Option<Epoch>, mut request: GraphQLRequest) -> Result<Response, TransportError> {
         self.paused().await;
         let transport = self.lend(epoch, Some(&mut request.variables))?;
+        request.epoch = epoch;
         self.note_graphql(&request);
         self.answer(epoch, transport.query(request).await).await
     }
@@ -187,7 +223,15 @@ impl EpochGate {
     pub fn close(&self, epoch: Epoch) { self.end(epoch, Cause::IdentityChanged); }
 
     pub fn shutdown(&self) {
-        self.update(|state| pack(epoch_of(state), cut_of(state) + 1, true));
+        let senders = {
+            let mut readers = crate::lock::lock(&self.refusals);
+            let state = self.state.load(Ordering::SeqCst);
+            self.state.store(pack(epoch_of(state), cut_of(state) + 1, true), Ordering::SeqCst);
+            readers.closed = true;
+            std::mem::take(&mut readers.senders)
+        };
+        for (_, (_, stopped)) in &senders { crate::lock::effect(|| stopped.send_replace(true)); }
+        drop(senders);
         #[cfg(test)]
         self.recorder.shut();
     }

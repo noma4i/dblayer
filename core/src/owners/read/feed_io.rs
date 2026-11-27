@@ -115,6 +115,9 @@ impl FeedIo {
             let line = match crate::runtime::send_in_epoch(&gate, epoch, || async { Ok(lines.connect(&cancel).await) }).await {
                 Ok(Ok(line)) => line,
                 Ok(Err(error)) => {
+                    let refusal = error.closed.as_ref().and_then(|(code, detail, _)| crate::transport::answer_kind::session_refusal(crate::transport::answer_kind::SessionRefusalInput::Close(*code, detail.as_deref())))
+                        .or_else(|| (error.socket_open || matches!(&error.error, TransportError::Http { .. })).then(|| crate::transport::answer_kind::session_refusal(crate::transport::answer_kind::SessionRefusalInput::Error(&error.error))).flatten());
+                    if let (Some(epoch), Some(reason)) = (epoch, refusal) { gate.report_refusal(epoch, reason); }
                     if error.socket_open {
                         let (code, detail, failure) = error.closed.unwrap_or_default();
                         let initiator = if code.is_some() { CableCloseInitiator::Server } else if failure.is_some() { CableCloseInitiator::Network } else { CableCloseInitiator::Client };
@@ -158,6 +161,7 @@ impl FeedIo {
             };
             let event = event.unwrap_or_else(|| CableClose { connection_id: connection, code: None, reason: None, failure: None, initiator: CableCloseInitiator::Client, intended: reason.load(Ordering::SeqCst) != 2 });
             let ended = matches!(closed_by(event.code, event.reason.as_deref()), Closed::SessionEnded);
+            if let (Some(epoch), Some(reason)) = (epoch, crate::transport::answer_kind::session_refusal(crate::transport::answer_kind::SessionRefusalInput::Close(event.code, event.reason.as_deref()))) { gate.report_refusal(epoch, reason); }
             let detail = event.reason.clone().unwrap_or_default();
             report(event);
             if !closed.swap(true, Ordering::SeqCst) { line.close().await; }

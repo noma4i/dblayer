@@ -89,6 +89,11 @@ public enum DB {
     try database.sessionStatus()
   }
 
+  public static func sessionRefusals() throws -> AsyncStream<SessionRefusal> {
+    let subscription = try database.sessionRefusals()
+    return AsyncStream(unfolding: { await subscription.next() }, onCancel: { subscription.cancel() })
+  }
+
   private static func sessionBodyText<Body: Encodable>(_ body: Body) throws -> String {
     String(decoding: try JSONEncoder().encode(body), as: UTF8.self)
   }

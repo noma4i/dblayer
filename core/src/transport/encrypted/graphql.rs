@@ -38,10 +38,13 @@ impl EncryptedTransport {
         Arc::new(crate::transport::EncryptedLines::new(self.rest.clone(), self.exchange.config().clone(), Arc::new(move || credential.read(&store))))
     }
 
-    async fn read(&self, path: &str, body: Value, wire: crate::transport::WireIds) -> Result<Answer, TransportError> {
+    async fn read(&self, path: &str, body: Value, wire: crate::transport::WireIds, epoch: Option<crate::runtime::Epoch>) -> Result<Answer, TransportError> {
         let credential = self.credential.read(&self.store)?;
         let (request_id, response_key) = (uuid::Uuid::new_v4().to_string(), random_token());
-        self.exchange.send_once(super::SendOnce { credential: Some(&credential), request_id: &request_id, response_key: &response_key, sequence: None, path, body: &body, purpose: crate::transport::NetworkPurpose::Standard, wire }).await
+        let result = self.exchange.send_once(super::SendOnce { credential: Some(&credential), request_id: &request_id, response_key: &response_key, sequence: None, path, body: &body, purpose: crate::transport::NetworkPurpose::Standard, wire }).await;
+        let refusal = match &result { Ok(answer) => crate::transport::answer_kind::SessionRefusalInput::Answer(&answer.body), Err(error) => crate::transport::answer_kind::SessionRefusalInput::Error(error) };
+        if let (Some(epoch), Some(life), Some(reason)) = (epoch, self.life.get().and_then(Weak::upgrade), crate::transport::answer_kind::session_refusal(refusal)) { life.gate().report_refusal(epoch, reason); }
+        result
     }
 
     /// A request with a `sequence`: the owner Session sends it, in order with every other request of the session.
@@ -136,11 +139,11 @@ impl Upstream for EncryptedTransport {
     async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
         let path = &self.exchange.config().endpoints.graphql;
         let wire = request.authored()?;
-        let response = response_from_read(self.read(path, graphql_body(&request, false), wire.clone()).await?, false)?;
+        let response = response_from_read(self.read(path, graphql_body(&request, false), wire.clone(), request.epoch).await?, false)?;
         if !matches!(&response.kind, Some(crate::transport::AnswerKind::DocumentMissing)) {
             return Ok(response);
         }
-        response_from_read(self.read(path, graphql_body(&request, true), crate::transport::WireIds::new(wire.author, wire.request_id, crate::transport::WireIds::next_attempt())).await?, true)
+        response_from_read(self.read(path, graphql_body(&request, true), crate::transport::WireIds::new(wire.author, wire.request_id, crate::transport::WireIds::next_attempt()), request.epoch).await?, true)
     }
 
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
