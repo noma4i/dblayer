@@ -7,8 +7,21 @@ protocol CableWebSocket: AnyObject, Sendable {
   func open() async throws
   func send(_ message: URLSessionWebSocketTask.Message, completion: @escaping @Sendable (Error?) -> Void)
   func receive() async throws -> URLSessionWebSocketTask.Message
+  func terminal(after error: Error) async -> CableTerminal
   func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?)
   func cancel()
+}
+
+struct CableTerminal {
+  let code: URLSessionWebSocketTask.CloseCode
+  let reason: Data?
+  let error: Error
+}
+
+extension CableWebSocket {
+  func terminal(after error: Error) async -> CableTerminal {
+    CableTerminal(code: closeCode, reason: closeReason, error: error)
+  }
 }
 
 extension URLSessionWebSocketTask: CableWebSocket {
@@ -31,10 +44,20 @@ extension URLSessionWebSocketTask: CableWebSocket {
       continuation.finish(throwing: CancellationError())
     }
   }
+
+  func terminal(after error: Error) async -> CableTerminal {
+    guard let opening = delegate as? SocketOpening, let result = await opening.terminal() else {
+      return CableTerminal(code: closeCode, reason: closeReason, error: error)
+    }
+    return CableTerminal(code: result.code, reason: result.reason, error: result.error ?? error)
+  }
 }
 
 private final class SocketOpening: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
   private let events: AsyncThrowingStream<Void, Error>.Continuation
+  private let results = AsyncStream<(code: URLSessionWebSocketTask.CloseCode, reason: Data?, error: Error?)>.makeStream()
+  // Only the session's serial delegate queue accesses the close frame.
+  private var close: (URLSessionWebSocketTask.CloseCode, Data?)?
 
   init(_ events: AsyncThrowingStream<Void, Error>.Continuation) { self.events = events }
 
@@ -44,11 +67,21 @@ private final class SocketOpening: NSObject, URLSessionWebSocketDelegate, @unche
   }
 
   func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+    close = (closeCode, reason)
     events.finish(throwing: URLError(.networkConnectionLost))
   }
 
   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
     events.finish(throwing: error ?? URLError(.networkConnectionLost))
+    let socket = task as? URLSessionWebSocketTask
+    let result = close ?? (socket?.closeCode ?? .invalid, socket?.closeReason)
+    results.continuation.yield((result.0, result.1, error))
+    results.continuation.finish()
+  }
+
+  func terminal() async -> (code: URLSessionWebSocketTask.CloseCode, reason: Data?, error: Error?)? {
+    var iterator = results.stream.makeAsyncIterator()
+    return await iterator.next()
   }
 }
 
@@ -93,13 +126,18 @@ private final class UrlSessionCableConnection: PlatformSocket, @unchecked Sendab
             trace?.frame("in", bytes: bytes.count)
             guard UInt64(bytes.count) <= cableFrameLimit() else { return Self.refuse(socket, events, trace) }
             events.binary(bytes: bytes)
-          @unknown default: events.ended(closeCode: nil, reason: nil, failure: RawFailure(domain: "cable", code: nil, message: "unknown cable frame"))
+          @unknown default:
+            events.ended(closeCode: nil, reason: nil, failure: RawFailure(domain: "cable", code: nil, message: "unknown cable frame"))
+            return
           }
         } catch {
           if Task.isCancelled { return }
-          let code = socket.closeCode
-          if code == .invalid { trace?.failed(error) } else { trace?.closed(code: code.rawValue, reason: socket.closeReason.map { String(decoding: $0, as: UTF8.self) }, initiator: "remote") }
-          events.ended(closeCode: code == .invalid ? nil : UInt16(clamping: code.rawValue), reason: socket.closeReason.map { String(decoding: $0, as: UTF8.self) }, failure: RawFailure(error))
+          let terminal = await socket.terminal(after: error)
+          if Task.isCancelled { return }
+          let code = terminal.code
+          let reason = terminal.reason.map { String(decoding: $0, as: UTF8.self) }
+          if code == .invalid { trace?.failed(terminal.error) } else { trace?.closed(code: code.rawValue, reason: reason, initiator: "remote") }
+          events.ended(closeCode: code == .invalid ? nil : UInt16(clamping: code.rawValue), reason: reason, failure: RawFailure(terminal.error))
           return
         }
       }
@@ -115,8 +153,8 @@ private final class UrlSessionCableConnection: PlatformSocket, @unchecked Sendab
   func send(text: String) -> Bool {
     guard socket.closeCode == .invalid else { return false }
     trace?.frame("out", bytes: text.utf8.count)
-    socket.send(.string(text)) { [events, trace] error in
-      if let error { trace?.failed(error); events.ended(closeCode: nil, reason: nil, failure: RawFailure(error)) }
+    socket.send(.string(text)) { [trace] error in
+      if let error { trace?.failed(error) }
     }
     return true
   }
