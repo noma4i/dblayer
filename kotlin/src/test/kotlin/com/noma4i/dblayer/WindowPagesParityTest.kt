@@ -43,7 +43,8 @@ class WindowPagesParityTest {
             assertEquals(1, transport.calls.count { it.operationName == "ContainerThread" })
 
             projected.loadMore()
-            projected.until("second page") { it.rows.firstOrNull()?.id == "m16" && it.state?.settled == true }
+            projected.until("second page") { it.rows.size == 50 && it.state?.settled == true }
+            assertEquals(((41..65) + (16..40)).map { "m$it" }, projected.projection.value.rows.map { it.id })
             assertFalse(projected.projection.value.state!!.hasMore)
             assertEquals(2, transport.calls.count { it.operationName == "ContainerThread" })
         } finally {

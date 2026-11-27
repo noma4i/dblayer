@@ -31,7 +31,8 @@ extension BridgeProbeTests {
     #expect(transport.calls.filter { $0.operationName == "ContainerThread" }.count == 1)
 
     _ = try await held.loadMore()
-    await eventually("second page") { held.rows.first?.id == "m16" && held.state?.settled == true }
+    await eventually("second page") { held.rows.count == 50 && held.state?.settled == true }
+    #expect(held.rows.map(\.id) == (Array(41...65) + Array(16...40)).map { "m\($0)" })
     #expect(held.state?.hasMore == false)
     #expect(transport.calls.filter { $0.operationName == "ContainerThread" }.count == 2)
 

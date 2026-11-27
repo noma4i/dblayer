@@ -201,6 +201,25 @@ val state = DBlayer.sessionStatus()
 if (state.phase == SessionStanding.ACTIVE) showMain() else showSignIn()
 ```
 
+### Observing session refusals
+
+Subscribe once after opening the database. Each authenticated API refusal emits a `SessionRefusal` with its session `epoch` and a typed `reason`.
+The stream includes GraphQL reads and writes, upload API calls, session calls, and authenticated cable refusals. A storage PUT failure stays with the transfer.
+The stream accepts subscribers before sign-in, follows later epochs, and ends on database close. It delivers future events only.
+Each call keeps its existing result. The app decides how to respond to an event, and server revocation keeps its existing behavior.
+
+```swift
+for await refusal in try DB.sessionRefusals() {
+  respondToRefusal(refusal.reason, epoch: refusal.epoch)
+}
+```
+
+```kotlin
+DBlayer.sessionRefusals().collect { refusal ->
+    respondToRefusal(refusal.reason, refusal.epoch)
+}
+```
+
 ### Session errors in loads and mutations
 
 A sealed answer of the encrypted session that carries an `error` field with a session code throws `DbError.Session(code:detail:)` (`DbException.Session` with `code` and `detail` in Kotlin). It is the same case that `sessionCall` throws, with the same `SessionCode`. No `Graphql` error and no text is parsed. `detail` holds the code text of the server.

@@ -133,6 +133,38 @@ async fn app_logout_stops_when_the_unregister_is_refused() {
     rig.database.close_now();
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn app_observes_auth_refusals_across_epochs_independent_of_call_errors() {
+    use crate::ffi::SessionRefusalReason;
+
+    let rig = Rig::encrypted().await;
+    let observer = rig.database.session_refusals().unwrap();
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    rig.world.fail_next("MyProfile", Fault::Http(401));
+    let error = bound(rig.database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into())).await.unwrap_err();
+    assert!(matches!(error, DbError::Unauthorized { .. }));
+    rig.world.fail_next("UnregisterDevice", Fault::Refuse { code: "UNAUTHENTICATED", confirmed: true });
+    drop(bound(rig.database.run(epoch, "UnregisterDevice".into(), "{}".into())).await);
+    let first = bound(observer.next()).await.unwrap();
+    let second = bound(observer.next()).await.unwrap();
+    assert_eq!((first.epoch, first.reason), (epoch, SessionRefusalReason::Http401));
+    assert_eq!((second.epoch, second.reason), (epoch, SessionRefusalReason::Unauthenticated));
+    assert!(rig.database.signed_in_digest().is_some());
+
+    bound(rig.database.session_call("logout".into(), "{}".into())).await.unwrap();
+    ends(&rig.database).await;
+    rig.login_ios("B").await;
+    let epoch = rig.database.session_epoch();
+    rig.world.fail_next("MyProfile", Fault::Http(403));
+    let error = bound(rig.database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into())).await.unwrap_err();
+    assert!(matches!(error, DbError::Http { status: 403, .. }));
+    let third = bound(observer.next()).await.unwrap();
+    assert_eq!((third.epoch, third.reason), (epoch, SessionRefusalReason::Http403));
+    rig.database.close_now();
+    assert!(bound(observer.next()).await.is_none());
+}
+
 /// C12: A, B, A with every kind of handle held. After each exit nothing of the previous account is delivered, a late answer of the old account changes nothing, the history ends on the new account.
 #[tokio::test(flavor = "multi_thread")]
 async fn account_switch_a_b_a_never_delivers_the_previous_account_and_drops_its_late_answer() {

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Report authenticated API refusals through a database-wide stream on Swift and Kotlin.
+
 ## 6.51.0 - 2026-11-26
 
 ### Added
